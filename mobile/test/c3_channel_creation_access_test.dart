@@ -7,7 +7,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/features/communities/community_screen.dart';
-import 'package:private_messenger/features/communities/create_channel_dialog.dart';
+import 'package:private_messenger/features/communities/create_channel_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -117,7 +117,7 @@ void main() {
       expect(await newChannelOffered(tester), allowed);
       if (allowed) {
         await chooseNewChannel(tester);
-        expect(find.byType(CreateChannelDialog), findsOneWidget);
+        expect(find.byType(CreateChannelScreen), findsOneWidget);
       }
       // Server roster hints never unlock encrypted peer records or edits.
       expect(state.mayEditCommunityInfo('community', 'community'), isFalse);
@@ -139,7 +139,7 @@ void main() {
     expect(await newChannelOffered(tester), isTrue);
     await chooseNewChannel(tester);
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.byType(CreateChannelDialog), findsNothing);
+    expect(find.byType(CreateChannelScreen), findsNothing);
   });
 
   testWidgets(

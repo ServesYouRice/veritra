@@ -18,7 +18,7 @@ import '../chat/roles_screen.dart';
 import '../reports/owner_reports_screen.dart';
 import 'membership_screens.dart';
 import 'community_info_screen.dart';
-import 'create_channel_dialog.dart';
+import 'create_channel_screen.dart';
 import 'edit_info_dialog.dart';
 import '../../ui/widgets/refresh_action.dart';
 
@@ -212,11 +212,7 @@ class CommunityScreen extends StatelessWidget {
       }
       return;
     }
-    await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => CreateChannelDialog(state: state, community: community),
-    );
+    await CreateChannelScreen.open(context, state, community);
   }
 
   Future<String?> _promptForName(

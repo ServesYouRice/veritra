@@ -4,7 +4,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/features/communities/create_channel_dialog.dart';
+import 'package:private_messenger/features/communities/create_channel_screen.dart';
 import 'package:private_messenger/features/communities/edit_info_dialog.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -135,7 +135,7 @@ void main() {
     addTearDown(state.dispose);
     await _pump(
         tester,
-        CreateChannelDialog(
+        CreateChannelScreen(
             state: state,
             community: Community(
                 id: 'community', name: '', sharedConversationId: 'shared')));
