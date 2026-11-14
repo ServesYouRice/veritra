@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
@@ -9,7 +10,8 @@ import '../../core/attachments.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
-import 'attachment_views.dart' show newOpenedCopy, openedFilesDirectory;
+import 'attachment_views.dart'
+    show deleteOpenedCopy, newOpenedCopy, openedFilesDirectory;
 import 'voice_recorder.dart';
 
 /// "1:05" for a voice note position or length.
@@ -89,6 +91,13 @@ abstract class VoicePlayback {
   Stream<Duration> get positions;
   Stream<Duration> get durations;
   Future<void> play(String path);
+
+  /// Whether [playBytes] works on this platform. `audioplayers` has no bytes
+  /// source on iOS, macOS or Linux, so a note there plays from a temp file.
+  bool get supportsBytes;
+
+  /// Plays a note held in memory, with no file (D134).
+  Future<void> playBytes(Uint8List bytes, {String? mimeType});
   Future<void> pause();
   Future<void> resume();
   Future<void> stop();
@@ -119,6 +128,13 @@ class AudioPlayersPlayback implements VoicePlayback {
   Future<void> play(String path) => _player.play(DeviceFileSource(path));
 
   @override
+  bool get supportsBytes => Platform.isAndroid || Platform.isWindows;
+
+  @override
+  Future<void> playBytes(Uint8List bytes, {String? mimeType}) =>
+      _player.play(BytesSource(bytes, mimeType: mimeType));
+
+  @override
   Future<void> pause() => _player.pause();
 
   @override
@@ -131,40 +147,60 @@ class AudioPlayersPlayback implements VoicePlayback {
   Future<void> dispose() => _player.dispose();
 }
 
-/// Decrypts [entry] to a private temporary file for playback, in the same
-/// cache folder other opened attachments use (purged at startup). The caller
-/// deletes its folder when playback ends.
-Future<File> decryptVoiceNote(
+/// A decrypted voice note: the bytes of one that plays from memory, or a
+/// private temp file for one that does not (D134).
+class DecryptedVoice {
+  DecryptedVoice.bytes(Uint8List this.bytes) : file = null;
+  DecryptedVoice.file(File this.file) : bytes = null;
+
+  final Uint8List? bytes;
+  final File? file;
+
+  /// Wipes the bytes or deletes the file's folder. Call once playback is
+  /// finished with it.
+  Future<void> discard() async {
+    bytes?.fillRange(0, bytes!.length, 0);
+    final copy = file;
+    if (copy != null) await deleteOpenedCopy(copy);
+  }
+}
+
+/// Decrypts [entry] for playback. With [inMemory] the note stays in memory
+/// and no file is written; otherwise it goes to a private temporary file in
+/// the same cache folder other opened attachments use (purged at startup and
+/// by the hourly sweep). The caller calls [DecryptedVoice.discard] when
+/// playback ends.
+Future<DecryptedVoice> decryptVoiceNote(
   AppState state,
   AttachmentEntry entry, {
   required String conversationId,
+  required bool inMemory,
 }) async {
+  if (inMemory) {
+    return DecryptedVoice.bytes(
+      await state.loadAttachment(entry, conversationId: conversationId),
+    );
+  }
   final root = await openedFilesDirectory();
   final copy = await newOpenedCopy(root, entry.fileName);
   try {
-    await state.saveAttachment(
+    await state.decryptAttachmentToFile(
       entry,
       copy.path,
       conversationId: conversationId,
     );
   } catch (_) {
-    await deleteVoiceCopy(copy);
+    await deleteOpenedCopy(copy);
     rethrow;
   }
-  return copy;
-}
-
-Future<void> deleteVoiceCopy(File copy) async {
-  try {
-    await copy.parent.delete(recursive: true);
-  } on FileSystemException {
-    // Purged at the next start instead.
-  }
+  return DecryptedVoice.file(copy);
 }
 
 /// One voice note in a message bubble: play and pause, a progress bar and
-/// the length. The file is downloaded and decrypted on the first play and
-/// its plaintext copy is deleted when playback ends or the tile goes away.
+/// the length. The note is downloaded and decrypted on the first play. A
+/// small one plays from memory where the platform can ([attachmentMemoryLimit]);
+/// otherwise its plaintext copy is deleted when playback ends or the tile
+/// goes away.
 class VoiceNoteTile extends StatefulWidget {
   const VoiceNoteTile({
     required this.entry,
@@ -175,8 +211,9 @@ class VoiceNoteTile extends StatefulWidget {
 
   final AttachmentEntry entry;
 
-  /// Decrypts the voice note to a temporary file.
-  final Future<File> Function() load;
+  /// Decrypts the voice note, in memory when [inMemory] is true and to a
+  /// temporary file otherwise.
+  final Future<DecryptedVoice> Function(bool inMemory) load;
   final VoicePlayback Function() playbackFactory;
 
   @override
@@ -190,7 +227,7 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
   VoicePlayback? _playback;
   final List<StreamSubscription<Object?>> _subs =
       <StreamSubscription<Object?>>[];
-  File? _copy;
+  DecryptedVoice? _voice;
   VoicePlaybackState _state = VoicePlaybackState.stopped;
   Duration _position = Duration.zero;
   Duration? _length;
@@ -219,9 +256,9 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
         await playback.dispose();
       } catch (_) {}
     }
-    final copy = _copy;
-    _copy = null;
-    if (copy != null) await deleteVoiceCopy(copy);
+    final voice = _voice;
+    _voice = null;
+    if (voice != null) await voice.discard();
   }
 
   void _set(VoidCallback change) {
@@ -263,18 +300,25 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
     try {
       await _stopOthers();
       await _release();
-      final copy = await widget.load();
-      if (!mounted) {
-        await deleteVoiceCopy(copy);
-        return;
-      }
-      _copy = copy;
       final playback = widget.playbackFactory();
       _playback = playback;
+      final voice = await widget.load(
+        playback.supportsBytes && widget.entry.opensFromMemory,
+      );
+      if (!mounted) {
+        await voice.discard();
+        return;
+      }
+      _voice = voice;
       _subs.add(playback.states.listen(_onState));
       _subs.add(playback.positions.listen(_onPosition));
       _subs.add(playback.durations.listen(_onLength));
-      await playback.play(copy.path);
+      final bytes = voice.bytes;
+      if (bytes != null) {
+        await playback.playBytes(bytes, mimeType: widget.entry.mediaType);
+      } else {
+        await playback.play(voice.file!.path);
+      }
     } catch (_) {
       await _release();
       _set(() => _failed = true);
@@ -295,11 +339,11 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
 
   void _onLength(Duration length) => _set(() => _length = length);
 
-  /// Playback finished: the plaintext copy is not needed until the next
-  /// play, which decrypts again.
+  /// Playback finished: the plaintext is not needed until the next play,
+  /// which decrypts again.
   Future<void> _dropCopy() async {
-    final copy = _copy;
-    _copy = null;
+    final voice = _voice;
+    _voice = null;
     final playback = _playback;
     _playback = null;
     for (final sub in _subs) {
@@ -311,7 +355,7 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
         await playback.dispose();
       } catch (_) {}
     }
-    if (copy != null) await deleteVoiceCopy(copy);
+    if (voice != null) await voice.discard();
   }
 
   @override

@@ -2,10 +2,12 @@
 // first, refuses a decompression bomb and decodes large images smaller
 // (TASK-065).
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -39,13 +41,28 @@ class _ImageState extends AppState {
 
   final Uint8List bytes;
 
+  /// How often the image was decrypted to memory and to a file.
+  int memoryLoads = 0;
+  int fileDecrypts = 0;
+
   @override
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
-    bool memoryOnly = false,
-  }) async =>
-      bytes;
+  }) async {
+    memoryLoads++;
+    return Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<void> decryptAttachmentToFile(
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) async {
+    fileDecrypts++;
+    await File(destinationPath).writeAsBytes(bytes);
+  }
 }
 
 const _entry = AttachmentEntry(
@@ -107,7 +124,11 @@ Future<Uint8List> _realPng(int width, int height) async {
   return data!.buffer.asUint8List();
 }
 
-Future<void> _show(WidgetTester tester, Uint8List bytes) async {
+Future<_ImageState> _show(
+  WidgetTester tester,
+  Uint8List bytes, {
+  AttachmentEntry entry = _entry,
+}) async {
   final state = _ImageState(bytes);
   addTearDown(state.dispose);
   await tester.pumpWidget(MaterialApp(
@@ -115,7 +136,7 @@ Future<void> _show(WidgetTester tester, Uint8List bytes) async {
     supportedLocales: AppLocalizations.supportedLocales,
     home: AttachmentImageScreen(
       state: state,
-      entry: _entry,
+      entry: entry,
       conversationId: 'conv_1',
     ),
   ));
@@ -128,9 +149,41 @@ Future<void> _show(WidgetTester tester, Uint8List bytes) async {
     () => Future<void>.delayed(const Duration(milliseconds: 300)),
   );
   await tester.pump();
+  // A copy on disk takes several real I/O steps, one per pump.
+  for (var i = 0;
+      i < 40 && tester.any(find.byType(CircularProgressIndicator));
+      i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump();
+  }
+  return state;
 }
 
+/// Points the path provider at a fresh cache folder and returns it.
+Directory _mockCache(WidgetTester tester) {
+  final cache = Directory.systemTemp.createTempSync('attachment_image_cache_');
+  const channel = MethodChannel('plugins.flutter.io/path_provider');
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(channel, (_) async => cache.path);
+  addTearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    cache.deleteSync(recursive: true);
+  });
+  return cache;
+}
+
+/// Every file under [directory].
+List<String> _filesUnder(Directory directory) => <String>[
+      for (final item in directory.listSync(recursive: true))
+        if (item is File) item.path,
+    ];
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('the declared size is read without decoding', () async {
     final size = await readImageSize(_declaredPng(30000, 30000));
     expect(size, isNotNull);
@@ -182,5 +235,70 @@ void main() {
     expect(provider, isA<ResizeImage>());
     expect((provider as ResizeImage).width, maxViewerDecodeSide);
     expect(provider.height, isNull);
+  });
+
+  testWidgets('a small image opens from memory and writes no file',
+      (tester) async {
+    final cache = _mockCache(tester);
+    final bytes = (await tester.runAsync(() => _realPng(64, 48)))!;
+    final state = await _show(tester, bytes);
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(tester.widget<Image>(find.byType(Image)).image, isA<MemoryImage>());
+    expect(state.memoryLoads, 1);
+    expect(state.fileDecrypts, 0, reason: 'no plaintext copy is made');
+    expect(_filesUnder(cache), isEmpty);
+    expect(Directory('${cache.path}/veritra-open').existsSync(), isFalse);
+  });
+
+  testWidgets('a big image uses a temp copy that goes when the viewer closes',
+      (tester) async {
+    final cache = _mockCache(tester);
+    final bytes = (await tester.runAsync(() => _realPng(64, 48)))!;
+    final big = AttachmentEntry(
+      id: 'att_2',
+      fileName: 'big.png',
+      mediaType: 'image/png',
+      plaintextSize: attachmentMemoryLimit + 1,
+      ciphertextSize: attachmentMemoryLimit + 100,
+      manifest: const <String, Object?>{},
+    );
+    expect(big.opensFromMemory, isFalse);
+    final state = await _show(tester, bytes, entry: big);
+
+    expect(state.memoryLoads, 0);
+    expect(state.fileDecrypts, 1);
+    expect(tester.widget<Image>(find.byType(Image)).image, isA<FileImage>());
+    expect(_filesUnder(cache), hasLength(1),
+        reason: 'the one temp copy, while the viewer is open');
+
+    // Close the viewer.
+    await tester.pumpWidget(const SizedBox.shrink());
+    for (var i = 0; i < 100 && _filesUnder(cache).isNotEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+    }
+    expect(_filesUnder(cache), isEmpty);
+    // Its folder is gone too: nothing is left in this slot's cache folder.
+    final slot = Directory('${cache.path}/veritra-open/primary');
+    expect(slot.listSync(), isEmpty);
+  });
+
+  test(
+      'the memory limit covers a voice note and a phone photo, not a 48 MP one',
+      () {
+    AttachmentEntry sized(int bytes) => AttachmentEntry(
+          id: 'a',
+          fileName: 'f',
+          mediaType: 'image/jpeg',
+          plaintextSize: bytes,
+          ciphertextSize: bytes + 100,
+          manifest: const <String, Object?>{},
+        );
+    expect(sized(4800 * 1000).opensFromMemory, isTrue);
+    expect(sized(6 * 1024 * 1024).opensFromMemory, isTrue);
+    expect(sized(attachmentMemoryLimit).opensFromMemory, isTrue);
+    expect(sized(attachmentMemoryLimit + 1).opensFromMemory, isFalse);
   });
 }

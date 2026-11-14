@@ -1000,10 +1000,14 @@ class AppState extends ChangeNotifier
   /// running across sign-out: the working directory belongs to the device,
   /// not the account, and files left from before a sign-out are exactly what
   /// it removes.
-  void startAttachmentOrphanSweep() {
+  void startAttachmentOrphanSweep({
+    Future<void> Function(Duration minAge)? alsoSweep,
+  }) {
     final service = attachmentService;
     if (service == null || _disposed || _orphanSweeper != null) return;
-    _orphanSweeper = AttachmentOrphanSweeper(service.workingDirectory)..start();
+    _orphanSweeper =
+        AttachmentOrphanSweeper(service.workingDirectory, alsoSweep: alsoSweep)
+          ..start();
   }
 
   // D52 bounded background work (phones). Off unless the demo entry point
@@ -4221,7 +4225,7 @@ class AppState extends ChangeNotifier
           for (final attachment in attachments) {
             if (!_syncOwnerActive(owner, generation)) return false;
             final plaintext = await loadAttachment(attachment,
-                conversationId: live.conversationId, memoryOnly: true);
+                conversationId: live.conversationId);
             try {
               if (!_syncOwnerActive(owner, generation)) return false;
               if (!await _sendEncryptedAttachment(id,
@@ -4442,16 +4446,44 @@ class AppState extends ChangeNotifier
   }
 
   /// Downloads one attachment's ciphertext to a temporary file and decrypts
-  /// it. By default it decrypts to a temporary plaintext file and reads that
-  /// back. With [memoryOnly] (used by forwarding) it decrypts straight to
-  /// bytes and creates no plaintext file. Both temporary files are deleted
-  /// in `finally`, best effort: a crash or kill before then can leave them
-  /// in the working directory.
+  /// it straight to bytes (D134): no plaintext file is ever created. The
+  /// ciphertext temporary file is deleted in `finally`, best effort: a crash
+  /// or kill before then can leave it in the working directory, where the
+  /// hourly sweep removes it. The caller wipes the bytes when done.
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
-    bool memoryOnly = false,
-  }) async {
+  }) =>
+      _withAttachmentCiphertext(
+        entry,
+        conversationId,
+        (service, ciphertext) => service.decryptBytes(
+            ciphertextPath: ciphertext.path, manifest: entry.manifest),
+      );
+
+  /// Decrypts one attachment straight into [destinationPath], which must not
+  /// exist yet, without holding the whole plaintext in memory. For a big
+  /// file that another viewer needs as a file (D134).
+  Future<void> decryptAttachmentToFile(
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) =>
+      _withAttachmentCiphertext(
+        entry,
+        conversationId,
+        (service, ciphertext) => service.decryptFile(
+          ciphertextPath: ciphertext.path,
+          destinationPath: destinationPath,
+          manifest: entry.manifest,
+        ),
+      );
+
+  Future<T> _withAttachmentCiphertext<T>(
+    AttachmentEntry entry,
+    String conversationId,
+    Future<T> Function(AttachmentCryptoService service, File ciphertext) use,
+  ) async {
     final service = attachmentService;
     final current = session;
     final client = api;
@@ -4467,10 +4499,8 @@ class AppState extends ChangeNotifier
       throw StateError('attachments wait until the request is accepted');
     }
     final directory = await service.workingDirectory();
-    final base = '${directory.path}${Platform.pathSeparator}'
-        '.veritra-attachment-${_randomHexId()}';
-    final ciphertext = File('$base.ciphertext');
-    final plaintext = File('$base.plaintext');
+    final ciphertext = File('${directory.path}${Platform.pathSeparator}'
+        '.veritra-attachment-${_randomHexId()}.ciphertext');
     try {
       final stream =
           await client.downloadEncryptedAttachment(current.token, entry.id);
@@ -4490,22 +4520,12 @@ class AppState extends ChangeNotifier
       if (received != entry.ciphertextSize) {
         throw const FormatException('attachment is smaller than announced');
       }
-      if (memoryOnly)
-        return await service.decryptBytes(
-            ciphertextPath: ciphertext.path, manifest: entry.manifest);
-      await service.decryptFile(
-        ciphertextPath: ciphertext.path,
-        destinationPath: plaintext.path,
-        manifest: entry.manifest,
-      );
-      return await plaintext.readAsBytes();
+      return await use(service, ciphertext);
     } finally {
-      for (final file in <File>[ciphertext, plaintext]) {
-        try {
-          if (await file.exists()) await file.delete();
-        } on FileSystemException {
-          // Best effort: the temporary directory is cleared by the system.
-        }
+      try {
+        if (await ciphertext.exists()) await ciphertext.delete();
+      } on FileSystemException {
+        // Best effort: the sweep removes it later.
       }
     }
   }

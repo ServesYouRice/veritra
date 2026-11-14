@@ -2,6 +2,7 @@
 // the media type a received note must have, and inline playback.
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -49,7 +50,11 @@ class _FakePlayback implements VoicePlayback {
   final _positions = StreamController<Duration>.broadcast();
   final _durations = StreamController<Duration>.broadcast();
   String? played;
+  Uint8List? playedBytes;
   bool disposed = false;
+
+  @override
+  bool supportsBytes = false;
 
   @override
   Stream<VoicePlaybackState> get states => _states.stream;
@@ -63,6 +68,13 @@ class _FakePlayback implements VoicePlayback {
   @override
   Future<void> play(String path) async {
     played = path;
+    _states.add(VoicePlaybackState.playing);
+    _durations.add(const Duration(seconds: 65));
+  }
+
+  @override
+  Future<void> playBytes(Uint8List bytes, {String? mimeType}) async {
+    playedBytes = bytes;
     _states.add(VoicePlaybackState.playing);
     _durations.add(const Duration(seconds: 65));
   }
@@ -84,12 +96,16 @@ class _FakePlayback implements VoicePlayback {
   }
 }
 
-AttachmentEntry _voiceEntry({String type = 'audio/mp4'}) => AttachmentEntry(
+AttachmentEntry _voiceEntry({
+  String type = 'audio/mp4',
+  int size = 4096,
+}) =>
+    AttachmentEntry(
       id: 'a1',
       fileName: 'voice-20261024-090507.m4a',
       mediaType: type,
-      plaintextSize: 4096,
-      ciphertextSize: 4200,
+      plaintextSize: size,
+      ciphertextSize: size + 104,
       manifest: const <String, Object?>{},
     );
 
@@ -212,9 +228,11 @@ void main() {
       home: Scaffold(
         body: VoiceNoteTile(
           entry: _voiceEntry(),
-          load: () async {
+          load: (inMemory) async {
             loads++;
-            return copy;
+            expect(inMemory, isFalse,
+                reason: 'this player cannot play from bytes');
+            return DecryptedVoice.file(copy);
           },
           playbackFactory: () => playback,
         ),
@@ -245,12 +263,86 @@ void main() {
     expect(playback.disposed, isTrue);
   });
 
+  testWidgets('a small note plays from memory and no file is made',
+      (tester) async {
+    final playback = _FakePlayback()..supportsBytes = true;
+    final audio = Uint8List.fromList(<int>[9, 8, 7]);
+    final asked = <bool>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VoiceNoteTile(
+          entry: _voiceEntry(),
+          load: (inMemory) async {
+            asked.add(inMemory);
+            return DecryptedVoice.bytes(audio);
+          },
+          playbackFactory: () => playback,
+        ),
+      ),
+    ));
+    await tester.tap(find.byType(VoiceNoteTile));
+    await tester.pump();
+    await tester.pump();
+
+    expect(asked, <bool>[true]);
+    expect(playback.playedBytes, audio);
+    expect(playback.played, isNull, reason: 'nothing was played from a path');
+
+    // The bytes are wiped once playback ends.
+    playback.finish();
+    await tester.pump();
+    for (var i = 0; i < 100 && !audio.every((b) => b == 0); i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(audio, <int>[0, 0, 0]);
+  });
+
+  testWidgets('a big note plays from a temp copy even where bytes play',
+      (tester) async {
+    final playback = _FakePlayback()..supportsBytes = true;
+    final copy = File('${dir.path}/big/voice.wav')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(<int>[1]);
+    final asked = <bool>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: VoiceNoteTile(
+          entry:
+              _voiceEntry(type: 'audio/wav', size: attachmentMemoryLimit + 1),
+          load: (inMemory) async {
+            asked.add(inMemory);
+            return DecryptedVoice.file(copy);
+          },
+          playbackFactory: () => playback,
+        ),
+      ),
+    ));
+    await tester.tap(find.byType(VoiceNoteTile));
+    await tester.pump();
+    await tester.pump();
+    expect(asked, <bool>[false]);
+    expect(playback.played, copy.path);
+
+    // Closing the tile deletes the copy at once.
+    await tester.pumpWidget(const SizedBox.shrink());
+    for (var i = 0; i < 100 && copy.parent.existsSync(); i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(copy.parent.existsSync(), isFalse);
+  });
+
   testWidgets('a note that cannot be loaded says so', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: VoiceNoteTile(
           entry: _voiceEntry(),
-          load: () async => throw const FileSystemException('gone'),
+          load: (_) async => throw const FileSystemException('gone'),
           playbackFactory: _FakePlayback.new,
         ),
       ),
