@@ -4683,34 +4683,73 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
+  String get l2SealedKeyTitle => 'Слање без вашег имена';
 
   @override
   String get l2SealedKeyTile => 'Поруке без вашег имена';
+
+  @override
+  String get l2SealedOn => 'Укључено';
+
+  @override
+  String get l2SealedOff => 'Искључено';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'Сервер доставља ваше поруке а да не сазна ко их је послао.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Паузирано: кључ сервера се променио. Ваше поруке носе ваше име.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'Овај сервер то тренутно не нуди, па ваше поруке носе ваше име.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Технички детаљи';
 
   @override
   String get l2SealedKeyIntro =>
       'Овај сервер потписује токене који омогућавају да ваше поруке стигну до њега без вашег имена. Апликација је запамтила његов кључ када га је први пут видела.';
 
   @override
-  String get l2SealedKeyOff => 'Овај сервер не нуди скривеног пошиљаоца.';
+  String get l2SealedKeyOff =>
+      'Овај сервер то не нуди, па ваше поруке носе ваше име.';
 
   @override
   String get l2SealedKeyNone =>
-      'Још нема запамћеног кључа. Биће запамћен при следећој синхронизацији.';
+      'Укључује се после следеће синхронизације са овим сервером.';
 
   @override
   String get l2SealedKeyPinned => 'Запамћени кључ';
 
   @override
   String get l2SealedKeyChanged =>
-      'Сервер сада показује други кључ. Док га не прихватите, ваше поруке се шаљу са вашим именом, као раније.';
+      'Док не одговорите, ваше поруке носе ваше име, као раније. Реците да само ако вам је оператер сервера то рекао: кључ направљен само за вас омогућио би серверу да издвоји ваше поруке.';
 
   @override
   String get l2SealedKeyNew => 'Нови кључ';
 
   @override
   String get l2SealedKeyAccept => 'Прихвати нови кључ';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Да ли вам је оператер сервера рекао да се његов кључ променио?';
+
+  @override
+  String get l2SealedKeyKeep => 'Не, или нисам сигуран';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Да, користи нови кључ';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Ништа се није променило. Ваше поруке носе ваше име док не прихватите нови кључ.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Промени одговор';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -4743,7 +4782,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get l2OwnerKeyAccept => 'Прихвати';
 
   @override
-  String get l2OwnerKeyReject => 'Одбиј';
+  String get l2OwnerKeyReject => 'Не, задржи како је било';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Да ли сте очекивали ову промену?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Да, прихвати';
 
   @override
   String get l2OwnerKeyAcceptWarning =>
@@ -9438,34 +9483,73 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';
+  String get l2SealedKeyTitle => 'Slanje bez vašeg imena';
 
   @override
   String get l2SealedKeyTile => 'Poruke bez vašeg imena';
+
+  @override
+  String get l2SealedOn => 'Uključeno';
+
+  @override
+  String get l2SealedOff => 'Isključeno';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'Server dostavlja vaše poruke a da ne sazna ko ih je poslao.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Pauzirano: ključ servera se promenio. Vaše poruke nose vaše ime.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'Ovaj server to trenutno ne nudi, pa vaše poruke nose vaše ime.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Tehnički detalji';
 
   @override
   String get l2SealedKeyIntro =>
       'Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.';
 
   @override
-  String get l2SealedKeyOff => 'Ovaj server ne nudi skrivenog pošiljaoca.';
+  String get l2SealedKeyOff =>
+      'Ovaj server to ne nudi, pa vaše poruke nose vaše ime.';
 
   @override
   String get l2SealedKeyNone =>
-      'Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.';
+      'Uključuje se posle sledeće sinhronizacije sa ovim serverom.';
 
   @override
   String get l2SealedKeyPinned => 'Zapamćeni ključ';
 
   @override
   String get l2SealedKeyChanged =>
-      'Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.';
+      'Dok ne odgovorite, vaše poruke nose vaše ime, kao ranije. Recite da samo ako vam je operater servera to rekao: ključ napravljen samo za vas omogućio bi serveru da izdvoji vaše poruke.';
 
   @override
   String get l2SealedKeyNew => 'Novi ključ';
 
   @override
   String get l2SealedKeyAccept => 'Prihvati novi ključ';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Da li vam je operater servera rekao da se njegov ključ promenio?';
+
+  @override
+  String get l2SealedKeyKeep => 'Ne, ili nisam siguran';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Da, koristi novi ključ';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Ništa se nije promenilo. Vaše poruke nose vaše ime dok ne prihvatite novi ključ.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Promeni odgovor';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -9498,7 +9582,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get l2OwnerKeyAccept => 'Prihvati';
 
   @override
-  String get l2OwnerKeyReject => 'Odbij';
+  String get l2OwnerKeyReject => 'Ne, zadrži kako je bilo';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Da li ste očekivali ovu promenu?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Da, prihvati';
 
   @override
   String get l2OwnerKeyAcceptWarning =>

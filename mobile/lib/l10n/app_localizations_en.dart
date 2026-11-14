@@ -4667,34 +4667,73 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Sealed sender key';
+  String get l2SealedKeyTitle => 'Send without your name';
 
   @override
   String get l2SealedKeyTile => 'Messages without your name';
+
+  @override
+  String get l2SealedOn => 'On';
+
+  @override
+  String get l2SealedOff => 'Off';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'The server delivers your messages without learning who sent them.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Paused: the server\'s key changed. Your messages carry your name.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'This server does not offer it right now, so your messages carry your name.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Technical details';
 
   @override
   String get l2SealedKeyIntro =>
       'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.';
 
   @override
-  String get l2SealedKeyOff => 'This server does not offer sealed sending.';
+  String get l2SealedKeyOff =>
+      'This server does not offer it, so your messages carry your name.';
 
   @override
   String get l2SealedKeyNone =>
-      'No key pinned yet. It is pinned on the next sync.';
+      'It turns on after the next sync with this server.';
 
   @override
   String get l2SealedKeyPinned => 'Pinned key';
 
   @override
   String get l2SealedKeyChanged =>
-      'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.';
+      'Until you answer, your messages carry your name, as before. Say yes only if the server\'s operator told you: a key made just for you would let the server pick out your messages.';
 
   @override
   String get l2SealedKeyNew => 'New key';
 
   @override
   String get l2SealedKeyAccept => 'Accept new key';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Did the server\'s operator tell you its key changed?';
+
+  @override
+  String get l2SealedKeyKeep => 'No, or I am not sure';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Yes, use the new key';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Nothing changed. Your messages keep your name until you accept the new key.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Change my answer';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -4727,7 +4766,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get l2OwnerKeyAccept => 'Accept';
 
   @override
-  String get l2OwnerKeyReject => 'Reject';
+  String get l2OwnerKeyReject => 'No, keep it as it was';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Did you expect this change?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Yes, accept it';
 
   @override
   String get l2OwnerKeyAcceptWarning =>

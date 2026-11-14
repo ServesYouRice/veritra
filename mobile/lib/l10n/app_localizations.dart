@@ -7704,7 +7704,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'Sealed sender key'**
+  /// **'Send without your name'**
   String get l2SealedKeyTitle;
 
   /// L2-3 sealed sender.
@@ -7712,6 +7712,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Messages without your name'**
   String get l2SealedKeyTile;
+
+  /// No description provided for @l2SealedOn.
+  ///
+  /// In en, this message translates to:
+  /// **'On'**
+  String get l2SealedOn;
+
+  /// No description provided for @l2SealedOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get l2SealedOff;
+
+  /// No description provided for @l2SealedSummaryOn.
+  ///
+  /// In en, this message translates to:
+  /// **'The server delivers your messages without learning who sent them.'**
+  String get l2SealedSummaryOn;
+
+  /// No description provided for @l2SealedSummaryChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused: the server\'s key changed. Your messages carry your name.'**
+  String get l2SealedSummaryChanged;
+
+  /// No description provided for @l2SealedSummaryNotOffered.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer it right now, so your messages carry your name.'**
+  String get l2SealedSummaryNotOffered;
+
+  /// No description provided for @l2SealedTechnicalDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Technical details'**
+  String get l2SealedTechnicalDetails;
 
   /// L2-3 sealed sender.
   ///
@@ -7722,13 +7758,13 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'This server does not offer sealed sending.'**
+  /// **'This server does not offer it, so your messages carry your name.'**
   String get l2SealedKeyOff;
 
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'No key pinned yet. It is pinned on the next sync.'**
+  /// **'It turns on after the next sync with this server.'**
   String get l2SealedKeyNone;
 
   /// L2-3 sealed sender.
@@ -7740,7 +7776,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.'**
+  /// **'Until you answer, your messages carry your name, as before. Say yes only if the server\'s operator told you: a key made just for you would let the server pick out your messages.'**
   String get l2SealedKeyChanged;
 
   /// L2-3 sealed sender.
@@ -7754,6 +7790,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Accept new key'**
   String get l2SealedKeyAccept;
+
+  /// No description provided for @l2SealedKeyQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Did the server\'s operator tell you its key changed?'**
+  String get l2SealedKeyQuestion;
+
+  /// No description provided for @l2SealedKeyKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'No, or I am not sure'**
+  String get l2SealedKeyKeep;
+
+  /// No description provided for @l2SealedKeyAcceptAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes, use the new key'**
+  String get l2SealedKeyAcceptAnswer;
+
+  /// No description provided for @l2SealedKeyKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing changed. Your messages keep your name until you accept the new key.'**
+  String get l2SealedKeyKept;
+
+  /// No description provided for @l2SealedKeyChangeAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Change my answer'**
+  String get l2SealedKeyChangeAnswer;
 
   /// L2-3 sealed sender.
   ///
@@ -7800,8 +7866,20 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender owner keys.
   ///
   /// In en, this message translates to:
-  /// **'Reject'**
+  /// **'No, keep it as it was'**
   String get l2OwnerKeyReject;
+
+  /// No description provided for @l2OwnerKeyQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Did you expect this change?'**
+  String get l2OwnerKeyQuestion;
+
+  /// No description provided for @l2OwnerKeyAcceptAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes, accept it'**
+  String get l2OwnerKeyAcceptAnswer;
 
   /// L2-3 sealed sender owner keys.
   ///
