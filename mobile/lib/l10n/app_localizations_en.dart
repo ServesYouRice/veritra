@@ -1802,10 +1802,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server stops delivering their messages to your account. They are not told, and messages already on your devices stay.';
 
   @override
-  String get chatStatusMutedEncrypted => 'MUTED · ENCRYPTED';
-
-  @override
-  String get chatStatusEncrypted => 'ENCRYPTED';
+  String get chatStatusMuted => 'Muted';
 
   @override
   String get chatNoConversationMessage =>
@@ -1815,8 +1812,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatEmptyTitle => 'No messages yet';
 
   @override
-  String get chatEmptyMessage =>
-      'Messages are stored as encrypted envelopes only the members can read.';
+  String get chatEmptyMessageDm => 'Only you two can read this.';
+
+  @override
+  String get chatEmptyMessageGroup => 'Only the members can read this.';
+
+  @override
+  String get chatNoticeEncryptedDm =>
+      'Messages here are end-to-end encrypted. Only you two can read them.';
+
+  @override
+  String get chatNoticeEncryptedGroup =>
+      'Messages here are end-to-end encrypted. Only the members can read them.';
 
   @override
   String get chatJumpToLatest => 'Jump to latest';

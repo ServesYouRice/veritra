@@ -40,6 +40,80 @@ void main() {
     });
   }
 
+  testWidgets('U13: "encrypted" is said once, at the start of the chat',
+      (tester) async {
+    final store = MemoryLocalStore(), state = _state();
+    state.localStoreOverride = store;
+    await _seed(store, extra: [
+      for (var i = 0; i < 3; i++)
+        InsertMessageEffect(
+            key: 'dev:m$i',
+            conversationId: 'conv',
+            senderAccountId: i.isEven ? 'alice' : 'bob',
+            senderDeviceId: 'dev',
+            kind: LocalMessageKind.text,
+            body: 'body $i',
+            createdAt: 2 + i,
+            state: LocalMessageState.received),
+    ]);
+    await state.refreshHistory('conv');
+    await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FormattedMessage), findsNWidgets(4));
+    // One notice, and it is the only padlock: no header line, no per-bubble
+    // lock.
+    final notice = find.byKey(const Key('chat-encryption-notice'));
+    expect(notice, findsOneWidget);
+    expect(find.text(englishL10n.chatNoticeEncryptedDm), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+    expect(find.textContaining('ENCRYPTED'), findsNothing);
+    // It opens the chat: above the oldest message.
+    expect(tester.getBottomLeft(notice).dy,
+        lessThanOrEqualTo(tester.getTopLeft(find.text('hello')).dy));
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  testWidgets('U13: a muted chat keeps a plain Muted line in its header',
+      (tester) async {
+    final store = MemoryLocalStore(), state = _state();
+    state.localStoreOverride = store;
+    await _seed(store);
+    await state.refreshHistory('conv');
+    await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+    await tester.pumpAndSettle();
+    expect(find.text(englishL10n.chatStatusMuted), findsNothing);
+    await state.setConversationMuted('conv', true);
+    await tester.pumpAndSettle();
+    expect(find.text(englishL10n.chatStatusMuted), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  for (final (kind, dm) in <(String, bool)>[('dm', true), ('group', false)]) {
+    testWidgets('U36: an empty $kind chat says who can read it',
+        (tester) async {
+      final state = _state()
+        ..conversations = [
+          Conversation(
+              id: 'conv', kind: kind, title: 'Team', createdBy: 'alice')
+        ];
+      await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      await tester.pumpAndSettle();
+      expect(
+          find.text(dm
+              ? englishL10n.chatEmptyMessageDm
+              : englishL10n.chatEmptyMessageGroup),
+          findsOneWidget);
+      expect(englishL10n.chatEmptyMessageDm, 'Only you two can read this.');
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+  }
+
   testWidgets('U7: a long-press on the message text opens the action sheet',
       (tester) async {
     final store = MemoryLocalStore(), state = _state();
@@ -88,6 +162,14 @@ class _UiState extends AppState {
 
 class _UiApi extends ApiClient {
   _UiApi() : super(baseUrl: 'https://example.test');
+  @override
+  Future<ConversationMute> setConversationMute(
+    String token,
+    String conversationId, {
+    required bool muted,
+    Duration? forDuration,
+  }) async =>
+      ConversationMute(muted: muted);
   @override
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {}
   @override

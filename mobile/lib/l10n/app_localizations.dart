@@ -2997,17 +2997,11 @@ abstract class AppLocalizations {
   /// **'The server stops delivering their messages to your account. They are not told, and messages already on your devices stay.'**
   String get detailsBlockDetail;
 
-  /// No description provided for @chatStatusMutedEncrypted.
+  /// No description provided for @chatStatusMuted.
   ///
   /// In en, this message translates to:
-  /// **'MUTED · ENCRYPTED'**
-  String get chatStatusMutedEncrypted;
-
-  /// No description provided for @chatStatusEncrypted.
-  ///
-  /// In en, this message translates to:
-  /// **'ENCRYPTED'**
-  String get chatStatusEncrypted;
+  /// **'Muted'**
+  String get chatStatusMuted;
 
   /// No description provided for @chatNoConversationMessage.
   ///
@@ -3021,11 +3015,29 @@ abstract class AppLocalizations {
   /// **'No messages yet'**
   String get chatEmptyTitle;
 
-  /// No description provided for @chatEmptyMessage.
+  /// No description provided for @chatEmptyMessageDm.
   ///
   /// In en, this message translates to:
-  /// **'Messages are stored as encrypted envelopes only the members can read.'**
-  String get chatEmptyMessage;
+  /// **'Only you two can read this.'**
+  String get chatEmptyMessageDm;
+
+  /// No description provided for @chatEmptyMessageGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the members can read this.'**
+  String get chatEmptyMessageGroup;
+
+  /// No description provided for @chatNoticeEncryptedDm.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages here are end-to-end encrypted. Only you two can read them.'**
+  String get chatNoticeEncryptedDm;
+
+  /// No description provided for @chatNoticeEncryptedGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages here are end-to-end encrypted. Only the members can read them.'**
+  String get chatNoticeEncryptedGroup;
 
   /// No description provided for @chatJumpToLatest.
   ///

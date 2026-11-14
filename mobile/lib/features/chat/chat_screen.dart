@@ -395,14 +395,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                // The subtitle line is the honest one-word status
-                                // of the thread, in the micro style.
-                                Text(
-                                  widget.state.isMuted(conversation.id)
-                                      ? context.l10n.chatStatusMutedEncrypted
-                                      : context.l10n.chatStatusEncrypted,
-                                  style: theme.textTheme.labelSmall,
-                                ),
+                                // Every chat is encrypted, and the chat's first
+                                // line says so once (U13); the header names only
+                                // a state that is not the default.
+                                if (widget.state.isMuted(conversation.id))
+                                  Text(
+                                    context.l10n.chatStatusMuted,
+                                    style: theme.textTheme.labelSmall,
+                                  ),
                               ],
                             ),
                           ),
@@ -697,6 +697,13 @@ class _ChatScreenState extends State<ChatScreen> {
         accountLabel(accountId, member?.username);
   }
 
+  bool _isDm(String conversationId) =>
+      widget.state.conversations
+          .where((item) => item.id == conversationId)
+          .firstOrNull
+          ?.isDm ??
+      false;
+
   /// Message area for the selected conversation. Failures get an explicit
   /// error + retry instead of masquerading as "No messages yet".
   Widget _messagesPane(
@@ -731,7 +738,10 @@ class _ChatScreenState extends State<ChatScreen> {
         empty = EmptyState(
           icon: Icons.lock_outline,
           title: context.l10n.chatEmptyTitle,
-          message: context.l10n.chatEmptyMessage,
+          // The empty chat's own notice that it is encrypted (U13, U36).
+          message: _isDm(conversationId)
+              ? context.l10n.chatEmptyMessageDm
+              : context.l10n.chatEmptyMessageGroup,
         );
       }
       if (renewalBanner == null) return empty;
@@ -1417,7 +1427,10 @@ class _MessageList extends StatelessWidget {
     // which is what preserves the scroll position across a page load. A day
     // separator is emitted whenever the calendar day changes relative to the
     // next-older message.
-    final footerCount = hasMore || loadingOlder || earlier ? 1 : 0;
+    // The oldest end of the thread is either the way to older history or,
+    // once there is none, the one notice that the chat is encrypted (U13).
+    final showHistoryFooter = hasMore || loadingOlder || earlier;
+    const footerCount = 1;
     return ListView.builder(
       controller: controller,
       reverse: true,
@@ -1431,6 +1444,7 @@ class _MessageList extends StatelessWidget {
       itemCount: pending.length + messages.length + footerCount,
       itemBuilder: (context, index) {
         if (index == pending.length + messages.length) {
+          if (!showHistoryFooter) return _EncryptionNotice(isDm: _isDm);
           return _HistoryFooter(
             loading: loadingOlder,
             label: hasMore ? null : context.l10n.channelHistoryEarlier,
@@ -1638,6 +1652,45 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
   // sequence.
   final characters = text.characters;
   return characters.length <= 80 ? text : '${characters.take(80)}…';
+}
+
+/// The one place a chat says it is encrypted (U13): the first line of its
+/// history. Bubbles and the header carry no padlock of their own.
+class _EncryptionNotice extends StatelessWidget {
+  const _EncryptionNotice({required this.isDm});
+
+  final bool isDm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          vertical: BoneSpacing.lg, horizontal: BoneSpacing.md),
+      child: Row(
+        key: const Key('chat-encryption-notice'),
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(Icons.lock_outline, size: 14, color: color),
+          ),
+          const SizedBox(width: BoneSpacing.sm),
+          Flexible(
+            child: Text(
+              isDm
+                  ? context.l10n.chatNoticeEncryptedDm
+                  : context.l10n.chatNoticeEncryptedGroup,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
@@ -2244,7 +2297,7 @@ class _MessageBubble extends StatelessWidget {
                         children: <Widget>[
                           Icon(
                               _isUndecryptable
-                                  ? Icons.lock_outline
+                                  ? Icons.visibility_off_outlined
                                   : local?.kind == LocalMessageKind.invalid
                                       ? Icons.warning_amber_outlined
                                       : Icons.update_outlined,
@@ -2330,9 +2383,8 @@ class _MessageBubble extends StatelessWidget {
   }
 
   // The raw crypto protocol identifier is debug info and stays out of the
-  // reading surface; the lock glyph carries the encrypted state now that the
-  // bars have replaced the `Encrypted message` row that used to say it in
-  // every single bubble.
+  // reading surface. A bubble carries no padlock: the chat says it is
+  // encrypted once, at its start (U13).
   Widget _metaLine(BuildContext context, ColorScheme scheme) {
     final theme = Theme.of(context);
     final parts = <String>[
@@ -2343,14 +2395,6 @@ class _MessageBubble extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (message.deletedAt == null && local?.deletedAt == null) ...<Widget>[
-          Icon(
-            Icons.lock_outline,
-            size: 12,
-            color: scheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 4),
-        ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
         if (tick != null) ...<Widget>[
           const SizedBox(width: 4),

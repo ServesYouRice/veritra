@@ -1816,10 +1816,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сервер престаје да доставља поруке тог налога вашем налогу. Тај налог о томе неће бити обавештен, а поруке које су већ на вашим уређајима остају.';
 
   @override
-  String get chatStatusMutedEncrypted => 'УТИШАНО · ШИФРОВАНО';
-
-  @override
-  String get chatStatusEncrypted => 'ШИФРОВАНО';
+  String get chatStatusMuted => 'Утишано';
 
   @override
   String get chatNoConversationMessage =>
@@ -1829,8 +1826,18 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatEmptyTitle => 'Још нема порука';
 
   @override
-  String get chatEmptyMessage =>
-      'Поруке се чувају као шифровани коверти које могу да прочитају само чланови.';
+  String get chatEmptyMessageDm => 'Само ви двоје можете ово да читате.';
+
+  @override
+  String get chatEmptyMessageGroup => 'Само чланови могу ово да читају.';
+
+  @override
+  String get chatNoticeEncryptedDm =>
+      'Поруке овде су шифроване од краја до краја. Само ви двоје можете да их читате.';
+
+  @override
+  String get chatNoticeEncryptedGroup =>
+      'Поруке овде су шифроване од краја до краја. Само чланови могу да их читају.';
 
   @override
   String get chatJumpToLatest => 'Иди на најновије';
@@ -6465,10 +6472,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Server prestaje da dostavlja poruke tog naloga vašem nalogu. Taj nalog o tome neće biti obavešten, a poruke koje su već na vašim uređajima ostaju.';
 
   @override
-  String get chatStatusMutedEncrypted => 'UTIŠANO · ŠIFROVANO';
-
-  @override
-  String get chatStatusEncrypted => 'ŠIFROVANO';
+  String get chatStatusMuted => 'Utišano';
 
   @override
   String get chatNoConversationMessage =>
@@ -6478,8 +6482,18 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatEmptyTitle => 'Još nema poruka';
 
   @override
-  String get chatEmptyMessage =>
-      'Poruke se čuvaju kao šifrovani koverti koje mogu da pročitaju samo članovi.';
+  String get chatEmptyMessageDm => 'Samo vi dvoje možete ovo da čitate.';
+
+  @override
+  String get chatEmptyMessageGroup => 'Samo članovi mogu ovo da čitaju.';
+
+  @override
+  String get chatNoticeEncryptedDm =>
+      'Poruke ovde su šifrovane od kraja do kraja. Samo vi dvoje možete da ih čitate.';
+
+  @override
+  String get chatNoticeEncryptedGroup =>
+      'Poruke ovde su šifrovane od kraja do kraja. Samo članovi mogu da ih čitaju.';
 
   @override
   String get chatJumpToLatest => 'Idi na najnovije';

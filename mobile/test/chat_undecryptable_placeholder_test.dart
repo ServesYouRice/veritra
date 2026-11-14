@@ -27,7 +27,7 @@ void main() {
     expect(
         find.descendant(
             of: find.ancestor(of: label, matching: find.byType(Row)).first,
-            matching: find.byIcon(Icons.lock_outline)),
+            matching: find.byIcon(Icons.visibility_off_outlined)),
         findsOneWidget);
     // The older "could not be read" placeholder is a different case.
     expect(find.text(englishL10n.chatMessageInvalid), findsNothing);
