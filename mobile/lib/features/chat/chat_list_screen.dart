@@ -222,6 +222,7 @@ class ChatListScreen extends StatelessWidget {
                     // hero tag is an assertion, not a nicer animation.
                     hero: !embedded,
                     previews: state,
+                    swipeOpensActions: true,
                     onActions: () => _showRowActions(context, conversation),
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
@@ -660,11 +661,16 @@ class _ConversationTile extends StatelessWidget {
     this.muted = false,
     this.selected = false,
     this.hero = false,
+    this.swipeOpensActions = false,
   });
 
   final Conversation conversation;
   final ProfileService? profiles;
   final bool showProfileName;
+
+  /// U36: a swipe in either direction opens the same menu as a long press.
+  /// The row never leaves the list; the menu's own choices change it.
+  final bool swipeOpensActions;
 
   /// Where this row reads the last message from (U12), or null for a row that
   /// never quotes one, such as a request.
@@ -690,7 +696,7 @@ class _ConversationTile extends StatelessWidget {
         profiles: showProfileName ? profiles : null);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
-    return MergeSemantics(
+    final row = MergeSemantics(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: Material(
@@ -769,13 +775,18 @@ class _ConversationTile extends StatelessWidget {
                                 const SizedBox(width: BoneSpacing.sm),
                                 // Compact on screen, spoken in full: `1d`
                                 // should not be read out as "one dee".
-                                StatusPill(
-                                  icon: Icons.timer_outlined,
-                                  label: retentionChipLabel(l10n, retention),
-                                  uppercase: false,
-                                  semanticsLabel:
-                                      l10n.chatListDisappearingAfter(
-                                    retentionLabel(l10n, retention),
+                                // Flexible so the pill and the preview
+                                // share a narrow 112dp slot at 200% text
+                                // instead of overflowing it.
+                                Flexible(
+                                  child: StatusPill(
+                                    icon: Icons.timer_outlined,
+                                    label: retentionChipLabel(l10n, retention),
+                                    uppercase: false,
+                                    semanticsLabel:
+                                        l10n.chatListDisappearingAfter(
+                                      retentionLabel(l10n, retention),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -824,6 +835,18 @@ class _ConversationTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (!swipeOpensActions) return row;
+    // Swipe either way opens the actions; the row stays (confirmDismiss is
+    // false), so nothing is removed by a swipe.
+    return Dismissible(
+      key: ValueKey<String>('chat-row-${conversation.id}'),
+      confirmDismiss: (_) async {
+        onActions();
+        return false;
+      },
+      background: const SizedBox.shrink(),
+      child: row,
     );
   }
 }
@@ -1006,7 +1029,8 @@ Widget conversationAvatar(
           ? Text(
               initials,
               style: TextStyle(
-                fontSize: radius * 0.62,
+                // Never under 12: the top-bar avatar is small (radius 17).
+                fontSize: radius * 0.62 < 12 ? 12 : radius * 0.62,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
                 color: colors.glyph,
