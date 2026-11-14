@@ -233,6 +233,9 @@ class K0Server {
 
   /// When set, a cancel throws it after the recent-auth check.
   Object? cancelFailure;
+
+  /// When set, a cancel waits for it first (a cancel in flight).
+  Completer<void>? cancelGate;
   final List<Object> statusAnswers = <Object>[];
   final List<String> reserved = <String>[];
   final List<Map<String, Object?>> claims = <Map<String, Object?>>[];
@@ -356,6 +359,7 @@ class K0Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<void> cancelAccountRecovery(String token, String requestId) async {
+    await server.cancelGate?.future;
     if (!server.recentAuth) throw k0Error(403, 'recent_auth_required');
     final failure = server.cancelFailure;
     if (failure != null) throw failure;

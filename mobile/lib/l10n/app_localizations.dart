@@ -2727,6 +2727,18 @@ abstract class AppLocalizations {
   /// **'Messages paused'**
   String get bannerPaused;
 
+  /// Button under the one notice that is showing, when others are folded behind it.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} more'**
+  String noticesMore(int count);
+
+  /// No description provided for @noticesShowFewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Show fewer'**
+  String get noticesShowFewer;
+
   /// No description provided for @bannerTryAgain.
   ///
   /// In en, this message translates to:
@@ -5816,6 +5828,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Someone is recovering your account on “{device}”, finishing {date}. Not you? Cancel, or change your password or recovery key.'**
   String recoveryPendingNotice(String device, String date);
+
+  /// No description provided for @recoveryPendingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery attempt'**
+  String get recoveryPendingTitle;
+
+  /// No description provided for @recoveryPendingNotMe.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not me'**
+  String get recoveryPendingNotMe;
 
   /// No description provided for @recoveryPendingCancel.
   ///

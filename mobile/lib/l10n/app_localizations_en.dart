@@ -1574,6 +1574,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bannerPaused => 'Messages paused';
 
   @override
+  String noticesMore(int count) {
+    return '$count more';
+  }
+
+  @override
+  String get noticesShowFewer => 'Show fewer';
+
+  @override
   String get bannerTryAgain => 'Try again';
 
   @override
@@ -3567,6 +3575,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String recoveryPendingNotice(String device, String date) {
     return 'Someone is recovering your account on “$device”, finishing $date. Not you? Cancel, or change your password or recovery key.';
   }
+
+  @override
+  String get recoveryPendingTitle => 'Account recovery attempt';
+
+  @override
+  String get recoveryPendingNotMe => 'This is not me';
 
   @override
   String get recoveryPendingCancel => 'Cancel recovery';

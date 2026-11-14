@@ -498,10 +498,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   children: <Widget>[
                     // U37: the account notices (a recovery waiting, a leaked
                     // password, a passkey change) also show inside an open
-                    // chat. In the wide layout the shell's own banners are
-                    // already on screen, so only a pushed chat adds them.
-                    if (widget.showBackButton)
-                      AccountRecoveryBanner(state: widget.state),
+                    // chat, unfolded as in the shell. In the wide layout the
+                    // shell's own banners are already on screen, so only a
+                    // pushed chat adds them.
+                    if (widget.showBackButton) ...<Widget>[
+                      RecoveryAttemptCard(state: widget.state),
+                      PasswordLeakBanner(state: widget.state),
+                      PasskeyNoticeBanner(state: widget.state),
+                    ],
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
                       Material(
                         color: Theme.of(context)
@@ -1842,6 +1846,7 @@ class _PendingMessageBubble extends StatelessWidget {
     final terminal = state == OutboxDeliveryState.terminal;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final warning = VeritraStateColors.of(context).warning;
     final l10n = context.l10n;
     return Semantics(
       liveRegion: true,
@@ -1856,12 +1861,13 @@ class _PendingMessageBubble extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
           decoration: BoxDecoration(
-            color: sending
-                ? BoneColors.ownBubble(theme.brightness)
-                : scheme.errorContainer,
+            // A failed send is not an emergency (U17): the bubble stays your
+            // own tone, with an amber border and icon, and the words stay in
+            // the normal text colour.
+            color: BoneColors.ownBubble(theme.brightness),
             borderRadius: _bubbleRadius(mine: true),
             border: Border.all(
-              color: sending ? scheme.outlineVariant : scheme.error,
+              color: sending ? scheme.outlineVariant : warning,
             ),
           ),
           child: Column(
@@ -1873,8 +1879,7 @@ class _PendingMessageBubble extends StatelessWidget {
                   child: Text(
                     text!,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      color:
-                          sending ? scheme.onSurface : scheme.onErrorContainer,
+                      color: scheme.onSurface,
                     ),
                   ),
                 ),
@@ -1885,9 +1890,9 @@ class _PendingMessageBubble extends StatelessWidget {
                   key: const Key('pending-not-sent-retry'),
                   onPressed: onRetry,
                   style: TextButton.styleFrom(
-                    foregroundColor: scheme.onErrorContainer,
+                    foregroundColor: scheme.onSurface,
                   ),
-                  icon: const Icon(Icons.error_outline, size: 18),
+                  icon: Icon(Icons.error_outline, size: 18, color: warning),
                   label: Text(l10n.chatPendingNotSentRetry),
                 )
               else
@@ -1903,7 +1908,7 @@ class _PendingMessageBubble extends StatelessWidget {
                       Icon(
                         Icons.error_outline,
                         size: 18,
-                        color: scheme.onErrorContainer,
+                        color: warning,
                       ),
                     const SizedBox(width: BoneSpacing.sm),
                     Text(
@@ -1911,9 +1916,7 @@ class _PendingMessageBubble extends StatelessWidget {
                           ? l10n.chatPendingSending
                           : l10n.chatPendingTerminal,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: sending
-                            ? scheme.onSurface
-                            : scheme.onErrorContainer,
+                        color: scheme.onSurface,
                       ),
                     ),
                   ],
@@ -1924,7 +1927,7 @@ class _PendingMessageBubble extends StatelessWidget {
                   failureMessage!,
                   textAlign: TextAlign.end,
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onErrorContainer,
+                    color: scheme.onSurface,
                   ),
                 ),
               ],
@@ -2452,14 +2455,18 @@ class _MessageBubble extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
+                          // Amber, not red (U17): the message is withheld
+                          // and the words say why; nothing here is a
+                          // threat in progress.
                           Icon(Icons.gpp_maybe_outlined,
-                              size: 16, color: scheme.error),
+                              size: 16,
+                              color: VeritraStateColors.of(context).warning),
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
                               l10n.chatSenderUnverified,
                               style: theme.textTheme.bodyMedium?.copyWith(
-                                color: scheme.error,
+                                color: scheme.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -3022,13 +3029,17 @@ class _SyncPausedNotice extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final pause = state.conversationPauseFor(conversationId);
     final choices = pause?.choices ?? const <SyncRecoveryChoice>[];
+    // Messages that are only waiting for a confirmation are calm (U17): a
+    // neutral strip with an amber icon. A paused conversation that needs a
+    // choice keeps the error tone.
+    final held = pause?.held == true;
     return Semantics(
       liveRegion: true,
       container: true,
       child: Container(
         key: const ValueKey('sync-paused-notice'),
         width: double.infinity,
-        color: scheme.errorContainer,
+        color: held ? scheme.surfaceContainerHigh : scheme.errorContainer,
         padding: const EdgeInsets.symmetric(
           horizontal: BoneSpacing.gutter,
           vertical: BoneSpacing.sm,
@@ -3036,12 +3047,26 @@ class _SyncPausedNotice extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              pause?.held == true
-                  ? context.l10n.chatSyncHeldNotice
-                  : context.l10n.chatSyncPausedNotice,
-              style: TextStyle(color: scheme.onErrorContainer),
-            ),
+            if (held)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(Icons.schedule,
+                      size: 18, color: VeritraStateColors.of(context).warning),
+                  const SizedBox(width: BoneSpacing.md),
+                  Expanded(
+                    child: Text(
+                      context.l10n.chatSyncHeldNotice,
+                      style: TextStyle(color: scheme.onSurface),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Text(
+                context.l10n.chatSyncPausedNotice,
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
             Wrap(
               spacing: BoneSpacing.sm,
               children: <Widget>[

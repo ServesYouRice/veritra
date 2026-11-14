@@ -426,7 +426,7 @@ void main() {
           ),
         );
       await tester.pumpWidget(
-        app(Scaffold(body: AccountRecoveryBanner(state: state))),
+        app(Scaffold(body: RecoveryAttemptCard(state: state))),
       );
       await tester.pumpAndSettle();
       expect(
@@ -436,7 +436,7 @@ void main() {
         ),
         findsOneWidget,
       );
-      await tester.tap(find.text('Cancel recovery'));
+      await tester.tap(find.text('This is not me'));
       await tester.pumpAndSettle();
       expect(find.text('Cancel this recovery?'), findsOneWidget);
       await tester.tap(
@@ -462,7 +462,7 @@ void main() {
     await store.saveSetting('k0.password_leak_day', '$scope$today');
     await state.refreshRecoveryNotices();
     await tester.pumpWidget(
-      app(Scaffold(body: AccountRecoveryBanner(state: state))),
+      app(Scaffold(body: PasswordLeakBanner(state: state))),
     );
     await tester.pumpAndSettle();
     expect(

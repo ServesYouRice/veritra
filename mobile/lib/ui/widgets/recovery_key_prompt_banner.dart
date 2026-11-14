@@ -15,6 +15,8 @@ class RecoveryKeyPromptBanner extends StatelessWidget {
 
   final AppState state;
 
+  static bool active(AppState state) => state.k1ShouldOfferRecoveryKey;
+
   @override
   Widget build(BuildContext context) {
     return ListenableSelector<bool>(

@@ -252,7 +252,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: veritraLightTheme(),
-        home: Scaffold(body: AccountRecoveryBanner(state: h.state)),
+        home: Scaffold(body: PasskeyNoticeBanner(state: h.state)),
       ),
     );
     expect(h.state.passkeyNotice, PasskeyNotice.added);

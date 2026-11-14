@@ -1587,6 +1587,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String get bannerPaused => 'Поруке су паузиране';
 
   @override
+  String noticesMore(int count) {
+    return 'још $count';
+  }
+
+  @override
+  String get noticesShowFewer => 'Прикажи мање';
+
+  @override
   String get bannerTryAgain => 'Покушај поново';
 
   @override
@@ -3588,6 +3596,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String recoveryPendingNotice(String device, String date) {
     return 'Неко опоравља ваш налог на уређају „$device”, до $date. Нисте ви? Откажите или промените лозинку или кључ за опоравак.';
   }
+
+  @override
+  String get recoveryPendingTitle => 'Покушај опоравка налога';
+
+  @override
+  String get recoveryPendingNotMe => 'То нисам ја';
 
   @override
   String get recoveryPendingCancel => 'Откажи опоравак';
@@ -6956,6 +6970,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get bannerPaused => 'Poruke su pauzirane';
 
   @override
+  String noticesMore(int count) {
+    return 'još $count';
+  }
+
+  @override
+  String get noticesShowFewer => 'Prikaži manje';
+
+  @override
   String get bannerTryAgain => 'Pokušaj ponovo';
 
   @override
@@ -8961,6 +8983,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String recoveryPendingNotice(String device, String date) {
     return 'Neko oporavlja vaš nalog na uređaju „$device”, do $date. Niste vi? Otkažite ili promenite lozinku ili ključ za oporavak.';
   }
+
+  @override
+  String get recoveryPendingTitle => 'Pokušaj oporavka naloga';
+
+  @override
+  String get recoveryPendingNotMe => 'To nisam ja';
 
   @override
   String get recoveryPendingCancel => 'Otkaži oporavak';

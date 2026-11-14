@@ -18,6 +18,12 @@ class ConnectionBanner extends StatelessWidget {
 
   final AppState state;
 
+  /// Whether the banner draws anything: sync is stopped, or the app is not
+  /// online.
+  static bool active(AppState state) =>
+      state.syncRecovery != null ||
+      state.connectionStatus != ConnectionStatus.online;
+
   @override
   Widget build(BuildContext context) {
     // Rebuilds only when what it draws changes (T49C-1). Online it draws
@@ -50,17 +56,14 @@ class ConnectionBanner extends StatelessWidget {
     final theme = Theme.of(context);
     final offline = state.connectionStatus == ConnectionStatus.offline;
     final scheme = theme.colorScheme;
-    final states = theme.extension<VeritraStateColors>() ??
-        (theme.brightness == Brightness.dark
-            ? VeritraStateColors.dark
-            : VeritraStateColors.light);
-    // Offline is a failure and keeps the error container. Connecting is not a
-    // failure — it gets the info tone rather than a grey that reads as
+    final states = VeritraStateColors.of(context);
+    // Offline is not an emergency (U17): messages stay queued, so it reads as
+    // a calm grey strip with an amber icon, and red is kept for danger.
+    // Connecting gets the info tone rather than a grey that reads as
     // "nothing is happening".
-    final background =
-        offline ? scheme.errorContainer : scheme.surfaceContainerHigh;
-    final foreground = offline ? scheme.onErrorContainer : scheme.onSurface;
-    final accent = offline ? scheme.onErrorContainer : states.info;
+    final background = scheme.surfaceContainerHigh;
+    final foreground = scheme.onSurface;
+    final accent = offline ? states.warning : states.info;
     final lastSynced = state.lastSyncedAt;
     final l10n = context.l10n;
     final detail = <String>[

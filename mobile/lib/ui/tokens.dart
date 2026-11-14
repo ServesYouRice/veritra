@@ -202,6 +202,16 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   /// Neutral progress — syncing, connecting.
   final Color info;
 
+  /// The state colours of the theme in [context], or the palette for its
+  /// brightness when the theme carries none.
+  static VeritraStateColors of(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.extension<VeritraStateColors>() ??
+        (theme.brightness == Brightness.dark
+            ? VeritraStateColors.dark
+            : VeritraStateColors.light);
+  }
+
   static const VeritraStateColors dark = VeritraStateColors(
     verified: Color(0xff4ade80),
     warning: Color(0xfffbbf24),
