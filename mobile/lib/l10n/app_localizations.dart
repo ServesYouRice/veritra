@@ -2754,13 +2754,13 @@ abstract class AppLocalizations {
   /// No description provided for @safetyGroupIntro.
   ///
   /// In en, this message translates to:
-  /// **'Every member of this group sees the same number. Compare it in person or scan each other\'s code.'**
+  /// **'Compare this number with the other members to be sure nobody else can read this chat.'**
   String get safetyGroupIntro;
 
   /// No description provided for @safetyPeerIntro.
   ///
   /// In en, this message translates to:
-  /// **'Compare this number with {peer} in person, or scan each other\'s code.'**
+  /// **'Compare this number with {peer} to be sure nobody else can read your chat.'**
   String safetyPeerIntro(String peer);
 
   /// No description provided for @safetyUnavailable.
@@ -2840,6 +2840,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mark as verified'**
   String get safetyMarkVerified;
+
+  /// No description provided for @safetyHowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How are you comparing?'**
+  String get safetyHowTitle;
+
+  /// No description provided for @safetyTogether.
+  ///
+  /// In en, this message translates to:
+  /// **'We are together'**
+  String get safetyTogether;
+
+  /// No description provided for @safetyTogetherDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan each other\'s code.'**
+  String get safetyTogetherDetail;
+
+  /// No description provided for @safetyOnCall.
+  ///
+  /// In en, this message translates to:
+  /// **'We are on a call'**
+  String get safetyOnCall;
+
+  /// No description provided for @safetyOnCallDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Read the number aloud to each other.'**
+  String get safetyOnCallDetail;
+
+  /// No description provided for @safetyTogetherSteps.
+  ///
+  /// In en, this message translates to:
+  /// **'Let them scan this code with their phone, then scan theirs.'**
+  String get safetyTogetherSteps;
+
+  /// No description provided for @safetyTogetherNoCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Let them scan this code with their phone, or compare the numbers below.'**
+  String get safetyTogetherNoCamera;
+
+  /// No description provided for @safetyCompareByEye.
+  ///
+  /// In en, this message translates to:
+  /// **'Or compare the numbers group by group. Every group must be the same:'**
+  String get safetyCompareByEye;
+
+  /// No description provided for @safetyCallSteps.
+  ///
+  /// In en, this message translates to:
+  /// **'Take turns reading the groups aloud, row by row. Every group must be the same. Only then mark the number as verified.'**
+  String get safetyCallSteps;
+
+  /// No description provided for @safetyOtherWay.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare another way'**
+  String get safetyOtherWay;
 
   /// No description provided for @detailsNotFound.
   ///

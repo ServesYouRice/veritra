@@ -1671,11 +1671,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get safetyGroupIntro =>
-      'Сваки члан ове групе види исти број. Упоредите га уживо или међусобно скенирајте кодове.';
+      'Упоредите овај број са осталим члановима да бисте били сигурни да нико други не може да чита овај разговор.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Упоредите овај број са корисником $peer уживо или међусобно скенирајте кодове.';
+    return 'Упоредите овај број са корисником $peer да бисте били сигурни да нико други не може да чита ваш разговор.';
   }
 
   @override
@@ -1722,6 +1722,40 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get safetyMarkVerified => 'Означи као верификовано';
+
+  @override
+  String get safetyHowTitle => 'Како упоређујете?';
+
+  @override
+  String get safetyTogether => 'Заједно смо';
+
+  @override
+  String get safetyTogetherDetail => 'Скенирајте кодове једно другом.';
+
+  @override
+  String get safetyOnCall => 'Разговарамо телефоном';
+
+  @override
+  String get safetyOnCallDetail => 'Прочитајте број наглас једно другом.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Нека скенирају овај код својим телефоном, а затим ви скенирајте њихов.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Нека скенирају овај код својим телефоном или упоредите бројеве испод.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Или упоредите бројеве група по група. Свака група мора бити иста:';
+
+  @override
+  String get safetyCallSteps =>
+      'Наизменично читајте групе наглас, ред по ред. Свака група мора бити иста. Тек тада означите број као верификован.';
+
+  @override
+  String get safetyOtherWay => 'Упореди на други начин';
 
   @override
   String get detailsNotFound => 'Разговор није пронађен.';
@@ -6387,11 +6421,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get safetyGroupIntro =>
-      'Svaki član ove grupe vidi isti broj. Uporedite ga uživo ili međusobno skenirajte kodove.';
+      'Uporedite ovaj broj sa ostalim članovima da biste bili sigurni da niko drugi ne može da čita ovaj razgovor.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Uporedite ovaj broj sa korisnikom $peer uživo ili međusobno skenirajte kodove.';
+    return 'Uporedite ovaj broj sa korisnikom $peer da biste bili sigurni da niko drugi ne može da čita vaš razgovor.';
   }
 
   @override
@@ -6438,6 +6472,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get safetyMarkVerified => 'Označi kao verifikovano';
+
+  @override
+  String get safetyHowTitle => 'Kako upoređujete?';
+
+  @override
+  String get safetyTogether => 'Zajedno smo';
+
+  @override
+  String get safetyTogetherDetail => 'Skenirajte kodove jedno drugom.';
+
+  @override
+  String get safetyOnCall => 'Razgovaramo telefonom';
+
+  @override
+  String get safetyOnCallDetail => 'Pročitajte broj naglas jedno drugom.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Neka skeniraju ovaj kod svojim telefonom, a zatim vi skenirajte njihov.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Neka skeniraju ovaj kod svojim telefonom ili uporedite brojeve ispod.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Ili uporedite brojeve grupa po grupa. Svaka grupa mora biti ista:';
+
+  @override
+  String get safetyCallSteps =>
+      'Naizmenično čitajte grupe naglas, red po red. Svaka grupa mora biti ista. Tek tada označite broj kao verifikovan.';
+
+  @override
+  String get safetyOtherWay => 'Uporedi na drugi način';
 
   @override
   String get detailsNotFound => 'Razgovor nije pronađen.';

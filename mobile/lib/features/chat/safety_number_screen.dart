@@ -46,11 +46,19 @@ class SafetyNumberScreen extends StatefulWidget {
 /// How a try to store a verification ended.
 enum _Saved { saved, numberChanged, failed }
 
+/// How the two people compare (U25): side by side, scanning each other's
+/// code, or apart, reading the number aloud.
+enum _Method { together, call }
+
 class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   ConversationSafetyNumber? _safety;
   PeerVerificationStatus? _status;
   bool _failed = false;
   bool _working = false;
+
+  /// Null until the person picks how they compare; "Mark as verified" is
+  /// offered only after that (U25).
+  _Method? _method;
 
   /// Bumped by every load; an answer from an older one is dropped.
   int _loadGeneration = 0;
@@ -281,44 +289,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
           else if (safety == null)
             const Center(child: CircularProgressIndicator())
           else ...<Widget>[
-            TileGroup(
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.all(BoneSpacing.lg),
-                  child: Column(
-                    children: <Widget>[
-                      Semantics(
-                        label: l10n.safetyDigitsSemantics(
-                          safetyDigitGroups(safety.digits).join(', '),
-                        ),
-                        excludeSemantics: true,
-                        child: SafetyDigitsGrid(digits: safety.digits),
-                      ),
-                      const SizedBox(height: BoneSpacing.lg),
-                      Semantics(
-                        label: l10n.safetyQrSemantics,
-                        child: Container(
-                          // QR codes need a light, uniform quiet zone to scan
-                          // reliably, independent of app theme.
-                          padding: const EdgeInsets.all(BoneSpacing.md),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(BoneRadii.md),
-                          ),
-                          child: QrImageView(
-                            data: safety.qrPayload,
-                            version: QrVersions.auto,
-                            size: 200,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
             if (_status != null) ...<Widget>[
-              const SizedBox(height: BoneSpacing.lg),
               TileGroup(
                 children: <Widget>[
                   ListTile(
@@ -348,26 +319,162 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: BoneSpacing.lg),
             ],
-            const SizedBox(height: BoneSpacing.lg),
-            if (canScan)
-              FilledButton.icon(
-                onPressed: _working ? null : _scan,
-                icon: const Icon(Icons.qr_code_scanner),
-                label: Text(l10n.safetyScanTheirCode),
-              ),
-            if (_peerAccountId != null &&
-                _status != PeerVerificationStatus.verified) ...<Widget>[
-              const SizedBox(height: BoneSpacing.sm),
-              OutlinedButton(
-                onPressed: _working ? null : _markVerified,
-                child: Text(l10n.safetyMarkVerified),
-              ),
-            ],
+            ...switch (_method) {
+              null => _choices(context),
+              _Method.together => _together(context, safety, canScan),
+              _Method.call => _onCall(context, safety),
+            },
           ],
         ],
       ),
     );
+  }
+
+  /// The first step: how are you comparing?
+  List<Widget> _choices(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(l10n.safetyHowTitle, style: theme.textTheme.titleMedium),
+      const SizedBox(height: BoneSpacing.sm),
+      TileGroup(
+        children: <Widget>[
+          ListTile(
+            key: const ValueKey<String>('safety-together'),
+            leading: const Icon(Icons.qr_code_scanner),
+            title: Text(l10n.safetyTogether),
+            subtitle: Text(l10n.safetyTogetherDetail),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() => _method = _Method.together),
+          ),
+          ListTile(
+            key: const ValueKey<String>('safety-on-call'),
+            leading: const Icon(Icons.call_outlined),
+            title: Text(l10n.safetyOnCall),
+            subtitle: Text(l10n.safetyOnCallDetail),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() => _method = _Method.call),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// Side by side: this code for them to scan, then theirs to scan here.
+  /// Without a camera (desktop), the numbers are compared by eye.
+  List<Widget> _together(
+      BuildContext context, ConversationSafetyNumber safety, bool canScan) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(
+        canScan ? l10n.safetyTogetherSteps : l10n.safetyTogetherNoCamera,
+        style: theme.textTheme.bodyMedium,
+      ),
+      const SizedBox(height: BoneSpacing.md),
+      TileGroup(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.all(BoneSpacing.lg),
+            child: Center(
+              child: Semantics(
+                label: l10n.safetyQrSemantics,
+                child: Container(
+                  // QR codes need a light, uniform quiet zone to scan
+                  // reliably, independent of app theme.
+                  padding: const EdgeInsets.all(BoneSpacing.md),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(BoneRadii.md),
+                  ),
+                  child: QrImageView(
+                    data: safety.qrPayload,
+                    version: QrVersions.auto,
+                    size: 200,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (canScan) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        FilledButton.icon(
+          onPressed: _working ? null : _scan,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: Text(l10n.safetyScanTheirCode),
+        ),
+      ],
+      const SizedBox(height: BoneSpacing.lg),
+      Text(l10n.safetyCompareByEye, style: theme.textTheme.bodyMedium),
+      const SizedBox(height: BoneSpacing.sm),
+      _number(context, safety),
+      ..._markAndBack(context, primary: !canScan),
+    ];
+  }
+
+  /// Apart: read the groups aloud, then mark the number as verified.
+  List<Widget> _onCall(BuildContext context, ConversationSafetyNumber safety) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(l10n.safetyCallSteps, style: theme.textTheme.bodyMedium),
+      const SizedBox(height: BoneSpacing.md),
+      _number(context, safety),
+      ..._markAndBack(context, primary: true),
+    ];
+  }
+
+  Widget _number(BuildContext context, ConversationSafetyNumber safety) {
+    final l10n = context.l10n;
+    return TileGroup(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(BoneSpacing.lg),
+          child: Semantics(
+            label: l10n.safetyDigitsSemantics(
+              safetyDigitGroups(safety.digits).join(', '),
+            ),
+            excludeSemantics: true,
+            child: SafetyDigitsGrid(digits: safety.digits),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// "Mark as verified" (a DM not yet verified), and the way back to the
+  /// choice of method.
+  List<Widget> _markAndBack(BuildContext context, {required bool primary}) {
+    final l10n = context.l10n;
+    final canMark =
+        _peerAccountId != null && _status != PeerVerificationStatus.verified;
+    return <Widget>[
+      if (canMark) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        if (primary)
+          FilledButton.icon(
+            onPressed: _working ? null : _markVerified,
+            icon: const Icon(Icons.verified_user_outlined),
+            label: Text(l10n.safetyMarkVerified),
+          )
+        else
+          OutlinedButton(
+            onPressed: _working ? null : _markVerified,
+            child: Text(l10n.safetyMarkVerified),
+          ),
+      ],
+      const SizedBox(height: BoneSpacing.sm),
+      Center(
+        child: TextButton(
+          onPressed: _working ? null : () => setState(() => _method = null),
+          child: Text(l10n.safetyOtherWay),
+        ),
+      ),
+    ];
   }
 }
 

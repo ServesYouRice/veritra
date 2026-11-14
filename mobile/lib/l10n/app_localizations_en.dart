@@ -1657,11 +1657,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get safetyGroupIntro =>
-      'Every member of this group sees the same number. Compare it in person or scan each other\'s code.';
+      'Compare this number with the other members to be sure nobody else can read this chat.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Compare this number with $peer in person, or scan each other\'s code.';
+    return 'Compare this number with $peer to be sure nobody else can read your chat.';
   }
 
   @override
@@ -1708,6 +1708,40 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get safetyMarkVerified => 'Mark as verified';
+
+  @override
+  String get safetyHowTitle => 'How are you comparing?';
+
+  @override
+  String get safetyTogether => 'We are together';
+
+  @override
+  String get safetyTogetherDetail => 'Scan each other\'s code.';
+
+  @override
+  String get safetyOnCall => 'We are on a call';
+
+  @override
+  String get safetyOnCallDetail => 'Read the number aloud to each other.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Let them scan this code with their phone, then scan theirs.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Let them scan this code with their phone, or compare the numbers below.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Or compare the numbers group by group. Every group must be the same:';
+
+  @override
+  String get safetyCallSteps =>
+      'Take turns reading the groups aloud, row by row. Every group must be the same. Only then mark the number as verified.';
+
+  @override
+  String get safetyOtherWay => 'Compare another way';
 
   @override
   String get detailsNotFound => 'Conversation not found.';
