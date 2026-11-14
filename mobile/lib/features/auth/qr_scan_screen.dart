@@ -6,6 +6,7 @@ import '../../core/api_client.dart';
 import '../../crypto/device_link_code.dart';
 import '../../core/transport_policy.dart';
 import '../../l10n/l10n.dart';
+import '../../ui/widgets/bar_action.dart';
 
 /// Pulls the `code` query parameter out of a scanned device-link URI
 /// (`veritra://device-link?code=…`), falling back to the raw scan when it is
@@ -133,14 +134,14 @@ class _QrScanScreenState extends State<QrScanScreen> {
       appBar: AppBar(
         title: Text(widget.title ?? context.l10n.qrScanLinkTitle),
         actions: <Widget>[
-          IconButton(
-            tooltip: context.l10n.qrToggleTorch,
-            icon: const Icon(Icons.flashlight_on_outlined),
+          BarAction(
+            label: context.l10n.qrToggleTorch,
+            icon: Icons.flashlight_on_outlined,
             onPressed: () => _controller.toggleTorch(),
           ),
-          IconButton(
-            tooltip: context.l10n.qrSwitchCamera,
-            icon: const Icon(Icons.cameraswitch_outlined),
+          BarAction(
+            label: context.l10n.qrSwitchCamera,
+            icon: Icons.cameraswitch_outlined,
             onPressed: () => _controller.switchCamera(),
           ),
         ],

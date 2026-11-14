@@ -14,6 +14,7 @@ import '../../ui/photo_avatar.dart';
 import '../../ui/reauthenticate.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
@@ -72,10 +73,8 @@ class ChatListScreen extends StatelessWidget {
         : conversations.where(state.isMessageRequest).toList(growable: false);
     final positions = {for (final (i, c) in conversations.indexed) c.id: i};
     final chats = conversations
-        .where(
-          (c) =>
-              !state.isMessageRequest(c) && state.isArchived(c.id) == archived,
-        )
+        .where((c) =>
+            !state.isMessageRequest(c) && state.isArchived(c.id) == archived)
         .toList()
       ..sort((a, b) {
         final ap = state.conversationPrefs[a.id]?.pinnedAt,
@@ -98,51 +97,54 @@ class ChatListScreen extends StatelessWidget {
         // is worth here.
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
+        // One line that ellipsizes, so the title never runs over the words
+        // in the bar (U11).
         title: Text(
           archived ? context.l10n.w8ArchivedChats : context.l10n.navChats,
           style: theme.textTheme.displaySmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: <Widget>[
           // New chat lives in the bar (U28) so nothing floats over a row. It
           // is the one filled control here: Bone rations its accent to the
-          // primary action, active nav, unread count and focus ring.
+          // primary action, active nav, unread count and focus ring. The
+          // embedded list sits in a 360 dp pane, so it keeps icons only.
           if (!archived)
-            IconButton.filled(
-              tooltip: context.l10n.chatListNewChat,
-              onPressed: () => _startChat(context),
-              icon: const Icon(Icons.add_comment_outlined),
-            ),
+            BarAction(
+                label: context.l10n.chatListNewChat,
+                filled: true,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
+                onPressed: () => _startChat(context),
+                icon: Icons.add_comment_outlined),
           if (!archived)
-            IconButton(
-              tooltip: context.l10n.w8ArchivedChats,
-              onPressed: () => Navigator.of(context).push(
-                sharedAxisRoute<void>(
-                  (_) => ChatListScreen(
-                    state: state,
-                    embedded: embedded,
-                    archived: true,
-                  ),
-                ),
-              ),
-              icon: const Icon(Icons.archive_outlined),
-            ),
+            BarAction(
+                label: context.l10n.w8ArchivedChats,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
+                onPressed: () => Navigator.of(context).push(
+                    sharedAxisRoute<void>((_) => ChatListScreen(
+                        state: state, embedded: embedded, archived: true))),
+                icon: Icons.archive_outlined),
           if (!archived && state.historyOnlyConversations.isNotEmpty)
-            IconButton(
-              tooltip: context.l10n.k2HistoryOnlyTitle,
-              onPressed: () => Navigator.of(context).push(
-                sharedAxisRoute<void>(
-                  (_) => CopiedHistoryListScreen(state: state),
-                ),
-              ),
-              icon: const Icon(Icons.history),
-            ),
+            BarAction(
+                label: context.l10n.k2HistoryOnlyTitle,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
+                onPressed: () => Navigator.of(context).push(
+                    sharedAxisRoute<void>(
+                        (_) => CopiedHistoryListScreen(state: state))),
+                icon: Icons.history),
           RefreshAction(onRefresh: state.refreshConversations),
           if (!archived)
             IconButton(
               tooltip: context.l10n.chatListSearch,
-              onPressed: () => Navigator.of(
-                context,
-              ).push(sharedAxisRoute<void>((_) => SearchScreen(state: state))),
+              onPressed: () => Navigator.of(context).push(
+                sharedAxisRoute<void>(
+                  (_) => SearchScreen(state: state),
+                ),
+              ),
               icon: const Icon(Icons.search),
             ),
           const SizedBox(width: BoneSpacing.sm),
@@ -199,8 +201,10 @@ class ChatListScreen extends StatelessWidget {
                       count: requests.length,
                       onTap: () => Navigator.of(context).push(
                         sharedAxisRoute<void>(
-                          (_) =>
-                              _RequestsScreen(state: state, embedded: embedded),
+                          (_) => _RequestsScreen(
+                            state: state,
+                            embedded: embedded,
+                          ),
                         ),
                       ),
                     );
@@ -218,7 +222,6 @@ class ChatListScreen extends StatelessWidget {
                     // hero tag is an assertion, not a nicer animation.
                     hero: !embedded,
                     previews: state,
-                    swipeOpensActions: true,
                     onActions: () => _showRowActions(context, conversation),
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
@@ -305,23 +308,17 @@ class ChatListScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             ListTile(
-              leading: const Icon(Icons.archive_outlined),
-              title: Text(
-                state.isArchived(conversation.id)
+                leading: const Icon(Icons.archive_outlined),
+                title: Text(state.isArchived(conversation.id)
                     ? context.l10n.w8Unarchive
-                    : context.l10n.w8Archive,
-              ),
-              onTap: () => Navigator.of(sheetContext).pop('archive'),
-            ),
+                    : context.l10n.w8Archive),
+                onTap: () => Navigator.of(sheetContext).pop('archive')),
             ListTile(
-              leading: const Icon(Icons.push_pin_outlined),
-              title: Text(
-                state.isChatPinned(conversation.id)
+                leading: const Icon(Icons.push_pin_outlined),
+                title: Text(state.isChatPinned(conversation.id)
                     ? context.l10n.w8UnpinChat
-                    : context.l10n.w8PinChat,
-              ),
-              onTap: () => Navigator.of(sheetContext).pop('pin'),
-            ),
+                    : context.l10n.w8PinChat),
+                onTap: () => Navigator.of(sheetContext).pop('pin')),
             ListTile(
               leading: Icon(
                 muted
@@ -349,20 +346,15 @@ class ChatListScreen extends StatelessWidget {
       try {
         if (action == 'archive') {
           await state.setConversationArchived(
-            conversation.id,
-            !state.isArchived(conversation.id),
-          );
+              conversation.id, !state.isArchived(conversation.id));
         } else {
           await state.setChatPinned(
-            conversation.id,
-            !state.isChatPinned(conversation.id),
-          );
+              conversation.id, !state.isChatPinned(conversation.id));
         }
       } catch (error) {
         if (context.mounted)
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(describeError(error, context.l10n))),
-          );
+              SnackBar(content: Text(describeError(error, context.l10n))));
       }
       return;
     }
@@ -387,9 +379,8 @@ class ChatListScreen extends StatelessWidget {
     if (!ok && context.mounted) {
       final error = state.errorFor(Ops.mute);
       if (error != null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error)));
       }
     }
   }
@@ -515,9 +506,9 @@ class _RequestsScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: state,
       builder: (context, _) {
-        final requests = _visibleConversations(
-          state,
-        ).where(state.isMessageRequest).toList(growable: false);
+        final requests = _visibleConversations(state)
+            .where(state.isMessageRequest)
+            .toList(growable: false);
         if (requests.isEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (context.mounted &&
@@ -654,7 +645,6 @@ class _ConversationTile extends StatelessWidget {
     this.muted = false,
     this.selected = false,
     this.hero = false,
-    this.swipeOpensActions = false,
   });
 
   final Conversation conversation;
@@ -668,10 +658,6 @@ class _ConversationTile extends StatelessWidget {
 
   /// Opens the row's mute/details menu.
   final VoidCallback onActions;
-
-  /// U36: a swipe in either direction opens the same menu as a long press.
-  /// The row never leaves the list; the menu's own choices change it.
-  final bool swipeOpensActions;
   final bool muted;
   final bool selected;
   final bool hero;
@@ -685,14 +671,11 @@ class _ConversationTile extends StatelessWidget {
     final activityAt = conversation.lastActivityAt;
     final retention = conversation.retentionSeconds;
     final l10n = context.l10n;
-    final title = conversationTitle(
-      l10n,
-      conversation,
-      profiles: showProfileName ? profiles : null,
-    );
+    final title = conversationTitle(l10n, conversation,
+        profiles: showProfileName ? profiles : null);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
-    final row = MergeSemantics(
+    return MergeSemantics(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: Material(
@@ -827,18 +810,6 @@ class _ConversationTile extends StatelessWidget {
         ),
       ),
     );
-    if (!swipeOpensActions) return row;
-    // Swipe either way opens the actions; the row stays (confirmDismiss is
-    // false), so nothing is removed by a swipe.
-    return Dismissible(
-      key: ValueKey<String>('chat-row-${conversation.id}'),
-      confirmDismiss: (_) async {
-        onActions();
-        return false;
-      },
-      background: const SizedBox.shrink(),
-      child: row,
-    );
   }
 }
 
@@ -858,8 +829,12 @@ class _RowSubtitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final style = Theme.of(context).textTheme.bodySmall;
-    Widget line(String text) =>
-        Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
+    Widget line(String text) => Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
     final state = previews;
     if (state == null) return line(conversationRowSubtitle(l10n, conversation));
     return ListenableSelector<String?>(
@@ -941,7 +916,10 @@ String conversationTitle(
   return l10n.conversationGroupChat;
 }
 
-String conversationSubtitle(AppLocalizations l10n, Conversation conversation) {
+String conversationSubtitle(
+  AppLocalizations l10n,
+  Conversation conversation,
+) {
   final retention = conversation.retentionSeconds;
   final parts = <String>[
     if (conversation.isDm) l10n.newConversationDirect,
@@ -996,12 +974,9 @@ Widget conversationAvatar(
   // username, a named group's or channel's from its name.
   final initials = conversation.isDm && peerId != null
       ? accountInitials(peerId, conversation.peerUsername)
-      : nameInitials(
-          conversation.isGroup
-              ? profiles?.conversation(conversation.id)?.name ??
-                  conversation.title
-              : conversation.title,
-        );
+      : nameInitials(conversation.isGroup
+          ? profiles?.conversation(conversation.id)?.name ?? conversation.title
+          : conversation.title);
   final initial = ExcludeSemantics(
     child: Container(
       width: radius * 2,
@@ -1016,9 +991,7 @@ Widget conversationAvatar(
           ? Text(
               initials,
               style: TextStyle(
-                // Never under 12 (U10): the 17 dp chat-header avatar would be
-                // 10.5 otherwise.
-                fontSize: radius * 0.62 < 12 ? 12 : radius * 0.62,
+                fontSize: radius * 0.62,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
                 color: colors.glyph,
