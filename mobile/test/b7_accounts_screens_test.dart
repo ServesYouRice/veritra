@@ -350,6 +350,13 @@ void main() {
         home: ConnectScreen(state: probing),
       ),
     ));
+    // U20: the server field opens behind "I already have an account".
+    await pumpAsync(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await pumpAsync(tester);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await pumpAsync(tester);
     await tester.enterText(
         find.byType(TextFormField).first, 'https://a.example');
     await tester.pump(const Duration(milliseconds: 700));

@@ -79,6 +79,13 @@ void main() {
         home: ConnectScreen(state: state),
       ),
     );
+    // U20: the form opens behind "I already have an account".
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await tester.pumpAndSettle();
 
     expect(find.bySemanticsLabel(RegExp('Username')), findsWidgets);
     expect(find.bySemanticsLabel(RegExp('Password')), findsWidgets);

@@ -490,6 +490,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Налог власника још не постоји — направите га испод.';
 
   @override
+  String get connectFreshInstanceAction => 'Подеси овај сервер';
+
+  @override
   String get connectInstanceUrl => 'URL инстанце';
 
   @override
@@ -652,6 +655,42 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get connectTagline =>
       'Самостално хостована размена порука, шифрована с краја на крај';
+
+  @override
+  String get connectStepBack => 'Назад';
+
+  @override
+  String get welcomeHaveInvite => 'Имам позивницу';
+
+  @override
+  String get welcomeHaveAccount => 'Већ имам налог';
+
+  @override
+  String get welcomeSetUpServer => 'Подеси нови сервер';
+
+  @override
+  String get welcomeAccountTitle => 'Како желите да се пријавите?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ово је нов уређај';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Додајте га помоћу уређаја који већ користите.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Већ користим овај уређај';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Пријавите се корисничким именом и лозинком.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Немам више ниједан уређај';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Вратите се помоћу лозинке и кључа за опоравак.';
 
   @override
   String get qrScanLinkTitle => 'Скенирај QR код за повезивање';
@@ -5136,6 +5175,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nalog vlasnika još ne postoji — napravite ga ispod.';
 
   @override
+  String get connectFreshInstanceAction => 'Podesi ovaj server';
+
+  @override
   String get connectInstanceUrl => 'URL instance';
 
   @override
@@ -5298,6 +5340,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get connectTagline =>
       'Samostalno hostovana razmena poruka, šifrovana s kraja na kraj';
+
+  @override
+  String get connectStepBack => 'Nazad';
+
+  @override
+  String get welcomeHaveInvite => 'Imam pozivnicu';
+
+  @override
+  String get welcomeHaveAccount => 'Već imam nalog';
+
+  @override
+  String get welcomeSetUpServer => 'Podesi novi server';
+
+  @override
+  String get welcomeAccountTitle => 'Kako želite da se prijavite?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ovo je nov uređaj';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Dodajte ga pomoću uređaja koji već koristite.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Već koristim ovaj uređaj';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Prijavite se korisničkim imenom i lozinkom.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Nemam više nijedan uređaj';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Vratite se pomoću lozinke i ključa za oporavak.';
 
   @override
   String get qrScanLinkTitle => 'Skeniraj QR kod za povezivanje';

@@ -101,6 +101,8 @@ Set<String> _englishOnly(AppLocalizations l10n) {
     englishL10n.connectInstanceUrl,
     englishL10n.connectTagline,
     englishL10n.connectOtherWays,
+    englishL10n.welcomeHaveInvite,
+    englishL10n.welcomeHaveAccount,
     englishL10n.communityEmptyTitle,
     englishL10n.listTimeYesterday,
     englishL10n.commonCancel,

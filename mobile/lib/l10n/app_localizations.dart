@@ -939,6 +939,12 @@ abstract class AppLocalizations {
   /// **'No owner account exists yet — create it below.'**
   String get connectFreshInstanceMessage;
 
+  /// No description provided for @connectFreshInstanceAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up this server'**
+  String get connectFreshInstanceAction;
+
   /// No description provided for @connectInstanceUrl.
   ///
   /// In en, this message translates to:
@@ -1232,6 +1238,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Self-hosted, end-to-end encrypted messaging'**
   String get connectTagline;
+
+  /// No description provided for @connectStepBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get connectStepBack;
+
+  /// No description provided for @welcomeHaveInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'I have an invite'**
+  String get welcomeHaveInvite;
+
+  /// No description provided for @welcomeHaveAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'I already have an account'**
+  String get welcomeHaveAccount;
+
+  /// No description provided for @welcomeSetUpServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up a new server'**
+  String get welcomeSetUpServer;
+
+  /// No description provided for @welcomeAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How do you want to sign in?'**
+  String get welcomeAccountTitle;
+
+  /// No description provided for @welcomeNewDeviceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a new device'**
+  String get welcomeNewDeviceTitle;
+
+  /// No description provided for @welcomeNewDeviceDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Add it using a device you already use.'**
+  String get welcomeNewDeviceDetail;
+
+  /// No description provided for @welcomeSignedInBeforeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'I\'ve signed in here before'**
+  String get welcomeSignedInBeforeTitle;
+
+  /// No description provided for @welcomeSignedInBeforeDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your username and password.'**
+  String get welcomeSignedInBeforeDetail;
+
+  /// No description provided for @welcomeLostDevicesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'I lost all my devices'**
+  String get welcomeLostDevicesTitle;
+
+  /// No description provided for @welcomeLostDevicesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Get back in with your password and recovery key.'**
+  String get welcomeLostDevicesDetail;
 
   /// No description provided for @qrScanLinkTitle.
   ///

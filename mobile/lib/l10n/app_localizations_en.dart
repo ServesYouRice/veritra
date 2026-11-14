@@ -489,6 +489,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'No owner account exists yet — create it below.';
 
   @override
+  String get connectFreshInstanceAction => 'Set up this server';
+
+  @override
   String get connectInstanceUrl => 'Instance URL';
 
   @override
@@ -647,6 +650,41 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectTagline => 'Self-hosted, end-to-end encrypted messaging';
+
+  @override
+  String get connectStepBack => 'Back';
+
+  @override
+  String get welcomeHaveInvite => 'I have an invite';
+
+  @override
+  String get welcomeHaveAccount => 'I already have an account';
+
+  @override
+  String get welcomeSetUpServer => 'Set up a new server';
+
+  @override
+  String get welcomeAccountTitle => 'How do you want to sign in?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'This is a new device';
+
+  @override
+  String get welcomeNewDeviceDetail => 'Add it using a device you already use.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'I\'ve signed in here before';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Sign in with your username and password.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'I lost all my devices';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Get back in with your password and recovery key.';
 
   @override
   String get qrScanLinkTitle => 'Scan link QR';

@@ -24,16 +24,13 @@ void main() {
       theme: veritraLightTheme(),
       home: ConnectScreen(state: state),
     ));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-set-up-server')));
+    await tester.pumpAndSettle();
     await tester.enterText(
         find.byType(TextFormField).first, 'https://chat.example.org');
     await tester.pumpAndSettle();
-
-    // Whatever mode the form opened in, one press finds the fresh instance
-    // and shows the owner form.
-    if (find.text('Create owner').evaluate().isEmpty) {
-      await tester.tap(find.byType(FilledButton).last);
-      await tester.pumpAndSettle();
-    }
     expect(find.text('Create owner'), findsWidgets);
     expect(state.owners, isEmpty);
 
@@ -69,6 +66,7 @@ void main() {
         theme: veritraLightTheme(),
         home: ConnectScreen(state: state),
       ));
+      await openRoute(tester, 'welcome-signed-in-before');
       await tester.enterText(find.byType(TextFormField).first, one);
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
@@ -169,19 +167,16 @@ void main() {
         theme: veritraLightTheme(),
         home: ConnectScreen(state: state),
       ));
+      // The person picks joining, although this device is linked there.
+      await openRoute(tester, 'welcome-invite');
+      expect(find.text('JOIN WITH AN INVITE'), findsOneWidget);
       await tester.enterText(
           find.byType(TextFormField).first, 'https://one.example.org');
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
       expect(state.probes, <String>['https://one.example.org']);
-      expect(find.text('SIGN IN'), findsOneWidget);
-
-      // The person picks another way to connect.
-      await tester.tap(find.text('Other ways to connect'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Join with an invite'));
-      await tester.pumpAndSettle();
-      expect(find.text('JOIN WITH AN INVITE'), findsOneWidget);
+      expect(find.text('JOIN WITH AN INVITE'), findsOneWidget,
+          reason: 'the probe does not override the chosen path');
 
       // Clicking into the field, or selecting its text, changes only the
       // selection.
@@ -211,6 +206,7 @@ void main() {
         theme: veritraLightTheme(),
         home: ConnectScreen(state: state),
       ));
+      await openRoute(tester, 'welcome-signed-in-before');
       await tester.enterText(
           find.byType(TextFormField).first, 'https://one.example.org');
       await tester.pump(const Duration(milliseconds: 700));
@@ -223,6 +219,19 @@ void main() {
           <String>['https://one.example.org', 'https://two.example.org']);
     });
   });
+}
+
+/// Taps through the welcome steps (U20) to the route with [key]:
+/// `welcome-invite`, `welcome-set-up-server`, or one of the account choices
+/// (`welcome-signed-in-before`, `welcome-new-device`).
+Future<void> openRoute(WidgetTester tester, String key) async {
+  await tester.pumpAndSettle();
+  if (key != 'welcome-invite' && key != 'welcome-set-up-server') {
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.byKey(ValueKey<String>(key)));
+  await tester.pumpAndSettle();
 }
 
 class _FreshInstanceState extends AppState {
