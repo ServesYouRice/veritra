@@ -77,6 +77,7 @@ func logLimits(logger *slog.Logger, limits config.Limits, source string) {
 		"deliveries_per_minute", limits.DeliveriesPerMinute,
 		"write_mib_per_hour", limits.WriteBytesPerHour>>20,
 		"sockets_per_ipv6_prefix", limits.SocketsPerIPv6Prefix,
+		"sockets_per_ipv4_address", limits.SocketsPerIPv4Address,
 	)
 }
 

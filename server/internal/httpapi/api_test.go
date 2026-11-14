@@ -695,7 +695,8 @@ func TestListMessagesCursorPagination(t *testing.T) {
 
 func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	handler, ownerToken, ownerDeviceID := newTestHandlerWithOwnerDevice(t)
-	_, memberAccountID := registerMemberWithID(t, handler, ownerToken, "claimmember")
+	memberToken, memberAccountID := registerMemberWithID(t, handler, ownerToken, "claimmember")
+	memberDeviceID := firstDeviceID(t, handler, memberToken)
 	outsiderToken := registerMember(t, handler, ownerToken, "claimoutsider")
 
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
@@ -713,12 +714,25 @@ func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	}
 	claimPath := "/api/v1/conversations/" + conversation.ID + "/key-packages/claim"
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, outsiderToken, nil)
+	claimBody := map[string]interface{}{"device_ids": []string{memberDeviceID}}
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, outsiderToken, claimBody)
 	if status != http.StatusForbidden || !bytes.Contains(response, []byte(`"error":"forbidden"`)) {
 		t.Fatalf("non-member claim status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
+	// A claim names the devices it wants (D134): none, whether the body is
+	// missing, empty or lists no device, is refused and takes nothing.
+	for name, body := range map[string]interface{}{"no body": nil, "empty object": map[string]interface{}{}, "empty list": map[string]interface{}{"device_ids": []string{}}} {
+		if status, response := doJSON(t, handler, http.MethodPost, claimPath, ownerToken, body); status != http.StatusBadRequest || !bytes.Contains(response, []byte(`"error":"invalid_input"`)) {
+			t.Fatalf("claim with %s status=%d body=%s", name, status, response)
+		}
+	}
+	// The requester's own device is never a target.
+	if status, response := doJSON(t, handler, http.MethodPost, claimPath, ownerToken, map[string]interface{}{"device_ids": []string{ownerDeviceID}}); status != http.StatusBadRequest {
+		t.Fatalf("claim of the requester's own device status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, claimBody)
 	if status != http.StatusOK {
 		t.Fatalf("member claim status=%d body=%s", status, response)
 	}
@@ -730,13 +744,15 @@ func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	if err := json.Unmarshal(response, &claimed); err != nil {
 		t.Fatalf("decode key packages: %v", err)
 	}
-	if len(claimed.KeyPackages) != 1 || claimed.KeyPackages[0].DeviceID == ownerDeviceID {
-		t.Fatalf("claim did not exclude requester device: %s", response)
+	if len(claimed.KeyPackages) != 1 || claimed.KeyPackages[0].DeviceID != memberDeviceID {
+		t.Fatalf("claim did not return the named device's package: %s", response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
-	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"error":"key_package_unavailable"`)) {
-		t.Fatalf("repeated claim status=%d body=%s", status, response)
+	// Single use: a device with no package left is skipped, not an error.
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, claimBody)
+	claimed.KeyPackages = nil
+	if err := json.Unmarshal(response, &claimed); err != nil || status != http.StatusOK || len(claimed.KeyPackages) != 0 {
+		t.Fatalf("repeated claim status=%d body=%s, want 200 with no package", status, response)
 	}
 }
 

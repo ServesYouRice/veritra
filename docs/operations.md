@@ -302,12 +302,17 @@ whole address no more than one account's budget; raise it for a large
 office. A refusal is 429 with `Retry-After`;
 `veritra_rate_limit_rejections_total` counts it by scope (`general`,
 `auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
-own limits: 10 per account and 3 per device, 20 per address, and for IPv6 a
-separate cap on all addresses of one /64 (default 200,
-`PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or home
-network hands out many addresses, so the /64 cap is higher than the address
-cap). IPv4 clients behind one NAT share their address's 20. The server logs
-the resolved values at start (`rate_limits`, `admission_limits`).
+own limits: 10 per account and 3 per device, 20 per IPv6 address, a cap per
+IPv4 address (default 20, `PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV4_ADDRESS`,
+3-10,000), and for IPv6 a separate cap on all addresses of one /64 (default
+200, `PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or
+home network hands out many addresses, so the /64 cap is higher than the
+address cap). IPv4 clients behind one NAT share their address's cap: raise
+`SOCKETS_PER_IPV4_ADDRESS` for a carrier-grade or office NAT that puts many
+users behind one address, since the refusal (429 `realtime_connection_limit`)
+leaves those users without live updates until they reconnect. An IPv4-mapped
+IPv6 address counts as the IPv4 address. The server logs the resolved values
+at start (`rate_limits`, `admission_limits`).
 
 Login and reauthentication also use bounded backoff scopes: the first two
 failures are unauthorized responses, the third starts a 1-second delay that
@@ -1376,12 +1381,13 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
-| `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
+| `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | none: a claim skips a device over its limit, as it skips one with no package left (it stays listed, so a later claim or another member adds it); the skip is counted in `veritra_admission_rejections_total` |
 | `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and waits for the `Retry-After` (at least an hour). One update after a C4 leave notice the same device sent in the last hour passes once (it voids a cancelled leave, `docs/crypto.md`) |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
-| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
+| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one IPv6 address always gets at most 20) | 429 `realtime_connection_limit` |
+| `SOCKETS_PER_IPV4_ADDRESS` | 20 | 3-10,000 | realtime sockets of one IPv4 address, shared by every client behind one NAT (the 10 per account and 3 per device caps still apply) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S

@@ -15,8 +15,13 @@ var (
 )
 
 const (
-	maxConnections      = 10000
-	maxConnectionsPerIP = 20
+	maxConnections = 10000
+	// defaultMaxConnectionsPerIPv4 is the cap for one IPv4 address, which
+	// clients behind one NAT share; it is configurable (HubLimits). One IPv6
+	// address always gets at most maxConnectionsPerIPv6Address, since an IPv6
+	// client has the whole /64 (the prefix cap) to spread over.
+	defaultMaxConnectionsPerIPv4 = 20
+	maxConnectionsPerIPv6Address = 20
 	// defaultMaxConnectionsPerIPv6Prefix is the cap for all addresses of one
 	// IPv6 /64, a single office or home network that hands out many
 	// addresses; it is configurable (HubLimits).
@@ -45,8 +50,9 @@ type Hub struct {
 	perIP       map[string]int
 	// perPrefix counts sockets per IPv6 /64 (IPv4 sockets are not counted).
 	perPrefix map[string]int
-	// perPrefixLimit is the /64 cap.
+	// perPrefixLimit is the /64 cap; perIPv4Limit the cap of one IPv4 address.
 	perPrefixLimit int
+	perIPv4Limit   int
 	draining       bool
 	total          int
 	// Aggregate counters for the private metrics endpoint (card I47).
@@ -56,10 +62,13 @@ type Hub struct {
 }
 
 // HubLimits configures the per-network socket caps. A zero field means the
-// default. The per-address cap (maxConnectionsPerIP) is fixed.
+// default. The cap of one IPv6 address (maxConnectionsPerIPv6Address) is fixed.
 type HubLimits struct {
 	// PerIPv6Prefix caps the sockets of all addresses in one IPv6 /64.
 	PerIPv6Prefix int
+	// PerIPv4Address caps the sockets of one IPv4 address (and its
+	// IPv4-mapped IPv6 form).
+	PerIPv4Address int
 }
 
 func NewHub() *Hub { return NewHubWithLimits(HubLimits{}) }
@@ -68,11 +77,15 @@ func NewHubWithLimits(limits HubLimits) *Hub {
 	if limits.PerIPv6Prefix <= 0 {
 		limits.PerIPv6Prefix = defaultMaxConnectionsPerIPv6Prefix
 	}
+	if limits.PerIPv4Address <= 0 {
+		limits.PerIPv4Address = defaultMaxConnectionsPerIPv4
+	}
 	return &Hub{
 		subscribers:    map[string]map[*Client]struct{}{},
 		perIP:          map[string]int{},
 		perPrefix:      map[string]int{},
 		perPrefixLimit: limits.PerIPv6Prefix,
+		perIPv4Limit:   limits.PerIPv4Address,
 	}
 }
 
@@ -85,13 +98,13 @@ func (h *Hub) ConnectionCount() int {
 }
 
 // addressKeys names the two buckets a remote address is counted under: the
-// address itself (IPv4-mapped IPv6 forms unmapped, zones dropped) against
-// maxConnectionsPerIP, and for IPv6 its /64 against the prefix cap, because an
-// IPv6 client normally controls at least a /64 and could otherwise rotate
-// addresses inside it past the per-address cap. IPv4 has no prefix bucket;
-// clients behind carrier-grade or corporate NAT share one address and its cap,
-// whose value is a separate open product question. An unparsable address is
-// its own bucket.
+// address itself (IPv4-mapped IPv6 forms unmapped, zones dropped) against its
+// address cap (addressLimit), and for IPv6 its /64 against the prefix cap,
+// because an IPv6 client normally controls at least a /64 and could otherwise
+// rotate addresses inside it past the per-address cap. IPv4 has no prefix
+// bucket; clients behind carrier-grade or corporate NAT share one address and
+// its cap, which the operator can raise (HubLimits.PerIPv4Address). An
+// unparsable address is its own bucket.
 func addressKeys(remoteIP string) (address, prefix string) {
 	addr, err := netip.ParseAddr(remoteIP)
 	if err != nil {
@@ -102,6 +115,15 @@ func addressKeys(remoteIP string) (address, prefix string) {
 		return addr.String(), ""
 	}
 	return addr.String(), netip.PrefixFrom(addr, 64).Masked().String()
+}
+
+// addressLimit is the cap of the address bucket ipKey: the IPv4 setting for an
+// IPv4 address, the fixed IPv6 address cap for anything else.
+func (h *Hub) addressLimit(ipKey string) int {
+	if addr, err := netip.ParseAddr(ipKey); err == nil && addr.Is4() {
+		return h.perIPv4Limit
+	}
+	return maxConnectionsPerIPv6Address
 }
 
 func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
@@ -121,7 +143,7 @@ func (h *Hub) Register(accountID, deviceID, remoteIP string) (*Client, error) {
 		}
 	}
 	if h.total >= maxConnections || accountCount >= maxConnectionsPerAccount ||
-		deviceCount >= maxConnectionsPerDevice || ipCount >= maxConnectionsPerIP ||
+		deviceCount >= maxConnectionsPerDevice || ipCount >= h.addressLimit(ipKey) ||
 		(prefixKey != "" && h.perPrefix[prefixKey] >= h.perPrefixLimit) {
 		h.rejectedLimit.Add(1)
 		return nil, ErrConnectionLimit

@@ -1115,10 +1115,11 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 }
 
 // ListSyncPage is ListSyncEvents with the scan position (D92, TASK-209). Only
-// when bounded (the client opted in with ?scan=bounded) does a scan budget
-// apply and a cursor naming a hidden row of the device's own scope count as
-// not expired; otherwise the scan, the response and the expiry test are the
-// unbounded ones. ScannedThrough is the last candidate read, hidden rows
+// when bounded does a scan budget apply and a cursor naming a hidden row of
+// the device's own scope count as not expired; otherwise the scan and the
+// expiry test are the unbounded ones. The HTTP routes always pass bounded
+// (D134); the unbounded form remains for tests, benchmarks and the
+// before/after comparison. ScannedThrough is the last candidate read, hidden rows
 // included, and never below the cursor; Truncated says the budget ended the
 // page before the stream did. Hidden rows it passes stay hidden (the MLS
 // join filter only grows, dead envelopes stay dead) or are block-hidden,
@@ -1128,8 +1129,8 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 }
 
 // SyncReadOptions are what a sync request opted in to. Bounded is the scan
-// budget (?scan=bounded, D92). Sealed (?sealed=1, L2-3) says the app reads
-// message.sealed.created; without it those events are hidden rows, so an
+// budget (always set by the routes since D134, D92). Sealed (?sealed=1, L2-3)
+// says the app reads message.sealed.created; without it those events are hidden rows, so an
 // app from before sealed sender never meets an event type it would stop
 // sync at (an unknown message.* event fails closed in the app).
 type SyncReadOptions struct {

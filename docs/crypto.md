@@ -272,7 +272,7 @@ This closes the race where a pass that fetched the add-Welcome before the
 leave applied it after the group was dropped and the note cleared.
 
 A server that returns no `event_id` (an older one) is asked for its newest
-sync event id instead (`latest_event_id` on an empty page), which is at or
+sync event id instead (older servers only: `latest_event_id` on an empty page), which is at or
 above the leave's own event. That floor is not exact: a Welcome created after
 the leave but before the app reads the bound would also be skipped, a window
 of one request. If that read fails too, the newest event id the running pass
@@ -1020,8 +1020,8 @@ holding tokens could otherwise pause the conversation (or, without scoped
 sync, all sync) on every other member's device. Two server rules keep that
 from happening:
 
-- **Opt-in.** Every sync read (legacy, `?scan=bounded` and the per
-  conversation route) hides `message.sealed.created` rows unless the request
+- **Opt-in.** Every sync read (`/sync/events` and the per
+  conversation route, both always bounded since D134) hides `message.sealed.created` rows unless the request
   carries `?sealed=1`. They are hidden rows, not a filter after the page, so
   an older app still pages past a run of sealed posts and never sees one.
 - **Issuance gate.** While the switch is on, a read with `?sealed=1`
@@ -2126,6 +2126,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     (400 `key_package_not_listed`) and claims only packages that carry it,
     deleting stored ones that do not. No migration. An honest-server gate:
     clients still stage every add with their own pinned key.
+  - **No claim without device IDs (owner D134, 2026-11-14).**
+    `POST /conversations/{id}/key-packages/claim` takes `device_ids` and
+    nothing else: a body that names none (no body, `{}` or an empty list) is
+    400 `invalid_input` and takes nothing. The old form claimed one package
+    of every other member device, for clients that did not list devices; the
+    app's native crypto service lists devices and claims them by ID. The 409 `key_package_unavailable` and
+    429 `key_package_claim_limit` answers went with it: a device with no
+    package left, or over its claim limit, is skipped.
   - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
     linking, D100 A):** built in their own change (see its entry); this step
     only signs change 2 after the link checks.

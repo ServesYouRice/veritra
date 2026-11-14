@@ -111,6 +111,17 @@ client cursors (C1-B2 to B4), and the legacy global stream is unchanged.
 `PRIVATE_MESSENGER_SCOPED_SYNC` still defaults to off in `config.go`; the
 brief said it now defaults on, but main does not.
 
+## 2026-11-14 bounded sync only (D134, TASK-209)
+
+`GET /api/v1/sync/events` and the scoped conversation route are always
+bounded: the 2,000-candidate scan budget, `scanned_through` and
+`scan_truncated` apply to every request, and `?scan=bounded` is accepted and
+ignored. A 200 from `/sync/events` carries `events`, `sync_epoch`,
+`scanned_through` and `scan_truncated`; `oldest_event_id` and
+`latest_event_id` are in the 409 `device_recovery_required` body only. The
+account stream (`/sync/account-events`) has no hidden rows and is unchanged.
+A client that stops at an empty page must page on while `scan_truncated`.
+
 ## 2026-11-09 local port onto 0d09fcb (partial)
 
 Ported both commits from `origin/agent/invite-v2`, preserving current L1,

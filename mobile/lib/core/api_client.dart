@@ -2349,23 +2349,6 @@ class ApiClient {
     );
   }
 
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-    String token,
-    String conversationId,
-  ) async {
-    final json = await _jsonRequest(
-      'POST',
-      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
-          '/key-packages/claim',
-      token: token,
-    );
-    return _rows(
-      json,
-      'key_packages',
-      DeviceKeyPackage.fromJson,
-    ).toList(growable: false);
-  }
-
   Future<MlsMessage> sendMlsMessage(
     String token,
     String conversationId, {
@@ -3117,8 +3100,8 @@ class ApiClient {
     });
   }
 
-  /// The newest sync event id the server holds for this account, read from
-  /// the `latest_event_id` bound of an empty page (the cursor is past every
+  /// Older servers only: the newest sync event id the server holds for this
+  /// account, read from the `latest_event_id` bound of an empty page (the cursor is past every
   /// event, so no event or ciphertext comes back). Used to date a leave
   /// (D70): every event from before it has an id at or below this.
   Future<int> syncLatestEventId(String token) async {

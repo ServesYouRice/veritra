@@ -102,7 +102,7 @@ func TestHubPerDeviceLimit(t *testing.T) {
 func TestHubPerIPLimit(t *testing.T) {
 	hub := NewHub()
 	var clients []*Client
-	for i := 0; i < maxConnectionsPerIP; i++ {
+	for i := 0; i < defaultMaxConnectionsPerIPv4; i++ {
 		c, err := hub.Register(fmt.Sprintf("acct%d", i), "dev", "203.0.113.1")
 		if err != nil {
 			t.Fatalf("register %d: %v", i, err)
@@ -127,7 +127,7 @@ func TestHubPerIPLimit(t *testing.T) {
 }
 
 // An IPv6 client controls at least a /64, so rotating addresses inside it
-// must not escape every cap: one address still gets maxConnectionsPerIP
+// must not escape every cap: one address still gets maxConnectionsPerIPv6Address
 // sockets, and the whole /64 gets its own, higher cap (VAL-238). IPv4 and
 // IPv4-mapped forms of one address share a bucket.
 func TestHubIPv6AddressAndPrefixLimits(t *testing.T) {
@@ -139,7 +139,7 @@ func TestHubIPv6AddressAndPrefixLimits(t *testing.T) {
 		return err
 	}
 	// 20 sockets from one address, and the 21st is refused.
-	for i := 0; i < maxConnectionsPerIP; i++ {
+	for i := 0; i < maxConnectionsPerIPv6Address; i++ {
 		if err := register("2001:db8:1::1"); err != nil {
 			t.Fatalf("register %d from one address: %v", i, err)
 		}
@@ -162,7 +162,7 @@ func TestHubIPv6AddressAndPrefixLimits(t *testing.T) {
 	checkHubIndexes(t, hub)
 
 	mapped := NewHub()
-	for i := 0; i < maxConnectionsPerIP; i++ {
+	for i := 0; i < defaultMaxConnectionsPerIPv4; i++ {
 		ip := "192.0.2.1"
 		if i%2 == 1 {
 			ip = "::ffff:192.0.2.1"
@@ -205,6 +205,52 @@ func TestHubPrefixLimitIsConfigurableAndFreesOnRemoval(t *testing.T) {
 	checkHubIndexes(t, hub)
 	if len(hub.perIP) != 0 || len(hub.perPrefix) != 0 {
 		t.Fatalf("indexes not empty after drain: %v %v", hub.perIP, hub.perPrefix)
+	}
+}
+
+// The IPv4 address cap is an operator setting (default 20). It governs an
+// IPv4 address and its IPv4-mapped form, frees on removal, and leaves the cap
+// of one IPv6 address at 20.
+func TestHubIPv4AddressLimitIsConfigurable(t *testing.T) {
+	if got := NewHub().perIPv4Limit; got != 20 {
+		t.Fatalf("default IPv4 cap = %d, want 20", got)
+	}
+	for _, limit := range []int{5, 30} {
+		hub := NewHubWithLimits(HubLimits{PerIPv4Address: limit})
+		var clients []*Client
+		for i := 0; i < limit; i++ {
+			ip := "203.0.113.9"
+			if i%2 == 1 {
+				ip = "::ffff:203.0.113.9"
+			}
+			c, err := hub.Register(fmt.Sprintf("acct%d", i), "dev", ip)
+			if err != nil {
+				t.Fatalf("limit %d: register %d: %v", limit, i, err)
+			}
+			clients = append(clients, c)
+		}
+		if _, err := hub.Register("over", "dev", "203.0.113.9"); !errors.Is(err, ErrConnectionLimit) {
+			t.Fatalf("the configured IPv4 cap of %d did not hold: %v", limit, err)
+		}
+		if _, err := hub.Register("other", "dev", "203.0.113.10"); err != nil {
+			t.Fatalf("another IPv4 address must be unaffected: %v", err)
+		}
+		hub.Unregister(clients[0])
+		if _, err := hub.Register("again", "dev", "203.0.113.9"); err != nil {
+			t.Fatalf("removal did not free an IPv4 slot: %v", err)
+		}
+		checkHubIndexes(t, hub)
+	}
+
+	// One IPv6 address stays at 20 whatever the IPv4 cap is.
+	hub := NewHubWithLimits(HubLimits{PerIPv4Address: 50})
+	for i := 0; i < maxConnectionsPerIPv6Address; i++ {
+		if _, err := hub.Register(fmt.Sprintf("v6acct%d", i), "dev", "2001:db8:7::1"); err != nil {
+			t.Fatalf("register %d from one IPv6 address: %v", i, err)
+		}
+	}
+	if _, err := hub.Register("v6over", "dev", "2001:db8:7::1"); !errors.Is(err, ErrConnectionLimit) {
+		t.Fatalf("the IPv4 setting raised the cap of one IPv6 address: %v", err)
 	}
 }
 
@@ -314,7 +360,7 @@ func TestHubConcurrentRegisterKeepsLimits(t *testing.T) {
 	checkHubIndexes(t, hub)
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
-	if hub.perIP["198.51.100.7"] > maxConnectionsPerIP {
+	if hub.perIP["198.51.100.7"] > defaultMaxConnectionsPerIPv4 {
 		t.Fatalf("IP cap exceeded: %d", hub.perIP["198.51.100.7"])
 	}
 	for _, clients := range hub.subscribers {

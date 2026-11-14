@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -28,8 +27,8 @@ func unclaimedKeyPackages(t *testing.T, ctx context.Context, store *Store, devic
 }
 
 // One member cannot drain another account's key packages: past its daily
-// allowance on a device a claim is refused, and the device keeps the rest.
-func TestConversationKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T) {
+// allowance on a device a claim skips it, and the device keeps the rest.
+func TestDeviceKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T) {
 	ctx := context.Background()
 	store := newLimitedStore(t, config.Limits{KeyPackageClaimsPerTarget: 3})
 	owner := createTestOwner(t, ctx, store)
@@ -44,16 +43,16 @@ func TestConversationKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T
 		t.Fatalf("setup: bob has %d packages, want 10", got)
 	}
 	for call := 1; call <= 3; call++ {
-		claimed, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID)
+		claimed, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID, []string{bob.Device.ID})
 		if err != nil || len(claimed) != 1 {
 			t.Fatalf("claim %d: %d packages, err = %v", call, len(claimed), err)
 		}
 	}
-	if _, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID); !errors.Is(err, ErrKeyPackageClaimLimit) {
-		t.Fatalf("claim past the allowance: err = %v, want %v", err, ErrKeyPackageClaimLimit)
+	if claimed, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID, []string{bob.Device.ID}); err != nil || len(claimed) != 0 {
+		t.Fatalf("claim past the allowance: %d packages, err = %v, want the device skipped", len(claimed), err)
 	}
 	if got := unclaimedKeyPackages(t, ctx, store, bob.Device.ID); got != 7 {
-		t.Fatalf("bob has %d packages left, want 7: the refused claim must take none", got)
+		t.Fatalf("bob has %d packages left, want 7: the skipped claim must take none", got)
 	}
 	if got := rejections(store, admission.KeyPackages); got != 1 {
 		t.Fatalf("key package rejections = %d, want 1", got)
@@ -64,8 +63,8 @@ func TestConversationKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T
 	if err := store.AddConversationMember(ctx, conversation.ID, owner.Account.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID); err != nil {
-		t.Fatalf("another account's first claim: %v", err)
+	if claimed, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID, []string{bob.Device.ID}); err != nil || len(claimed) != 1 {
+		t.Fatalf("another account's first claim: %d packages, err = %v", len(claimed), err)
 	}
 	if got := unclaimedKeyPackages(t, ctx, store, bob.Device.ID); got != 6 {
 		t.Fatalf("bob has %d packages left, want 6: the owner claims on its own allowance", got)
@@ -76,8 +75,8 @@ func TestConversationKeyPackageClaimsAreCappedPerRequesterAndTarget(t *testing.T
 	if _, err := store.db.ExecContext(ctx, `UPDATE device_key_packages SET claimed_at = ? WHERE device_id = ? AND claimed_by_device_id = ?`, old, bob.Device.ID, mallory.Device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID); err != nil {
-		t.Fatalf("claim after the window passed: %v", err)
+	if claimed, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, mallory.Account.ID, mallory.Device.ID, []string{bob.Device.ID}); err != nil || len(claimed) != 1 {
+		t.Fatalf("claim after the window passed: %d packages, err = %v", len(claimed), err)
 	}
 }
 

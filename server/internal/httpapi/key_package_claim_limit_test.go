@@ -1,7 +1,6 @@
 package httpapi_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -10,11 +9,13 @@ import (
 )
 
 // An account may claim only so many key packages of one other device a day;
-// past that the claim is refused with 429 and a code the app can tell from
-// an exhausted device (409 key_package_unavailable).
-func TestKeyPackageClaimPastTheDailyAllowanceIsRefused(t *testing.T) {
+// past that the device is skipped, as one with no package left is, and the
+// device keeps its remaining packages.
+func TestKeyPackageClaimPastTheDailyAllowanceTakesNothing(t *testing.T) {
 	handler, ownerToken := newLimitedHandler(t, config.Limits{KeyPackageClaimsPerTarget: 1})
-	_, memberID := registerMemberWithID(t, handler, ownerToken, "member")
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "member")
+	memberDevice := firstDeviceID(t, handler, memberToken)
+	uploadKeyPackages(t, handler, memberToken, 3)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken,
 		map[string]interface{}{"kind": "group", "member_account_ids": []string{memberID}})
 	if status != http.StatusCreated {
@@ -26,16 +27,24 @@ func TestKeyPackageClaimPastTheDailyAllowanceIsRefused(t *testing.T) {
 	if err := json.Unmarshal(response, &conversation); err != nil {
 		t.Fatal(err)
 	}
-	path := "/api/v1/conversations/" + conversation.ID + "/key-packages/claim"
-	first := doRawRecorder(t, handler, http.MethodPost, path, ownerToken, nil)
-	if first.Code != http.StatusOK {
-		t.Fatalf("first claim status=%d body=%s", first.Code, first.Body.String())
+	claimed := func() int {
+		t.Helper()
+		recorder := claimKeyPackages(t, handler, ownerToken, conversation.ID, memberDevice)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("claim status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var body struct {
+			KeyPackages []json.RawMessage `json:"key_packages"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return len(body.KeyPackages)
 	}
-	second := doRawRecorder(t, handler, http.MethodPost, path, ownerToken, nil)
-	if second.Code != http.StatusTooManyRequests || !bytes.Contains(second.Body.Bytes(), []byte("key_package_claim_limit")) {
-		t.Fatalf("second claim status=%d body=%s, want 429 key_package_claim_limit", second.Code, second.Body.String())
+	if got := claimed(); got != 1 {
+		t.Fatalf("first claim returned %d packages, want 1", got)
 	}
-	if second.Header().Get("Retry-After") == "" {
-		t.Fatal("the refusal carries no Retry-After")
+	if got := claimed(); got != 0 {
+		t.Fatalf("claim past the allowance returned %d packages, want none", got)
 	}
 }

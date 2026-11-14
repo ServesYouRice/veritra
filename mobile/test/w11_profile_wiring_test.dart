@@ -8,6 +8,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/profile_service.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/profile_record_codec.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -101,6 +102,11 @@ class _Api extends ApiClient {
   Future<List<BlockedAccount>> listBlocks(String token) async => remoteBlocks;
 
   @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String conversationId) async =>
+      const <ConversationMember>[];
+
+  @override
   Future<List<Conversation>> conversations(String token) async =>
       const <Conversation>[];
 
@@ -127,13 +133,6 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-    String token,
-    String conversationId,
-  ) async =>
-      const <DeviceKeyPackage>[];
-
-  @override
   Future<BlockedAccount> blockAccount(String token, String accountId) async {
     blocked.add(accountId);
     return BlockedAccount(accountId: accountId);
@@ -148,7 +147,16 @@ class _Api extends ApiClient {
       null;
 }
 
-class _Mls implements MlsConversationCryptoService {
+class _Mls
+    implements
+        MlsConversationCryptoService,
+        ApprovedDeviceDiscoveryCryptoService {
+  @override
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+          String? conversationId, Iterable<String> accountIds,
+          {Set<String> excluding = const <String>{}}) async =>
+      const <MlsDeviceRef>[];
+
   @override
   Future<void> initializeConversation(
     String conversationId,
