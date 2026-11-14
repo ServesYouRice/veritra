@@ -815,8 +815,24 @@ func wake(ch chan<- struct{}) {
 
 type syncPage struct {
 	Events []syncEvent `json:"events"`
-	Latest int64       `json:"latest_event_id"`
+	// ScannedThrough and Truncated are the server's scan position (D134: the
+	// account stream is always bounded). A page can be empty and truncated, so
+	// the app, and so this client, pages on until neither holds.
+	ScannedThrough int64 `json:"scanned_through"`
+	Truncated      bool  `json:"scan_truncated"`
 }
+
+// next is the cursor after applying the page: the last event, or how far the
+// server looked when that is further (a hidden run is crossed once).
+func (p syncPage) next(cursor int64) int64 {
+	if n := len(p.Events); n > 0 {
+		cursor = max(cursor, p.Events[n-1].ID)
+	}
+	return max(cursor, p.ScannedThrough)
+}
+
+// more says the stream may hold more after this page.
+func (p syncPage) more() bool { return len(p.Events) > 0 || p.Truncated }
 
 // syncEvent is one /sync/events entry; a message event carries its
 // envelope.
@@ -855,26 +871,39 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 			}
 		}
 		if cursor < 0 {
-			// The request that sets the cursor is a measured sync too, so
-			// a client that cannot start shows up as failed syncs.
-			var page syncPage
-			_, err := w.timed(opSync, func() (int, error) {
-				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
-				return status, expect(status, err, http.StatusOK)
-			})
-			if err != nil {
+			// A device with no cursor reads the stream to its end, as an app
+			// does, and counts none of it. Each request is a measured sync
+			// too, so a client that cannot start shows up as failed syncs.
+			var at int64
+			failed := false
+			for ctx.Err() == nil {
+				var page syncPage
+				_, err := w.timed(opSync, func() (int, error) {
+					status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(at, 10)+"&limit=200&scan=bounded", dev, "", nil, &page, nil)
+					return status, expect(status, err, http.StatusOK)
+				})
+				if err != nil {
+					failed = true
+					break
+				}
+				at = page.next(at)
+				if !page.more() {
+					break
+				}
+			}
+			if failed || ctx.Err() != nil {
 				continue
 			}
-			cursor = page.Latest
+			cursor = at
 			seen = max(seen, cursor)
 		}
 		for ctx.Err() == nil {
 			var page syncPage
 			_, err := w.timed(op, func() (int, error) {
-				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(cursor, 10)+"&limit=200", dev, "", nil, &page, nil)
+				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(cursor, 10)+"&limit=200&scan=bounded", dev, "", nil, &page, nil)
 				return status, expect(status, err, http.StatusOK)
 			})
-			if err != nil || len(page.Events) == 0 {
+			if err != nil {
 				break
 			}
 			now := time.Now()
@@ -889,7 +918,10 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 					w.queueDownloads(downloads, dev, envelope.AttachmentRefs, now)
 				}
 			}
-			cursor = page.Events[len(page.Events)-1].ID
+			cursor = page.next(cursor)
+			if !page.more() {
+				break
+			}
 		}
 	}
 }

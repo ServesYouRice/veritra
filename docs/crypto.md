@@ -1020,8 +1020,8 @@ holding tokens could otherwise pause the conversation (or, without scoped
 sync, all sync) on every other member's device. Two server rules keep that
 from happening:
 
-- **Opt-in.** Every sync read (legacy, `?scan=bounded` and the per
-  conversation route) hides `message.sealed.created` rows unless the request
+- **Opt-in.** Every sync read (`/sync/events` and the per
+  conversation route, both always bounded since D134) hides `message.sealed.created` rows unless the request
   carries `?sealed=1`. They are hidden rows, not a filter after the page, so
   an older app still pages past a run of sealed posts and never sees one.
 - **Issuance gate.** While the switch is on, a read with `?sealed=1`

@@ -37,10 +37,10 @@ func (a *API) accountSyncEvents(w http.ResponseWriter, r *http.Request, principa
 
 func (a *API) conversationSyncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, limit := syncPageParams(r)
-	bounded := r.URL.Query().Get("scan") == "bounded"
+	// Always bounded (D92, D134): ?scan=bounded is accepted and ignored.
 	conversationID := r.PathValue("id")
-	page, err := a.Store.ListConversationSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, storage.SyncReadOptions{Bounded: bounded, Sealed: a.noteSealedReader(r, principal)})
-	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, bounded, err)
+	page, err := a.Store.ListConversationSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, storage.SyncReadOptions{Bounded: true, Sealed: a.noteSealedReader(r, principal)})
+	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, true, err)
 }
 
 func syncPageParams(r *http.Request) (int64, int) {
@@ -89,9 +89,8 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 	// The position the server scanned to, hidden rows included, and whether
 	// the scan budget cut the page short (D92, C1 bounds). A client may move
 	// its cursor to scanned_through after applying the events, and keeps
-	// paging while scan_truncated. Sent only on request (?scan=bounded): an
-	// older client would stop at a truncated empty page, so it never gets
-	// the budget or the fields.
+	// paging while scan_truncated. The conversation route always sends them
+	// (D134); the account stream has no hidden rows and sends neither.
 	if bounded {
 		body["scanned_through"] = page.ScannedThrough
 		body["scan_truncated"] = page.Truncated

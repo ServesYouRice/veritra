@@ -27,16 +27,16 @@ func TestInitialSyncFailureIsRecorded(t *testing.T) {
 	var initial, paged atomic.Int64
 	w := testWorld(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		switch r.URL.RawQuery {
-		case "after=0&limit=1":
+		case "after=0&limit=200&scan=bounded":
 			initial.Add(1)
 			if failing.Load() {
 				rw.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			_, _ = rw.Write([]byte(`{"events":[],"latest_event_id":5}`))
-		case "after=5&limit=200":
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":5,"scan_truncated":false}`))
+		case "after=5&limit=200&scan=bounded":
 			paged.Add(1)
-			_, _ = rw.Write([]byte(`{"events":[],"latest_event_id":5}`))
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":5,"scan_truncated":false}`))
 		default:
 			rw.WriteHeader(http.StatusBadRequest)
 		}
@@ -78,17 +78,17 @@ func TestCatchUpObservesDeliveries(t *testing.T) {
 		`{"id":6,"type":"message.envelope.created","payload":{"envelope":{"sender_device_id":"d1","idempotency_key":"k-other","attachment_refs":["att-1"]}}},` +
 		`{"id":7,"type":"message.envelope.created","payload":{"envelope":{"sender_device_id":"d0","idempotency_key":"k-own","attachment_refs":["att-2"]}}},` +
 		`{"id":8,"type":"reaction.created","payload":{}}` +
-		`],"latest_event_id":8}`
+		`],"scanned_through":8,"scan_truncated":false}`
 	var pages atomic.Int64
 	w := testWorld(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		switch r.URL.RawQuery {
-		case "after=0&limit=1":
-			_, _ = rw.Write([]byte(`{"events":[],"latest_event_id":5}`))
-		case "after=5&limit=200", "after=4&limit=200":
+		case "after=0&limit=200&scan=bounded":
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":5,"scan_truncated":false}`))
+		case "after=5&limit=200&scan=bounded", "after=4&limit=200&scan=bounded":
 			pages.Add(1)
 			_, _ = rw.Write([]byte(events))
 		default:
-			_, _ = rw.Write([]byte(`{"events":[],"latest_event_id":8}`))
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":8,"scan_truncated":false}`))
 		}
 	}))
 	other := clientSlot{dev: 0}
