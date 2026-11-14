@@ -1,57 +1,99 @@
 import 'package:flutter/material.dart';
 
-/// Deterministic avatar tinting for **K2 · Bone**.
+/// Deterministic avatar colours for **K2 · Bone**.
 ///
 /// `docs/design.md` §3 asks for avatars tinted from a hash of the account
 /// ID, so a list has visual anchors instead of one repeated container colour.
-/// It describes that for the coloured directions, where the tint can come off
-/// a hue wheel. Bone cannot do that: it spends **no** accent hue precisely so
-/// that green, amber, red and blue stay free to mean verified, warning, error
-/// and info (`docs/design.md` §K, and `VeritraStateColors`). A rainbow
-/// of avatars would spend all four.
+/// Bone spends **no** accent hue so that green, amber, red and blue stay free
+/// to mean verified, warning, error and info (`docs/design.md` §K, and
+/// `VeritraStateColors`). The avatar palette therefore sits in the gaps
+/// between those state colours: six hues, computed rather than picked, with
+/// the evidence in `testing/evidence/UI-audit-2026-11-14.md` (D131, U39).
 ///
-/// So the tint varies across the five bone *temperatures* that direction
-/// already defines — Chalk, Bone, Greige, Ash, Steel — rather than across
-/// hues. Side by side they read as five distinct materials; none of them
-/// reads as a state colour.
+/// The colour is a hint, never an identity: a look-alike account matches one
+/// time in six. A photo replaces it, and the initials always show on it.
 ///
 /// The bucket is computed locally from the seed. No server data is involved,
-/// and the colour leaks nothing about the seed beyond one of five buckets
+/// and the colour leaks nothing about the seed beyond one of six buckets
 /// over the whole ID space.
 @immutable
-class BoneTint {
-  const BoneTint({
+class AvatarHue {
+  const AvatarHue({
     required this.name,
-    required this.dark,
-    required this.light,
+    required this.darkFill,
+    required this.darkInitials,
+    required this.lightFill,
+    required this.lightInitials,
   });
 
-  /// The temperature's name in `docs/design.md` §K. Carried so the
-  /// table there and this list can be diffed by eye.
+  /// The slot's name in the evidence file, so the table there and this list
+  /// can be diffed by eye.
   final String name;
 
-  /// Near-white, for the plum ground.
-  final Color dark;
+  final Color darkFill;
+  final Color darkInitials;
+  final Color lightFill;
+  final Color lightInitials;
 
-  /// Deep tone of the same temperature, for warm paper.
-  final Color light;
+  Color fillFor(Brightness brightness) =>
+      brightness == Brightness.dark ? darkFill : lightFill;
 
-  Color resolve(Brightness brightness) =>
-      brightness == Brightness.dark ? dark : light;
+  Color initialsFor(Brightness brightness) =>
+      brightness == Brightness.dark ? darkInitials : lightInitials;
 }
 
-/// The five temperatures, in the order `docs/design.md` §K lists them.
-/// Reordering this list re-colours every existing avatar, so don't.
-const List<BoneTint> boneTints = <BoneTint>[
-  BoneTint(name: 'Chalk', dark: Color(0xfff4f4f6), light: Color(0xff332f3a)),
-  BoneTint(name: 'Bone', dark: Color(0xffede4da), light: Color(0xff3a2e42)),
-  BoneTint(name: 'Greige', dark: Color(0xffdcd3c6), light: Color(0xff403528)),
-  BoneTint(name: 'Ash', dark: Color(0xffe4ddea), light: Color(0xff372c43)),
-  BoneTint(name: 'Steel', dark: Color(0xffd8e0e8), light: Color(0xff2c333b)),
+const Color _onLight = Color(0xff16111f);
+const Color _onDark = Color(0xffffffff);
+
+/// The six hues, in the order of the evidence table. Reordering this list, or
+/// changing its length, re-colours every existing avatar, so don't.
+const List<AvatarHue> avatarHues = <AvatarHue>[
+  AvatarHue(
+    name: 'Olive',
+    darkFill: Color(0xff8d9d0a),
+    darkInitials: _onLight,
+    lightFill: Color(0xff90a013),
+    lightInitials: _onLight,
+  ),
+  AvatarHue(
+    name: 'Teal',
+    darkFill: Color(0xff0e9a94),
+    darkInitials: _onLight,
+    lightFill: Color(0xff16aba4),
+    lightInitials: _onLight,
+  ),
+  AvatarHue(
+    name: 'Iris',
+    darkFill: Color(0xff465dbb),
+    darkInitials: _onDark,
+    lightFill: Color(0xff8ca6fb),
+    lightInitials: _onLight,
+  ),
+  AvatarHue(
+    name: 'Lilac',
+    darkFill: Color(0xffa878db),
+    darkInitials: _onLight,
+    lightFill: Color(0xff9868ca),
+    lightInitials: _onLight,
+  ),
+  AvatarHue(
+    name: 'Plum',
+    darkFill: Color(0xff94457d),
+    darkInitials: _onDark,
+    lightFill: Color(0xffe882c8),
+    lightInitials: _onLight,
+  ),
+  AvatarHue(
+    name: 'Ochre',
+    darkFill: Color(0xffa35e16),
+    darkInitials: _onDark,
+    lightFill: Color(0xffe2a16b),
+    lightInitials: _onLight,
+  ),
 ];
 
-BoneTint boneTintFor(String seed) =>
-    boneTints[_bucketOf(seed, boneTints.length)];
+AvatarHue avatarHueFor(String seed) =>
+    avatarHues[_bucketOf(seed, avatarHues.length)];
 
 /// FNV-1a, 32-bit.
 ///
@@ -64,6 +106,20 @@ int _bucketOf(String seed, int count) {
     hash = (hash * 0x01000193) & 0xffffffff;
   }
   return hash % count;
+}
+
+/// Initials of a group's or channel's name for its avatar: the first letter
+/// or digit of up to two words, upper-cased. Null when the name has none, so
+/// the caller falls back to the kind icon rather than a misleading mark.
+String? nameInitials(String? name) {
+  if (name == null) return null;
+  final words = name
+      .split(RegExp(r'[^\p{L}\p{N}]+', unicode: true))
+      .where((word) => word.isNotEmpty);
+  final letters = <String>[
+    for (final word in words.take(2)) word.characters.first.toUpperCase(),
+  ];
+  return letters.isEmpty ? null : letters.join();
 }
 
 /// The three colours an avatar needs, resolved for one seed and the ambient
@@ -83,19 +139,17 @@ class AvatarColors {
 
 /// Avatar colours for [seed].
 ///
-/// The fill is the tint at low alpha rather than solid: a column of solid
-/// near-white circles would blow out the plum ground the direction is built
-/// on — the same argument that keeps Bone's sent bubbles on tone. The glyph
-/// carries the tint at full strength, which is both where the temperature
-/// difference is actually legible and where the contrast is (≈14:1 for
-/// initials on the resulting fill, in both brightnesses).
+/// The fill is solid and the glyph (the initials) is the colour the evidence
+/// file lists for that fill, at 4.5:1 or better in both themes. The ring is
+/// the fill itself: the callers draw one, and a second tone would only blur
+/// the edge.
 AvatarColors avatarColorsFor(BuildContext context, String seed) {
   final brightness = Theme.of(context).brightness;
-  final isDark = brightness == Brightness.dark;
-  final tint = boneTintFor(seed).resolve(brightness);
+  final hue = avatarHueFor(seed);
+  final fill = hue.fillFor(brightness);
   return AvatarColors(
-    fill: tint.withValues(alpha: isDark ? 0.18 : 0.12),
-    ring: tint.withValues(alpha: isDark ? 0.32 : 0.24),
-    glyph: tint,
+    fill: fill,
+    ring: fill,
+    glyph: hue.initialsFor(brightness),
   );
 }

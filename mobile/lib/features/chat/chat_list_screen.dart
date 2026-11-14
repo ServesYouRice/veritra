@@ -645,13 +645,13 @@ String conversationRowSubtitle(
   return parts.join(' · ');
 }
 
-/// Avatar for a conversation row: peer initials for a named DM, otherwise the
-/// kind icon. Decorative in both cases — the title carries the identity.
+/// Avatar for a conversation row: initials for a DM or a named group or
+/// channel, otherwise the kind icon. A photo replaces it. Decorative in every
+/// case — the title carries the identity.
 ///
-/// The tint is derived from the peer's account ID where there is one, so the
+/// The colour is derived from the peer's account ID where there is one, so the
 /// same contact is the same colour everywhere, and from the conversation ID
-/// otherwise. See `ui/avatar.dart` for why it varies by temperature rather
-/// than by hue.
+/// otherwise. See `ui/avatar.dart` for the six hues.
 Widget conversationAvatar(
   BuildContext context,
   Conversation conversation, {
@@ -666,6 +666,13 @@ Widget conversationAvatar(
       : conversation.isGroup
           ? profiles?.conversation(conversation.id)?.photoPng
           : null;
+  // Initials always show on the default avatar (U39): a person's from their
+  // username, a named group's or channel's from its name.
+  final initials = conversation.isDm && peerId != null
+      ? accountInitials(peerId, conversation.peerUsername)
+      : nameInitials(conversation.isGroup
+          ? profiles?.conversation(conversation.id)?.name ?? conversation.title
+          : conversation.title);
   final initial = ExcludeSemantics(
     child: Container(
       width: radius * 2,
@@ -676,9 +683,9 @@ Widget conversationAvatar(
         shape: BoxShape.circle,
         border: Border.all(color: colors.ring),
       ),
-      child: conversation.isDm && peerId != null
+      child: initials != null
           ? Text(
-              accountInitials(peerId, conversation.peerUsername),
+              initials,
               style: TextStyle(
                 fontSize: radius * 0.62,
                 fontWeight: FontWeight.w600,
