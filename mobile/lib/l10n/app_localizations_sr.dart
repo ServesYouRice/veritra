@@ -1466,6 +1466,25 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatListMuted => 'Утишано';
 
   @override
+  String chatPreviewYou(String text) {
+    return 'Ви: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Фотографија';
+
+  @override
+  String get chatPreviewVoiceNote => 'Гласовна порука';
+
+  @override
+  String get chatPreviewPoll => 'Анкета';
+
+  @override
   String chatListDisappearingAfter(String duration) {
     return 'Нестајуће поруке: $duration';
   }
@@ -2839,6 +2858,13 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get w8MentionsMutedDetail =>
       'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
+
+  @override
+  String get chatPreviewsSetting => 'Последња порука у ћаскањима';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Прикажи почетак последње поруке испод сваког ћаскања. Чита се само са овог уређаја.';
 
   @override
   String get b2LinkPreviews => 'Прегледи веза';
@@ -6125,6 +6151,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatListMuted => 'Utišano';
 
   @override
+  String chatPreviewYou(String text) {
+    return 'Vi: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Fotografija';
+
+  @override
+  String get chatPreviewVoiceNote => 'Glasovna poruka';
+
+  @override
+  String get chatPreviewPoll => 'Anketa';
+
+  @override
   String chatListDisappearingAfter(String duration) {
     return 'Nestajuće poruke: $duration';
   }
@@ -7501,6 +7546,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get w8MentionsMutedDetail =>
       'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
+
+  @override
+  String get chatPreviewsSetting => 'Poslednja poruka u ćaskanjima';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Prikaži početak poslednje poruke ispod svakog ćaskanja. Čita se samo sa ovog uređaja.';
 
   @override
   String get b2LinkPreviews => 'Pregledi veza';

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
@@ -17,6 +19,7 @@ import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import '../settings/invite_screen.dart';
+import 'chat_preview.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
 import 'copied_history_screen.dart';
@@ -54,7 +57,8 @@ class ChatListScreen extends StatelessWidget {
       listenable: state,
       select: () => _chatListSelection(state, embedded: embedded),
       equals: listEquals,
-      builder: (context, _, __) => _build(context),
+      builder: (context, _, __) =>
+          _PreviewLoader(state: state, child: _build(context)),
     );
   }
 
@@ -204,6 +208,7 @@ class ChatListScreen extends StatelessWidget {
                     // conversation share a route, and two widgets with one
                     // hero tag is an assertion, not a nicer animation.
                     hero: !embedded,
+                    previews: state,
                     onActions: () => _showRowActions(context, conversation),
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
@@ -544,7 +549,40 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     for (final conversation in conversations) state.requestBucket(conversation),
     state.historyOnlyConversations.isNotEmpty,
     state.profiles?.revision,
+    // Each row follows its own last message (see [_RowSubtitle]); the switch
+    // is here so the list reads the messages again when it is turned on.
+    state.showChatPreviews,
   ];
+}
+
+/// Reads the last message of chats not opened this session from the local
+/// store (U12), now and whenever the list changes. The read is idempotent:
+/// [AppState.loadChatPreviews] skips what it already holds.
+class _PreviewLoader extends StatefulWidget {
+  const _PreviewLoader({required this.state, required this.child});
+
+  final AppState state;
+  final Widget child;
+
+  @override
+  State<_PreviewLoader> createState() => _PreviewLoaderState();
+}
+
+class _PreviewLoaderState extends State<_PreviewLoader> {
+  @override
+  void initState() {
+    super.initState();
+    scheduleMicrotask(widget.state.loadChatPreviews);
+  }
+
+  @override
+  void didUpdateWidget(_PreviewLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    scheduleMicrotask(widget.state.loadChatPreviews);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _ConversationTile extends StatelessWidget {
@@ -554,6 +592,7 @@ class _ConversationTile extends StatelessWidget {
     required this.onActions,
     this.profiles,
     this.showProfileName = true,
+    this.previews,
     this.muted = false,
     this.selected = false,
     this.hero = false,
@@ -562,6 +601,10 @@ class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final ProfileService? profiles;
   final bool showProfileName;
+
+  /// Where this row reads the last message from (U12), or null for a row that
+  /// never quotes one, such as a request.
+  final AppState? previews;
   final VoidCallback onTap;
 
   /// Opens the row's mute/details menu.
@@ -652,11 +695,9 @@ class _ConversationTile extends StatelessWidget {
                           Row(
                             children: <Widget>[
                               Flexible(
-                                child: Text(
-                                  conversationRowSubtitle(l10n, conversation),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodySmall,
+                                child: _RowSubtitle(
+                                  conversation: conversation,
+                                  previews: previews,
                                 ),
                               ),
                               if (retention != null &&
@@ -719,6 +760,44 @@ class _ConversationTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The line under a row's title: "sender: first words" of the last message,
+/// or the kind line when there is none to quote (U12).
+///
+/// It selects its own text, so a new message rebuilds this one line and not the
+/// list around it (T49C-1), and a change of sender name, block or members is
+/// picked up because the text is what is compared.
+class _RowSubtitle extends StatelessWidget {
+  const _RowSubtitle({required this.conversation, required this.previews});
+
+  final Conversation conversation;
+  final AppState? previews;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final style = Theme.of(context).textTheme.bodySmall;
+    Widget line(String text) => Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
+    final state = previews;
+    if (state == null) return line(conversationRowSubtitle(l10n, conversation));
+    return ListenableSelector<String?>(
+      listenable: state,
+      select: () => chatPreviewLine(
+        l10n,
+        state,
+        conversation,
+        state.chatPreviewFor(conversation.id),
+      ),
+      builder: (context, preview, _) =>
+          line(preview ?? conversationRowSubtitle(l10n, conversation)),
     );
   }
 }

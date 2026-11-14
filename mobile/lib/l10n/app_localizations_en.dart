@@ -1456,6 +1456,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatListMuted => 'Muted';
 
   @override
+  String chatPreviewYou(String text) {
+    return 'You: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Photo';
+
+  @override
+  String get chatPreviewVoiceNote => 'Voice note';
+
+  @override
+  String get chatPreviewPoll => 'Poll';
+
+  @override
   String chatListDisappearingAfter(String duration) {
     return 'Disappearing after $duration';
   }
@@ -2821,6 +2840,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get w8MentionsMutedDetail =>
       'Notify when a member mentions you, even in a muted chat.';
+
+  @override
+  String get chatPreviewsSetting => 'Last message on chats';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Show the start of the last message under each chat. It is read from this device only.';
 
   @override
   String get b2LinkPreviews => 'Link previews';

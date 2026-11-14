@@ -2511,6 +2511,36 @@ abstract class AppLocalizations {
   /// **'Muted'**
   String get chatListMuted;
 
+  /// No description provided for @chatPreviewYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You: {text}'**
+  String chatPreviewYou(String text);
+
+  /// No description provided for @chatPreviewFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}: {text}'**
+  String chatPreviewFrom(String name, String text);
+
+  /// No description provided for @chatPreviewPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo'**
+  String get chatPreviewPhoto;
+
+  /// No description provided for @chatPreviewVoiceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice note'**
+  String get chatPreviewVoiceNote;
+
+  /// No description provided for @chatPreviewPoll.
+  ///
+  /// In en, this message translates to:
+  /// **'Poll'**
+  String get chatPreviewPoll;
+
   /// No description provided for @chatListDisappearingAfter.
   ///
   /// In en, this message translates to:
@@ -4616,6 +4646,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Notify when a member mentions you, even in a muted chat.'**
   String get w8MentionsMutedDetail;
+
+  /// No description provided for @chatPreviewsSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Last message on chats'**
+  String get chatPreviewsSetting;
+
+  /// No description provided for @chatPreviewsSettingDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the start of the last message under each chat. It is read from this device only.'**
+  String get chatPreviewsSettingDetail;
 
   /// No description provided for @b2LinkPreviews.
   ///
