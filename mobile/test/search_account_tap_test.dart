@@ -76,7 +76,7 @@ Future<_PeopleState> _openSearch(WidgetTester tester) async {
     supportedLocales: AppLocalizations.supportedLocales,
     home: SearchScreen(state: state),
   ));
-  await tester.tap(find.text('People and communities'));
+  await tester.tap(find.text('People'));
   await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextField), 'peer');
   // The account lookup runs on submit only.
@@ -138,5 +138,19 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  // U35: a heading replaces the per-row badge and there is no inline Block.
+  testWidgets('people results sit under a heading, with no badge or Block',
+      (tester) async {
+    await _openSearch(tester);
+    expect(find.text('People'), findsOneWidget, reason: 'the tab');
+    expect(find.text('PEOPLE'), findsOneWidget,
+        reason: 'the heading over the person');
+    expect(find.byKey(const Key('search-heading-account')), findsOneWidget);
+    expect(find.text('ACCOUNT'), findsNothing, reason: 'no per-row badge');
+    expect(find.byIcon(Icons.block), findsNothing);
+    expect(find.byTooltip('Block Samuel'), findsNothing);
+    expect(find.text('People and communities'), findsNothing);
   });
 }

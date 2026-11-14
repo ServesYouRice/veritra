@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/errors.dart';
@@ -13,6 +14,29 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../chat/chat_list_screen.dart' show conversationTitle;
+
+/// A person by the name they shared (W11) and the account label, as the
+/// owner's device knows them; the short account ID when nobody here does.
+String _personName(AppState state, String accountId) {
+  final username = state.conversations
+      .expand((c) => state.membersFor(c.id))
+      .where((m) => m.accountId == accountId)
+      .firstOrNull
+      ?.username;
+  final label = accountLabel(accountId, username);
+  final profile = state.profileNameOf(accountId);
+  return profile == null ? label : '$profile ($label)';
+}
+
+/// The chat or channel a report came from, when this device has it (an
+/// owner who is not in the chat has no name for it).
+String? _placeName(BuildContext context, AppState state, String id) {
+  final conversation = state.conversations.where((c) => c.id == id).firstOrNull;
+  return conversation == null
+      ? null
+      : conversationTitle(context.l10n, conversation, profiles: state.profiles);
+}
 
 /// C6 step 4: the instance owner's report inbox (docs/designs/C6-reports-
 /// franking.md, D95). Shows this device's report key (its code, for people
@@ -123,8 +147,8 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
     if (service == null) return;
     final dismissed = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) =>
-            OwnerReportDetailScreen(service: service, report: report),
+        builder: (_) => OwnerReportDetailScreen(
+            service: service, report: report, state: widget.state),
       ),
     );
     if (dismissed == true && mounted) await _load();
@@ -143,9 +167,12 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
             : reports == null || key == null
                 ? const Center(child: CircularProgressIndicator.adaptive())
                 : ListView(
+                    // The 16 dp side gutter every screen shares.
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: BoneSpacing.gutter),
                     children: <Widget>[
-                      SectionHeader(l10n.c6ReportsKeySection),
-                      _keyTile(context, key),
+                      // The inbox leads with the reports; the report key is
+                      // set-up and comes after them.
                       SectionHeader(l10n.c6ReportsTitle),
                       if (reports.isEmpty)
                         EmptyState(
@@ -168,11 +195,16 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              subtitle: Text(l10n.c6ReportsFiled(formatDateTime(
-                                  context, report.row.createdAt))),
+                              subtitle: Text(l10n.c6ReportsFiledBy(
+                                  _personName(widget.state,
+                                      report.row.reporterAccountId),
+                                  formatDateTime(
+                                      context, report.row.createdAt))),
                               onTap: () => _openDetail(report),
                             ),
                         ]),
+                      SectionHeader(l10n.c6ReportsKeySection),
+                      _keyTile(context, key),
                       if (widget.communityId == null) ...<Widget>[
                         SectionHeader(l10n.c6ReportsCommunity),
                         TileGroup(children: <Widget>[
@@ -184,6 +216,7 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                           ),
                         ]),
                       ],
+                      const SizedBox(height: BoneSpacing.lg),
                     ],
                   ),
       ),
@@ -253,11 +286,16 @@ class OwnerReportDetailScreen extends StatefulWidget {
   const OwnerReportDetailScreen({
     required this.service,
     required this.report,
+    this.state,
     super.key,
   });
 
   final ReportsService service;
   final OpenedReport report;
+
+  /// Gives names to the reporter, the sender and the chat. Without it the
+  /// short account ID stands in.
+  final AppState? state;
 
   @override
   State<OwnerReportDetailScreen> createState() =>
@@ -283,6 +321,20 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
     } finally {
       if (mounted) setState(() => _checking = false);
     }
+  }
+
+  String _name(String accountId) {
+    final state = widget.state;
+    return state == null ? shortId(accountId) : _personName(state, accountId);
+  }
+
+  Future<void> _copyText() async {
+    final text = widget.report.text;
+    if (text == null) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(context.l10n.c6ReportsCopied)));
   }
 
   Future<void> _dismiss() async {
@@ -329,7 +381,13 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
             Text(l10n.c6ReportsFiled(formatDateTime(context, row.createdAt)),
                 style: theme.textTheme.labelLarge),
             const SizedBox(height: BoneSpacing.sm),
-            Text(l10n.c6ReportsReporter(shortId(row.reporterAccountId))),
+            Text(l10n.c6ReportsReporter(_name(row.reporterAccountId))),
+            if (widget.state case final state?)
+              if (_placeName(context, state, row.conversationId)
+                  case final place?) ...<Widget>[
+                const SizedBox(height: BoneSpacing.xs),
+                Text(l10n.c6ReportsWhere(place)),
+              ],
             const SizedBox(height: BoneSpacing.lg),
             if (lockedText != null)
               Text(lockedText)
@@ -348,25 +406,15 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
               const SizedBox(height: BoneSpacing.lg),
               if (_verification case final verification?)
                 ..._verdict(context, verification)
-              else ...<Widget>[
+              else
                 Text(l10n.c6ReportsCheckNote, style: theme.textTheme.bodySmall),
-                const SizedBox(height: BoneSpacing.sm),
-                FilledButton(
-                  onPressed: _checking ? null : _check,
-                  child: Text(
-                      _checking ? l10n.c6ReportsChecking : l10n.c6ReportsCheck),
-                ),
-              ],
             ],
             if (_error != null) ...<Widget>[
               const SizedBox(height: BoneSpacing.md),
               Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
             ],
             const SizedBox(height: BoneSpacing.xl),
-            OutlinedButton(
-              onPressed: _dismiss,
-              child: Text(l10n.c6ReportsDismiss),
-            ),
+            _actions(context),
           ],
         ),
       ),
@@ -418,17 +466,86 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
         ),
     };
     final record = result.record;
+    final theme = Theme.of(context);
     return <Widget>[
       Align(
         alignment: AlignmentDirectional.centerStart,
         child: StatusPill(label: label, tone: tone, uppercase: false),
       ),
       const SizedBox(height: BoneSpacing.sm),
-      Text(detail),
+      // A plain verdict above; the careful wording is one tap away, never
+      // dropped. A match shows the server's record agrees, no more (C6).
+      Theme(
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const Key('report-why-not-certain'),
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          expandedAlignment: Alignment.centerLeft,
+          title: Text(l10n.c6ReportsWhyNotCertain),
+          children: <Widget>[
+            Text(detail),
+            const SizedBox(height: BoneSpacing.sm),
+            Text(l10n.c6ReportsWhyNotCertainCommon),
+            const SizedBox(height: BoneSpacing.sm),
+          ],
+        ),
+      ),
       if (record != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.sm),
-        Text(l10n.c6ReportsSender(shortId(record.senderAccountId))),
+        Text(l10n.c6ReportsSender(_name(record.senderAccountId))),
       ],
     ];
+  }
+
+  /// Dismiss, with the next step beside it: check the report first, then,
+  /// when it holds up, keep the text; a report nothing backs up says so.
+  Widget _actions(BuildContext context) {
+    final l10n = context.l10n;
+    final report = widget.report;
+    final verdict = _verification?.verdict;
+    final holdsUp = verdict == ReportVerdict.verified ||
+        verdict == ReportVerdict.verifiedServerTrusted ||
+        verdict == ReportVerdict.senderUnverified;
+    final Widget? next;
+    if (!report.isOpen) {
+      next = null;
+    } else if (verdict == null) {
+      next = FilledButton(
+        key: const Key('report-next-check'),
+        onPressed: _checking ? null : _check,
+        child: Text(_checking ? l10n.c6ReportsChecking : l10n.c6ReportsCheck),
+      );
+    } else if (holdsUp && report.text != null) {
+      next = FilledButton(
+        key: const Key('report-next-copy'),
+        onPressed: _copyText,
+        child: Text(l10n.c6ReportsCopyText),
+      );
+    } else {
+      next = null;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (verdict != null && !holdsUp) ...<Widget>[
+          Text(l10n.c6ReportsNothingBacksUp),
+          const SizedBox(height: BoneSpacing.sm),
+        ],
+        Wrap(
+          spacing: BoneSpacing.sm,
+          runSpacing: BoneSpacing.sm,
+          alignment: WrapAlignment.end,
+          children: <Widget>[
+            OutlinedButton(
+              key: const Key('report-dismiss'),
+              onPressed: _dismiss,
+              child: Text(l10n.c6ReportsDismiss),
+            ),
+            if (next != null) next,
+          ],
+        ),
+      ],
+    );
   }
 }

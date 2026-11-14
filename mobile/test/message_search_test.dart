@@ -533,7 +533,7 @@ void main() {
 
       // Switching mode never carries the words over to the server: the field
       // is cleared and nothing is asked until something new is typed.
-      await tester.tap(find.text('People and communities'));
+      await tester.tap(find.text('People'));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();

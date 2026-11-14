@@ -233,6 +233,9 @@
   "searchTypeCommunity": "Zajednica",
   "searchTypeChannel": "Kanal",
   "searchTypeAccount": "Nalog",
+  "searchHeadingCommunities": "Zajednice",
+  "searchHeadingChannels": "Kanali",
+  "searchHeadingConversations": "Razgovori",
   "searchUnblockAccount": "Deblokiraj {label}",
   "searchBlockAccount": "Blokiraj {label}",
   "searchBlocked": "Nalog {label} je blokiran.",
@@ -696,7 +699,7 @@
   "emojiGroupSymbols": "Simboli",
   "emojiGroupFlags": "Zastave",
   "searchModeMessages": "Poruke",
-  "searchModePeople": "Ljudi i zajednice",
+  "searchModePeople": "Ljudi",
   "searchMessagesHint": "Pretražite poruke na ovom uređaju…",
   "searchMessagesIntroTitle": "Pretraga ovog uređaja",
   "searchMessagesIntroMessage": "Nalazi tekst u porukama koje ovaj uređaj čuva. Pretraga se odvija ovde i nikada se ne šalje serveru.",
@@ -929,6 +932,7 @@
   "callCameraOff": "Isključi kameru",
   "callCameraOn": "Uključi kameru",
   "callDismiss": "Zatvori",
+  "callBack": "Uzvrati poziv",
   "callNoticeMissed": "Propušten poziv: {name}",
   "@callNoticeMissed": {
     "placeholders": {
@@ -1059,17 +1063,41 @@
   "c6ReportsCommunity": "Prijave zajednice",
   "c6ReportsCommunityUnavailable": "Prijave u zajednici idu njenim moderatorima. Moderator ih otvara iz zajednice.",
   "c6ReportsFiled": "Prijavljeno {when}",
+  "c6ReportsFiledBy": "Prijavio: {reporter}, {when}",
+  "@c6ReportsFiledBy": {
+    "placeholders": {
+      "reporter": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "c6ReportsWhere": "U: {place}",
+  "@c6ReportsWhere": {
+    "placeholders": {
+      "place": {
+        "type": "String"
+      }
+    }
+  },
   "c6ReportsLocked": "Ne može da se otvori",
   "c6ReportsLockedNoSeed": "Ovaj uređaj nema ključ za prijave, pa ne može da otvori ovu prijavu. Otvori je na uređaju koji je napravio tvoj ključ.",
   "c6ReportsLockedOtherKey": "Poslato na stariji ključ za prijave koji ovaj uređaj ne drži.",
   "c6ReportsLockedDamaged": "Ova prijava je oštećena ili nije bila namenjena tebi.",
   "c6ReportsMessageLabel": "Prijavljena poruka",
   "c6ReportsNoText": "Nije tekstualna poruka. Njeni podaci, uključujući ključ kojim se datoteka otvara, nalaze se u prijavi, ali ne i sama datoteka.",
-  "c6ReportsReporter": "Prijavio nalog {account}",
-  "c6ReportsSender": "Poslao nalog {account}",
+  "c6ReportsReporter": "Prijavio: {account}",
+  "c6ReportsSender": "Poslao: {account}",
   "c6ReportsCheck": "Proveri prema zapisima servera",
   "c6ReportsChecking": "Proveravam…",
   "c6ReportsCheckNote": "Proverom server saznaje o kojoj se poruci radi u ovoj prijavi.",
+  "c6ReportsWhyNotCertain": "Zašto nije sigurno?",
+  "c6ReportsWhyNotCertainCommon": "Čak i poklapanje pokazuje samo da se zapis servera slaže da je ovaj nalog poslao tačno ovu poruku u ovom razgovoru. Ne pokazuje šta je bilo pre ili posle nje, ni šta je njome mišljeno, i pouzdano je samo koliko i taj zapis.",
+  "c6ReportsCopyText": "Kopiraj tekst poruke",
+  "c6ReportsCopied": "Tekst poruke je kopiran.",
+  "c6ReportsNothingBacksUp": "Ovde ništa ne potvrđuje ovu prijavu. Možete da je odbacite.",
   "c6VerdictVerified": "Poklapa se sa zapisom servera",
   "c6VerdictVerifiedDetail": "Server je zabeležio baš ovu poruku ovog pošiljaoca u ovom razgovoru. To je pouzdano samo koliko i sopstveni zapis servera.",
   "c6VerdictMismatch": "Ne poklapa se",

@@ -16,7 +16,9 @@ import '../../crypto/crypto_service.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
-import '../chat/chat_list_screen.dart' show conversationTitle;
+import '../../core/models.dart' show Conversation;
+import '../chat/chat_list_screen.dart'
+    show conversationAvatar, conversationTitle;
 
 /// Demo builds only (D11): owns the [NativeCallService] and [CallController]
 /// for the signed-in session and draws incoming-call, call and notice UI
@@ -162,7 +164,11 @@ class _CallHostState extends State<CallHost> {
   Widget _overlay(BuildContext context, CallController controller) {
     final title = _title(context, controller);
     if (controller.phase != CallPhase.idle) {
-      return CallScreen(controller: controller, title: title);
+      return CallScreen(
+        controller: controller,
+        title: title,
+        avatar: _avatarFor(context, controller.conversationId, 48),
+      );
     }
     final notice = controller.notice;
     if (notice == null) return const SizedBox.shrink();
@@ -174,6 +180,15 @@ class _CallHostState extends State<CallHost> {
           child: CallNoticeCard(
             notice: notice,
             title: _titleFor(context, notice.conversationId),
+            avatar: _avatarFor(context, notice.conversationId, 20),
+            onCallBack: notice.kind == CallNoticeKind.missed &&
+                    _conversationOf(notice.conversationId) != null
+                ? () {
+                    final id = notice.conversationId;
+                    controller.dismissNotice();
+                    unawaited(controller.start(id));
+                  }
+                : null,
             onDismiss: controller.dismissNotice,
           ),
         ),
@@ -184,13 +199,29 @@ class _CallHostState extends State<CallHost> {
   String _title(BuildContext context, CallController controller) =>
       _titleFor(context, controller.conversationId);
 
+  Conversation? _conversationOf(String? conversationId) =>
+      widget.state.conversations
+          .where((c) => c.id == conversationId)
+          .firstOrNull;
+
+  /// The chat's display name: the name the person shared (W11), else the
+  /// chat title, never a bare username.
   String _titleFor(BuildContext context, String? conversationId) {
-    final conversation = widget.state.conversations
-        .where((c) => c.id == conversationId)
-        .firstOrNull;
+    final conversation = _conversationOf(conversationId);
     return conversation == null
         ? context.l10n.callUnknownContact
-        : conversationTitle(context.l10n, conversation);
+        : conversationTitle(context.l10n, conversation,
+            profiles: widget.state.profiles);
+  }
+
+  /// The chat's photo, or its coloured initials; null for an unknown chat.
+  Widget? _avatarFor(
+      BuildContext context, String? conversationId, double radius) {
+    final conversation = _conversationOf(conversationId);
+    return conversation == null
+        ? null
+        : conversationAvatar(context, conversation,
+            radius: radius, profiles: widget.state.profiles);
   }
 }
 
@@ -200,11 +231,19 @@ class CallNoticeCard extends StatelessWidget {
       {required this.notice,
       required this.title,
       required this.onDismiss,
+      this.avatar,
+      this.onCallBack,
       super.key});
 
   final CallNotice notice;
   final String title;
   final VoidCallback onDismiss;
+
+  /// The chat's photo or initials, shown in place of the status icon.
+  final Widget? avatar;
+
+  /// Set on a missed call: starts a voice call back to the same chat.
+  final VoidCallback? onCallBack;
 
   @override
   Widget build(BuildContext context) {
@@ -228,9 +267,15 @@ class CallNoticeCard extends StatelessWidget {
             horizontal: BoneSpacing.lg, vertical: BoneSpacing.sm),
         child: Row(
           children: <Widget>[
-            Icon(icon),
+            avatar ?? Icon(icon),
             const SizedBox(width: BoneSpacing.md),
             Expanded(child: Text(text, key: const Key('call-notice-text'))),
+            if (onCallBack != null)
+              TextButton(
+                key: const Key('call-notice-call-back'),
+                onPressed: onCallBack,
+                child: Text(l10n.callBack),
+              ),
             TextButton(
               key: const Key('call-notice-dismiss'),
               onPressed: onDismiss,
@@ -245,10 +290,15 @@ class CallNoticeCard extends StatelessWidget {
 
 /// Full-screen incoming, outgoing and in-call UI.
 class CallScreen extends StatefulWidget {
-  const CallScreen({required this.controller, required this.title, super.key});
+  const CallScreen(
+      {required this.controller, required this.title, this.avatar, super.key});
 
   final CallController controller;
   final String title;
+
+  /// The chat's photo or initials (radius 48). Without one the first letter
+  /// of [title] is drawn.
+  final Widget? avatar;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -333,7 +383,10 @@ class _CallScreenState extends State<CallScreen> {
               Column(
                 children: <Widget>[
                   const SizedBox(height: BoneSpacing.xl * 2),
-                  if (!showVideo)
+                  if (!showVideo && widget.avatar != null)
+                    KeyedSubtree(
+                        key: const Key('call-avatar'), child: widget.avatar!)
+                  else if (!showVideo)
                     CircleAvatar(
                         radius: 48,
                         child: Text(
@@ -460,21 +513,30 @@ class _RoundButton extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        IconButton.filled(
-          iconSize: 28,
-          style: IconButton.styleFrom(
-            minimumSize: const Size(64, 64),
-            backgroundColor: color ??
-                (selected ? scheme.primary : scheme.surfaceContainerHighest),
-            foregroundColor: color != null
-                ? Colors.white
-                : (selected ? scheme.onPrimary : scheme.onSurface),
-          ),
-          onPressed: onPressed,
-          icon: Icon(icon),
-        ),
+        // A tooltip would need an Overlay, which this host's routes lack;
+        // the label is spoken through Semantics instead.
+        Semantics(
+            container: true,
+            label: label,
+            child: IconButton.filled(
+              iconSize: 28,
+              style: IconButton.styleFrom(
+                minimumSize: const Size(64, 64),
+                backgroundColor: color ??
+                    (selected
+                        ? scheme.primary
+                        : scheme.surfaceContainerHighest),
+                foregroundColor: color != null
+                    ? Colors.white
+                    : (selected ? scheme.onPrimary : scheme.onSurface),
+              ),
+              onPressed: onPressed,
+              icon: Icon(icon),
+            )),
         const SizedBox(height: BoneSpacing.xs),
-        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        // The button's own label already speaks the name.
+        ExcludeSemantics(
+            child: Text(label, style: Theme.of(context).textTheme.labelMedium)),
       ],
     );
   }

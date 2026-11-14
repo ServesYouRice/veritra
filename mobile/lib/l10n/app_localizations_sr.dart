@@ -799,6 +799,15 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchTypeAccount => 'Налог';
 
   @override
+  String get searchHeadingCommunities => 'Заједнице';
+
+  @override
+  String get searchHeadingChannels => 'Канали';
+
+  @override
+  String get searchHeadingConversations => 'Разговори';
+
+  @override
   String searchUnblockAccount(String label) {
     return 'Деблокирај $label';
   }
@@ -869,8 +878,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -881,8 +891,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1210,16 +1221,13 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'на чекању',
-        'claimed': 'преузето',
-        'approved': 'одобрено',
-        'expired': 'истекло',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'на чекању',
+      'claimed': 'преузето',
+      'approved': 'одобрено',
+      'expired': 'истекло',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1408,8 +1416,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1417,8 +1426,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1428,7 +1438,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+          locale: localeName,
+          decimalDigits: 1,
+        );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2060,8 +2072,9 @@ class AppLocalizationsSr extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -2624,7 +2637,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchModeMessages => 'Поруке';
 
   @override
-  String get searchModePeople => 'Људи и заједнице';
+  String get searchModePeople => 'Људи';
 
   @override
   String get searchMessagesHint => 'Претражите поруке на овом уређају…';
@@ -3415,6 +3428,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get callDismiss => 'Затвори';
 
   @override
+  String get callBack => 'Узврати позив';
+
+  @override
   String callNoticeMissed(String name) {
     return 'Пропуштен позив: $name';
   }
@@ -3783,6 +3799,16 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String c6ReportsFiledBy(String reporter, String when) {
+    return 'Пријавио: $reporter, $when';
+  }
+
+  @override
+  String c6ReportsWhere(String place) {
+    return 'У: $place';
+  }
+
+  @override
   String get c6ReportsLocked => 'Не може да се отвори';
 
   @override
@@ -3806,12 +3832,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String c6ReportsReporter(String account) {
-    return 'Пријавио налог $account';
+    return 'Пријавио: $account';
   }
 
   @override
   String c6ReportsSender(String account) {
-    return 'Послао налог $account';
+    return 'Послао: $account';
   }
 
   @override
@@ -3823,6 +3849,23 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get c6ReportsCheckNote =>
       'Провером сервер сазнаје о којој се поруци ради у овој пријави.';
+
+  @override
+  String get c6ReportsWhyNotCertain => 'Зашто није сигурно?';
+
+  @override
+  String get c6ReportsWhyNotCertainCommon =>
+      'Чак и поклапање показује само да се запис сервера слаже да је овај налог послао тачно ову поруку у овом разговору. Не показује шта је било пре или после ње, ни шта је њоме мишљено, и поуздано је само колико и тај запис.';
+
+  @override
+  String get c6ReportsCopyText => 'Копирај текст поруке';
+
+  @override
+  String get c6ReportsCopied => 'Текст поруке је копиран.';
+
+  @override
+  String get c6ReportsNothingBacksUp =>
+      'Овде ништа не потврђује ову пријаву. Можете да је одбаците.';
 
   @override
   String get c6VerdictVerified => 'Поклапа се са записом сервера';
@@ -5475,6 +5518,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchTypeAccount => 'Nalog';
 
   @override
+  String get searchHeadingCommunities => 'Zajednice';
+
+  @override
+  String get searchHeadingChannels => 'Kanali';
+
+  @override
+  String get searchHeadingConversations => 'Razgovori';
+
+  @override
   String searchUnblockAccount(String label) {
     return 'Deblokiraj $label';
   }
@@ -5545,8 +5597,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5557,8 +5610,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5886,16 +5940,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'na čekanju',
-        'claimed': 'preuzeto',
-        'approved': 'odobreno',
-        'expired': 'isteklo',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'na čekanju',
+      'claimed': 'preuzeto',
+      'approved': 'odobreno',
+      'expired': 'isteklo',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -6084,8 +6135,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -6093,8 +6145,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -6104,7 +6157,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+          locale: localeName,
+          decimalDigits: 1,
+        );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -6736,8 +6791,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -7303,7 +7359,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchModeMessages => 'Poruke';
 
   @override
-  String get searchModePeople => 'Ljudi i zajednice';
+  String get searchModePeople => 'Ljudi';
 
   @override
   String get searchMessagesHint => 'Pretražite poruke na ovom uređaju…';
@@ -8095,6 +8151,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get callDismiss => 'Zatvori';
 
   @override
+  String get callBack => 'Uzvrati poziv';
+
+  @override
   String callNoticeMissed(String name) {
     return 'Propušten poziv: $name';
   }
@@ -8463,6 +8522,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String c6ReportsFiledBy(String reporter, String when) {
+    return 'Prijavio: $reporter, $when';
+  }
+
+  @override
+  String c6ReportsWhere(String place) {
+    return 'U: $place';
+  }
+
+  @override
   String get c6ReportsLocked => 'Ne može da se otvori';
 
   @override
@@ -8486,12 +8555,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String c6ReportsReporter(String account) {
-    return 'Prijavio nalog $account';
+    return 'Prijavio: $account';
   }
 
   @override
   String c6ReportsSender(String account) {
-    return 'Poslao nalog $account';
+    return 'Poslao: $account';
   }
 
   @override
@@ -8503,6 +8572,23 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6ReportsCheckNote =>
       'Proverom server saznaje o kojoj se poruci radi u ovoj prijavi.';
+
+  @override
+  String get c6ReportsWhyNotCertain => 'Zašto nije sigurno?';
+
+  @override
+  String get c6ReportsWhyNotCertainCommon =>
+      'Čak i poklapanje pokazuje samo da se zapis servera slaže da je ovaj nalog poslao tačno ovu poruku u ovom razgovoru. Ne pokazuje šta je bilo pre ili posle nje, ni šta je njome mišljeno, i pouzdano je samo koliko i taj zapis.';
+
+  @override
+  String get c6ReportsCopyText => 'Kopiraj tekst poruke';
+
+  @override
+  String get c6ReportsCopied => 'Tekst poruke je kopiran.';
+
+  @override
+  String get c6ReportsNothingBacksUp =>
+      'Ovde ništa ne potvrđuje ovu prijavu. Možete da je odbacite.';
 
   @override
   String get c6VerdictVerified => 'Poklapa se sa zapisom servera';

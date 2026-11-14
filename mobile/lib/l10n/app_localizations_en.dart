@@ -794,6 +794,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchTypeAccount => 'Account';
 
   @override
+  String get searchHeadingCommunities => 'Communities';
+
+  @override
+  String get searchHeadingChannels => 'Channels';
+
+  @override
+  String get searchHeadingConversations => 'Conversations';
+
+  @override
   String searchUnblockAccount(String label) {
     return 'Unblock $label';
   }
@@ -863,8 +872,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -875,8 +885,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1200,16 +1211,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'pending',
-        'claimed': 'claimed',
-        'approved': 'approved',
-        'expired': 'expired',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'pending',
+      'claimed': 'claimed',
+      'approved': 'approved',
+      'expired': 'expired',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1398,8 +1406,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1407,8 +1416,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1418,7 +1428,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+          locale: localeName,
+          decimalDigits: 1,
+        );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2045,8 +2057,9 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -2607,7 +2620,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchModeMessages => 'Messages';
 
   @override
-  String get searchModePeople => 'People and communities';
+  String get searchModePeople => 'People';
 
   @override
   String get searchMessagesHint => 'Search messages on this device…';
@@ -3402,6 +3415,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get callDismiss => 'Dismiss';
 
   @override
+  String get callBack => 'Call back';
+
+  @override
   String callNoticeMissed(String name) {
     return 'Missed call from $name';
   }
@@ -3767,6 +3783,16 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String c6ReportsFiledBy(String reporter, String when) {
+    return 'Reported by $reporter, $when';
+  }
+
+  @override
+  String c6ReportsWhere(String place) {
+    return 'In $place';
+  }
+
+  @override
   String get c6ReportsLocked => 'Cannot open';
 
   @override
@@ -3790,12 +3816,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String c6ReportsReporter(String account) {
-    return 'Reported by account $account';
+    return 'Reported by $account';
   }
 
   @override
   String c6ReportsSender(String account) {
-    return 'Sent by account $account';
+    return 'Sent by $account';
   }
 
   @override
@@ -3807,6 +3833,23 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get c6ReportsCheckNote =>
       'Checking tells the server which message this report is about.';
+
+  @override
+  String get c6ReportsWhyNotCertain => 'Why not certain?';
+
+  @override
+  String get c6ReportsWhyNotCertainCommon =>
+      'Even a match shows only that the server\'s record agrees this account sent this exact message in this conversation. It cannot show what came before or after it, or what was meant, and it is only as trustworthy as that record.';
+
+  @override
+  String get c6ReportsCopyText => 'Copy message text';
+
+  @override
+  String get c6ReportsCopied => 'Message text copied.';
+
+  @override
+  String get c6ReportsNothingBacksUp =>
+      'Nothing here backs this report up. You can dismiss it.';
 
   @override
   String get c6VerdictVerified => 'Matches the server record';
