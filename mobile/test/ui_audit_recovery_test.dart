@@ -552,6 +552,115 @@ void main() {
       state.dispose();
     });
 
+    Finder back() => find.byKey(const ValueKey<String>('follow-up-back'));
+    Finder anyBack() => find.byIcon(Icons.arrow_back);
+
+    testWidgets('Back from the key step returns to the restore step, and on',
+        (tester) async {
+      phone(tester);
+      crypto = K0RestoringCrypto();
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.recoveryKey;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      expect(find.text('Step 2 of 3'), findsOneWidget);
+      expect(back(), findsOneWidget);
+
+      await tester.tap(back());
+      await tester.pumpAndSettle();
+      expect(find.text('Step 1 of 3'), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('follow-up-restore')),
+          findsOneWidget);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(await store.loadSetting('k0.recovery_follow_up'),
+          'acct_me\u0000dev_old\u0000restore');
+      // The first step has nothing before it.
+      expect(back(), findsNothing);
+      expect(anyBack(), findsNothing);
+
+      // Forward again goes through the same skip warning.
+      await tester
+          .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
+      await tester.pumpAndSettle();
+      expect(
+          find.textContaining('older backups become unusable'), findsOneWidget);
+      await tester.tap(
+          find.byKey(const ValueKey<String>('follow-up-restore-skip-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.text('Step 2 of 3'), findsOneWidget);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(back(), findsOneWidget);
+
+      // Back and forth made no key and replaced nothing.
+      expect(crypto.handedOut, isEmpty);
+      expect(server.puts, isEmpty);
+      expect(server.passwords, isEmpty);
+      state.dispose();
+    });
+
+    testWidgets('no step Back while a new key is held', (tester) async {
+      phone(tester);
+      crypto = K0RestoringCrypto();
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.recoveryKey;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create a recovery key'));
+      await tester.pumpAndSettle();
+      expect(back(), findsNothing);
+      // The key's own Back keeps the key; the step stays.
+      await tester.tap(find.byKey(const ValueKey<String>('recovery-key-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey<String>('recovery-key-show-draft')),
+          findsOneWidget);
+      expect(back(), findsNothing,
+          reason: 'leaving would drop a key that may be written down');
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      state.dispose();
+    });
+
+    testWidgets('a saved key leads to the password step, which has no Back',
+        (tester) async {
+      phone(tester);
+      crypto = K0RestoringCrypto();
+      server.requireRecentAuth = false;
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.recoveryKey;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create a recovery key'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('I have saved it'));
+      await tester.pumpAndSettle();
+      await tester.enterText(confirmField(), k0Display);
+      await tester.tap(find.text('Save recovery key'));
+      await tester.pumpAndSettle();
+      expect(server.puts, hasLength(1));
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(find.text('Step 3 of 3'), findsOneWidget);
+      // The new key is on the server and wiped here: going back could
+      // only replace it again.
+      expect(back(), findsNothing);
+      expect(anyBack(), findsNothing);
+      expect(find.byType(BackButton), findsNothing);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(server.puts, hasLength(1));
+      state.dispose();
+    });
+
+    testWidgets('without the restore, the key step is first and has no Back',
+        (tester) async {
+      phone(tester);
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.recoveryKey;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      expect(state.k1RestoreSupported, isFalse);
+      expect(find.text('Step 1 of 2'), findsOneWidget);
+      expect(back(), findsNothing);
+      state.dispose();
+    });
+
     testWidgets('one toggle shows both new-password fields', (tester) async {
       phone(tester);
       final state = signedIn()

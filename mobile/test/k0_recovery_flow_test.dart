@@ -3,31 +3,12 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/crypto/native_crypto_bindings.dart'
-    show BackupHeaderInfo, OpenedBackup;
-import 'dart:typed_data';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, PendingEnrollmentConflict;
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'k0_recovery_fakes.dart';
-
-/// A build that can open K1 backups: the recovery follow-up then starts with
-/// the restore step (K1-4).
-class _RestoringCrypto extends K0Crypto implements BackupOpenCryptoService {
-  @override
-  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
-
-  @override
-  Future<OpenedBackup> openK1Backup({
-    required Uint8List ciphertext,
-    required Uint8List entropy,
-    required String accountId,
-    String? sourceDeviceId,
-  }) async =>
-      throw UnimplementedError();
-}
 
 /// K0 R3 (recovery key setup) and R4 (recovery when every device is lost)
 /// through AppState against a fake server (docs/designs/K0-recovery-
@@ -418,7 +399,7 @@ void main() {
     test('with backups to restore, the follow-up starts at the restore step',
         () async {
       state.dispose();
-      crypto = _RestoringCrypto();
+      crypto = K0RestoringCrypto();
       state = k0App(server, store, crypto, apis: apis);
       await claim();
       server.statusAnswers.add(const AccountRecoveryStatus(
@@ -469,6 +450,173 @@ void main() {
       expect(state.pendingAccountRecovery, isNull);
       expect(await persisted(), isNull);
       expect(crypto.abandons, 1);
+    });
+  });
+
+  group('U23: Back in the follow-up', () {
+    /// A recovery that finished on a build with ([restore]) or without the
+    /// K1 restore.
+    Future<void> recovered({required bool restore}) async {
+      state.dispose();
+      crypto = restore ? K0RestoringCrypto() : K0Crypto();
+      state = k0App(server, store, crypto, apis: apis);
+      await claim();
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completed,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        token: 'tok_new',
+      ));
+      expect(await state.checkAccountRecovery(), isTrue,
+          reason: state.errorFor(Ops.accountRecovery));
+    }
+
+    /// The app killed and started again, on [build] when it changed.
+    Future<void> restart([K0Crypto? build]) async {
+      state.dispose();
+      if (build != null) crypto = build;
+      state = k0App(server, store, crypto, apis: apis);
+      await state.tryRestoreSession();
+    }
+
+    Future<void> saveKey() async {
+      final draft = await state.createRecoveryKeyDraft();
+      if (!server.recentAuth) await state.reauthenticate('pw');
+      expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
+      draft.dispose();
+    }
+
+    test('back from the key to the restore, and forward, across restarts',
+        () async {
+      await recovered(restore: true);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      // The restore step is the first: nothing before it to go back to.
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+
+      await state.finishRecoveryRestoreStep();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      expect(await state.backToRecoveryRestoreStep(), isTrue);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+
+      // The step Back stored is the one a restart opens.
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+
+      await state.finishRecoveryRestoreStep();
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      // Going back and forth replaced nothing.
+      expect(server.puts, isEmpty);
+      expect(server.passwords, isEmpty);
+    });
+
+    test('no Back once the key is replaced: it is never replaced twice',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await saveKey();
+      expect(server.puts, hasLength(1));
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+
+      await state.changePassword('a new long password');
+      expect(state.recoveryFollowUp, isNull);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, isNull);
+      expect(server.puts, hasLength(1));
+      expect(server.passwords, <String>['a new long password']);
+      // The end of the follow-up also ends its restore flag.
+      expect(await store.loadSetting('k0.recovery_follow_up'), '');
+      expect(await store.loadSetting('k0.recovery_follow_up_restore'), '');
+    });
+
+    test('Back waits behind a key save in flight and then refuses', () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      server.requireRecentAuth = false;
+      final draft = await state.createRecoveryKeyDraft();
+      final saving = state.saveRecoveryKey(draft);
+      final back = state.backToRecoveryRestoreStep();
+      expect(await saving, RecoveryActionResult.done);
+      expect(await back, isFalse);
+      draft.dispose();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(server.puts, hasLength(1));
+    });
+
+    test('without the restore there is no Back, and two steps', () async {
+      await recovered(restore: false);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+
+      // A later build that can restore does not add a step mid-way.
+      await restart(K0RestoringCrypto());
+      expect(state.k1RestoreSupported, isTrue);
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+    });
+
+    test('a build that can no longer restore keeps the count, offers no Back',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await restart(K0Crypto());
+      expect(state.k1RestoreSupported, isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      // Still step 2 of 3: the restore step was part of this follow-up.
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+    });
+
+    test('a restore step open on a build that cannot restore stays open',
+        () async {
+      await recovered(restore: true);
+      await restart(K0Crypto());
+      // Never skipped silently: the user still restores elsewhere or skips
+      // with the warning.
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+    });
+
+    test('a follow-up from an earlier build reads as before', () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      // As an earlier build left it: no restore flag.
+      await store.saveSetting('k0.recovery_follow_up_restore', '');
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      await restart(K0Crypto());
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+    });
+
+    test("another account's restore flag is not read", () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await store.saveSetting(
+          'k0.recovery_follow_up_restore', 'acct_other\u0000dev_new\u00000');
+      await restart();
+      // Falls back to this build, which restores.
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
     });
   });
 

@@ -907,6 +907,10 @@ class AppState extends ChangeNotifier
   RecoveryKeyStatus? recoveryKeyStatus;
   PendingAccountRecovery? pendingAccountRecovery;
   RecoveryFollowUpStep? recoveryFollowUp;
+  // U23: whether this device's follow-up began with the restore step, as
+  // stored when the recovery finished; null when nothing was stored (a
+  // follow-up begun by an earlier build).
+  bool? _recoveryFollowUpWithRestore;
   String? _passwordLeakDay;
   // K0 step 8: whether this device came from a completed recovery, and the
   // conversations it was last found to have no MLS group for.
@@ -9107,6 +9111,7 @@ class AppState extends ChangeNotifier
     devices = <Device>[];
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
+    _recoveryFollowUpWithRestore = null;
     passkeyList = const <PasskeyRecord>[];
     passkeysLoaded = false;
     passkeyNotice = null;

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,15 @@ import '../settings/recovery_key_screen.dart';
 /// flow step 6): replace the recovery key, then the password. Both may be
 /// known to someone else. The old key stays valid until the new one is
 /// saved, so stopping halfway never locks the user out.
+///
+/// U23, Back: only the recovery key step goes back, to the restore step,
+/// and only while no new key is saved or shown
+/// ([AccountRecoveryActions.canGoBackToRecoveryRestore]). The restore step
+/// has no Back: before it, the recovery itself finished and cannot be
+/// undone (its own restore screen has the usual Back). The password step
+/// has no Back either: it comes after the new key was saved on the server
+/// and wiped here, so it can never be shown again, and going back could
+/// only mean replacing it once more.
 class RecoveryFollowUpScreen extends StatelessWidget {
   const RecoveryFollowUpScreen({required this.state, super.key});
 
@@ -26,7 +36,7 @@ class RecoveryFollowUpScreen extends StatelessWidget {
         final l10n = context.l10n;
         final step = state.recoveryFollowUp;
         final (number, total) = recoveryFollowUpPosition(step,
-            restoreOffered: state.k1RestoreSupported);
+            restoreOffered: state.recoveryFollowUpIncludesRestore);
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: false,
@@ -59,6 +69,9 @@ class RecoveryFollowUpScreen extends StatelessWidget {
                         state: state,
                         intro: l10n.recoveryFollowUpKeyDetail,
                         onSaved: () {},
+                        onBack: state.canGoBackToRecoveryRestore
+                            ? () => unawaited(state.backToRecoveryRestoreStep())
+                            : null,
                       ),
                   },
                 ),
@@ -71,8 +84,9 @@ class RecoveryFollowUpScreen extends StatelessWidget {
   }
 }
 
-/// The follow-up [step]'s number and the number of steps: three when the
-/// history restore is offered, else two.
+/// The follow-up [step]'s number and the number of steps: three when this
+/// follow-up has the history restore step
+/// ([AccountRecoveryActions.recoveryFollowUpIncludesRestore]), else two.
 (int, int) recoveryFollowUpPosition(RecoveryFollowUpStep? step,
     {required bool restoreOffered}) {
   final total = restoreOffered || step == RecoveryFollowUpStep.restore ? 3 : 2;
