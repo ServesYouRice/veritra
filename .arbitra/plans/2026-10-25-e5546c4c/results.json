@@ -769,7 +769,7 @@
       "result": "fixed",
       "failedBefore": true,
       "test": "mobile/test/desktop_notifier_plugin_test.dart, mobile/test/desktop_shell_test.dart",
-      "proof": "Commits 45f88f7. The failing-test evidence is in each commit message. Left open: In-flight notifications drop on session change or detach. Open: a short window during sign-out where the session is still set (_clearLocalSession nulls it late); closing it needs an AppState signal.",
+      "proof": "Commits 45f88f7. The failing-test evidence is in each commit message. Left open: In-flight notifications drop on session change or detach. Open: a short window during sign-out where the session is still set (_clearLocalSession nulls it late); closing it needs an AppState signal. Closed 2026-11-14 (arbitra-loose-ends): already done by 72ddf5f and 6d38ba3. AppState.sessionEndGeneration moves as the first step of every local sign-out and AppState.sessionEnding is true for all of it; MessageNotifier.handle checks both before starting and in its stillWanted check right before a notification shows. Tests: desktop_shell_test.dart 'sign-out during ... shows nothing', 'a sign-out that has started during ... shows nothing', 'a message handled while a sign-out runs shows nothing', and sign_out_fence_test.dart. An account switch is fenced as well: AccountHost detaches the old account's notifier (bumping its generation) before closeForSwitch, and each account has its own AppState.",
       "checkedEndToEnd": false
     },
     {

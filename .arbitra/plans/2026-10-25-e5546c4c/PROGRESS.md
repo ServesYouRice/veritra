@@ -76,6 +76,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 60 `TASK-060` Fail closed on notification previews until the saved choice is known
 - [x] 61 `TASK-061` Drop in-flight notifications when the session changes or the notifier detaches
   - Left open: In-flight notifications drop on session change or detach. Open: a short window during sign-out where the session is still set (_clearLocalSession nulls it late); closing it needs an AppState signal.
+  - Closed 2026-11-14 (arbitra-loose-ends): already done by 72ddf5f and 6d38ba3 (AppState.sessionEndGeneration and sessionEnding, checked by MessageNotifier); tests in desktop_shell_test.dart and sign_out_fence_test.dart.
 - [x] 62 `TASK-062` Capture all connect-screen inputs together and allow one submission at a time
 - [x] 63 `TASK-063` React to URL text changes only, not caret or selection moves
 - [x] 64 `TASK-064` Give each externally opened attachment copy its own path and expiry
