@@ -499,7 +499,9 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
   }
 
   /// Dismiss, with the next step beside it: check the report first, then,
-  /// when it holds up, keep the text; a report nothing backs up says so.
+  /// when it holds up, keep the text. Only a check that found the server's
+  /// record contradicting the report says that nothing backs it up; a record
+  /// that is gone, not designated or unchecked proves nothing either way.
   Widget _actions(BuildContext context) {
     final l10n = context.l10n;
     final report = widget.report;
@@ -528,7 +530,7 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (verdict != null && !holdsUp) ...<Widget>[
+        if (verdict == ReportVerdict.mismatch) ...<Widget>[
           Text(l10n.c6ReportsNothingBacksUp),
           const SizedBox(height: BoneSpacing.sm),
         ],

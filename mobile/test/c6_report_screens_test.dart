@@ -439,11 +439,35 @@ void main() {
     expect(find.textContaining('no longer has this message'), findsOneWidget);
     expect(find.textContaining('only as trustworthy as that record'),
         findsOneWidget);
-    // Nothing backs the report up: the next step is gone, Dismiss stays.
+    // A gone record proves nothing either way, so the report is not called
+    // unbacked. The next step is gone, Dismiss stays.
+    expect(find.text('Nothing here backs this report up. You can dismiss it.'),
+        findsNothing);
+    expect(find.byKey(const Key('report-next-copy')), findsNothing);
+    expect(dismiss, findsOneWidget);
+  });
+
+  // U33: only a record that contradicts the report says nothing backs it up.
+  testWidgets('report detail: a mismatch says nothing backs the report up',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    h.api.record = ReportEnvelopeRecord(
+      envelopeId: 'env_1',
+      conversationId: 'conv_1',
+      senderAccountId: 'acct_sender',
+      senderDeviceId: 'dev_sender',
+      frankCommit: List<int>.filled(32, 1),
+      createdAt: DateTime.utc(2026, 11, 7),
+    );
+    await tester.pumpWidget(_app(OwnerReportDetailScreen(
+        service: h.state.reportsService!, state: h.state, report: _opened())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('report-next-check')));
+    await tester.pumpAndSettle();
     expect(find.text('Nothing here backs this report up. You can dismiss it.'),
         findsOneWidget);
     expect(find.byKey(const Key('report-next-copy')), findsNothing);
-    expect(dismiss, findsOneWidget);
+    expect(find.byKey(const Key('report-dismiss')), findsOneWidget);
   });
 }
 
