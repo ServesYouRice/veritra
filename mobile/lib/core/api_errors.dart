@@ -497,12 +497,16 @@ class ApiResponseException implements FormatException {
 
 /// A resumed download asked for a byte range and the server (or a proxy in
 /// front of it) answered 200 with the whole object, which starts at byte 0.
-/// Those bytes must never be appended at the saved offset.
+/// Those bytes must never be appended at the saved offset; the body is
+/// discarded unread.
 ///
 /// It is an [ApiException] with status 416, the answer a server gives when
-/// it cannot serve the requested range, so existing handling of a rejected
-/// range applies: the saved prefix is dropped and the next attempt downloads
-/// from the start.
+/// it cannot serve the requested range. No app path resumes a download
+/// since K1-6 removed the old recovery flow: `recoverEncryptedBackup` with a
+/// start offset has no caller, and the K1 header peek (`downloadBackup`
+/// with a range) refuses a 200 as a malformed answer instead. A resume added
+/// later must treat this like a 416: drop the saved prefix and download
+/// again from byte 0.
 class RangeNotHonoredException extends ApiException {
   RangeNotHonoredException() : super(416);
 }

@@ -10,6 +10,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 06 `TASK-006` Authorize committers, inviters and identity-key bindings against the section-52f8711c03564f2607ba13c6/Q-002 trust anchor
   - Done with L1-3 (D94, D100 A): adds gated by the pinned key, every commit and Welcome leaf judged, approval hold and hidden messages. Follow-ups in docs/crypto.md (L1-3 entry).
   - Rechecked 2026-11-11 (bughunt-l1): device inventory now from verified lists (creation, reported changes, audit of unreported groups), claims by explicit IDs. Left: tests for the audit; independent review.
+  - Audit tests closed 2026-11-14 (arbitra-loose-ends): 1db32cb added them (l1_app_state_lists_test.dart, 'audit:' and 'notice:'); they pass on native crypto. Independent review still open.
 - [x] 07 `TASK-007` Remove the raw-bytes signing oracle on the MLS identity key
 - [x] 08 `TASK-008` Reject past-epoch application messages from senders no longer in the roster
 - [x] 09 `TASK-009` Distinguish unsupported sealed-state format from corruption
@@ -31,6 +32,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 23 `TASK-023` Bound streamed uploads by progress and abort on timeout; add idle timeout to download body streams
 - [x] 24 `TASK-024` Validate 206/Content-Range for resumed backup downloads
   - Left open: Fixed the 206/Content-Range check. A Range-ignoring 200 now raises RangeNotHonoredException (416); the existing 416 path drops the partial file and the retry starts from byte 0. A direct restart-from-0 is left open.
+  - Closed 2026-11-14 (arbitra-loose-ends): moot. K1-6 (4fb1bdb) removed the resuming recovery download; no app path resumes, and the K1 header peek refuses a 200. The RangeNotHonoredException comment says what a future resume must do.
 - [x] 25 `TASK-025` Use the ciphertext response cap (with shrinking) for account export and MLS send
 - [x] 26 `TASK-026` Deliver logout revocation on an open client in logout() and relinkAfterSyncRecovery()
 - [x] 27 `TASK-027` Guard conversation/community/invite refresh results by session ownership
@@ -74,6 +76,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 60 `TASK-060` Fail closed on notification previews until the saved choice is known
 - [x] 61 `TASK-061` Drop in-flight notifications when the session changes or the notifier detaches
   - Left open: In-flight notifications drop on session change or detach. Open: a short window during sign-out where the session is still set (_clearLocalSession nulls it late); closing it needs an AppState signal.
+  - Closed 2026-11-14 (arbitra-loose-ends): already done by 72ddf5f and 6d38ba3 (AppState.sessionEndGeneration and sessionEnding, checked by MessageNotifier); tests in desktop_shell_test.dart and sign_out_fence_test.dart.
 - [x] 62 `TASK-062` Capture all connect-screen inputs together and allow one submission at a time
 - [x] 63 `TASK-063` React to URL text changes only, not caret or selection moves
 - [x] 64 `TASK-064` Give each externally opened attachment copy its own path and expiry
