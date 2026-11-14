@@ -439,6 +439,11 @@ void main() {
             100,
             scrollable: find.byType(Scrollable).first,
           );
+          // The larger type ramp (U10) can leave the toggle just below the
+          // fold at 200% text; scroll its own scrollable until it is on
+          // screen.
+          await tester.ensureVisible(find.text('How recovery works'));
+          await tester.pumpAndSettle();
           await tester.tap(find.text('How recovery works'));
           await tester.pumpAndSettle();
           expect(

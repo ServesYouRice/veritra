@@ -78,7 +78,7 @@ void main() {
   });
 
   test('the micro type remains readable at the accessibility floor', () {
-    expect(BoneType.micro.fontSize, 11);
+    expect(BoneType.micro.fontSize, 12.5);
   });
 
   testWidgets('shared headings and pills expose stable semantic labels', (

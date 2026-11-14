@@ -59,6 +59,11 @@ final _screens = <_Screen>[
     open: (tester) async {
       await tester.tap(find.text('@alice'));
       await tester.pumpAndSettle();
+      // The list is newest-first. With the larger type ramp (U10) the
+      // newest bubble fills a 320 px viewport at 200% text, so bring the
+      // older, unverified message into view.
+      await tester.drag(find.byType(ListView).last, const Offset(0, 400));
+      await tester.pumpAndSettle();
     },
     text: (l10n) => l10n.chatSenderUnverified,
   ),
