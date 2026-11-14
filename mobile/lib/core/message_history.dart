@@ -68,6 +68,25 @@ class ConversationHistory {
   /// Every local record, in no particular order.
   Iterable<LocalMessage> get messages => _byKey.values;
 
+  /// The newest row a chat-list preview may quote (U12): a message, not an
+  /// edit, delete or reaction envelope, and not one the chat would never draw
+  /// (hidden, or expired at [nowMs]). Whether its body may be shown is for the
+  /// caller to decide from its kind.
+  LocalMessage? latestForPreview({required int nowMs}) {
+    LocalMessage? newest;
+    for (final row in _byKey.values) {
+      if (row.kind == LocalMessageKind.action ||
+          row.hiddenAt != null ||
+          row.senderHidden == true ||
+          _hiddenKeys.contains(row.key) ||
+          (row.expiresAt != null && row.expiresAt! <= nowMs)) {
+        continue;
+      }
+      if (newest == null || row.createdAt > newest.createdAt) newest = row;
+    }
+    return newest;
+  }
+
   LocalMessage? forEnvelope(ReceivedMessageEnvelope envelope) {
     if (envelope.conversationId != conversationId) return null;
     return _byServerId[envelope.id] ??

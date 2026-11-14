@@ -19,11 +19,13 @@ import 'widgets/history_copy_banner.dart';
 import 'widgets/listenable_selector.dart';
 import '../l10n/l10n.dart';
 
+/// Tabs keep their word from 320dp up to text scale 1.3 (U11). Above that the
+/// icon carries the tab and the word stays in semantics only.
 bool shouldShowFloatingNavLabels({
   required double width,
   required double textScale,
 }) {
-  return width >= 440 && textScale < 1.1;
+  return width >= 320 && textScale <= 1.3;
 }
 
 /// How the root scaffold arranges itself at a given window width.
@@ -313,35 +315,55 @@ class _NavItem extends StatelessWidget {
               minHeight: BoneSpacing.minTapTarget,
             ),
             padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.sm),
-            // Centred by the Row, not by Container.alignment: an Align
-            // expands to the bottom-bar slot's loose height, which is the
-            // whole screen, and the pill swallowed the page (T43C).
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                ExcludeSemantics(
-                  child: Icon(
-                    selected ? destination.selectedIcon : destination.icon,
-                    size: 20,
-                    color: foreground,
-                  ),
-                ),
-                if (showLabels) ...<Widget>[
-                  const SizedBox(width: BoneSpacing.sm),
-                  Flexible(
-                    child: Text(
-                      destination.label(context.l10n),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: foreground,
+            // Centred by the Column or Row, not by Container.alignment: an
+            // Align expands to the bottom-bar slot's loose height, which is
+            // the whole screen, and the pill swallowed the page (T43C).
+            // With a word, the icon sits over it, so each of the three tabs
+            // gets the full slot width (U11). FittedBox shrinks a word that
+            // is still too long rather than cutting it off.
+            child: showLabels
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      ExcludeSemantics(
+                        child: Icon(
+                          selected
+                              ? destination.selectedIcon
+                              : destination.icon,
+                          size: 20,
+                          color: foreground,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: BoneSpacing.xs),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: ExcludeSemantics(
+                          child: Text(
+                            destination.label(context.l10n),
+                            maxLines: 1,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: foreground,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      ExcludeSemantics(
+                        child: Icon(
+                          selected
+                              ? destination.selectedIcon
+                              : destination.icon,
+                          size: 20,
+                          color: foreground,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ],
-            ),
           ),
         ),
       ),

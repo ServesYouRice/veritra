@@ -234,6 +234,9 @@ void main() {
       await state.refreshConversations();
       await tester.pumpWidget(_app(ChatListScreen(state: state)));
       await tester.pump();
+      // The request sits behind the Requests row (U28).
+      await tester.tap(find.byKey(const Key('requests-row')));
+      await tester.pumpAndSettle();
       expect(find.text('@bob'), findsWidgets);
       expect(find.text('Bobby'), findsNothing);
     });

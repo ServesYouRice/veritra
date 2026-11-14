@@ -7,7 +7,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/features/communities/community_screen.dart';
-import 'package:private_messenger/features/communities/create_channel_dialog.dart';
+import 'package:private_messenger/features/communities/create_channel_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -77,6 +77,26 @@ void main() {
     return state;
   }
 
+  /// U1: "New channel" sits in the community card's one actions menu.
+  Future<bool> newChannelOffered(WidgetTester tester) async {
+    final menu = find.byType(PopupMenuButton<String>);
+    if (menu.evaluate().isEmpty) return false;
+    await tester.tap(menu.first);
+    await tester.pumpAndSettle();
+    final offered = find.text('New channel').evaluate().isNotEmpty;
+    // Close the menu again without choosing anything.
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pumpAndSettle();
+    return offered;
+  }
+
+  Future<void> chooseNewChannel(WidgetTester tester) async {
+    await tester.tap(find.byType(PopupMenuButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New channel'));
+    await tester.pumpAndSettle();
+  }
+
   Future<void> show(WidgetTester tester, AppState state) async {
     await tester.pumpWidget(MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -94,12 +114,10 @@ void main() {
       await state.refreshCommunities();
       await show(tester, state);
       final allowed = role == 'owner' || role == 'admin';
-      expect(find.byTooltip('New channel'),
-          allowed ? findsOneWidget : findsNothing);
+      expect(await newChannelOffered(tester), allowed);
       if (allowed) {
-        await tester.tap(find.byTooltip('New channel'));
-        await tester.pumpAndSettle();
-        expect(find.byType(CreateChannelDialog), findsOneWidget);
+        await chooseNewChannel(tester);
+        expect(find.byType(CreateChannelScreen), findsOneWidget);
       }
       // Server roster hints never unlock encrypted peer records or edits.
       expect(state.mayEditCommunityInfo('community', 'community'), isFalse);
@@ -114,15 +132,14 @@ void main() {
     final state = stateFor(api);
     await state.refreshCommunities();
     await show(tester, state);
-    expect(find.byTooltip('New channel'), findsNothing);
+    expect(await newChannelOffered(tester), isFalse);
     api.role = 'admin';
     await state.refreshCommunities();
     await tester.pumpAndSettle();
-    expect(find.byTooltip('New channel'), findsOneWidget);
-    await tester.tap(find.byTooltip('New channel'));
-    await tester.pumpAndSettle();
+    expect(await newChannelOffered(tester), isTrue);
+    await chooseNewChannel(tester);
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.byType(CreateChannelDialog), findsNothing);
+    expect(find.byType(CreateChannelScreen), findsNothing);
   });
 
   testWidgets(
@@ -136,17 +153,17 @@ void main() {
     api.roster = () => pending.future;
     final refresh = state.refreshCommunities();
     await tester.pump();
-    expect(find.byTooltip('New channel'), findsNothing);
+    expect(await newChannelOffered(tester), isFalse);
     pending
         .complete([ConversationMember(accountId: 'alice', role: 'moderator')]);
     await refresh;
     await tester.pumpAndSettle();
-    expect(find.byTooltip('New channel'), findsNothing);
+    expect(await newChannelOffered(tester), isFalse);
     api.roster = null;
     api.role = 'admin';
     await state.refreshCommunities();
     await tester.pumpAndSettle();
-    expect(find.byTooltip('New channel'), findsOneWidget);
+    expect(await newChannelOffered(tester), isTrue);
   });
 
   test('list or roster failure keeps channels but clears creation access',

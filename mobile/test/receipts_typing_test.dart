@@ -427,7 +427,9 @@ void main() {
       ]);
       await tester.pump();
       expect(seen, MessageTick.read);
-      final icon = tester.widget<Icon>(find.byIcon(Icons.done_all));
+      // U29: the three ticks differ by shape, not only by colour.
+      expect(MessageTick.values.map(messageTickGlyph).toSet(), hasLength(3));
+      final icon = tester.widget<Icon>(find.byIcon(Icons.visibility));
       expect(icon.color,
           Theme.of(tester.element(find.byType(Column))).colorScheme.primary);
 

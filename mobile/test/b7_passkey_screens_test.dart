@@ -77,6 +77,13 @@ void main() {
       theme: veritraLightTheme(),
       home: ConnectScreen(state: state),
     ));
+    // U20: sign-in sits behind "I already have an account".
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await tester.pumpAndSettle();
     await tester.enterText(
         find.byType(TextFormField).first, 'https://chat.example.com');
     await tester.pump(const Duration(milliseconds: 700));
@@ -163,7 +170,9 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump();
       expect(find.text('Work phone'), findsOneWidget);
-      expect(find.textContaining('Backed up'), findsOneWidget);
+      // U37: one fact per row.
+      expect(find.textContaining('Added'), findsOneWidget);
+      expect(find.textContaining('Backed up'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey<String>('passkeys-add')));
       await tester.pump();

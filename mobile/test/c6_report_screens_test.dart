@@ -10,16 +10,19 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/report_models.dart';
 import 'package:private_messenger/core/report_seed_store.dart';
+import 'package:private_messenger/core/reports_service.dart' show OpenedReport;
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/franking.dart'
     show reportInboxInstanceOwner;
 import 'package:private_messenger/crypto/owner_key_watch.dart';
 import 'package:private_messenger/crypto/owner_proof_pins.dart';
+import 'package:private_messenger/crypto/report_body.dart';
 import 'package:private_messenger/features/reports/owner_reports_screen.dart';
 import 'package:private_messenger/features/reports/report_message_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
+import 'package:private_messenger/ui/widgets/tile_group.dart';
 
 import 'test_crypto_service.dart';
 
@@ -97,6 +100,17 @@ class _Api extends ApiClient {
   Future<List<ReportCopyRow>> listOwnerReports(String token,
           {String? afterId, int limit = 50}) async =>
       rows;
+
+  /// What the server's record of an envelope answers; null is "gone" (404).
+  ReportEnvelopeRecord? record;
+
+  @override
+  Future<ReportEnvelopeRecord> getReportEnvelope(
+      String token, String reportId, String envelopeId) async {
+    final found = record;
+    if (found == null) throw ApiException(404, '{"error":"not_found"}');
+    return found;
+  }
 
   @override
   Future<void> createReport(
@@ -368,4 +382,118 @@ void main() {
     );
     expect(testOnly.reportsAvailable, isFalse);
   });
+
+  // U33 / U8: the inbox leads with the reports, has the 16 dp gutter and
+  // names the reporter.
+  testWidgets('owner inbox: reports first, 16 dp gutter, reporter in the row',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    h.api.rows.add(_row());
+    await tester.pumpWidget(_app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpAndSettle();
+
+    final reports = tester.getTopLeft(find.text('REPORTS')).dy;
+    final key = tester.getTopLeft(find.text('REPORT KEY')).dy;
+    expect(reports, lessThan(key), reason: 'the inbox leads with reports');
+    expect(find.textContaining('Reported by '), findsOneWidget);
+    final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    for (final box in tester.elementList(find.byType(TileGroup))) {
+      final rect = tester.getRect(find.byElementPredicate((e) => e == box));
+      expect(rect.left, 16);
+      expect(rect.right, width - 16);
+    }
+  });
+
+  // U33: names, the channel, a plain verdict with "Why not certain?" and the
+  // next step beside Dismiss. The wording never claims more than C6.
+  testWidgets('report detail: names, verdict, why not certain, next step',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    h.state.conversations = <Conversation>[
+      Conversation(id: 'conv_1', kind: 'group', title: 'Team'),
+    ];
+    final service = h.state.reportsService!;
+    await tester.pumpWidget(_app(OwnerReportDetailScreen(
+        service: service, state: h.state, report: _opened())));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Reported by '), findsOneWidget);
+    expect(find.text('In Team'), findsOneWidget);
+    expect(find.text('the exact words'), findsOneWidget);
+    // Before the check, the next step sits beside Dismiss.
+    final dismiss = find.byKey(const Key('report-dismiss'));
+    final next = find.byKey(const Key('report-next-check'));
+    expect(tester.getCenter(dismiss).dy, tester.getCenter(next).dy);
+
+    // The server no longer has the message: the verdict is plain, and
+    // "Why not certain?" holds the careful wording.
+    await tester.tap(next);
+    await tester.pumpAndSettle();
+    expect(find.text('Cannot be checked'), findsOneWidget);
+    expect(find.text('Why not certain?'), findsOneWidget);
+    expect(find.textContaining('only as trustworthy'), findsNothing);
+    await tester.ensureVisible(find.text('Why not certain?'));
+    await tester.tap(find.text('Why not certain?'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('no longer has this message'), findsOneWidget);
+    expect(find.textContaining('only as trustworthy as that record'),
+        findsOneWidget);
+    // A gone record proves nothing either way, so the report is not called
+    // unbacked. The next step is gone, Dismiss stays.
+    expect(find.text('Nothing here backs this report up. You can dismiss it.'),
+        findsNothing);
+    expect(find.byKey(const Key('report-next-copy')), findsNothing);
+    expect(dismiss, findsOneWidget);
+  });
+
+  // U33: only a record that contradicts the report says nothing backs it up.
+  testWidgets('report detail: a mismatch says nothing backs the report up',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    h.api.record = ReportEnvelopeRecord(
+      envelopeId: 'env_1',
+      conversationId: 'conv_1',
+      senderAccountId: 'acct_sender',
+      senderDeviceId: 'dev_sender',
+      frankCommit: List<int>.filled(32, 1),
+      createdAt: DateTime.utc(2026, 11, 7),
+    );
+    await tester.pumpWidget(_app(OwnerReportDetailScreen(
+        service: h.state.reportsService!, state: h.state, report: _opened())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('report-next-check')));
+    await tester.pumpAndSettle();
+    expect(find.text('Nothing here backs this report up. You can dismiss it.'),
+        findsOneWidget);
+    expect(find.byKey(const Key('report-next-copy')), findsNothing);
+    expect(find.byKey(const Key('report-dismiss')), findsOneWidget);
+  });
 }
+
+ReportCopyRow _row() => ReportCopyRow(
+      id: 'row_1',
+      reportId: 'rep_1',
+      inboxKind: 'instance_owner',
+      inboxId: 'acct_me',
+      keyRev: 1,
+      recipientPublicKey: List<int>.filled(32, 1),
+      conversationId: 'conv_1',
+      reporterAccountId: 'acct_reporter',
+      sealed: List<int>.filled(40, 2),
+      createdAt: DateTime.utc(2026, 11, 7),
+    );
+
+OpenedReport _opened() => OpenedReport(
+      _row(),
+      body: ReportBody(
+        envelopeId: 'env_1',
+        conversationId: 'conv_1',
+        senderDeviceId: 'dev_sender',
+        actionId: 'a1',
+        payload:
+            utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
+        frankKey: List<int>.filled(32, 7),
+      ),
+      text: 'the exact words',
+    );

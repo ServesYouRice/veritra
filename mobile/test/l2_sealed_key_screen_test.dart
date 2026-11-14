@@ -68,12 +68,27 @@ void main() {
       seenKeyId: 'b' * 32,
       seenPublicKey: changed,
     ));
+    tester.view.physicalSize = const Size(900, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    // U26: Off, one line, and a question with the safe answer first.
+    expect(find.text('OFF'), findsOneWidget);
+    expect(find.textContaining('Paused'), findsOneWidget);
+    expect(find.text("Did the server's operator tell you its key changed?"),
+        findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'No, or I am not sure'),
+        findsOneWidget);
+    // The codes wait under "Technical details".
+    expect(find.text(reportKeyFingerprint(pinned)), findsNothing);
+    await tester.tap(find.text('Technical details'));
     await tester.pumpAndSettle();
     expect(find.text(reportKeyFingerprint(pinned)), findsOneWidget);
     expect(find.text(reportKeyFingerprint(changed)), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Accept new key'));
+    await tester
+        .tap(find.widgetWithText(OutlinedButton, 'Yes, use the new key'));
     await tester.pumpAndSettle();
     // The confirmation says what accepting risks; confirm.
     await tester.tap(find.descendant(
@@ -86,7 +101,47 @@ void main() {
     expect(pin.changed, isFalse);
     await tester.pumpAndSettle();
     expect(find.text(reportKeyFingerprint(changed)), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Accept new key'), findsNothing);
+    expect(find.text('Yes, use the new key'), findsNothing);
+    expect(find.text('ON'), findsOneWidget);
+  });
+
+  testWidgets('U26: the safe answer keeps the old key and changes nothing',
+      (tester) async {
+    final state = await stateWith(SealedKeyPin(
+      origin: origin,
+      keyId: 'a' * 32,
+      publicKey: pinned,
+      pinnedAt: 1,
+      seenKeyId: 'b' * 32,
+      seenPublicKey: changed,
+    ));
+    await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'No, or I am not sure'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('sealed-key-kept')), findsOneWidget);
+    final pin = (await state.sealedKeyPin())!;
+    expect(pin.keyId, 'a' * 32);
+    expect(pin.changed, isTrue, reason: 'the changed key stays refused');
+    expect(find.text('OFF'), findsOneWidget);
+    // The answer can be changed on this visit.
+    await tester.tap(find.text('Change my answer'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('sealed-key-question')), findsOneWidget);
+  });
+
+  testWidgets('U26: a pinned, unchanged key reads On in one line',
+      (tester) async {
+    final state = await stateWith(SealedKeyPin(
+        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1));
+    await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    expect(find.text('ON'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const ValueKey('sealed-summary'))).data,
+        'The server delivers your messages without learning who sent them.');
+    expect(find.text(reportKeyFingerprint(pinned)), findsNothing);
+    expect(find.byKey(const ValueKey('sealed-key-question')), findsNothing);
   });
 
   // Owner decision 4: with no pinned owner key a sealed message is provable
@@ -164,7 +219,19 @@ void main() {
     await tester.pumpAndSettle();
     for (final id in ['acct_o1', 'acct_o2', 'acct_o3']) {
       expect(find.byKey(ValueKey('owner-key-review-$id')), findsOneWidget);
+      // U26: keeping what was pinned is the main button.
+      expect(
+          find.descendant(
+              of: find.byKey(ValueKey('owner-key-review-$id')),
+              matching:
+                  find.widgetWithText(FilledButton, 'No, keep it as it was')),
+          findsOneWidget);
     }
+    expect(find.text('Did you expect this change?'), findsNWidgets(3));
+    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
+        findsNothing);
+    await tester.tap(find.text('Technical details'));
+    await tester.pumpAndSettle();
     expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
         findsOneWidget);
     expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x51))),
@@ -208,7 +275,8 @@ void main() {
     final state = await stateWith(null);
     await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
     await tester.pumpAndSettle();
-    expect(find.textContaining('No key pinned yet'), findsOneWidget);
+    expect(find.textContaining('turns on after the next sync'), findsOneWidget);
+    expect(find.text('OFF'), findsOneWidget);
   });
 }
 

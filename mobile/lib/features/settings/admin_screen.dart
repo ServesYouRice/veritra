@@ -135,7 +135,8 @@ class _AdminScreenState extends State<AdminScreen> {
     });
   }
 
-  Future<void> _toggle(AdminAccount account) async {
+  /// True when the status changed.
+  Future<bool> _toggle(AdminAccount account) async {
     final l10n = context.l10n;
     final suspend = !account.suspended;
     final confirmed = await confirmAction(
@@ -147,35 +148,98 @@ class _AdminScreenState extends State<AdminScreen> {
       confirmLabel: suspend ? l10n.adminSuspend : l10n.adminUnsuspend,
       destructive: suspend,
     );
-    if (!confirmed || !mounted) return;
+    if (!confirmed || !mounted) return false;
     var reauthed = false;
     for (var attempt = 0; attempt < 2; attempt++) {
       final client = widget.state.api;
       final token = _token;
-      if (client == null || token == null) return;
+      if (client == null || token == null) return false;
       try {
         await client.setAdminAccountStatus(
           token,
           account.id,
           suspended: suspend,
         );
-        if (!mounted) return;
+        if (!mounted) return true;
         await _loadAccounts(reset: true);
         await _loadEvents(reset: true);
-        return;
+        return true;
       } on ApiException catch (err) {
         if (err.serverCode == 'recent_auth_required' && !reauthed) {
           reauthed = true;
-          if (!mounted || !await widget.reauthenticate(context)) return;
+          if (!mounted || !await widget.reauthenticate(context)) return false;
           continue;
         }
         _showError(err);
-        return;
+        return false;
       } catch (err) {
         _showError(err);
-        return;
+        return false;
       }
     }
+    return false;
+  }
+
+  /// Whether the signed-in account outranks [account] and may suspend it;
+  /// the server enforces the same rule.
+  bool _canAct(AdminAccount account) =>
+      account.id != widget.state.session?.accountId &&
+      roleRank(widget.state.session?.role) > roleRank(account.role);
+
+  Future<void> _openAccount(AdminAccount account) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _AdminAccountPage(
+          account: account,
+          canAct: _canAct(account),
+          onToggle: () => _toggle(account),
+        ),
+      ),
+    );
+  }
+
+  /// The name of an account in the audit log: the username when the loaded
+  /// accounts know it, else the short id.
+  String _nameOf(String? id) {
+    if (id == null || id.isEmpty) return context.l10n.adminActorUnknown;
+    for (final account in _accounts) {
+      if (account.id == id) return '@${account.username}';
+    }
+    return shortId(id);
+  }
+
+  String _eventSentence(AppLocalizations l10n, AdminAuditEvent event) {
+    final actor = _nameOf(event.actorAccountId);
+    final target = _nameOf(event.metadata['target_account_id']);
+    switch (event.eventType) {
+      case 'account.status.updated':
+        return event.metadata['status'] == 'suspended'
+            ? l10n.adminEventSuspended(actor, target)
+            : l10n.adminEventReactivated(actor, target);
+      case 'account.registered':
+        return l10n.adminEventRegistered(actor);
+      case 'owner.created':
+        return l10n.adminEventOwnerCreated(actor);
+      case 'session.login':
+        return l10n.adminEventSignedIn(actor);
+      case 'session.logout':
+        return l10n.adminEventSignedOut(actor);
+      case 'session.logout_others':
+        return l10n.adminEventSignedOutOthers(actor);
+      case 'account.password_changed':
+        return l10n.adminEventPasswordChanged(actor);
+      case 'device.revoked':
+        return l10n.adminEventDeviceSignedOut(actor);
+      case 'invite.created':
+        return l10n.adminEventInviteCreated(actor);
+      case 'invite.revoked':
+        return l10n.adminEventInviteRevoked(actor);
+    }
+    // No wording of its own: the code, spaced out.
+    return l10n.adminEventOther(
+      actor,
+      event.eventType.replaceAll(RegExp(r'[._]'), ' '),
+    );
   }
 
   void _showError(Object err) {
@@ -264,20 +328,9 @@ class _AdminScreenState extends State<AdminScreen> {
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    // Only accounts of a lower rank than the signed-in one;
-                    // the server enforces the same rule.
-                    trailing: account.id == widget.state.session?.accountId ||
-                            roleRank(widget.state.session?.role) <=
-                                roleRank(account.role)
-                        ? null
-                        : TextButton(
-                            onPressed: () => _toggle(account),
-                            child: Text(
-                              account.suspended
-                                  ? l10n.adminUnsuspend
-                                  : l10n.adminSuspend,
-                            ),
-                          ),
+                    // U34: suspending lives on the person's page, one tap away.
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _openAccount(account),
                   ),
               ],
             ),
@@ -314,24 +367,16 @@ class _AdminScreenState extends State<AdminScreen> {
               children: <Widget>[
                 for (final event in _events)
                   ListTile(
-                    title: Text(
-                      event.eventType,
-                      style: BoneType.mono.copyWith(fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      <String>[
-                        if (event.createdAt != null)
-                          formatDateTime(context, event.createdAt!.toLocal()),
-                        if (event.actorAccountId != null)
-                          l10n.adminEventBy(event.actorAccountId!),
-                        for (final entry in event.metadata.entries)
-                          '${entry.key}: ${entry.value}',
-                      ].join('\n'),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    isThreeLine: true,
+                    // U34: a sentence with names, not an event code.
+                    title: Text(_eventSentence(l10n, event)),
+                    subtitle: event.createdAt == null
+                        ? null
+                        : Text(
+                            formatDateTime(context, event.createdAt!.toLocal()),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                   ),
               ],
             ),
@@ -340,6 +385,87 @@ class _AdminScreenState extends State<AdminScreen> {
               onPressed: () => _loadEvents(),
               child: Text(l10n.adminLoadMore),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One person's page (U34): who they are and, for an account the signed-in
+/// one outranks, Suspend or Reactivate.
+class _AdminAccountPage extends StatelessWidget {
+  const _AdminAccountPage({
+    required this.account,
+    required this.canAct,
+    required this.onToggle,
+  });
+
+  final AdminAccount account;
+  final bool canAct;
+  final Future<bool> Function() onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: LargeTitleBar(title: '@${account.username}'),
+      body: ListView(
+        padding: const EdgeInsets.all(BoneSpacing.gutter),
+        children: <Widget>[
+          TileGroup(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: Row(
+                  children: <Widget>[
+                    Flexible(child: Text('@${account.username}')),
+                    if (account.suspended) ...<Widget>[
+                      const SizedBox(width: BoneSpacing.sm),
+                      StatusPill(
+                        label: l10n.adminSuspendedPill,
+                        tone: StatusTone.warning,
+                      ),
+                    ],
+                  ],
+                ),
+                subtitle: Text(
+                  l10n.adminAccountSummary(
+                    account.role,
+                    account.deviceCount,
+                    formatFileSize(context, account.storageBytes),
+                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (canAct) ...<Widget>[
+            const SizedBox(height: BoneSpacing.lg),
+            OutlinedButton.icon(
+              key: const Key('admin-account-toggle'),
+              style: account.suspended
+                  ? null
+                  : OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                    ),
+              icon: Icon(
+                account.suspended
+                    ? Icons.lock_open_outlined
+                    : Icons.block_outlined,
+              ),
+              label: Text(
+                account.suspended ? l10n.adminUnsuspend : l10n.adminSuspend,
+              ),
+              onPressed: () async {
+                final navigator = Navigator.of(context);
+                // Back to the list once the status changed; it has reloaded.
+                if (await onToggle() && navigator.mounted) navigator.pop();
+              },
+            ),
+          ],
         ],
       ),
     );

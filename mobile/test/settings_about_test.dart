@@ -118,6 +118,9 @@ void main() {
       final state = _state();
       await tester.pumpWidget(_App(state: state));
       await tester.scrollUntilVisible(find.text('Sign out'), 200);
+      // Sign out is the last row, so it is built before it is on screen.
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
       expect(find.text('Sign out?'), findsOneWidget);
@@ -125,10 +128,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(state.session, isNotNull);
 
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Sign out'));
-      await tester.pumpAndSettle();
+      // Settings keeps a loading spinner running, so settle by hand.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(state.session, isNull);
     });
 
@@ -240,27 +247,23 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
-      final approveButton = find.widgetWithText(
-        FilledButton,
-        'Approve device',
-      );
-      await tester.ensureVisible(approveButton);
-      await tester.tap(approveButton);
-      await tester.pumpAndSettle();
+      final approve = find.byKey(const ValueKey<String>('device-link-approve'));
+      final field =
+          find.byKey(const ValueKey<String>('device-link-code-field'));
+      await tester.ensureVisible(approve);
+      expect(tester.widget<FilledButton>(approve).onPressed, isNull);
 
-      final dialogApprove = find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.byType(FilledButton),
-      );
-      await tester.enterText(find.byType(TextField), '1234567');
+      await tester.enterText(field, '1234567');
       await tester.pump();
-      expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNull);
+      expect(tester.widget<FilledButton>(approve).onPressed, isNull);
       expect(state.errorFor(Ops.deviceLink), isNull);
 
-      await tester.enterText(find.byType(TextField), '12345678');
+      // Only digits are taken, and no more than eight.
+      await tester.enterText(field, '1234 5678 9');
       await tester.pump();
-      expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNotNull);
-      await tester.tap(dialogApprove);
+      expect(tester.widget<TextField>(field).controller!.text, '12345678');
+      expect(tester.widget<FilledButton>(approve).onPressed, isNotNull);
+      await tester.tap(approve);
       await tester.pumpAndSettle();
       // The typed code reached AppState, which has no link record behind
       // this hand-built view and does nothing; the native confirmation and
@@ -270,7 +273,9 @@ void main() {
       expect(state.activeDeviceLink?.state, isNot('approved'));
     });
 
-    testWidgets('approve is disabled without a verified code', (tester) async {
+    testWidgets('approve is not offered without a verified code', (
+      tester,
+    ) async {
       final state = _state()
         ..activeDeviceLink = DeviceLinkV3View(
           id: 'dl_1',
@@ -281,12 +286,11 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
-      final approveButton = find.widgetWithText(
-        FilledButton,
-        'Approve device',
-      );
-      await tester.ensureVisible(approveButton);
-      expect(tester.widget<FilledButton>(approveButton).onPressed, isNull);
+      expect(find.byKey(const ValueKey<String>('device-link-approve')),
+          findsNothing);
+      expect(find.byKey(const ValueKey<String>('device-link-code-field')),
+          findsNothing);
+      expect(find.textContaining('Checking the new device'), findsOneWidget);
     });
 
     test('the QR payload is built locally and round-trips the scanner', () {

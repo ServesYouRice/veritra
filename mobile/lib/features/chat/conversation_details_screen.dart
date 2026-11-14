@@ -3,18 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../settings/block_actions.dart';
+import '../../calls/call_controller.dart';
 import '../../core/app_state.dart';
 import '../settings/profile_edit_screen.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
+import '../../ui/motion.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/account_picker.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
-import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../communities/membership_screens.dart';
+import '../search/search_screen.dart';
 import 'chat_list_screen.dart';
 import 'mute_sheet.dart';
 import 'roles_screen.dart';
@@ -104,16 +107,77 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               BoneSpacing.xl,
             ),
             children: <Widget>[
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    leading: conversationAvatar(context, conversation,
-                        radius: 20, profiles: state.profiles),
-                    title: Text(conversationTitle(l10n, conversation,
-                        profiles: state.profiles)),
-                    subtitle: Text(conversationSubtitle(l10n, conversation)),
+              _DetailsHeader(
+                avatar: conversationAvatar(context, conversation,
+                    radius: 44, profiles: state.profiles),
+                title: conversationTitle(l10n, conversation,
+                    profiles: state.profiles),
+                subtitle: _headerSubtitle(l10n, conversation),
+              ),
+              const SizedBox(height: BoneSpacing.lg),
+              _ActionRow(
+                actions: <Widget>[
+                  _DetailAction(
+                    key: const Key('details-mute'),
+                    icon: state.isMuted(conversationId)
+                        ? Icons.notifications_off_outlined
+                        : Icons.notifications_outlined,
+                    label: state.isMuted(conversationId)
+                        ? l10n.detailsActionUnmute
+                        : l10n.detailsActionMute,
+                    onTap: state.isBusy(Ops.mute)
+                        ? null
+                        : () => _chooseMute(context),
                   ),
-                  if (conversation.isGroup && state.profilesAvailable)
+                  // The same message search the chat's Ctrl+F opens: the app
+                  // has no search inside one chat.
+                  _DetailAction(
+                    key: const Key('details-search'),
+                    icon: Icons.search,
+                    label: l10n.chatListSearch,
+                    onTap: () => Navigator.of(context).push(
+                      sharedAxisRoute<void>(
+                        (_) => SearchScreen(state: state),
+                      ),
+                    ),
+                  ),
+                  if (isDm && !state.readOnlyWithoutPeer(conversationId))
+                    ValueListenableBuilder<CallController?>(
+                      valueListenable: state.callController,
+                      builder: (context, calls, _) => calls == null
+                          ? const SizedBox.shrink()
+                          : ListenableBuilder(
+                              listenable: calls,
+                              builder: (context, _) => _DetailAction(
+                                key: const Key('details-call'),
+                                icon: Icons.call_outlined,
+                                label: l10n.detailsActionCall,
+                                onTap: calls.busy
+                                    ? null
+                                    : () =>
+                                        unawaited(calls.start(conversation.id)),
+                              ),
+                            ),
+                    ),
+                ],
+              ),
+              if (state.isMuted(conversationId))
+                Padding(
+                  padding: const EdgeInsets.only(top: BoneSpacing.sm),
+                  child: Text(
+                    _muteStatus(context, l10n),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              if (state.errorFor(Ops.mute) != null)
+                _InlineError(message: state.errorFor(Ops.mute)!),
+              const SizedBox(height: BoneSpacing.lg),
+              if (conversation.isGroup && state.profilesAvailable) ...<Widget>[
+                TileGroup(
+                  children: <Widget>[
                     ListTile(
                       key: const Key('group-profile-tile'),
                       leading: const Icon(Icons.edit_outlined),
@@ -127,121 +191,93 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                         ),
                       ),
                     ),
-                  ListTile(
-                    leading: const Icon(Icons.tag_outlined),
-                    title: Text(
-                      l10n.detailsConversationIdLabel,
-                      style: theme.textTheme.labelSmall,
-                    ),
-                    subtitle: Text(
-                      shortId(conversation.id),
-                      style: BoneType.mono.copyWith(
-                        color: theme.colorScheme.onSurface,
-                      ),
-                    ),
-                    trailing: IconButton(
-                      tooltip: l10n.detailsCopyId,
-                      icon: const Icon(Icons.copy_outlined),
-                      onPressed: () => _copy(
-                        context,
-                        conversation.id,
-                        l10n.detailsConversationId,
-                      ),
-                    ),
-                  ),
-                  if (conversation.createdAt != null)
-                    ListTile(
-                      leading: const Icon(Icons.schedule_outlined),
-                      title: Text(
-                        l10n.detailsCreatedLabel,
-                        style: theme.textTheme.labelSmall,
-                      ),
-                      subtitle: Text(
-                        formatDateTime(context, conversation.createdAt!),
-                      ),
-                    ),
-                ],
-              ),
-              SectionHeader(l10n.settingsSectionNotifications),
+                  ],
+                ),
+                const SizedBox(height: BoneSpacing.sm),
+              ],
+              // One row, one sheet: the five options and the reason they are
+              // locked live there instead of down the page (U30).
               TileGroup(
                 children: <Widget>[
                   ListTile(
-                    leading: Icon(
-                      state.isMuted(conversationId)
-                          ? Icons.notifications_off_outlined
-                          : Icons.notifications_outlined,
-                    ),
-                    title: Text(l10n.chatListMute),
+                    key: const Key('details-retention'),
+                    leading: const Icon(Icons.timer_outlined),
+                    title: Text(l10n.detailsSectionDisappearing),
                     subtitle: Text(
-                      _muteStatus(context, l10n),
+                      retention == null || retention == 0
+                          ? l10n.detailsRetentionOff
+                          : retentionLabel(l10n, retention),
                     ),
                     trailing: const Icon(Icons.chevron_right),
-                    enabled: !state.isBusy(Ops.mute),
-                    onTap: () => _chooseMute(context),
+                    onTap: () => _openRetentionSheet(
+                      context,
+                      conversation,
+                      canManage: canManage,
+                    ),
                   ),
                 ],
               ),
-              if (state.errorFor(Ops.mute) != null)
-                _InlineError(message: state.errorFor(Ops.mute)!),
-              SectionHeader(l10n.detailsSectionMembers),
-              if (memberError != null) _InlineError(message: memberError),
-              TileGroup(
-                children: <Widget>[
-                  if (members.isEmpty && state.isBusy(Ops.members))
-                    ListTile(
-                      leading: const SizedBox.square(
-                        dimension: 24,
-                        child: Center(
-                          child: SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+              if (!isDm) ...<Widget>[
+                SectionHeader(l10n.detailsSectionMembers),
+                if (memberError != null) _InlineError(message: memberError),
+                TileGroup(
+                  children: <Widget>[
+                    if (members.isEmpty && state.isBusy(Ops.members))
+                      ListTile(
+                        leading: const SizedBox.square(
+                          dimension: 24,
+                          child: Center(
+                            child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                           ),
                         ),
+                        title: Text(l10n.detailsLoadingMembers),
+                      )
+                    else if (members.isEmpty)
+                      ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(l10n.detailsMembersUnavailable),
+                        subtitle: Text(l10n.detailsMembersUnavailableDetail),
+                      )
+                    else
+                      for (final member in members)
+                        _MemberTile(
+                          member: member,
+                          profileName: state.profileNameOf(member.accountId),
+                          isSelf: member.accountId == state.session?.accountId,
+                          // Only a manager can remove someone, never
+                          // themselves through this control, and never anyone
+                          // ranked at or above their own role.
+                          canRemove: canManage &&
+                              !isDm &&
+                              member.accountId != state.session?.accountId &&
+                              _outranks(
+                                  myRole,
+                                  state.roleOf(
+                                          conversationId, member.accountId) ??
+                                      member.role),
+                          busy: state.isBusy(Ops.members),
+                          onRemove: () => _confirmRemove(context, member),
+                        ),
+                    // K0 step 8: no group device here could add them.
+                    if (!isDm &&
+                        state.membershipChangesAvailable &&
+                        !state.readOnlyWithoutPeer(conversationId))
+                      ListTile(
+                        leading: const Icon(Icons.person_add_outlined),
+                        title: Text(l10n.detailsAddMember),
+                        subtitle: Text(canManage
+                            ? l10n.detailsAddMemberDetail
+                            : l10n.detailsAddMemberNoPermission),
+                        onTap: state.isBusy(Ops.members) || !canManage
+                            ? null
+                            : () => _addMember(context, myRole),
                       ),
-                      title: Text(l10n.detailsLoadingMembers),
-                    )
-                  else if (members.isEmpty)
-                    ListTile(
-                      leading: const Icon(Icons.person_outline),
-                      title: Text(l10n.detailsMembersUnavailable),
-                      subtitle: Text(l10n.detailsMembersUnavailableDetail),
-                    )
-                  else
-                    for (final member in members)
-                      _MemberTile(
-                        member: member,
-                        profileName: state.profileNameOf(member.accountId),
-                        isSelf: member.accountId == state.session?.accountId,
-                        // Only a manager can remove someone, never
-                        // themselves through this control, and never anyone
-                        // ranked at or above their own role.
-                        canRemove: canManage &&
-                            !isDm &&
-                            member.accountId != state.session?.accountId &&
-                            _outranks(
-                                myRole,
-                                state.roleOf(
-                                        conversationId, member.accountId) ??
-                                    member.role),
-                        busy: state.isBusy(Ops.members),
-                        onRemove: () => _confirmRemove(context, member),
-                      ),
-                  // K0 step 8: no group device here could add them.
-                  if (!isDm &&
-                      state.membershipChangesAvailable &&
-                      !state.readOnlyWithoutPeer(conversationId))
-                    ListTile(
-                      leading: const Icon(Icons.person_add_outlined),
-                      title: Text(l10n.detailsAddMember),
-                      subtitle: Text(canManage
-                          ? l10n.detailsAddMemberDetail
-                          : l10n.detailsAddMemberNoPermission),
-                      onTap: state.isBusy(Ops.members) || !canManage
-                          ? null
-                          : () => _addMember(context, myRole),
-                    ),
-                ],
-              ),
+                  ],
+                ),
+              ],
               if (conversation.isGroup ||
                   conversation.isCommunityShared) ...<Widget>[
                 const SizedBox(height: BoneSpacing.sm),
@@ -265,13 +301,6 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   ],
                 ),
               ],
-              const SizedBox(height: BoneSpacing.sm),
-              Text(
-                l10n.detailsMembershipNote,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
               // C1: invitation links and join requests of a group, for its
               // owners and admins. A DM or a community channel has none.
               if (conversation.isGroup &&
@@ -336,41 +365,70 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   ),
                 ],
               ),
-              SectionHeader(l10n.detailsSectionDisappearing),
+              const SizedBox(height: BoneSpacing.lg),
+              // The identifiers and the membership caveat are for the few who
+              // look for them (U30).
               TileGroup(
-                dividerIndent: 0,
                 children: <Widget>[
-                  RadioGroup<int?>(
-                    groupValue:
-                        retention == null || retention == 0 ? null : retention,
-                    onChanged: (value) {
-                      if (!state.busy && canManage) {
-                        _confirmRetentionChange(
-                          context,
-                          conversation.id,
-                          value,
-                        );
-                      }
-                    },
-                    child: Column(
+                  Theme(
+                    data: theme.copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      key: const Key('details-advanced'),
+                      leading: const Icon(Icons.tune_outlined),
+                      title: Text(l10n.detailsSectionAdvanced),
+                      childrenPadding: const EdgeInsets.only(
+                        bottom: BoneSpacing.md,
+                      ),
+                      expandedCrossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        for (final option in _retentionOptions)
-                          RadioListTile<int?>(
-                            value: option.seconds,
-                            title: Text(option.label(l10n)),
-                            enabled: !state.busy && canManage,
+                        ListTile(
+                          leading: const Icon(Icons.tag_outlined),
+                          title: Text(
+                            l10n.detailsConversationIdLabel,
+                            style: theme.textTheme.labelSmall,
                           ),
+                          subtitle: Text(
+                            shortId(conversation.id),
+                            style: BoneType.mono.copyWith(
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                          trailing: IconButton(
+                            tooltip: l10n.detailsCopyId,
+                            icon: const Icon(Icons.copy_outlined),
+                            onPressed: () => _copy(
+                              context,
+                              conversation.id,
+                              l10n.detailsConversationId,
+                            ),
+                          ),
+                        ),
+                        if (conversation.createdAt != null)
+                          ListTile(
+                            leading: const Icon(Icons.schedule_outlined),
+                            title: Text(
+                              l10n.detailsCreatedLabel,
+                              style: theme.textTheme.labelSmall,
+                            ),
+                            subtitle: Text(
+                              formatDateTime(context, conversation.createdAt!),
+                            ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: BoneSpacing.lg,
+                          ),
+                          child: Text(
+                            l10n.detailsMembershipNote,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: BoneSpacing.sm),
-              Text(
-                l10n.detailsDisappearingNote,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
               ),
               const SizedBox(height: 24),
             ],
@@ -416,6 +474,125 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
   static String _retentionWeek(AppLocalizations l10n) => l10n.durationDays(7);
   static String _retentionMonth(AppLocalizations l10n) => l10n.durationDays(30);
 
+  /// The line under the name: who this is, never an identifier. A chat of two
+  /// shows the username unless the name above already is it.
+  String? _headerSubtitle(AppLocalizations l10n, Conversation conversation) {
+    if (conversation.isDm) {
+      final peer = conversation.peerAccountId;
+      if (peer == null) return null;
+      final label = accountLabel(peer, conversation.peerUsername);
+      return label ==
+              conversationTitle(l10n, conversation, profiles: state.profiles)
+          ? null
+          : label;
+    }
+    return conversation.isChannel
+        ? l10n.communityChannelSubtitle
+        : l10n.conversationPrivateGroup;
+  }
+
+  /// The five timers in one sheet. Locked, it opens all the same and says why:
+  /// a disabled list with no reason reads as broken.
+  Future<void> _openRetentionSheet(
+    BuildContext context,
+    Conversation conversation, {
+    required bool canManage,
+  }) async {
+    final theme = Theme.of(context);
+    final retention = conversation.retentionSeconds;
+    final current = retention == null || retention == 0 ? null : retention;
+    final chosen = await showModalBottomSheet<({int? seconds})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final l10n = sheetContext.l10n;
+        final editable = canManage && !state.busy;
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: BoneSpacing.gutter,
+                  ),
+                  child: Text(
+                    l10n.detailsSectionDisappearing,
+                    style: theme.textTheme.titleLarge,
+                  ),
+                ),
+                if (!canManage)
+                  Padding(
+                    key: const Key('retention-locked'),
+                    padding: const EdgeInsets.fromLTRB(
+                      BoneSpacing.gutter,
+                      BoneSpacing.sm,
+                      BoneSpacing.gutter,
+                      0,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Icon(Icons.lock_outline, size: 18),
+                        const SizedBox(width: BoneSpacing.sm),
+                        Expanded(
+                          child: Text(
+                            // The server lets the owner of a chat of two, who
+                            // started it, change the timer; no role is named.
+                            conversation.isDm
+                                ? l10n.detailsRetentionLockedDm
+                                : l10n.detailsRetentionLocked,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    BoneSpacing.gutter,
+                    BoneSpacing.sm,
+                    BoneSpacing.gutter,
+                    BoneSpacing.sm,
+                  ),
+                  child: Text(
+                    l10n.detailsDisappearingNote,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                RadioGroup<int?>(
+                  groupValue: current,
+                  onChanged: (value) {
+                    if (editable) {
+                      Navigator.of(sheetContext).pop((seconds: value));
+                    }
+                  },
+                  child: Column(
+                    children: <Widget>[
+                      for (final option in _retentionOptions)
+                        RadioListTile<int?>(
+                          value: option.seconds,
+                          title: Text(option.label(l10n)),
+                          enabled: editable,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (chosen == null || chosen.seconds == current || !context.mounted) {
+      return;
+    }
+    await _confirmRetentionChange(context, conversation.id, chosen.seconds);
+  }
+
   String _muteStatus(BuildContext context, AppLocalizations l10n) {
     if (!state.isMuted(conversationId)) return l10n.detailsMuteDetail;
     final until = state.mutedUntil(conversationId);
@@ -451,6 +628,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
       title: context.l10n.detailsRemoveTitle(label),
       message: context.l10n.detailsRemoveMessage,
       confirmLabel: context.l10n.detailsRemoveConfirm,
+      destructive: true, // U15
     );
     if (!confirmed) {
       return;
@@ -659,6 +837,126 @@ String roleLabel(AppLocalizations l10n, String role) {
   }
 }
 
+/// The photo, the name and, under it, who this is: the page opens on a person
+/// or a group, not on a form (U30).
+class _DetailsHeader extends StatelessWidget {
+  const _DetailsHeader({
+    required this.avatar,
+    required this.title,
+    this.subtitle,
+  });
+
+  final Widget avatar;
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      children: <Widget>[
+        const SizedBox(height: BoneSpacing.sm),
+        avatar,
+        const SizedBox(height: BoneSpacing.md),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.headlineSmall,
+        ),
+        if (subtitle != null)
+          Padding(
+            padding: const EdgeInsets.only(top: BoneSpacing.xs),
+            child: Text(
+              subtitle!,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The few things most people open this page for, side by side under the name.
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({required this.actions});
+
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (final action in actions) Flexible(child: action),
+      ],
+    );
+  }
+}
+
+/// A round icon with its word under it, 72 wide so three fit a phone and the
+/// label has room to wrap at large text.
+class _DetailAction extends StatelessWidget {
+  const _DetailAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final enabled = onTap != null;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 72, maxWidth: 104),
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: label,
+        excludeSemantics: true,
+        onTap: onTap,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(BoneRadii.md),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: BoneSpacing.sm,
+              vertical: BoneSpacing.sm,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: scheme.surfaceContainerHigh,
+                  foregroundColor:
+                      enabled ? scheme.onSurface : scheme.onSurfaceVariant,
+                  child: Icon(icon),
+                ),
+                const SizedBox(height: BoneSpacing.xs),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MemberTile extends StatelessWidget {
   const _MemberTile({
     required this.member,
@@ -686,9 +984,9 @@ class _MemberTile extends StatelessWidget {
     final account = accountLabel(member.accountId, member.username);
     final label = profileName == null ? account : '$profileName ($account)';
     final colors = avatarColorsFor(context, member.accountId);
-    // Role moved onto a pill; what is left in the subtitle is the one thing
-    // that is genuinely a detail.
+    // U15: the role shows under the name, in words.
     final details = <String>[
+      roleLabel(l10n, member.role),
       if (isSelf) l10n.detailsYou,
       if (member.joinedAt != null)
         l10n.detailsJoined(formatDate(context, member.joinedAt!)),
@@ -714,28 +1012,26 @@ class _MemberTile extends StatelessWidget {
             ),
           ),
         ),
-        title: Row(
-          children: <Widget>[
-            Flexible(
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            const SizedBox(width: BoneSpacing.sm),
-            StatusPill(label: roleLabel(l10n, member.role)),
-          ],
+        title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          details.join(' · '),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
-        subtitle: details.isEmpty
-            ? null
-            : Text(
-                details.join(' · '),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
+        // U15: removing sits in a per-member menu, not behind a bare icon.
         trailing: canRemove
-            ? IconButton(
-                tooltip: l10n.detailsRemoveMember(label),
-                onPressed: busy ? null : onRemove,
-                icon: const Icon(Icons.person_remove_outlined),
+            ? PopupMenuButton<VoidCallback>(
+                key: Key('member-menu-${member.accountId}'),
+                tooltip: l10n.memberModerateTooltip(label),
+                enabled: !busy,
+                onSelected: (action) => action(),
+                itemBuilder: (_) => <PopupMenuEntry<VoidCallback>>[
+                  PopupMenuItem<VoidCallback>(
+                    value: onRemove,
+                    child: Text(l10n.detailsRemoveConfirm),
+                  ),
+                ],
               )
             : null,
       ),
@@ -783,23 +1079,15 @@ class _BlockTile extends StatelessWidget {
     );
   }
 
-  Future<void> _toggle(BuildContext context, {required bool blocked}) async {
-    final ok = blocked
-        ? await state.unblockAccount(accountId)
-        : await state.blockAccount(accountId);
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? (blocked
-                ? context.l10n.blockedUnblocked(label)
-                : context.l10n.searchBlocked(label))
-            : state.errorFor(Ops.blocks) ?? context.l10n.searchBlockFailed),
-      ),
-    );
-  }
+  // U16: blocking asks first; both directions offer Undo.
+  Future<void> _toggle(BuildContext context, {required bool blocked}) =>
+      toggleBlock(
+        context,
+        state,
+        accountId: accountId,
+        label: label,
+        blocked: blocked,
+      );
 }
 
 class _InlineError extends StatelessWidget {

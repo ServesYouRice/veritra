@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/errors.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/communities/membership_screens.dart';
 import 'package:private_messenger/features/communities/moderation_screen.dart';
@@ -49,9 +51,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('No requests yet.'), findsOneWidget);
 
+      // U32: a pasted link checks itself; no button press is needed.
       await tester.enterText(find.byType(TextField), link.url);
-      await tester.pump();
-      await tester.tap(find.text('Check link'));
       await tester.pumpAndSettle();
 
       expect(find.text('Hikers'), findsOneWidget);
@@ -72,6 +73,40 @@ void main() {
       // The secret is dropped from the field once the request is made.
       expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
           isEmpty);
+    });
+
+    testWidgets('a link checks itself when pasted, and only once',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      final link = newInviteLink(origin: _origin);
+      api.link = link;
+      await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
+      await tester.pumpAndSettle();
+
+      // Typing a few characters by hand does not check anything.
+      await tester.enterText(find.byType(TextField), 'htt');
+      await tester.pumpAndSettle();
+      expect(api.previewed, isEmpty);
+
+      await tester.enterText(find.byType(TextField), link.url);
+      await tester.pumpAndSettle();
+      expect(api.previewed, <String>[link.locator]);
+      expect(find.text('Ask to join'), findsOneWidget);
+    });
+
+    testWidgets('pasted text that is not a link says so under the field',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byType(TextField), 'see you at the trailhead on saturday');
+      await tester.pumpAndSettle();
+      expect(find.text('This is not an invitation link for this server.'),
+          findsOneWidget);
+      expect(api.previewed, isEmpty);
     });
 
     testWidgets('a dead link says so, and a member is told they are in',
@@ -172,6 +207,43 @@ void main() {
       expect(copied, shown);
     });
 
+    testWidgets('turning a link off is a labelled button and asks first',
+        (tester) async {
+      final api = _Api()
+        ..invites.add(MembershipInvite(
+          id: 'minv_1',
+          maxUses: 10,
+          uses: 3,
+          expiresAt: DateTime.utc(2026, 11, 20),
+        ));
+      final state = _state(api);
+      await tester.pumpWidget(_app(Scaffold(
+        body: SingleChildScrollView(
+          child: MembershipInvitesPanel(
+            state: state,
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+          ),
+        ),
+      )));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Turn off'), findsOneWidget);
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      // Cancelling changes nothing.
+      expect(find.text('Turn off this link?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(api.revokedInvites, isEmpty);
+
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
+      await tester.pumpAndSettle();
+      expect(api.revokedInvites, <String>['minv_1']);
+    });
+
     testWidgets('an admin approves or declines a request by username',
         (tester) async {
       final api = _Api()
@@ -212,9 +284,14 @@ void main() {
       expect(find.text('@alice'), findsOneWidget);
       expect(find.text('@bob'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Approve @alice'));
+      // U16: labelled buttons, not bare icons.
+      expect(find.text('Approve'), findsNWidgets(2));
+      expect(find.text('Decline'), findsNWidgets(2));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Decline @bob'));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-decline-jreq_2')));
       await tester.pumpAndSettle();
 
       expect(api.decisions, <String>['jreq_1:approve', 'jreq_2:reject']);
@@ -223,6 +300,54 @@ void main() {
   });
 
   group('moderation (C5)', () {
+    // U5: a failed read never shows as an empty or default state.
+    testWidgets(
+        'when moderation fails to load it says so with Retry and guesses nothing',
+        (tester) async {
+      final api = _Api()..failModeration = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      // Before the read finishes: a spinner, none of the defaults.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Nobody is banned.'), findsNothing);
+      expect(find.text('Off'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsNothing);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Nobody is banned.'), findsNothing);
+      expect(find.text('Off'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsNothing);
+      expect(find.text('Nothing yet.'), findsNothing);
+
+      api.failModeration = false;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsOneWidget);
+      expect(find.text('@owner banned @bob'), findsOneWidget);
+    });
+
+    testWidgets('a failed activity log is not "Nothing yet." for an admin',
+        (tester) async {
+      final api = _Api()..failEvents = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('Nothing yet.'), findsNothing);
+      expect(find.text('Nobody is banned.'), findsNothing);
+    });
+
     testWidgets(
         'an owner bans from the member menu and times out with a length',
         (tester) async {
@@ -238,7 +363,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Time out…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 h'));
+      await tester.tap(find.text('1 hour'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['timeout:comm_1:acct_alice:3600']);
 
@@ -260,6 +385,40 @@ void main() {
       // The banned account leaves the channel's local roster, as for a removal.
       state.membersByConversation['conv_chan']
           ?.forEach((m) => expect(m.accountId, isNot('acct_alice')));
+    });
+
+    testWidgets('a timeout offers Undo, which lifts it; a ban offers none',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Time out…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 hour'));
+      await tester.pumpAndSettle();
+      expect(find.text('Timeout set.'), findsOneWidget);
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>[
+        'timeout:comm_1:acct_alice:3600',
+        'timeout:comm_1:acct_alice:0',
+      ]);
+
+      // Banning ends access; nothing offers to take that back.
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ban…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Ban'));
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsNothing);
     });
 
     testWidgets('a moderator can ban but not lift bans or pause invitations',
@@ -317,7 +476,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('@bob'), findsWidgets);
-      expect(find.text('One message every 30 s'), findsOneWidget);
+      expect(find.text('One message every 30 seconds'), findsOneWidget);
       expect(find.text('@owner banned @bob'), findsOneWidget);
       expect(find.text('Invitation links work normally.'), findsOneWidget);
 
@@ -327,13 +486,13 @@ void main() {
       expect(find.text('Channel'), findsOneWidget);
       await tester.tap(find.text('Channel'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('5 min'));
+      await tester.tap(find.text('5 minutes'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['slow:comm_1:chan_1:300']);
 
       await tester.tap(find.text('Pause invitations'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 d'));
+      await tester.tap(find.text('1 day'));
       await tester.pumpAndSettle();
       expect(api.moderation.last, 'pause:comm_1:86400');
 
@@ -341,6 +500,135 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.moderation.last, 'unban:comm_1:acct_bob');
       expect(find.text('Nobody is banned.'), findsOneWidget);
+    });
+  });
+
+  // U4: a failed leave, revoke, remove or decline keeps its message on the
+  // page after the panels reload, shown once.
+  group('errors stay on the community page (U4)', () {
+    final failure = describeError(
+        ApiException(500, '{"error":"internal"}'), englishL10n, false);
+
+    Future<void> openOwnerPage(WidgetTester tester, _Api api) async {
+      final state = _state(api);
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> expectStays(WidgetTester tester) async {
+      // The panels reload after a failed action; the message must outlast it.
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsOneWidget);
+    }
+
+    testWidgets('a failed removal', (tester) async {
+      final api = _Api();
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await expectStays(tester);
+      expect(api.removed, isEmpty);
+    });
+
+    testWidgets('a failed revoke', (tester) async {
+      final api = _Api()
+        ..invites.add(MembershipInvite(
+            id: 'minv_1',
+            maxUses: 10,
+            uses: 0,
+            expiresAt: DateTime.utc(2026, 11, 14)));
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
+      await expectStays(tester);
+      // Leaving the tab and coming back keeps the message: the page is kept.
+      await tester.tap(find.text('Members'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsOneWidget);
+    });
+
+    testWidgets('a failed decline', (tester) async {
+      final api = _Api()
+        ..pending = <JoinRequest>[
+          JoinRequest(
+            id: 'jreq_1',
+            kind: InviteTargetKind.community,
+            status: JoinRequestStatus.pending,
+            createdAt: DateTime.utc(2026, 11, 7),
+            targetId: 'comm_1',
+            accountId: 'acct_bob',
+            username: 'bob',
+          ),
+        ];
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
+      await expectStays(tester);
+      expect(find.text('@bob'), findsOneWidget,
+          reason: 'the request is still waiting');
+    });
+
+    testWidgets('a failed leave', (tester) async {
+      final api = _Api()..me = 'acct_alice';
+      final state = _state(api)
+        ..session = const Session(
+          baseUrl: _origin,
+          token: 'tok',
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+          username: 'alice',
+        );
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+      api.failWrites = true;
+      await tester.scrollUntilVisible(find.text('Leave community'), 200);
+      await tester.tap(find.text('Leave community'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Leave'));
+      await expectStays(tester);
+    });
+
+    testWidgets('the message clears when the next action starts',
+        (tester) async {
+      final api = _Api();
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await expectStays(tester);
+
+      api.failWrites = false;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsNothing);
     });
   });
 
@@ -359,11 +647,28 @@ void main() {
       expect(find.text('@alice'), findsOneWidget);
       expect(find.byTooltip('Moderate @alice'), findsOneWidget);
       expect(find.byTooltip('Moderate @owner'), findsNothing);
+      // U31: Members, Invites and Requests are tabs of the community page.
+      expect(find.widgetWithText(Tab, 'Members'), findsOneWidget);
+      expect(find.widgetWithText(Tab, 'Invites'), findsOneWidget);
+      expect(find.widgetWithText(Tab, 'Requests'), findsOneWidget);
+      expect(find.text('INVITATION LINKS'), findsNothing);
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
       expect(find.text('INVITATION LINKS'), findsOneWidget);
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
       expect(find.text('JOIN REQUESTS'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Leave community'), 200);
+      await tester.tap(find.text('Members'));
+      await tester.pumpAndSettle();
+      // The tab pages scroll up and down; the pager itself sideways.
+      final page = find
+          .byWidgetPredicate((w) => w is Scrollable && w.axis == Axis.vertical)
+          .first;
+      await tester.scrollUntilVisible(find.text('Leave community'), 200,
+          scrollable: page);
       expect(find.text('Leave community'), findsOneWidget);
-      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200);
+      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200,
+          scrollable: page);
 
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
@@ -393,6 +698,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Moderate @owner'), findsNothing);
+      expect(find.byType(TabBar), findsNothing);
       expect(find.text('INVITATION LINKS'), findsNothing);
       expect(find.text('JOIN REQUESTS'), findsNothing);
       expect(find.text('Leave community'), findsOneWidget);
@@ -438,6 +744,10 @@ class _Api extends ApiClient {
   bool alreadyMember = false;
   String me = 'acct_owner';
   final Set<String> gone = <String>{};
+  bool failModeration = false;
+  bool failWrites = false;
+  bool failEvents = false;
+  final List<String> revokedInvites = <String>[];
 
   @override
   Future<MembershipInvite> createMembershipInvite(
@@ -520,11 +830,19 @@ class _Api extends ApiClient {
       List<JoinRequest>.of(pending);
 
   @override
+  Future<void> revokeMembershipInvite(String token, String inviteId) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
+    revokedInvites.add(inviteId);
+    invites.removeWhere((invite) => invite.id == inviteId);
+  }
+
+  @override
   Future<JoinRequest> decideJoinRequest(
     String token,
     String requestId, {
     required bool approve,
   }) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
     decisions.add('$requestId:${approve ? 'approve' : 'reject'}');
     final request = pending.firstWhere((r) => r.id == requestId);
     pending = pending.where((r) => r.id != requestId).toList();
@@ -606,25 +924,29 @@ class _Api extends ApiClient {
 
   @override
   Future<ModerationState> moderationState(
-          String token, String communityId) async =>
-      const ModerationState(
-        invitesPausedUntil: null,
-        slowModeSeconds: <String, int>{'chan_1': 30},
-      );
+      String token, String communityId) async {
+    if (failModeration) throw ApiException(500, '{"error":"internal"}');
+    return const ModerationState(
+      invitesPausedUntil: null,
+      slowModeSeconds: <String, int>{'chan_1': 30},
+    );
+  }
 
   @override
   Future<List<ModerationEvent>> moderationEvents(
-          String token, String communityId) async =>
-      <ModerationEvent>[
-        ModerationEvent(
-          id: 'mod_1',
-          actor: 'acct_owner',
-          target: 'acct_bob',
-          channelId: null,
-          action: 'ban',
-          createdAt: DateTime.utc(2026, 11, 7),
-        ),
-      ];
+      String token, String communityId) async {
+    if (failEvents) throw ApiException(500, '{"error":"internal"}');
+    return <ModerationEvent>[
+      ModerationEvent(
+        id: 'mod_1',
+        actor: 'acct_owner',
+        target: 'acct_bob',
+        channelId: null,
+        action: 'ban',
+        createdAt: DateTime.utc(2026, 11, 7),
+      ),
+    ];
+  }
 
   @override
   Future<CommunityRemoval> removeCommunityMember(
@@ -632,6 +954,7 @@ class _Api extends ApiClient {
     String communityId,
     String accountId,
   ) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
     removed.add('$communityId:$accountId');
     gone.add(accountId);
     return const CommunityRemoval(<({String conversationId, int? eventId})>[]);

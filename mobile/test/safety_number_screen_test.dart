@@ -31,7 +31,8 @@ void main() {
       home: SafetyNumberScreen(state: state, conversation: dm),
     ));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
+    await _choose(tester, 'We are on a call');
+    expect(_shownNumber(tester), _shown);
     expect(find.text('NOT VERIFIED'), findsOneWidget);
     expect(
         find.textContaining('Compare this number with @sam'), findsOneWidget);
@@ -55,6 +56,7 @@ void main() {
       home: SafetyNumberScreen(state: state, conversation: dm),
     ));
     await tester.pumpAndSettle();
+    await _choose(tester, 'We are on a call');
     await tester.tap(find.text('Mark as verified'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cancel'));
@@ -74,6 +76,7 @@ void main() {
       home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
     ));
     await tester.pumpAndSettle();
+    await _choose(tester, 'We are on a call');
     expect(find.text('CHANGED'), findsOneWidget);
     expect(find.textContaining('replaced since you verified'), findsOneWidget);
     expect(find.text('Mark as verified'), findsOneWidget);
@@ -91,6 +94,7 @@ void main() {
       home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
     ));
     await tester.pumpAndSettle();
+    await _choose(tester, 'We are on a call');
     expect(find.text('NOT VERIFIED'), findsOneWidget);
     expect(find.text('CHANGED'), findsNothing);
   });
@@ -105,8 +109,10 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
-    expect(find.textContaining('Every member of this group'), findsOneWidget);
+    await _choose(tester, 'We are on a call');
+    expect(_shownNumber(tester), _shown);
+    expect(find.textContaining('Compare this number with the other members'),
+        findsOneWidget);
     expect(find.text('Mark as verified'), findsNothing);
     expect(find.text('NOT VERIFIED'), findsNothing);
   });
@@ -120,12 +126,14 @@ void main() {
           state: _state(MemoryLocalStore(), mls), conversation: dm),
     ));
     await tester.pumpAndSettle();
+    await _choose(tester, 'We are on a call');
     expect(find.text('Safety number unavailable'), findsOneWidget);
 
     mls.fail = false;
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
+    await _choose(tester, 'We are on a call');
+    expect(_shownNumber(tester), _shown);
   });
 
   group('leaving the screen', () {
@@ -140,6 +148,7 @@ void main() {
           home: SafetyNumberScreen(state: state, conversation: dm),
         ));
         await tester.pumpAndSettle();
+        await _choose(tester, 'We are on a call');
         await tester.tap(find.text('Mark as verified'));
         await tester.pumpAndSettle();
         await tester.tap(find.text('They match'));
@@ -173,6 +182,7 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle();
+      await _choose(tester, 'We are together');
       await tester.tap(find.text('Scan their code'));
       await tester.pumpAndSettle();
     }
@@ -249,6 +259,7 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle();
+      await _choose(tester, 'We are together');
       await tester.tap(find.text('Scan their code'));
       await tester.pump();
       await tester.pump();
@@ -271,7 +282,8 @@ void main() {
         home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      await _choose(tester, 'We are on a call');
+      expect(_shownNumber(tester), _shown);
 
       await tester.tap(find.text('Mark as verified'));
       await tester.pumpAndSettle();
@@ -295,6 +307,7 @@ void main() {
         home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
       ));
       await tester.pumpAndSettle();
+      await _choose(tester, 'We are on a call');
       await tester.tap(find.text('Mark as verified'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('They match'));
@@ -339,15 +352,16 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      await _choose(tester, 'We are on a call');
+      expect(_shownNumber(tester), _shown);
       expect(find.text('VERIFIED'), findsOneWidget);
 
       // A device is replaced: new number, so the stored verification is stale.
       mls.change();
       state.poke();
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsNothing);
-      expect(find.text(_shownLater), findsOneWidget);
+      expect(_shownNumber(tester), isNot(_shown));
+      expect(_shownNumber(tester), _shownLater);
       expect(find.text('CHANGED'), findsOneWidget);
       expect(find.text('Mark as verified'), findsOneWidget);
     });
@@ -360,7 +374,8 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      await _choose(tester, 'We are on a call');
+      expect(_shownNumber(tester), _shown);
 
       // A reload starts and waits; it has already read the number as it is.
       mls.gate = Completer<void>();
@@ -377,13 +392,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('They match'));
       await tester.pumpAndSettle();
-      expect(find.text(_shownLater), findsOneWidget);
+      expect(_shownNumber(tester), _shownLater);
 
       // The older answer, from before the change, arrives last.
       older.complete();
       await tester.pumpAndSettle();
-      expect(find.text(_shownLater), findsOneWidget);
-      expect(find.text(_shown), findsNothing);
+      expect(_shownNumber(tester), _shownLater);
+      expect(_shownNumber(tester), isNot(_shown));
     });
 
     testWidgets('notifications do not pile up loads', (tester) async {
@@ -394,6 +409,7 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
+      await _choose(tester, 'We are on a call');
       final before = mls.reads;
       mls.gate = Completer<void>();
       for (var i = 0; i < 20; i++) {
@@ -415,12 +431,77 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
+      await _choose(tester, 'We are on a call');
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
       final reads = mls.reads;
       state.poke();
       await tester.pumpAndSettle();
       expect(mls.reads, reads);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('U25: a guided comparison', () {
+    testWidgets('the screen opens with why and how, and nothing to mark yet',
+        (tester) async {
+      _phoneSizedView(tester);
+      await tester.pumpWidget(MaterialApp(
+        home: SafetyNumberScreen(
+            state: _state(MemoryLocalStore(), _FakeMls()), conversation: dm),
+      ));
+      await tester.pumpAndSettle();
+      expect(
+          find.text('Compare this number with @sam to be sure nobody else '
+              'can read your chat.'),
+          findsOneWidget);
+      expect(find.text('We are together'), findsOneWidget);
+      expect(find.text('We are on a call'), findsOneWidget);
+      expect(find.text('Mark as verified'), findsNothing,
+          reason: 'only after a compare step');
+      expect(find.byKey(const ValueKey<String>('safety-number-grid')),
+          findsNothing);
+      expect(find.text('NOT VERIFIED'), findsOneWidget);
+    });
+
+    testWidgets('on a call: read aloud, then mark; another way goes back',
+        (tester) async {
+      _phoneSizedView(tester);
+      await tester.pumpWidget(MaterialApp(
+        home: SafetyNumberScreen(
+            state: _state(MemoryLocalStore(), _FakeMls()), conversation: dm),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('We are on a call'));
+      await tester.pumpAndSettle();
+      expect(_shownNumber(tester), _shown);
+      expect(find.textContaining('reading the groups aloud'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Mark as verified'),
+          findsOneWidget);
+
+      await tester.tap(find.text('Compare another way'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark as verified'), findsNothing);
+      expect(find.text('We are on a call'), findsOneWidget);
+    });
+
+    testWidgets('together: their code is scanned first, marking is second',
+        (tester) async {
+      _phoneSizedView(tester);
+      await tester.pumpWidget(MaterialApp(
+        home: SafetyNumberScreen(
+          state: _state(MemoryLocalStore(), _FakeMls()),
+          conversation: dm,
+          scanCode: (_) async => null,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('We are together'));
+      await tester.pumpAndSettle();
+      expect(
+          find.widgetWithText(FilledButton, 'Scan their code'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Mark as verified'),
+          findsOneWidget);
+      expect(_shownNumber(tester), _shown);
     });
   });
 
@@ -540,6 +621,29 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+/// Picks how the two people compare, when the screen offers the choice.
+Future<void> _choose(WidgetTester tester, String method) async {
+  final choice = find.text(method);
+  if (choice.evaluate().isEmpty) return;
+  await tester.tap(choice);
+  await tester.pumpAndSettle();
+}
+
+/// The number as the grid shows it: groups by row, rows by line.
+String _shownNumber(WidgetTester tester) {
+  final rows = <String>[];
+  for (var row = 0; row < 3; row++) {
+    rows.add(<String>[
+      for (var column = 0; column < 4; column++)
+        tester
+            .widget<Text>(find
+                .byKey(ValueKey<String>('safety-group-${row * 4 + column}')))
+            .data!,
+    ].join(' '));
+  }
+  return rows.join('\n');
 }
 
 /// How the fake's sixty digits appear: twelve groups of five, four a line.

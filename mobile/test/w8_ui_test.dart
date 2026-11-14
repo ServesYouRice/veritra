@@ -36,12 +36,10 @@ void main() {
                   ]
                 }))));
     await tester.pumpWidget(app('secret'));
-    String visible() => tester
-        .widget<SelectableText>(find.byType(SelectableText))
-        .textSpan!
-        .toPlainText();
+    String visible() =>
+        tester.widget<Text>(find.byType(Text)).textSpan!.toPlainText();
     expect(visible(), '█' * 6);
-    await tester.tap(find.byType(SelectableText));
+    await tester.tap(find.byType(Text));
     await tester.pump();
     expect(visible(), 'secret');
     await tester.pumpWidget(app('different'));
@@ -66,7 +64,10 @@ void main() {
     await tester.tap(find.text(englishL10n.w8Star));
     await tester.pumpAndSettle();
     expect(await store.loadStarred(), {'dev:t'});
-    await tester.tap(find.byTooltip(englishL10n.w8StarredMessages));
+    // Starred messages sit in the chat menu (U29).
+    await tester.tap(find.byKey(const Key('chat-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(englishL10n.w8StarredMessages));
     await tester.pumpAndSettle();
     expect(find.text(englishL10n.w8StarredMessages), findsOneWidget);
     expect(find.byIcon(Icons.star), findsWidgets);
@@ -166,8 +167,7 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('archived chats remain reachable through the archive switch',
-      (tester) async {
+  testWidgets('archived chats open as a page with Back', (tester) async {
     final state = _state();
     await state.setConversationArchived('conv', true);
     await tester.pumpWidget(MaterialApp(home: ChatListScreen(state: state)));
@@ -177,6 +177,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Team'), findsOneWidget);
     expect(find.text(englishL10n.w8ArchivedChats), findsOneWidget);
+    // The archive is a page with Back (U28), not a switch on the list.
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Team'), findsNothing);
+    expect(find.text(englishL10n.navChats), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });

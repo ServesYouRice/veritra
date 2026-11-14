@@ -54,10 +54,19 @@ String messageTickLabel(AppLocalizations l10n, MessageTick tick) =>
       MessageTick.read => l10n.chatTickRead,
     };
 
-/// One tick for sent, two for delivered, two in the accent for read. The
-/// accent is the theme's own (bone on plum, plum on paper), so read stands
-/// out by tone rather than by a new hue (`docs/design.md` §K). The bubble
-/// speaks the state in its semantics label, so the glyph itself is excluded.
+/// The glyph of a tick. The three states differ by shape, not only by tone
+/// (U29): one check for sent, two for delivered, an eye for read, so none
+/// depends on telling two colours apart.
+IconData messageTickGlyph(MessageTick tick) => switch (tick) {
+      MessageTick.sent => Icons.done,
+      MessageTick.delivered => Icons.done_all,
+      MessageTick.read => Icons.visibility,
+    };
+
+/// The tick of one message: a check, two checks, or an eye. Read is also in
+/// the accent (bone on plum, plum on paper), so it stands out by tone as well
+/// (`docs/design.md` §K). The bubble speaks the state in its semantics label,
+/// so the glyph itself is excluded.
 class MessageTickIcon extends StatelessWidget {
   const MessageTickIcon({required this.tick, super.key});
 
@@ -68,7 +77,7 @@ class MessageTickIcon extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return ExcludeSemantics(
       child: Icon(
-        tick == MessageTick.sent ? Icons.done : Icons.done_all,
+        messageTickGlyph(tick),
         size: 14,
         color:
             tick == MessageTick.read ? scheme.primary : scheme.onSurfaceVariant,

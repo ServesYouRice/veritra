@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../core/server_origin.dart';
@@ -65,6 +66,13 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
   bool _working = false;
   String? _mismatch;
 
+  /// U24: this screen put the key on the clipboard and has not cleared it.
+  bool _onClipboard = false;
+
+  /// Clears the copy after [_clipboardLifetime] if the person never continues.
+  Timer? _clipboardTimer;
+  static const Duration _clipboardLifetime = Duration(seconds: 90);
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +81,7 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
 
   @override
   void dispose() {
+    _clearClipboard();
     _draft?.dispose();
     _typed.clear();
     _typed.dispose();
@@ -145,6 +154,28 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     } finally {
       if (mounted) setState(() => _working = false);
     }
+  }
+
+  /// U24: the key goes to a password manager through the clipboard.
+  Future<void> _copyForPasswordManager(String display) async {
+    await Clipboard.setData(ClipboardData(text: groupRecoveryKey(display)));
+    _onClipboard = true;
+    _clipboardTimer?.cancel();
+    _clipboardTimer = Timer(_clipboardLifetime, _clearClipboard);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(context.l10n.recoveryKeyCopied)));
+  }
+
+  /// Overwrites the copy this screen made, so the key does not stay on the
+  /// clipboard and the check that follows comes from the saved copy. It is
+  /// not read first: reading would show a paste notice on iOS.
+  void _clearClipboard() {
+    _clipboardTimer?.cancel();
+    _clipboardTimer = null;
+    if (!_onClipboard) return;
+    _onClipboard = false;
+    unawaited(Clipboard.setData(const ClipboardData(text: '')));
   }
 
   void _showError(Object err) {
@@ -253,12 +284,23 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
         const SizedBox(height: BoneSpacing.md),
       ],
       const SizedBox(height: BoneSpacing.lg),
-      FilledButton.icon(
-        onPressed: _working || off ? null : _generate,
-        icon: const Icon(Icons.key),
-        label:
-            Text(configured ? l10n.recoveryKeyReplace : l10n.recoveryKeyCreate),
-      ),
+      if (_draft != null)
+        // U23: Back from the key keeps it, so what was written down stays
+        // the key to type back.
+        FilledButton.icon(
+          key: const ValueKey<String>('recovery-key-show-draft'),
+          onPressed:
+              _working ? null : () => setState(() => _step = _SetupStep.show),
+          icon: const Icon(Icons.key),
+          label: Text(l10n.recoveryKeyShowAgain),
+        )
+      else
+        FilledButton.icon(
+          onPressed: _working || off ? null : _generate,
+          icon: const Icon(Icons.key),
+          label: Text(
+              configured ? l10n.recoveryKeyReplace : l10n.recoveryKeyCreate),
+        ),
     ];
   }
 
@@ -279,22 +321,22 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
         excludeSemantics: true,
         child: Container(
           key: const ValueKey<String>('recovery-key-display'),
-          padding: const EdgeInsets.all(BoneSpacing.lg),
+          padding: const EdgeInsets.all(BoneSpacing.md),
           decoration: BoxDecoration(
             color: theme.colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Text(
-            _displayLines(display),
-            textAlign: TextAlign.center,
-            style: BoneType.mono.copyWith(
-              fontSize: 20,
-              height: 1.6,
-              letterSpacing: 2,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
+          child: RecoveryKeyGroups(display: display),
         ),
+      ),
+      const SizedBox(height: BoneSpacing.md),
+      OutlinedButton.icon(
+        key: const ValueKey<String>('recovery-key-copy'),
+        onPressed: display.isEmpty
+            ? null
+            : () => unawaited(_copyForPasswordManager(display)),
+        icon: const Icon(Icons.copy_outlined),
+        label: Text(l10n.recoveryKeyCopy),
       ),
       if (address != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
@@ -312,22 +354,21 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
       ],
       const SizedBox(height: BoneSpacing.xl),
       FilledButton(
-        onPressed: () => setState(() => _step = _SetupStep.confirm),
+        onPressed: () {
+          _clearClipboard();
+          setState(() => _step = _SetupStep.confirm);
+        },
         child: Text(l10n.recoveryKeyWritten),
       ),
+      TextButton(
+        key: const ValueKey<String>('recovery-key-back'),
+        onPressed: () {
+          _clearClipboard();
+          setState(() => _step = _SetupStep.overview);
+        },
+        child: Text(MaterialLocalizations.of(context).backButtonTooltip),
+      ),
     ];
-  }
-
-  /// Four groups of four per line, so the key is copied line by line.
-  static String _displayLines(String display) {
-    final groups = groupRecoveryKey(display).split('-');
-    final lines = <String>[];
-    for (var i = 0; i < groups.length; i += 4) {
-      lines.add(groups
-          .sublist(i, i + 4 > groups.length ? groups.length : i + 4)
-          .join(' '));
-    }
-    return lines.join('\n');
   }
 
   List<Widget> _confirm(BuildContext context) {
@@ -353,6 +394,16 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
           labelText: l10n.recoveryKeyField,
           errorText: _mismatch,
         ),
+        onChanged: (_) {
+          if (_mismatch != null) setState(() => _mismatch = null);
+        },
+      ),
+      const SizedBox(height: BoneSpacing.md),
+      // Guidance only: saving still checks the whole key natively.
+      ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _typed,
+        builder: (context, value, _) => RecoveryKeyCheck(
+            expected: _draft?.display ?? '', typed: value.text),
       ),
       const SizedBox(height: BoneSpacing.lg),
       FilledButton(
@@ -372,5 +423,218 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
         child: Text(l10n.recoveryKeyShowAgain),
       ),
     ];
+  }
+}
+
+/// The 13 groups of [display], or fewer for a shorter text.
+List<String> recoveryKeyGroups(String display) =>
+    display.isEmpty ? const <String>[] : groupRecoveryKey(display).split('-');
+
+/// U24: the key as 13 numbered groups, four to a row, so it is copied and
+/// checked group by group.
+class RecoveryKeyGroups extends StatelessWidget {
+  const RecoveryKeyGroups({required this.display, super.key});
+
+  final String display;
+
+  static const int perRow = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final groups = recoveryKeyGroups(display);
+    final rows = <Widget>[];
+    for (var start = 0; start < groups.length; start += perRow) {
+      final cells = <Widget>[];
+      for (var i = start; i < start + perRow; i++) {
+        cells.add(Expanded(
+          child: i < groups.length
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: BoneSpacing.xs, vertical: BoneSpacing.xs),
+                  child: Column(
+                    children: <Widget>[
+                      Text(
+                        '${i + 1}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          groups[i],
+                          key: ValueKey<String>('recovery-key-group-${i + 1}'),
+                          maxLines: 1,
+                          style: BoneType.mono.copyWith(
+                            fontSize: 20,
+                            letterSpacing: 2,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ));
+      }
+      rows.add(
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: cells));
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: rows);
+  }
+}
+
+/// How one typed group compares with the key shown.
+enum RecoveryGroupMark { pending, correct, wrong }
+
+/// Typed key text as the native decoder reads it: separators dropped, upper
+/// case, `O` as 0 and `I`/`L` as 1 (`crypto/rust/src/recovery.rs`).
+String canonicalRecoveryKeyText(String typed) {
+  final upper = normalizeRecoveryKeyInput(typed).toUpperCase();
+  final out = StringBuffer();
+  for (final unit in upper.split('')) {
+    out.write(switch (unit) { 'O' => '0', 'I' || 'L' => '1', _ => unit });
+  }
+  return out.toString();
+}
+
+/// One mark per group of [expected] (the canonical display) for [typed]. A
+/// group still being typed is pending while it agrees so far. Guidance
+/// only: it never decides whether the key is accepted.
+List<RecoveryGroupMark> recoveryGroupMarks(String expected, String typed) {
+  final canonical = canonicalRecoveryKeyText(typed);
+  final groups = recoveryKeyGroups(expected);
+  final marks = <RecoveryGroupMark>[];
+  for (var i = 0; i < groups.length; i++) {
+    final start = i * 4;
+    if (canonical.length <= start) {
+      marks.add(RecoveryGroupMark.pending);
+      continue;
+    }
+    final end = start + groups[i].length;
+    final chunk = canonical.substring(
+        start, canonical.length < end ? canonical.length : end);
+    if (chunk.length == groups[i].length) {
+      marks.add(chunk == groups[i]
+          ? RecoveryGroupMark.correct
+          : RecoveryGroupMark.wrong);
+    } else {
+      marks.add(groups[i].startsWith(chunk)
+          ? RecoveryGroupMark.pending
+          : RecoveryGroupMark.wrong);
+    }
+  }
+  return marks;
+}
+
+/// U24: a tick for each group typed correctly, and the number of the first
+/// wrong one. It names groups by number only and never shows the key.
+class RecoveryKeyCheck extends StatelessWidget {
+  const RecoveryKeyCheck(
+      {required this.expected, required this.typed, super.key});
+
+  /// The canonical display of the key being confirmed.
+  final String expected;
+  final String typed;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final states = theme.extension<VeritraStateColors>() ??
+        (theme.brightness == Brightness.dark
+            ? VeritraStateColors.dark
+            : VeritraStateColors.light);
+    final marks = recoveryGroupMarks(expected, typed);
+    final wrong = marks.indexOf(RecoveryGroupMark.wrong);
+    final matched =
+        marks.where((mark) => mark == RecoveryGroupMark.correct).length;
+    final tooLong = canonicalRecoveryKeyText(typed).length > expected.length;
+    final String? message;
+    if (wrong >= 0) {
+      message = l10n.recoveryKeyGroupWrong(wrong + 1);
+    } else if (tooLong) {
+      message = l10n.recoveryKeyTooLong;
+    } else if (typed.trim().isEmpty) {
+      message = null;
+    } else {
+      message = l10n.recoveryKeyGroupsMatched(matched);
+    }
+    final problem = wrong >= 0 || tooLong;
+    return Column(
+      key: const ValueKey<String>('recovery-key-check'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        ExcludeSemantics(
+          child: Wrap(
+            spacing: BoneSpacing.xs,
+            runSpacing: BoneSpacing.xs,
+            children: <Widget>[
+              for (var i = 0; i < marks.length; i++)
+                _GroupMark(
+                  key: ValueKey<String>('recovery-key-mark-${i + 1}'),
+                  number: i + 1,
+                  mark: marks[i],
+                  correctColor: states.verified,
+                ),
+            ],
+          ),
+        ),
+        if (message != null) ...<Widget>[
+          const SizedBox(height: BoneSpacing.sm),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              message,
+              key: const ValueKey<String>('recovery-key-check-message'),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                  color: problem
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _GroupMark extends StatelessWidget {
+  const _GroupMark({
+    required this.number,
+    required this.mark,
+    required this.correctColor,
+    super.key,
+  });
+
+  final int number;
+  final RecoveryGroupMark mark;
+  final Color correctColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (IconData icon, Color color) = switch (mark) {
+      RecoveryGroupMark.correct => (Icons.check_circle, correctColor),
+      RecoveryGroupMark.wrong => (Icons.cancel, theme.colorScheme.error),
+      RecoveryGroupMark.pending => (
+          Icons.radio_button_unchecked,
+          theme.colorScheme.outline
+        ),
+    };
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 2),
+        Text('$number',
+            style: theme.textTheme.labelMedium?.copyWith(
+                color: mark == RecoveryGroupMark.wrong
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(width: BoneSpacing.xs),
+      ],
+    );
   }
 }

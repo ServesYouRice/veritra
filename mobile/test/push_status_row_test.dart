@@ -76,7 +76,7 @@ void main() {
     expect(find.text(l10n.settingsPushActiveTitle), findsOneWidget);
     expect(
         tintOf(tester, Icons.notifications_active_outlined), states.verified);
-    expect(find.text(l10n.settingsAllowNotifications), findsNothing);
+    expect(find.text(l10n.settingsTurnOn), findsNothing);
   });
 
   testWidgets('permission not asked yet is not shown as active',
@@ -90,8 +90,8 @@ void main() {
     expect(find.text(l10n.settingsPushNotAllowedTitle), findsOneWidget);
     expect(find.text(l10n.settingsPushNotAllowedDetail), findsOneWidget);
     expect(tintOf(tester, Icons.notifications_paused_outlined), states.warning);
-    // The tile that asks for permission is still offered.
-    expect(find.text(l10n.settingsAllowNotifications), findsOneWidget);
+    // U18: the status row offers "Turn on" when notifications are off.
+    expect(find.text(l10n.settingsTurnOn), findsOneWidget);
   });
 
   testWidgets('denied permission keeps its own message', (tester) async {
@@ -101,6 +101,7 @@ void main() {
       permission: NotificationPermission.denied,
     );
     expect(find.text(l10n.settingsPushDeniedTitle), findsOneWidget);
+    expect(find.text(l10n.settingsTurnOn), findsOneWidget);
     expect(find.text(l10n.settingsPushActiveTitle), findsNothing);
     expect(tintOf(tester, Icons.notifications_off_outlined), states.warning);
   });

@@ -167,6 +167,8 @@ ThemeData _buildTheme(Brightness brightness) {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surfaceContainer,
+      // U8: a field error wraps to a second line instead of being cut.
+      errorMaxLines: 2,
       hintStyle: textTheme.bodyMedium?.copyWith(
         color: scheme.onSurfaceVariant,
       ),

@@ -57,6 +57,8 @@ void main() {
         .pumpWidget(_app(CallScreen(controller: controller, title: 'Ana')));
     await tester.pump();
     expect(find.byKey(const Key('call-accept')), findsOneWidget);
+    // The relay note moved to Settings (U36).
+    expect(find.textContaining('relay'), findsNothing);
     expect(find.byKey(const Key('call-decline')), findsOneWidget);
     expect(find.text('Incoming call'), findsOneWidget);
     expect(find.byKey(const Key('call-mute')), findsNothing);
@@ -112,5 +114,62 @@ void main() {
             onDismiss: () {}),
         locale: const Locale('sr')));
     expect(find.text('Пропуштен позив: Ana'), findsOneWidget);
+  });
+
+  // U6: the call shows the person, every round button has a spoken name and
+  // the missed-call card offers Call back.
+  testWidgets('call screen shows the avatar; buttons speak; notice calls back',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    final log = <String>[];
+    late NativeCallService service;
+    late CallController controller;
+    await tester.runAsync(() async {
+      service = NativeCallService(
+          api: FakeCallApi(log),
+          token: 't',
+          crypto: FakeCallCrypto(log),
+          incoming: const Stream<IncomingCallSignal>.empty(),
+          media: FakeMediaFactory(log));
+      controller =
+          CallController(service: service, selfAccountId: 'acc_callee');
+    });
+    await tester.pumpWidget(_app(CallScreen(
+        controller: controller,
+        title: 'Ana Petrovic',
+        avatar: const CircleAvatar(radius: 48, child: Text('AP')))));
+    await tester.pump();
+    expect(find.text('Ana Petrovic'), findsOneWidget);
+    expect(find.byKey(const Key('call-avatar')), findsOneWidget);
+    expect(find.text('AP'), findsOneWidget);
+    // The name is spoken once: the visible caption is not read again.
+    expect(find.bySemanticsLabel('Hang up'), findsOneWidget);
+    expect(find.bySemanticsLabel('Mute'), findsOneWidget);
+
+    var calledBack = false;
+    await tester.pumpWidget(_app(CallNoticeCard(
+        notice: const CallNotice(CallNoticeKind.missed, 'conv_1'),
+        title: 'Ana Petrovic',
+        avatar: const CircleAvatar(child: Text('AP')),
+        onCallBack: () => calledBack = true,
+        onDismiss: () {})));
+    expect(find.text('Missed call from Ana Petrovic'), findsOneWidget);
+    expect(find.text('AP'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('call-notice-call-back')));
+    expect(calledBack, isTrue);
+
+    // Only a missed call offers it.
+    await tester.pumpWidget(_app(CallNoticeCard(
+        notice: const CallNotice(CallNoticeKind.declined, 'conv_1'),
+        title: 'Ana Petrovic',
+        onDismiss: () {})));
+    expect(find.byKey(const Key('call-notice-call-back')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() async {
+      controller.dispose();
+      await service.dispose();
+    });
+    semantics.dispose();
   });
 }

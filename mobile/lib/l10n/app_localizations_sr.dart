@@ -24,6 +24,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get commonRevoke => 'Опозови';
 
   @override
+  String get commonUndo => 'Опозови';
+
+  @override
   String get listTimeYesterday => 'Јуче';
 
   @override
@@ -31,6 +34,14 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get validationNameTooLong => 'Тај назив је предугачак.';
+
+  @override
+  String get validationNameInvalid =>
+      'Тај назив садржи знакове који нису дозвољени.';
+
+  @override
+  String get validationTopicInvalid =>
+      'Та тема је предугачка или садржи знакове који нису дозвољени.';
 
   @override
   String get validationGroupNameRequired => 'Унесите назив групе.';
@@ -128,6 +139,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsSectionPrivacy => 'Приватност';
+
+  @override
+  String get settingsSectionPrivacySafety => 'Приватност и безбедност';
 
   @override
   String get settingsReadReceiptsTitle => 'Потврде о читању';
@@ -256,6 +270,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Обавештења кажу само да је стигла порука.';
 
   @override
+  String get settingsTurnOn => 'Укључи';
+
+  @override
   String get settingsPushProvider => 'Push добављач';
 
   @override
@@ -303,6 +320,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsCallsComingSoonDetail => 'Аудио и видео позиви 1:1';
 
   @override
+  String get settingsCallsRelayTitle => 'Позиви';
+
+  @override
+  String get settingsCallsRelayNote =>
+      'Позиви иду преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
+
+  @override
   String get settingsDeleteAccount => 'Избриши налог';
 
   @override
@@ -319,6 +343,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ ће одмах изгубити приступ.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Одјавити „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Одјави';
 
   @override
   String get settingsSignOutTitle => 'Одјавити се?';
@@ -490,10 +522,13 @@ class AppLocalizationsSr extends AppLocalizations {
       'Налог власника још не постоји — направите га испод.';
 
   @override
+  String get connectFreshInstanceAction => 'Подеси овај сервер';
+
+  @override
   String get connectInstanceUrl => 'URL инстанце';
 
   @override
-  String get connectCheckApproval => 'Провери одобрење';
+  String get connectCheckApproval => 'Провери сада';
 
   @override
   String get connectLinkInstead => 'Уместо тога повежи овај уређај';
@@ -518,11 +553,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectScanQr => 'Скенирај QR код';
 
   @override
-  String get connectVerificationTitle => 'Верификациони код';
+  String get connectVerificationTitle => 'Унесите овај код на другом уређају';
 
   @override
   String get connectVerificationMessage =>
-      'Потврдите овај код на свом већ повезаном уређају, а затим проверите одобрење испод.';
+      'Унесите овај код на уређају који већ користите. Никоме га не шаљите нити читајте наглас.';
 
   @override
   String get connectInviteCode => 'Код позивнице';
@@ -535,6 +570,45 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectInviteCodeHint => 'Од администратора ове инстанце';
 
   @override
+  String get connectInviteLink => 'Линк позивнице';
+
+  @override
+  String get connectInviteLinkHint => 'Налепите линк који сте добили';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Налепите линк позивнице који сте добили.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ово није Veritra линк позивнице. Проверите да сте га копирали цео.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Уместо тога унесите адресу сервера и код';
+
+  @override
+  String get connectInviteLinkInstead => 'Уместо тога налепите линк позивнице';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Налепите линк позивнице који сте добили или скенирајте његов QR код.';
+
+  @override
+  String get connectJoinAccountTitle => 'Изаберите корисничко име и лозинку';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Придружујете се серверу $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Промени';
+
+  @override
+  String get connectScanInviteTitle => 'Скенирај QR код позивнице';
+
+  @override
   String get connectUsername => 'Корисничко име';
 
   @override
@@ -542,6 +616,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectUsernameHint => 'Ваше име на овој инстанци';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Користите од 3 до 32 латинична слова, цифре, _ или -.';
 
   @override
   String get connectPassword => 'Лозинка';
@@ -654,6 +732,42 @@ class AppLocalizationsSr extends AppLocalizations {
       'Самостално хостована размена порука, шифрована с краја на крај';
 
   @override
+  String get connectStepBack => 'Назад';
+
+  @override
+  String get welcomeHaveInvite => 'Имам позивницу';
+
+  @override
+  String get welcomeHaveAccount => 'Већ имам налог';
+
+  @override
+  String get welcomeSetUpServer => 'Подеси нови сервер';
+
+  @override
+  String get welcomeAccountTitle => 'Како желите да се пријавите?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ово је нов уређај';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Додајте га помоћу уређаја који већ користите.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Већ користим овај уређај';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Пријавите се корисничким именом и лозинком.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Немам више ниједан уређај';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Вратите се помоћу лозинке и кључа за опоравак.';
+
+  @override
   String get qrScanLinkTitle => 'Скенирај QR код за повезивање';
 
   @override
@@ -667,8 +781,11 @@ class AppLocalizationsSr extends AppLocalizations {
       'Усмерите камеру ка QR коду на постојећем уређају (Подешавања → Повежи нови уређај).';
 
   @override
+  String get qrPointCameraInvite => 'Усмерите камеру ка QR коду позивнице.';
+
+  @override
   String get qrPermissionDenied =>
-      'За скенирање је потребна дозвола за камеру. Омогућите је у системским подешавањима или ручно унесите код за повезивање.';
+      'Veritra треба камеру за скенирање. Дозволите је у Подешавањима или унесите код ручно.';
 
   @override
   String get qrUnsupported =>
@@ -680,6 +797,13 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get qrEnterManually => 'Унеси код ручно';
+
+  @override
+  String get qrOpenSettings => 'Отвори подешавања';
+
+  @override
+  String get qrOpenSettingsFailed =>
+      'Подешавања нису могла да се отворе. Дозволите камеру за Veritra у подешавањима уређаја.';
 
   @override
   String get newConversationTitle => 'Нови разговор';
@@ -700,7 +824,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get newConversationAddMembers => 'Додај чланове';
 
   @override
-  String get newConversationStartDm => 'Започни разговор';
+  String get newConversationStartDm => 'Порука';
 
   @override
   String get newConversationCreateGroup => 'Направи групу';
@@ -750,6 +874,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Унесите тачно корисничко име или налепите ИД налога (acct_…).';
 
   @override
+  String get accountPickerKnown => 'Људи које знате';
+
+  @override
   String get accountPickerNoMatch =>
       'Није пронађен налог са тачно тим корисничким именом.';
 
@@ -792,6 +919,15 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchTypeAccount => 'Налог';
 
   @override
+  String get searchHeadingCommunities => 'Заједнице';
+
+  @override
+  String get searchHeadingChannels => 'Канали';
+
+  @override
+  String get searchHeadingConversations => 'Разговори';
+
+  @override
   String searchUnblockAccount(String label) {
     return 'Деблокирај $label';
   }
@@ -805,6 +941,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String searchBlocked(String label) {
     return 'Налог $label је блокиран.';
   }
+
+  @override
+  String get searchBlockConfirm => 'Блокирај';
 
   @override
   String get searchBlockFailed => 'Блокирање није могло да се ажурира.';
@@ -885,6 +1024,27 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString од $maxUsesString искоришћено';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString искоришћено';
+  }
+
+  @override
   String get inviteNeverExpires => 'Никада не истиче';
 
   @override
@@ -900,6 +1060,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get inviteCopyCode => 'Копирај код';
+
+  @override
+  String get inviteCopyLink => 'Копирај линк';
+
+  @override
+  String get inviteLinkCopied => 'Линк позивнице је копиран.';
+
+  @override
+  String get inviteShowQr => 'Прикажи QR код';
+
+  @override
+  String get inviteQrTitle => 'QR код позивнице';
+
+  @override
+  String get inviteQrHint =>
+      'На новом телефону отворите Veritra, додирните „Имам позивницу“ и скенирајте овај код.';
 
   @override
   String get profileThisInstance => 'ова инстанца';
@@ -980,6 +1156,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get profileSectionIdentity => 'Идентитет';
 
   @override
+  String get profileSectionAdvanced => 'Напредно';
+
+  @override
   String get profileNotAvailable => 'Није доступно';
 
   @override
@@ -1050,6 +1229,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNew => 'Нова заједница';
 
   @override
+  String get communityJoinAction => 'Придружи';
+
+  @override
+  String get communityNewAction => 'Нова';
+
+  @override
   String get communityEmptyTitle => 'Још нема заједница';
 
   @override
@@ -1096,6 +1281,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNewChannel => 'Нови канал';
 
   @override
+  String communityActionsTooltip(String community) {
+    return 'Радње за $community';
+  }
+
+  @override
   String get communityNoChannelsHint => 'Користите + да направите први.';
 
   @override
@@ -1125,6 +1315,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelSave => 'Сачувај';
+
+  @override
+  String get channelEditNotAllowed =>
+      'Овде више не можете да сачувате измене, јер се ваша улога или налог променио.';
 
   @override
   String get communityNotMember => 'Још нисте члан';
@@ -1182,7 +1376,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Генеришите једнократни код, унесите га на новом уређају, а затим га овде одобрите помоћу верификационог кода који приказује нови уређај. Ваша историја разговора се затим шифрована копира на нови уређај, па оба уређаја држите на мрежи.';
+      'Додајте нови телефон или рачунар свом налогу у три корака. На новом уређају отворите Veritra и изаберите Повежите овај уређај.';
 
   @override
   String get deviceLinkCreate => 'Направи везу';
@@ -1230,7 +1424,70 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkApproveHint =>
-      'Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.';
+      'Нови уређај сада приказује осмоцифрени код. Унесите га овде.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Никада не користите код који вам је неко послао или прочитао. Унесите само код који сами видите на екрану новог уређаја.';
+
+  @override
+  String get deviceLinkCodeField => 'Код са новог уређаја';
+
+  @override
+  String get deviceLinkCompareTitle => 'Унесите код са новог уређаја';
+
+  @override
+  String get deviceLinkStepScan => 'Скенирај';
+
+  @override
+  String get deviceLinkStepCompare => 'Упореди';
+
+  @override
+  String get deviceLinkStepDone => 'Готово';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Корак $step од 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Скенирајте овај код новим уређајем';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'Овај код важи до $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Чека се нови уређај. Овај екран се сам освежава.';
+
+  @override
+  String get deviceLinkCannotScan => 'Не можете да скенирате?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'На новом уређају изаберите унос кода за повезивање, па унесите овај:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'Нови уређај: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Нови уређај се проверава. Ако се ово не промени, покушајте поново.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Нови уређај је повезан';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Историја разговора се шифрована копира на њега. Држите оба уређаја на мрежи док се не заврши.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'Ова веза је истекла. Направите нову да бисте повезали уређај.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -1265,7 +1522,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Чека се да ваш други уређај одобри. Оставите овај екран отворен.';
+      'Чека се да ваш други уређај одобри. Овај екран се сам освежава.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -1441,6 +1698,19 @@ class AppLocalizationsSr extends AppLocalizations {
       'Започните директну поруку или направите групу. Све је шифровано с краја на крај.';
 
   @override
+  String get chatListStartChat => 'Започни ћаскање';
+
+  @override
+  String get chatListInviteSomeone => 'Позови некога';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Нема архивираних ћаскања';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ћаскања која архивирате чувају се овде, ван главне листе.';
+
+  @override
   String get chatListUnmute => 'Укључи обавештења';
 
   @override
@@ -1451,6 +1721,25 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatListMuted => 'Утишано';
+
+  @override
+  String chatPreviewYou(String text) {
+    return 'Ви: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Фотографија';
+
+  @override
+  String get chatPreviewVoiceNote => 'Гласовна порука';
+
+  @override
+  String get chatPreviewPoll => 'Анкета';
 
   @override
   String chatListDisappearingAfter(String duration) {
@@ -1532,6 +1821,22 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString секунди',
+      few: '$countString секунде',
+      one: '$countString секунда',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String durationChipDays(int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1601,11 +1906,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get safetyGroupIntro =>
-      'Сваки члан ове групе види исти број. Упоредите га уживо или међусобно скенирајте кодове.';
+      'Упоредите овај број са осталим члановима да бисте били сигурни да нико други не може да чита овај разговор.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Упоредите овај број са корисником $peer уживо или међусобно скенирајте кодове.';
+    return 'Упоредите овај број са корисником $peer да бисте били сигурни да нико други не може да чита ваш разговор.';
   }
 
   @override
@@ -1654,6 +1959,40 @@ class AppLocalizationsSr extends AppLocalizations {
   String get safetyMarkVerified => 'Означи као верификовано';
 
   @override
+  String get safetyHowTitle => 'Како упоређујете?';
+
+  @override
+  String get safetyTogether => 'Заједно смо';
+
+  @override
+  String get safetyTogetherDetail => 'Скенирајте кодове једно другом.';
+
+  @override
+  String get safetyOnCall => 'Разговарамо телефоном';
+
+  @override
+  String get safetyOnCallDetail => 'Прочитајте број наглас једно другом.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Нека скенирају овај код својим телефоном, а затим ви скенирајте њихов.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Нека скенирају овај код својим телефоном или упоредите бројеве испод.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Или упоредите бројеве група по група. Свака група мора бити иста:';
+
+  @override
+  String get safetyCallSteps =>
+      'Наизменично читајте групе наглас, ред по ред. Свака група мора бити иста. Тек тада означите број као верификован.';
+
+  @override
+  String get safetyOtherWay => 'Упореди на други начин';
+
+  @override
   String get detailsNotFound => 'Разговор није пронађен.';
 
   @override
@@ -1673,7 +2012,25 @@ class AppLocalizationsSr extends AppLocalizations {
       'Зауставља push обавештења за овај разговор. Поруке и даље стижу и рачунају се као непрочитане.';
 
   @override
+  String get detailsActionMute => 'Утишај';
+
+  @override
+  String get detailsActionUnmute => 'Укључи';
+
+  @override
+  String get detailsActionCall => 'Позови';
+
+  @override
   String get detailsSectionMembers => 'Чланови';
+
+  @override
+  String get communityTabInvites => 'Позивнице';
+
+  @override
+  String get communityTabRequests => 'Захтеви';
+
+  @override
+  String get detailsSectionAdvanced => 'Напредно';
 
   @override
   String get detailsLoadingMembers => 'Учитавање чланова…';
@@ -1718,6 +2075,14 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get detailsDisappearingNote =>
       'Када је ово подешено, поруке послате од тада бришу се са сервера након овог временског периода. Постојеће поруке задржавају тајмер са којим су послате.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ово могу да мењају само власник, администратор или модератор овог ћаскања.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Ово може да мења само особа која је започела ово ћаскање.';
 
   @override
   String get detailsRetentionOff => 'Искључено';
@@ -1816,10 +2181,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сервер престаје да доставља поруке тог налога вашем налогу. Тај налог о томе неће бити обавештен, а поруке које су већ на вашим уређајима остају.';
 
   @override
-  String get chatStatusMutedEncrypted => 'УТИШАНО · ШИФРОВАНО';
-
-  @override
-  String get chatStatusEncrypted => 'ШИФРОВАНО';
+  String get chatStatusMuted => 'Утишано';
 
   @override
   String get chatNoConversationMessage =>
@@ -1829,8 +2191,18 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatEmptyTitle => 'Још нема порука';
 
   @override
-  String get chatEmptyMessage =>
-      'Поруке се чувају као шифровани коверти које могу да прочитају само чланови.';
+  String get chatEmptyMessageDm => 'Само ви двоје можете ово да читате.';
+
+  @override
+  String get chatEmptyMessageGroup => 'Само чланови могу ово да читају.';
+
+  @override
+  String get chatNoticeEncryptedDm =>
+      'Поруке овде су шифроване од краја до краја. Само ви двоје можете да их читате.';
+
+  @override
+  String get chatNoticeEncryptedGroup =>
+      'Поруке овде су шифроване од краја до краја. Само чланови могу да их читају.';
 
   @override
   String get chatJumpToLatest => 'Иди на најновије';
@@ -1845,6 +2217,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatCopyText => 'Копирај текст';
+
+  @override
+  String get chatSelectText => 'Изабери текст';
 
   @override
   String get chatEdit => 'Измени';
@@ -1899,7 +2274,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatPendingTerminal => 'Порука захтева пажњу';
 
   @override
-  String get chatPendingFailed => 'Слање није успело';
+  String get chatPendingNotSentRetry => 'Није послато · Покушај поново';
 
   @override
   String get chatDiscard => 'Одбаци';
@@ -2028,6 +2403,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatAttachFile => 'Приложи датотеку';
+
+  @override
+  String get chatAddTooltip => 'Додај датотеку или анкету';
 
   @override
   String get chatComposerHint => 'Порука';
@@ -2604,7 +2982,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchModeMessages => 'Поруке';
 
   @override
-  String get searchModePeople => 'Људи и заједнице';
+  String get searchModePeople => 'Људи';
 
   @override
   String get searchMessagesHint => 'Претражите поруке на овом уређају…';
@@ -2714,6 +3092,69 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get adminActorUnknown => 'Неко';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor је суспендовао/ла $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor је поново активирао/ла $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor се придружио/ла серверу';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor је направио/ла налог власника';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor се пријавио/ла';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor се одјавио/ла';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor је одјавио/ла остале своје уређаје';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor је променио/ла лозинку';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor је одјавио/ла један уређај';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor је направио/ла позивницу';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor је искључио/ла позивницу';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
+  }
+
+  @override
   String get adminLoadMore => 'Учитај још';
 
   @override
@@ -2745,6 +3186,20 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get requestExplanation =>
       'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
+
+  @override
+  String get requestSharedTitle => 'Шта они могу да виде';
+
+  @override
+  String get requestSharedNow =>
+      'Сада: не знају да сте ово отворили и не шаље се потврда о читању.';
+
+  @override
+  String get requestSharedAccept =>
+      'Ако прихватите: видеће када куцате и, ако су потврде о читању укључене у подешавањима, када прочитате њихове поруке.';
+
+  @override
+  String get requestSharedDelete => 'Ако избришете: не добијају обавештење.';
 
   @override
   String get requestAccept => 'Прихвати';
@@ -2826,6 +3281,12 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get w8MentionsMutedDetail =>
       'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
+
+  @override
+  String get chatPreviewsSetting => 'Последња порука у ћаскањима';
+
+  @override
+  String get chatPreviewsSettingDetail => 'Чита се само са овог уређаја.';
 
   @override
   String get b2LinkPreviews => 'Прегледи веза';
@@ -2915,17 +3376,24 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Запишите ова 52 знака на папир и чувајте га на сигурном. Свако ко има овај кључ и вашу лозинку може да преузме ваш налог. Не правите снимак екрана и не чувајте га у разговору.';
+      'Запишите ова 52 знака на папир или их сачувајте у менаџеру лозинки. Свако ко има овај кључ и вашу лозинку може да преузме ваш налог. Не правите снимак екрана и не чувајте га у разговору.';
 
   @override
-  String get recoveryKeyWritten => 'Кључ је записан';
+  String get recoveryKeyWritten => 'Кључ је сачуван';
+
+  @override
+  String get recoveryKeyCopy => 'Копирај за менаџер лозинки';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Копирано. Налепите га сада у менаџер лозинки. Апликација га брише из оставе када наставите или после отприлике минут и по.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Унесите кључ за опоравак';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Унесите цео кључ са папира да бисте га проверили. Цртице и размаци нису битни.';
+      'Унесите цео кључ са папира или из менаџера лозинки да бисте га проверили. Цртице и размаци нису битни.';
 
   @override
   String get recoveryKeyField => 'Кључ за опоравак';
@@ -2938,6 +3406,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'То није приказани кључ. Проверите папир и покушајте поново.';
 
   @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Група $group се не поклапа. Проверите је на свом запису.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return 'Поклапа се $count од 13 група.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'Ово је дуже од кључа. Проверите да ли има вишка знакова.';
+
+  @override
   String get recoveryKeyShowAgain => 'Прикажи кључ поново';
 
   @override
@@ -2948,6 +3430,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryFollowUpTitle => 'Завршите опоравак налога';
+
+  @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Корак $step од $total';
+  }
 
   @override
   String get recoveryFollowUpKeyDetail =>
@@ -2966,6 +3453,21 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryStartDetail =>
       'Користите ово само ако сте изгубили сваки уређај пријављен на ваш налог. Потребни су вам лозинка и кључ за опоравак. Ако је неки ваш уређај коришћен у последњих 7 дана, овај уређај се придружује тек после 7 дана, а ти уређаји могу да откажу опоравак. Историја порука се враћа само из резервне копије враћене на овај уређај.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Користите ово само ако сте изгубили сваки уређај пријављен на ваш налог.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'Потребни су вам лозинка и кључ за опоравак.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'Ако је неки ваш уређај коришћен у последњих 7 дана, чекате 7 дана, а ваши уређаји могу да откажу опоравак.';
+
+  @override
+  String get recoveryStartHowItWorks => 'Како опоравак ради';
 
   @override
   String get recoveryStartSubmit => 'Започни опоравак';
@@ -3008,6 +3510,11 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String recoveryWaitingDetail(String date) {
     return 'Овај уређај се придружује вашем налогу после $date. Апликација сама проверава док је отворена. Ваши други уређаји могу да откажу овај опоравак.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return 'Преостало: $time';
   }
 
   @override
@@ -3199,6 +3706,16 @@ class AppLocalizationsSr extends AppLocalizations {
   String get membInviteRevoke => 'Опозови линк';
 
   @override
+  String get membInviteTurnOff => 'Искључи';
+
+  @override
+  String get membInviteTurnOffTitle => 'Искључити ову везу?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'Нико више не може да се придружи помоћу ње. Особе које су већ затражиле задржавају своје захтеве.';
+
+  @override
   String get joinReqSection => 'Захтеви за придруживање';
 
   @override
@@ -3218,6 +3735,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String joinReqReject(String username) {
     return 'Одбиј $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Одбиј';
+
+  @override
+  String get joinReqApproveButton => 'Одобри';
 
   @override
   String get joinReqRejectedSnack => 'Захтев је одбијен.';
@@ -3354,10 +3877,6 @@ class AppLocalizationsSr extends AppLocalizations {
   String get callInProgress => 'Позив у току';
 
   @override
-  String get callRelayNote =>
-      'Овај позив иде преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
-
-  @override
   String get callAccept => 'Прихвати';
 
   @override
@@ -3383,6 +3902,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get callDismiss => 'Затвори';
+
+  @override
+  String get callBack => 'Узврати позив';
 
   @override
   String callNoticeMissed(String name) {
@@ -3480,6 +4002,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности';
 
   @override
+  String get moderationLoadFailed => 'Није могуће учитати';
+
+  @override
   String memberModerateTooltip(String username) {
     return 'Модерирај $username';
   }
@@ -3492,6 +4017,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get memberTimeoutLift => 'Укини утишавање';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Утишан/а до $time';
+  }
 
   @override
   String banTitle(String username) {
@@ -3753,6 +4283,16 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String c6ReportsFiledBy(String reporter, String when) {
+    return 'Пријавио: $reporter, $when';
+  }
+
+  @override
+  String c6ReportsWhere(String place) {
+    return 'У: $place';
+  }
+
+  @override
   String get c6ReportsLocked => 'Не може да се отвори';
 
   @override
@@ -3776,12 +4316,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String c6ReportsReporter(String account) {
-    return 'Пријавио налог $account';
+    return 'Пријавио: $account';
   }
 
   @override
   String c6ReportsSender(String account) {
-    return 'Послао налог $account';
+    return 'Послао: $account';
   }
 
   @override
@@ -3793,6 +4333,23 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get c6ReportsCheckNote =>
       'Провером сервер сазнаје о којој се поруци ради у овој пријави.';
+
+  @override
+  String get c6ReportsWhyNotCertain => 'Зашто није сигурно?';
+
+  @override
+  String get c6ReportsWhyNotCertainCommon =>
+      'Чак и поклапање показује само да се запис сервера слаже да је овај налог послао тачно ову поруку у овом разговору. Не показује шта је било пре или после ње, ни шта је њоме мишљено, и поуздано је само колико и тај запис.';
+
+  @override
+  String get c6ReportsCopyText => 'Копирај текст поруке';
+
+  @override
+  String get c6ReportsCopied => 'Текст поруке је копиран.';
+
+  @override
+  String get c6ReportsNothingBacksUp =>
+      'Овде ништа не потврђује ову пријаву. Можете да је одбаците.';
 
   @override
   String get c6VerdictVerified => 'Поклапа се са записом сервера';
@@ -4062,6 +4619,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String k1RestoreEntryPrevious(String device, String date) {
     return '$device · $date (претходна копија)';
   }
+
+  @override
+  String get k1RestoreOlderCopy => 'Старија копија';
 
   @override
   String get k1RestoreDeviceUnnamed => 'Уређај';
@@ -4394,6 +4954,26 @@ class AppLocalizationsSr extends AppLocalizations {
   String get rolesStepDown => 'Одступи';
 
   @override
+  String rolesChangeTitle(String name) {
+    return 'Променити улогу: $name?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name постаје $role. Сви у групи виде промену.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Промени улогу';
+
+  @override
+  String get rolesStepDownTitle => 'Одустати од улоге?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'Постајете члан. Само неко са вишом улогом може да вам врати улогу.';
+
+  @override
   String get rolesElectorOn => 'Дозволи гласање за новог власника';
 
   @override
@@ -4449,12 +5029,24 @@ class AppLocalizationsSr extends AppLocalizations {
       'Нове објаве ће моћи да читају и људи који се придруже касније.';
 
   @override
+  String get channelHistoryOnEarlier =>
+      'Објаве направљене пре него што ово укључите остају скривене од њих.';
+
+  @override
   String get channelHistoryOffConfirm =>
-      'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
+      'Људи који се придруже касније неће видети раније објаве.';
+
+  @override
+  String get channelHistoryOffKept =>
+      'Чланови који већ имају раније објаве задржавају их.';
+
+  @override
+  String get channelHistoryOffAgain =>
+      'Ако га касније поново укључите, нови чланови ће видети само објаве направљене после тога.';
 
   @override
   String get channelHistoryProofConfirm =>
-      'Објаве у овом каналу се потписују да би људи који се придруже касније могли да провере ко их је написао. То значи да се може доказати ко је написао објаву: свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
+      'Објаве су потписане, па се може доказати ко је написао објаву. Свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
 
   @override
   String get channelHistoryProofLine =>
@@ -4579,34 +5171,73 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
+  String get l2SealedKeyTitle => 'Слање без вашег имена';
 
   @override
   String get l2SealedKeyTile => 'Поруке без вашег имена';
+
+  @override
+  String get l2SealedOn => 'Укључено';
+
+  @override
+  String get l2SealedOff => 'Искључено';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'Сервер доставља ваше поруке а да не сазна ко их је послао.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Паузирано: кључ сервера се променио. Ваше поруке носе ваше име.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'Овај сервер то тренутно не нуди, па ваше поруке носе ваше име.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Технички детаљи';
 
   @override
   String get l2SealedKeyIntro =>
       'Овај сервер потписује токене који омогућавају да ваше поруке стигну до њега без вашег имена. Апликација је запамтила његов кључ када га је први пут видела.';
 
   @override
-  String get l2SealedKeyOff => 'Овај сервер не нуди скривеног пошиљаоца.';
+  String get l2SealedKeyOff =>
+      'Овај сервер то не нуди, па ваше поруке носе ваше име.';
 
   @override
   String get l2SealedKeyNone =>
-      'Још нема запамћеног кључа. Биће запамћен при следећој синхронизацији.';
+      'Укључује се после следеће синхронизације са овим сервером.';
 
   @override
   String get l2SealedKeyPinned => 'Запамћени кључ';
 
   @override
   String get l2SealedKeyChanged =>
-      'Сервер сада показује други кључ. Док га не прихватите, ваше поруке се шаљу са вашим именом, као раније.';
+      'Док не одговорите, ваше поруке носе ваше име, као раније. Реците да само ако вам је оператер сервера то рекао: кључ направљен само за вас омогућио би серверу да издвоји ваше поруке.';
 
   @override
   String get l2SealedKeyNew => 'Нови кључ';
 
   @override
   String get l2SealedKeyAccept => 'Прихвати нови кључ';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Да ли вам је оператер сервера рекао да се његов кључ променио?';
+
+  @override
+  String get l2SealedKeyKeep => 'Не, или нисам сигуран';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Да, користи нови кључ';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Ништа се није променило. Ваше поруке носе ваше име док не прихватите нови кључ.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Промени одговор';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -4639,7 +5270,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get l2OwnerKeyAccept => 'Прихвати';
 
   @override
-  String get l2OwnerKeyReject => 'Одбиј';
+  String get l2OwnerKeyReject => 'Не, задржи како је било';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Да ли сте очекивали ову промену?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Да, прихвати';
 
   @override
   String get l2OwnerKeyAcceptWarning =>
@@ -4670,6 +5307,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get commonRevoke => 'Opozovi';
 
   @override
+  String get commonUndo => 'Opozovi';
+
+  @override
   String get listTimeYesterday => 'Juče';
 
   @override
@@ -4677,6 +5317,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get validationNameTooLong => 'Taj naziv je predugačak.';
+
+  @override
+  String get validationNameInvalid =>
+      'Taj naziv sadrži znakove koji nisu dozvoljeni.';
+
+  @override
+  String get validationTopicInvalid =>
+      'Ta tema je predugačka ili sadrži znakove koji nisu dozvoljeni.';
 
   @override
   String get validationGroupNameRequired => 'Unesite naziv grupe.';
@@ -4774,6 +5422,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionPrivacy => 'Privatnost';
+
+  @override
+  String get settingsSectionPrivacySafety => 'Privatnost i bezbednost';
 
   @override
   String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
@@ -4902,6 +5553,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Obaveštenja kažu samo da je stigla poruka.';
 
   @override
+  String get settingsTurnOn => 'Uključi';
+
+  @override
   String get settingsPushProvider => 'Push dobavljač';
 
   @override
@@ -4949,6 +5603,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get settingsCallsComingSoonDetail => 'Audio i video pozivi 1:1';
 
   @override
+  String get settingsCallsRelayTitle => 'Pozivi';
+
+  @override
+  String get settingsCallsRelayNote =>
+      'Pozivi idu preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
+
+  @override
   String get settingsDeleteAccount => 'Izbriši nalog';
 
   @override
@@ -4965,6 +5626,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ će odmah izgubiti pristup.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Odjaviti „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Odjavi';
 
   @override
   String get settingsSignOutTitle => 'Odjaviti se?';
@@ -5136,10 +5805,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nalog vlasnika još ne postoji — napravite ga ispod.';
 
   @override
+  String get connectFreshInstanceAction => 'Podesi ovaj server';
+
+  @override
   String get connectInstanceUrl => 'URL instance';
 
   @override
-  String get connectCheckApproval => 'Proveri odobrenje';
+  String get connectCheckApproval => 'Proveri sada';
 
   @override
   String get connectLinkInstead => 'Umesto toga poveži ovaj uređaj';
@@ -5164,11 +5836,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectScanQr => 'Skeniraj QR kod';
 
   @override
-  String get connectVerificationTitle => 'Verifikacioni kod';
+  String get connectVerificationTitle => 'Unesite ovaj kod na drugom uređaju';
 
   @override
   String get connectVerificationMessage =>
-      'Potvrdite ovaj kod na svom već povezanom uređaju, a zatim proverite odobrenje ispod.';
+      'Unesite ovaj kod na uređaju koji već koristite. Nikome ga ne šaljite niti čitajte naglas.';
 
   @override
   String get connectInviteCode => 'Kod pozivnice';
@@ -5181,6 +5853,45 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectInviteCodeHint => 'Od administratora ove instance';
 
   @override
+  String get connectInviteLink => 'Link pozivnice';
+
+  @override
+  String get connectInviteLinkHint => 'Nalepite link koji ste dobili';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Nalepite link pozivnice koji ste dobili.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ovo nije Veritra link pozivnice. Proverite da ste ga kopirali ceo.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Umesto toga unesite adresu servera i kod';
+
+  @override
+  String get connectInviteLinkInstead => 'Umesto toga nalepite link pozivnice';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Nalepite link pozivnice koji ste dobili ili skenirajte njegov QR kod.';
+
+  @override
+  String get connectJoinAccountTitle => 'Izaberite korisničko ime i lozinku';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Pridružujete se serveru $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Promeni';
+
+  @override
+  String get connectScanInviteTitle => 'Skeniraj QR kod pozivnice';
+
+  @override
   String get connectUsername => 'Korisničko ime';
 
   @override
@@ -5188,6 +5899,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectUsernameHint => 'Vaše ime na ovoj instanci';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Koristite od 3 do 32 latinična slova, cifre, _ ili -.';
 
   @override
   String get connectPassword => 'Lozinka';
@@ -5300,6 +6015,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Samostalno hostovana razmena poruka, šifrovana s kraja na kraj';
 
   @override
+  String get connectStepBack => 'Nazad';
+
+  @override
+  String get welcomeHaveInvite => 'Imam pozivnicu';
+
+  @override
+  String get welcomeHaveAccount => 'Već imam nalog';
+
+  @override
+  String get welcomeSetUpServer => 'Podesi novi server';
+
+  @override
+  String get welcomeAccountTitle => 'Kako želite da se prijavite?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ovo je nov uređaj';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Dodajte ga pomoću uređaja koji već koristite.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Već koristim ovaj uređaj';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Prijavite se korisničkim imenom i lozinkom.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Nemam više nijedan uređaj';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Vratite se pomoću lozinke i ključa za oporavak.';
+
+  @override
   String get qrScanLinkTitle => 'Skeniraj QR kod za povezivanje';
 
   @override
@@ -5313,8 +6064,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Usmerite kameru ka QR kodu na postojećem uređaju (Podešavanja → Poveži novi uređaj).';
 
   @override
+  String get qrPointCameraInvite => 'Usmerite kameru ka QR kodu pozivnice.';
+
+  @override
   String get qrPermissionDenied =>
-      'Za skeniranje je potrebna dozvola za kameru. Omogućite je u sistemskim podešavanjima ili ručno unesite kod za povezivanje.';
+      'Veritra treba kameru za skeniranje. Dozvolite je u Podešavanjima ili unesite kod ručno.';
 
   @override
   String get qrUnsupported =>
@@ -5326,6 +6080,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get qrEnterManually => 'Unesi kod ručno';
+
+  @override
+  String get qrOpenSettings => 'Otvori podešavanja';
+
+  @override
+  String get qrOpenSettingsFailed =>
+      'Podešavanja nisu mogla da se otvore. Dozvolite kameru za Veritra u podešavanjima uređaja.';
 
   @override
   String get newConversationTitle => 'Novi razgovor';
@@ -5346,7 +6107,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get newConversationAddMembers => 'Dodaj članove';
 
   @override
-  String get newConversationStartDm => 'Započni razgovor';
+  String get newConversationStartDm => 'Poruka';
 
   @override
   String get newConversationCreateGroup => 'Napravi grupu';
@@ -5396,6 +6157,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Unesite tačno korisničko ime ili nalepite ID naloga (acct_…).';
 
   @override
+  String get accountPickerKnown => 'Ljudi koje znate';
+
+  @override
   String get accountPickerNoMatch =>
       'Nije pronađen nalog sa tačno tim korisničkim imenom.';
 
@@ -5438,6 +6202,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchTypeAccount => 'Nalog';
 
   @override
+  String get searchHeadingCommunities => 'Zajednice';
+
+  @override
+  String get searchHeadingChannels => 'Kanali';
+
+  @override
+  String get searchHeadingConversations => 'Razgovori';
+
+  @override
   String searchUnblockAccount(String label) {
     return 'Deblokiraj $label';
   }
@@ -5451,6 +6224,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String searchBlocked(String label) {
     return 'Nalog $label je blokiran.';
   }
+
+  @override
+  String get searchBlockConfirm => 'Blokiraj';
 
   @override
   String get searchBlockFailed => 'Blokiranje nije moglo da se ažurira.';
@@ -5531,6 +6307,27 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString od $maxUsesString iskorišćeno';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString iskorišćeno';
+  }
+
+  @override
   String get inviteNeverExpires => 'Nikada ne ističe';
 
   @override
@@ -5546,6 +6343,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get inviteCopyCode => 'Kopiraj kod';
+
+  @override
+  String get inviteCopyLink => 'Kopiraj link';
+
+  @override
+  String get inviteLinkCopied => 'Link pozivnice je kopiran.';
+
+  @override
+  String get inviteShowQr => 'Prikaži QR kod';
+
+  @override
+  String get inviteQrTitle => 'QR kod pozivnice';
+
+  @override
+  String get inviteQrHint =>
+      'Na novom telefonu otvorite Veritra, dodirnite „Imam pozivnicu“ i skenirajte ovaj kod.';
 
   @override
   String get profileThisInstance => 'ova instanca';
@@ -5626,6 +6439,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get profileSectionIdentity => 'Identitet';
 
   @override
+  String get profileSectionAdvanced => 'Napredno';
+
+  @override
   String get profileNotAvailable => 'Nije dostupno';
 
   @override
@@ -5696,6 +6512,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get communityNew => 'Nova zajednica';
 
   @override
+  String get communityJoinAction => 'Pridruži';
+
+  @override
+  String get communityNewAction => 'Nova';
+
+  @override
   String get communityEmptyTitle => 'Još nema zajednica';
 
   @override
@@ -5742,6 +6564,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get communityNewChannel => 'Novi kanal';
 
   @override
+  String communityActionsTooltip(String community) {
+    return 'Radnje za $community';
+  }
+
+  @override
   String get communityNoChannelsHint => 'Koristite + da napravite prvi.';
 
   @override
@@ -5771,6 +6598,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelSave => 'Sačuvaj';
+
+  @override
+  String get channelEditNotAllowed =>
+      'Ovde više ne možete da sačuvate izmene, jer se vaša uloga ili nalog promenio.';
 
   @override
   String get communityNotMember => 'Još niste član';
@@ -5828,7 +6659,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkIntro =>
-      'Generišite jednokratni kod, unesite ga na novom uređaju, a zatim ga ovde odobrite pomoću verifikacionog koda koji prikazuje novi uređaj. Vaša istorija razgovora se zatim šifrovana kopira na novi uređaj, pa oba uređaja držite na mreži.';
+      'Dodajte novi telefon ili računar svom nalogu u tri koraka. Na novom uređaju otvorite Veritra i izaberite Povežite ovaj uređaj.';
 
   @override
   String get deviceLinkCreate => 'Napravi vezu';
@@ -5876,7 +6707,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkApproveHint =>
-      'Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.';
+      'Novi uređaj sada prikazuje osmocifreni kod. Unesite ga ovde.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Nikada ne koristite kod koji vam je neko poslao ili pročitao. Unesite samo kod koji sami vidite na ekranu novog uređaja.';
+
+  @override
+  String get deviceLinkCodeField => 'Kod sa novog uređaja';
+
+  @override
+  String get deviceLinkCompareTitle => 'Unesite kod sa novog uređaja';
+
+  @override
+  String get deviceLinkStepScan => 'Skeniraj';
+
+  @override
+  String get deviceLinkStepCompare => 'Uporedi';
+
+  @override
+  String get deviceLinkStepDone => 'Gotovo';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Korak $step od 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Skenirajte ovaj kod novim uređajem';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'Ovaj kod važi do $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Čeka se novi uređaj. Ovaj ekran se sam osvežava.';
+
+  @override
+  String get deviceLinkCannotScan => 'Ne možete da skenirate?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'Na novom uređaju izaberite unos koda za povezivanje, pa unesite ovaj:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'Novi uređaj: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Novi uređaj se proverava. Ako se ovo ne promeni, pokušajte ponovo.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Novi uređaj je povezan';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Istorija razgovora se šifrovana kopira na njega. Držite oba uređaja na mreži dok se ne završi.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'Ova veza je istekla. Napravite novu da biste povezali uređaj.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -5911,7 +6805,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.';
+      'Čeka se da vaš drugi uređaj odobri. Ovaj ekran se sam osvežava.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -6087,6 +6981,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Započnite direktnu poruku ili napravite grupu. Sve je šifrovano s kraja na kraj.';
 
   @override
+  String get chatListStartChat => 'Započni ćaskanje';
+
+  @override
+  String get chatListInviteSomeone => 'Pozovi nekoga';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Nema arhiviranih ćaskanja';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ćaskanja koja arhivirate čuvaju se ovde, van glavne liste.';
+
+  @override
   String get chatListUnmute => 'Uključi obaveštenja';
 
   @override
@@ -6097,6 +7004,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatListMuted => 'Utišano';
+
+  @override
+  String chatPreviewYou(String text) {
+    return 'Vi: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Fotografija';
+
+  @override
+  String get chatPreviewVoiceNote => 'Glasovna poruka';
+
+  @override
+  String get chatPreviewPoll => 'Anketa';
 
   @override
   String chatListDisappearingAfter(String duration) {
@@ -6178,6 +7104,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString sekundi',
+      few: '$countString sekunde',
+      one: '$countString sekunda',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String durationChipDays(int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6247,11 +7189,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get safetyGroupIntro =>
-      'Svaki član ove grupe vidi isti broj. Uporedite ga uživo ili međusobno skenirajte kodove.';
+      'Uporedite ovaj broj sa ostalim članovima da biste bili sigurni da niko drugi ne može da čita ovaj razgovor.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Uporedite ovaj broj sa korisnikom $peer uživo ili međusobno skenirajte kodove.';
+    return 'Uporedite ovaj broj sa korisnikom $peer da biste bili sigurni da niko drugi ne može da čita vaš razgovor.';
   }
 
   @override
@@ -6300,6 +7242,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get safetyMarkVerified => 'Označi kao verifikovano';
 
   @override
+  String get safetyHowTitle => 'Kako upoređujete?';
+
+  @override
+  String get safetyTogether => 'Zajedno smo';
+
+  @override
+  String get safetyTogetherDetail => 'Skenirajte kodove jedno drugom.';
+
+  @override
+  String get safetyOnCall => 'Razgovaramo telefonom';
+
+  @override
+  String get safetyOnCallDetail => 'Pročitajte broj naglas jedno drugom.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Neka skeniraju ovaj kod svojim telefonom, a zatim vi skenirajte njihov.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Neka skeniraju ovaj kod svojim telefonom ili uporedite brojeve ispod.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Ili uporedite brojeve grupa po grupa. Svaka grupa mora biti ista:';
+
+  @override
+  String get safetyCallSteps =>
+      'Naizmenično čitajte grupe naglas, red po red. Svaka grupa mora biti ista. Tek tada označite broj kao verifikovan.';
+
+  @override
+  String get safetyOtherWay => 'Uporedi na drugi način';
+
+  @override
   String get detailsNotFound => 'Razgovor nije pronađen.';
 
   @override
@@ -6319,7 +7295,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Zaustavlja push obaveštenja za ovaj razgovor. Poruke i dalje stižu i računaju se kao nepročitane.';
 
   @override
+  String get detailsActionMute => 'Utišaj';
+
+  @override
+  String get detailsActionUnmute => 'Uključi';
+
+  @override
+  String get detailsActionCall => 'Pozovi';
+
+  @override
   String get detailsSectionMembers => 'Članovi';
+
+  @override
+  String get communityTabInvites => 'Pozivnice';
+
+  @override
+  String get communityTabRequests => 'Zahtevi';
+
+  @override
+  String get detailsSectionAdvanced => 'Napredno';
 
   @override
   String get detailsLoadingMembers => 'Učitavanje članova…';
@@ -6364,6 +7358,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get detailsDisappearingNote =>
       'Kada je ovo podešeno, poruke poslate od tada brišu se sa servera nakon ovog vremenskog perioda. Postojeće poruke zadržavaju tajmer sa kojim su poslate.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ovo mogu da menjaju samo vlasnik, administrator ili moderator ovog ćaskanja.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Ovo može da menja samo osoba koja je započela ovo ćaskanje.';
 
   @override
   String get detailsRetentionOff => 'Isključeno';
@@ -6462,10 +7464,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Server prestaje da dostavlja poruke tog naloga vašem nalogu. Taj nalog o tome neće biti obavešten, a poruke koje su već na vašim uređajima ostaju.';
 
   @override
-  String get chatStatusMutedEncrypted => 'UTIŠANO · ŠIFROVANO';
-
-  @override
-  String get chatStatusEncrypted => 'ŠIFROVANO';
+  String get chatStatusMuted => 'Utišano';
 
   @override
   String get chatNoConversationMessage =>
@@ -6475,8 +7474,18 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatEmptyTitle => 'Još nema poruka';
 
   @override
-  String get chatEmptyMessage =>
-      'Poruke se čuvaju kao šifrovani koverti koje mogu da pročitaju samo članovi.';
+  String get chatEmptyMessageDm => 'Samo vi dvoje možete ovo da čitate.';
+
+  @override
+  String get chatEmptyMessageGroup => 'Samo članovi mogu ovo da čitaju.';
+
+  @override
+  String get chatNoticeEncryptedDm =>
+      'Poruke ovde su šifrovane od kraja do kraja. Samo vi dvoje možete da ih čitate.';
+
+  @override
+  String get chatNoticeEncryptedGroup =>
+      'Poruke ovde su šifrovane od kraja do kraja. Samo članovi mogu da ih čitaju.';
 
   @override
   String get chatJumpToLatest => 'Idi na najnovije';
@@ -6491,6 +7500,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatCopyText => 'Kopiraj tekst';
+
+  @override
+  String get chatSelectText => 'Izaberi tekst';
 
   @override
   String get chatEdit => 'Izmeni';
@@ -6545,7 +7557,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatPendingTerminal => 'Poruka zahteva pažnju';
 
   @override
-  String get chatPendingFailed => 'Slanje nije uspelo';
+  String get chatPendingNotSentRetry => 'Nije poslato · Pokušaj ponovo';
 
   @override
   String get chatDiscard => 'Odbaci';
@@ -6674,6 +7686,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatAttachFile => 'Priloži datoteku';
+
+  @override
+  String get chatAddTooltip => 'Dodaj datoteku ili anketu';
 
   @override
   String get chatComposerHint => 'Poruka';
@@ -7253,7 +8268,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchModeMessages => 'Poruke';
 
   @override
-  String get searchModePeople => 'Ljudi i zajednice';
+  String get searchModePeople => 'Ljudi';
 
   @override
   String get searchMessagesHint => 'Pretražite poruke na ovom uređaju…';
@@ -7363,6 +8378,69 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get adminActorUnknown => 'Neko';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor je suspendovao/la $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor je ponovo aktivirao/la $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor se pridružio/la serveru';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor je napravio/la nalog vlasnika';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor se prijavio/la';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor se odjavio/la';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor je odjavio/la ostale svoje uređaje';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor je promenio/la lozinku';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor je odjavio/la jedan uređaj';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor je napravio/la pozivnicu';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor je isključio/la pozivnicu';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
+  }
+
+  @override
   String get adminLoadMore => 'Učitaj još';
 
   @override
@@ -7394,6 +8472,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get requestExplanation =>
       'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
+
+  @override
+  String get requestSharedTitle => 'Šta oni mogu da vide';
+
+  @override
+  String get requestSharedNow =>
+      'Sada: ne znaju da ste ovo otvorili i ne šalje se potvrda o čitanju.';
+
+  @override
+  String get requestSharedAccept =>
+      'Ako prihvatite: videće kada kucate i, ako su potvrde o čitanju uključene u podešavanjima, kada pročitate njihove poruke.';
+
+  @override
+  String get requestSharedDelete => 'Ako izbrišete: ne dobijaju obaveštenje.';
 
   @override
   String get requestAccept => 'Prihvati';
@@ -7475,6 +8567,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get w8MentionsMutedDetail =>
       'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
+
+  @override
+  String get chatPreviewsSetting => 'Poslednja poruka u ćaskanjima';
+
+  @override
+  String get chatPreviewsSettingDetail => 'Čita se samo sa ovog uređaja.';
 
   @override
   String get b2LinkPreviews => 'Pregledi veza';
@@ -7565,17 +8663,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Zapišite ova 52 znaka na papir i čuvajte ga na sigurnom. Svako ko ima ovaj ključ i vašu lozinku može da preuzme vaš nalog. Ne pravite snimak ekrana i ne čuvajte ga u razgovoru.';
+      'Zapišite ova 52 znaka na papir ili ih sačuvajte u menadžeru lozinki. Svako ko ima ovaj ključ i vašu lozinku može da preuzme vaš nalog. Ne pravite snimak ekrana i ne čuvajte ga u razgovoru.';
 
   @override
-  String get recoveryKeyWritten => 'Ključ je zapisan';
+  String get recoveryKeyWritten => 'Ključ je sačuvan';
+
+  @override
+  String get recoveryKeyCopy => 'Kopiraj za menadžer lozinki';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Kopirano. Nalepite ga sada u menadžer lozinki. Aplikacija ga briše iz ostave kada nastavite ili posle otprilike minut i po.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Unesite ključ za oporavak';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Unesite ceo ključ sa papira da biste ga proverili. Crtice i razmaci nisu bitni.';
+      'Unesite ceo ključ sa papira ili iz menadžera lozinki da biste ga proverili. Crtice i razmaci nisu bitni.';
 
   @override
   String get recoveryKeyField => 'Ključ za oporavak';
@@ -7588,6 +8693,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'To nije prikazani ključ. Proverite papir i pokušajte ponovo.';
 
   @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Grupa $group se ne poklapa. Proverite je na svom zapisu.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return 'Poklapa se $count od 13 grupa.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'Ovo je duže od ključa. Proverite da li ima viška znakova.';
+
+  @override
   String get recoveryKeyShowAgain => 'Prikaži ključ ponovo';
 
   @override
@@ -7598,6 +8717,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryFollowUpTitle => 'Završite oporavak naloga';
+
+  @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Korak $step od $total';
+  }
 
   @override
   String get recoveryFollowUpKeyDetail =>
@@ -7616,6 +8740,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryStartDetail =>
       'Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog. Potrebni su vam lozinka i ključ za oporavak. Ako je neki vaš uređaj korišćen u poslednjih 7 dana, ovaj uređaj se pridružuje tek posle 7 dana, a ti uređaji mogu da otkažu oporavak. Istorija poruka se vraća samo iz rezervne kopije vraćene na ovaj uređaj.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'Potrebni su vam lozinka i ključ za oporavak.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'Ako je neki vaš uređaj korišćen u poslednjih 7 dana, čekate 7 dana, a vaši uređaji mogu da otkažu oporavak.';
+
+  @override
+  String get recoveryStartHowItWorks => 'Kako oporavak radi';
 
   @override
   String get recoveryStartSubmit => 'Započni oporavak';
@@ -7658,6 +8797,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String recoveryWaitingDetail(String date) {
     return 'Ovaj uređaj se pridružuje vašem nalogu posle $date. Aplikacija sama proverava dok je otvorena. Vaši drugi uređaji mogu da otkažu ovaj oporavak.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return 'Preostalo: $time';
   }
 
   @override
@@ -7849,6 +8993,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get membInviteRevoke => 'Opozovi link';
 
   @override
+  String get membInviteTurnOff => 'Isključi';
+
+  @override
+  String get membInviteTurnOffTitle => 'Isključiti ovu vezu?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'Niko više ne može da se pridruži pomoću nje. Osobe koje su već zatražile zadržavaju svoje zahteve.';
+
+  @override
   String get joinReqSection => 'Zahtevi za pridruživanje';
 
   @override
@@ -7868,6 +9022,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String joinReqReject(String username) {
     return 'Odbij $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Odbij';
+
+  @override
+  String get joinReqApproveButton => 'Odobri';
 
   @override
   String get joinReqRejectedSnack => 'Zahtev je odbijen.';
@@ -8004,10 +9164,6 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get callInProgress => 'Poziv u toku';
 
   @override
-  String get callRelayNote =>
-      'Ovaj poziv ide preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
-
-  @override
   String get callAccept => 'Prihvati';
 
   @override
@@ -8033,6 +9189,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get callDismiss => 'Zatvori';
+
+  @override
+  String get callBack => 'Uzvrati poziv';
 
   @override
   String callNoticeMissed(String name) {
@@ -8130,6 +9289,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti';
 
   @override
+  String get moderationLoadFailed => 'Nije moguće učitati';
+
+  @override
   String memberModerateTooltip(String username) {
     return 'Moderiraj $username';
   }
@@ -8142,6 +9304,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get memberTimeoutLift => 'Ukini utišavanje';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Utišan/a do $time';
+  }
 
   @override
   String banTitle(String username) {
@@ -8403,6 +9570,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String c6ReportsFiledBy(String reporter, String when) {
+    return 'Prijavio: $reporter, $when';
+  }
+
+  @override
+  String c6ReportsWhere(String place) {
+    return 'U: $place';
+  }
+
+  @override
   String get c6ReportsLocked => 'Ne može da se otvori';
 
   @override
@@ -8426,12 +9603,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String c6ReportsReporter(String account) {
-    return 'Prijavio nalog $account';
+    return 'Prijavio: $account';
   }
 
   @override
   String c6ReportsSender(String account) {
-    return 'Poslao nalog $account';
+    return 'Poslao: $account';
   }
 
   @override
@@ -8443,6 +9620,23 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6ReportsCheckNote =>
       'Proverom server saznaje o kojoj se poruci radi u ovoj prijavi.';
+
+  @override
+  String get c6ReportsWhyNotCertain => 'Zašto nije sigurno?';
+
+  @override
+  String get c6ReportsWhyNotCertainCommon =>
+      'Čak i poklapanje pokazuje samo da se zapis servera slaže da je ovaj nalog poslao tačno ovu poruku u ovom razgovoru. Ne pokazuje šta je bilo pre ili posle nje, ni šta je njome mišljeno, i pouzdano je samo koliko i taj zapis.';
+
+  @override
+  String get c6ReportsCopyText => 'Kopiraj tekst poruke';
+
+  @override
+  String get c6ReportsCopied => 'Tekst poruke je kopiran.';
+
+  @override
+  String get c6ReportsNothingBacksUp =>
+      'Ovde ništa ne potvrđuje ovu prijavu. Možete da je odbacite.';
 
   @override
   String get c6VerdictVerified => 'Poklapa se sa zapisom servera';
@@ -8713,6 +9907,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String k1RestoreEntryPrevious(String device, String date) {
     return '$device · $date (prethodna kopija)';
   }
+
+  @override
+  String get k1RestoreOlderCopy => 'Starija kopija';
 
   @override
   String get k1RestoreDeviceUnnamed => 'Uređaj';
@@ -9045,6 +10242,26 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get rolesStepDown => 'Odstupi';
 
   @override
+  String rolesChangeTitle(String name) {
+    return 'Promeniti ulogu: $name?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name postaje $role. Svi u grupi vide promenu.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Promeni ulogu';
+
+  @override
+  String get rolesStepDownTitle => 'Odustati od uloge?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'Postajete član. Samo neko sa višom ulogom može da vam vrati ulogu.';
+
+  @override
   String get rolesElectorOn => 'Dozvoli glasanje za novog vlasnika';
 
   @override
@@ -9100,12 +10317,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nove objave će moći da čitaju i ljudi koji se pridruže kasnije.';
 
   @override
+  String get channelHistoryOnEarlier =>
+      'Objave napravljene pre nego što ovo uključite ostaju skrivene od njih.';
+
+  @override
   String get channelHistoryOffConfirm =>
-      'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+      'Ljudi koji se pridruže kasnije neće videti ranije objave.';
+
+  @override
+  String get channelHistoryOffKept =>
+      'Članovi koji već imaju ranije objave zadržavaju ih.';
+
+  @override
+  String get channelHistoryOffAgain =>
+      'Ako ga kasnije ponovo uključite, novi članovi će videti samo objave napravljene posle toga.';
 
   @override
   String get channelHistoryProofConfirm =>
-      'Objave u ovom kanalu se potpisuju da bi ljudi koji se pridruže kasnije mogli da provere ko ih je napisao. To znači da se može dokazati ko je napisao objavu: svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
+      'Objave su potpisane, pa se može dokazati ko je napisao objavu. Svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
 
   @override
   String get channelHistoryProofLine =>
@@ -9230,34 +10459,73 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';
+  String get l2SealedKeyTitle => 'Slanje bez vašeg imena';
 
   @override
   String get l2SealedKeyTile => 'Poruke bez vašeg imena';
+
+  @override
+  String get l2SealedOn => 'Uključeno';
+
+  @override
+  String get l2SealedOff => 'Isključeno';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'Server dostavlja vaše poruke a da ne sazna ko ih je poslao.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Pauzirano: ključ servera se promenio. Vaše poruke nose vaše ime.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'Ovaj server to trenutno ne nudi, pa vaše poruke nose vaše ime.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Tehnički detalji';
 
   @override
   String get l2SealedKeyIntro =>
       'Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.';
 
   @override
-  String get l2SealedKeyOff => 'Ovaj server ne nudi skrivenog pošiljaoca.';
+  String get l2SealedKeyOff =>
+      'Ovaj server to ne nudi, pa vaše poruke nose vaše ime.';
 
   @override
   String get l2SealedKeyNone =>
-      'Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.';
+      'Uključuje se posle sledeće sinhronizacije sa ovim serverom.';
 
   @override
   String get l2SealedKeyPinned => 'Zapamćeni ključ';
 
   @override
   String get l2SealedKeyChanged =>
-      'Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.';
+      'Dok ne odgovorite, vaše poruke nose vaše ime, kao ranije. Recite da samo ako vam je operater servera to rekao: ključ napravljen samo za vas omogućio bi serveru da izdvoji vaše poruke.';
 
   @override
   String get l2SealedKeyNew => 'Novi ključ';
 
   @override
   String get l2SealedKeyAccept => 'Prihvati novi ključ';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Da li vam je operater servera rekao da se njegov ključ promenio?';
+
+  @override
+  String get l2SealedKeyKeep => 'Ne, ili nisam siguran';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Da, koristi novi ključ';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Ništa se nije promenilo. Vaše poruke nose vaše ime dok ne prihvatite novi ključ.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Promeni odgovor';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -9290,7 +10558,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get l2OwnerKeyAccept => 'Prihvati';
 
   @override
-  String get l2OwnerKeyReject => 'Odbij';
+  String get l2OwnerKeyReject => 'Ne, zadrži kako je bilo';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Da li ste očekivali ovu promenu?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Da, prihvati';
 
   @override
   String get l2OwnerKeyAcceptWarning =>

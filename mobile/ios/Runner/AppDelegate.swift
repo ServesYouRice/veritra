@@ -31,6 +31,7 @@ import Darwin
     GeneratedPluginRegistrant.register(with: engine)
     registerStorageChannel(engine)
     registerK1SecondCopyChannel(engine)
+    registerAppSettingsChannel(engine)
     registerPushChannels(engine)
     wakeCoordinator.attach(engine.binaryMessenger, background: startingInBackground)
     return engine
@@ -158,6 +159,21 @@ import Darwin
       } else {
         result(nil)
       }
+    }
+  }
+
+  /// U8: the QR scanner's "Open settings" when the camera was refused.
+  /// Answers whether the system accepted the request.
+  private func registerAppSettingsChannel(_ registry: FlutterPluginRegistry) {
+    guard let registrar = registry.registrar(forPlugin: "VeritraAppSettings") else { return }
+    FlutterMethodChannel(
+      name: "org.veritra.private_messenger/app_settings",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { call, result in
+      guard call.method == "open" else { result(FlutterMethodNotImplemented); return }
+      guard let url = URL(string: UIApplication.openSettingsURLString),
+            UIApplication.shared.canOpenURL(url) else { result(false); return }
+      UIApplication.shared.open(url, options: [:]) { opened in result(opened) }
     }
   }
 

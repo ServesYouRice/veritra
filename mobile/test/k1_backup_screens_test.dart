@@ -69,6 +69,19 @@ class _Api extends K0Api {
           'rk_id': base64.encode(List<int>.filled(16, 0xB2)),
           'superseded': false,
         },
+        <String, Object?>{
+          'id': 'backup_prev',
+          'device_id': 'dev_spare',
+          'device_name': 'Spare tablet',
+          'device_revoked': false,
+          'kind': 1,
+          'ciphertext_sha256': 'b' * 64,
+          'size_bytes': 10,
+          'created_at': '2026-11-07T09:00:00Z',
+          'counter': 1,
+          'rk_id': base64.encode(List<int>.filled(16, 0xB2)),
+          'superseded': true,
+        },
         <String, Object?>{'id': 'legacy', 'kind': 0},
       ];
 
@@ -207,6 +220,19 @@ void main() {
         .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pumpAndSettle();
     expect(find.textContaining('Old phone'), findsOneWidget);
+    // U37: an older copy says so in words, and every row ends in an arrow.
+    expect(find.text('Older copy'), findsOneWidget);
+    expect(find.textContaining('the copy before'), findsNothing);
+    for (final id in <String>['backup_a', 'backup_prev']) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey<String>('k1-restore-$id')),
+          matching: find.byIcon(Icons.chevron_right),
+        ),
+        findsOneWidget,
+        reason: id,
+      );
+    }
     expect(find.text('This device was removed from your account.'),
         findsOneWidget);
     expect(

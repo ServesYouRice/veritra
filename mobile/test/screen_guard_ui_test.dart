@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/settings/settings_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
@@ -60,6 +61,61 @@ void main() {
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets(
+      'the chat list holds the screen guard only while previews are shown (U12)',
+      (tester) async {
+    final guard = FakeScreenGuard();
+    final state = _createState(guard, MemoryLocalStore());
+    expect(state.showChatPreviews, isTrue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ChatListScreen(state: state),
+      ),
+    );
+    await tester.pump();
+
+    // Previews on: the list shows message text, so it is guarded.
+    expect(state.activeChatViewsForTesting, 1);
+    expect(state.isScreenGuardActive, isTrue);
+    expect(await guard.isSecure(), isTrue);
+
+    // Turning previews off while the list is mounted drops the guard.
+    await tester.runAsync(() => state.setShowChatPreviews(false));
+    await tester.pump();
+    expect(state.activeChatViewsForTesting, 0);
+    expect(state.isScreenGuardActive, isFalse);
+    expect(await guard.isSecure(), isFalse);
+
+    // And turning them back on takes it again.
+    await tester.runAsync(() => state.setShowChatPreviews(true));
+    await tester.pump();
+    expect(state.activeChatViewsForTesting, 1);
+    expect(await guard.isSecure(), isTrue);
+
+    // Unmounting releases it.
+    await tester.pumpWidget(const SizedBox());
+    expect(state.activeChatViewsForTesting, 0);
+    expect(await guard.isSecure(), isFalse);
+
+    // A list mounted with previews already off never takes the guard.
+    await tester.runAsync(() => state.setShowChatPreviews(false));
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ChatListScreen(state: state),
+      ),
+    );
+    await tester.pump();
+    expect(state.activeChatViewsForTesting, 0);
+    expect(state.isScreenGuardActive, isFalse);
+
+    state.dispose();
   });
 
   testWidgets(
@@ -127,10 +183,7 @@ void main() {
       final switchTile = tester.widget<SwitchListTile>(tileFinder);
       expect(switchTile.value, isTrue);
       expect(find.text('Screen guard'), findsOneWidget);
-      expect(
-          find.text(
-              'Block screenshots and AI-assistant screen reading in chats.'),
-          findsOneWidget);
+      // U18 dropped the explanation line from the row.
 
       // Tap to toggle off
       await tester.tap(tileFinder);

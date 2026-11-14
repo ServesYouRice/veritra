@@ -6,6 +6,7 @@ import '../../core/app_state.dart';
 import 'connect_screen.dart' show exampleServerOrigin;
 import '../../core/server_origin.dart';
 import '../settings/accounts_screen.dart' show AccountsShortcut;
+import '../settings/reauth_dialog.dart' show SecretRevealButton;
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
@@ -36,6 +37,7 @@ class _AccountRecoveryStartScreenState
   final _password = TextEditingController();
   final _recoveryKey = TextEditingController();
   bool _submitting = false;
+  bool _passwordShown = false;
 
   @override
   void initState() {
@@ -94,6 +96,21 @@ class _AccountRecoveryStartScreenState
     }
   }
 
+  Widget _point(BuildContext context, IconData icon, String text) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: BoneSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(icon, size: 22, color: theme.colorScheme.primary),
+          const SizedBox(width: BoneSpacing.md),
+          Expanded(child: Text(text, style: theme.textTheme.bodyLarge)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -112,9 +129,28 @@ class _AccountRecoveryStartScreenState
               child: ListView(
                 padding: const EdgeInsets.all(BoneSpacing.xl),
                 children: <Widget>[
-                  Text(l10n.recoveryStartDetail,
-                      style: theme.textTheme.bodyMedium),
-                  const SizedBox(height: BoneSpacing.xl),
+                  // U23: three points; the full text is the fine print.
+                  _point(context, Icons.devices_other_outlined,
+                      l10n.recoveryStartPointLost),
+                  _point(
+                      context, Icons.key_outlined, l10n.recoveryStartPointNeed),
+                  _point(context, Icons.hourglass_top_outlined,
+                      l10n.recoveryStartPointWait),
+                  ExpansionTile(
+                    key: const ValueKey<String>('recovery-how-it-works'),
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding:
+                        const EdgeInsets.only(bottom: BoneSpacing.md),
+                    shape: const Border(),
+                    collapsedShape: const Border(),
+                    expandedAlignment: Alignment.centerLeft,
+                    title: Text(l10n.recoveryStartHowItWorks),
+                    children: <Widget>[
+                      Text(l10n.recoveryStartDetail,
+                          style: theme.textTheme.bodyMedium),
+                    ],
+                  ),
+                  const SizedBox(height: BoneSpacing.lg),
                   TextFormField(
                     controller: _server,
                     keyboardType: TextInputType.url,
@@ -142,7 +178,7 @@ class _AccountRecoveryStartScreenState
                   const SizedBox(height: BoneSpacing.lg),
                   TextFormField(
                     controller: _password,
-                    obscureText: true,
+                    obscureText: !_passwordShown,
                     autofillHints: const <String>[AutofillHints.password],
                     validator: (value) => (value ?? '').isEmpty
                         ? l10n.connectPasswordRequired
@@ -150,6 +186,11 @@ class _AccountRecoveryStartScreenState
                     decoration: InputDecoration(
                       labelText: l10n.connectPassword,
                       prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: SecretRevealButton(
+                        shown: _passwordShown,
+                        onPressed: () =>
+                            setState(() => _passwordShown = !_passwordShown),
+                      ),
                     ),
                   ),
                   const SizedBox(height: BoneSpacing.lg),
@@ -202,9 +243,16 @@ class _AccountRecoveryStartScreenState
 /// claim: when it finishes, a check now, stopping it, and the password
 /// sign-in that finishes a claim whose answer was lost.
 class AccountRecoveryWaitingScreen extends StatefulWidget {
-  const AccountRecoveryWaitingScreen({required this.state, super.key});
+  const AccountRecoveryWaitingScreen({
+    required this.state,
+    @visibleForTesting this.clock,
+    super.key,
+  });
 
   final AppState state;
+
+  /// The time the countdown is drawn from; the device clock by default.
+  final DateTime Function()? clock;
 
   @override
   State<AccountRecoveryWaitingScreen> createState() =>
@@ -214,9 +262,25 @@ class AccountRecoveryWaitingScreen extends StatefulWidget {
 class _AccountRecoveryWaitingScreenState
     extends State<AccountRecoveryWaitingScreen> {
   final _password = TextEditingController();
+  bool _passwordShown = false;
+
+  /// U23: redraws the countdown. It only reads the clock; the app's own
+  /// checks and the server decide when the wait is over.
+  Timer? _tick;
+
+  DateTime _now() => (widget.clock ?? DateTime.now)().toUtc();
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(recoveryCountdownInterval, (_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
+    _tick?.cancel();
     _password.clear();
     _password.dispose();
     super.dispose();
@@ -271,8 +335,8 @@ class _AccountRecoveryWaitingScreenState
     final pending = widget.state.pendingAccountRecovery;
     final busy = widget.state.isBusy(Ops.accountRecovery);
     final error = widget.state.errorFor(Ops.accountRecovery);
-    final ready =
-        pending != null && !pending.readyAt.isAfter(DateTime.now().toUtc());
+    final now = _now();
+    final ready = pending != null && !pending.readyAt.isAfter(now);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -310,10 +374,16 @@ class _AccountRecoveryWaitingScreenState
                     const SizedBox(height: BoneSpacing.lg),
                     TextField(
                       controller: _password,
-                      obscureText: true,
+                      obscureText: !_passwordShown,
                       autofillHints: const <String>[AutofillHints.password],
-                      decoration:
-                          InputDecoration(labelText: l10n.connectPassword),
+                      decoration: InputDecoration(
+                        labelText: l10n.connectPassword,
+                        suffixIcon: SecretRevealButton(
+                          shown: _passwordShown,
+                          onPressed: () =>
+                              setState(() => _passwordShown = !_passwordShown),
+                        ),
+                      ),
                       onSubmitted: (_) => _signIn(),
                     ),
                     const SizedBox(height: BoneSpacing.lg),
@@ -322,6 +392,16 @@ class _AccountRecoveryWaitingScreenState
                       child: Text(l10n.recoveryLoginSubmit),
                     ),
                   ] else ...<Widget>[
+                    if (!ready) ...<Widget>[
+                      Text(
+                        l10n.recoveryTimeLeft(recoveryTimeLeftText(
+                            l10n, pending.readyAt.difference(now))),
+                        key: const ValueKey<String>('recovery-countdown'),
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: BoneSpacing.md),
+                    ],
                     Text(
                       ready
                           ? l10n.recoveryReadyDetail
@@ -363,4 +443,31 @@ class _AccountRecoveryWaitingScreenState
       ),
     );
   }
+}
+
+/// How often the waiting screen redraws its countdown.
+const Duration recoveryCountdownInterval = Duration(seconds: 30);
+
+/// U23: the time left in the recovery wait, in at most two units and
+/// rounded up, so it never reads zero while the wait is still on.
+String recoveryTimeLeftText(AppLocalizations l10n, Duration left) {
+  var minutes = (left.inSeconds + 59) ~/ 60;
+  if (minutes < 1) minutes = 1;
+  if (minutes < 60) return l10n.durationMinutes(minutes);
+  if (minutes < 24 * 60) {
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    return rest == 0
+        ? l10n.durationHours(hours)
+        : '${l10n.durationHours(hours)} ${l10n.durationMinutes(rest)}';
+  }
+  var days = minutes ~/ (24 * 60);
+  var hours = ((minutes % (24 * 60)) + 59) ~/ 60;
+  if (hours == 24) {
+    days += 1;
+    hours = 0;
+  }
+  return hours == 0
+      ? l10n.durationDays(days)
+      : '${l10n.durationDays(days)} ${l10n.durationHours(hours)}';
 }

@@ -11,6 +11,10 @@
   "@commonRefresh": {"description": "Tooltip for a button that reloads the current screen."},
   "commonRevoke": "Revoke",
   "@commonRevoke": {"description": "Button or tooltip that revokes a device or invite."},
+  "commonUndo": "Undo",
+  "@commonUndo": {
+    "description": "Snackbar action that reverses what was just done."
+  },
 
   "listTimeYesterday": "Yesterday",
   "@listTimeYesterday": {"description": "Chat list timestamp for activity on the previous calendar day."},
@@ -19,6 +23,10 @@
   "@validationNameRequired": {"description": "Inline error under an empty community or channel name field."},
   "validationNameTooLong": "That name is too long.",
   "@validationNameTooLong": {"description": "Inline error when a community or channel name exceeds the server limit."},
+  "validationNameInvalid": "That name has characters that are not allowed.",
+  "@validationNameInvalid": {"description": "Inline error when a community or channel name has control, line-break or direction characters."},
+  "validationTopicInvalid": "That topic is too long or has characters that are not allowed.",
+  "@validationTopicInvalid": {"description": "Inline error under a channel topic field."},
   "validationGroupNameRequired": "Enter a group name.",
   "@validationGroupNameRequired": {"description": "Inline error under an empty group name field."},
   "validationGroupNameTooLong": "That group name is too long.",
@@ -83,6 +91,7 @@
   "trayQuit": "Quit",
 
   "settingsSectionPrivacy": "Privacy",
+  "settingsSectionPrivacySafety": "Privacy and safety",
   "settingsReadReceiptsTitle": "Read receipts",
   "settingsReadReceiptsDetail": "Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.",
   "settingsReadReceiptsFailed": "The setting could not be changed. Check your connection and try again.",
@@ -127,6 +136,7 @@
   "settingsExportSaved": "Account export saved locally.",
   "settingsAllowNotifications": "Allow notifications",
   "settingsAllowNotificationsDetail": "Notifications say only that a message arrived.",
+  "settingsTurnOn": "Turn on",
   "settingsPushProvider": "Push provider",
   "settingsPushProviderDetail": "Choose an Android UnifiedPush provider",
   "settingsTestPush": "Send a test notification",
@@ -145,6 +155,8 @@
   "settingsRecoveryComingSoonDetail": "Encrypted backup & recovery key",
   "settingsCallsComingSoon": "Calls",
   "settingsCallsComingSoonDetail": "1:1 audio/video",
+  "settingsCallsRelayTitle": "Calls",
+  "settingsCallsRelayNote": "Calls go through the server's relay, so the other side never sees your network address.",
   "settingsDeleteAccount": "Delete account",
   "settingsDeleteAccountDetail": "Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.",
   "settingsSignedIn": "Signed in",
@@ -155,6 +167,17 @@
   "@settingsRevokeDeviceMessage": {
     "placeholders": {"deviceName": {"type": "String", "example": "Pixel 8"}}
   },
+  "settingsSignOutDeviceTitle": "Sign out \"{deviceName}\"?",
+  "@settingsSignOutDeviceTitle": {
+    "description": "Title of the confirmation for signing a device out.",
+    "placeholders": {
+      "deviceName": {
+        "type": "String",
+        "example": "Pixel 8"
+      }
+    }
+  },
+  "settingsSignOutDeviceButton": "Sign out",
   "settingsSignOutTitle": "Sign out?",
   "settingsSignOutMessage": "This device stops receiving messages until you sign in again with your password.",
   "settingsSignOutOthersTitle": "Sign out other devices?",
@@ -218,8 +241,9 @@
 
   "connectFreshInstanceTitle": "Fresh instance detected",
   "connectFreshInstanceMessage": "No owner account exists yet — create it below.",
+  "connectFreshInstanceAction": "Set up this server",
   "connectInstanceUrl": "Instance URL",
-  "connectCheckApproval": "Check approval",
+  "connectCheckApproval": "Check now",
   "connectLinkInstead": "Link this device instead",
   "connectOtherWays": "Other ways to connect",
   "connectRestoreBackup": "Restore from a backup",
@@ -227,14 +251,29 @@
   "connectLinkCodeRequired": "Enter the link code from your existing device.",
   "connectLinkCodeHint": "From Settings → Link device",
   "connectScanQr": "Scan QR code",
-  "connectVerificationTitle": "Verification code",
-  "connectVerificationMessage": "Confirm this code on your already-linked device, then check approval below.",
+  "connectVerificationTitle": "Type this code on your other device",
+  "connectVerificationMessage": "On the device you already use, type this code. Never send it to anyone or read it out to them.",
   "connectInviteCode": "Invite code",
   "connectInviteCodeRequired": "Enter the invite code you received.",
   "connectInviteCodeHint": "From an admin on this instance",
+  "connectInviteLink": "Invite link",
+  "connectInviteLinkHint": "Paste the link you were sent",
+  "connectInviteLinkRequired": "Paste the invite link you received.",
+  "connectInviteLinkInvalid": "This is not a Veritra invite link. Check that you copied all of it.",
+  "connectInviteTypeInstead": "Type the server address and code instead",
+  "connectInviteLinkInstead": "Paste an invite link instead",
+  "connectJoinLinkDetail": "Paste the invite link you were sent, or scan its QR code.",
+  "connectJoinAccountTitle": "Choose a username and password",
+  "connectJoiningServer": "Joining {server}",
+  "@connectJoiningServer": {
+    "placeholders": {"server": {"type": "String", "example": "chat.example.org"}}
+  },
+  "connectJoinChangeServer": "Change",
+  "connectScanInviteTitle": "Scan invite QR",
   "connectUsername": "Username",
   "connectUsernameRequired": "Enter a username.",
   "connectUsernameHint": "Your name on this instance",
+  "connectUsernameInvalid": "Use 3 to 32 letters, digits, _ or -.",
   "connectPassword": "Password",
   "connectPasswordHint": "At least 12 characters",
   "connectHidePassword": "Hide password",
@@ -268,15 +307,29 @@
   "connectSubmitJoin": "Join with invite",
   "connectSubmitLink": "Claim link",
   "connectTagline": "Self-hosted, end-to-end encrypted messaging",
+  "connectStepBack": "Back",
+  "welcomeHaveInvite": "I have an invite",
+  "welcomeHaveAccount": "I already have an account",
+  "welcomeSetUpServer": "Set up a new server",
+  "welcomeAccountTitle": "How do you want to sign in?",
+  "welcomeNewDeviceTitle": "This is a new device",
+  "welcomeNewDeviceDetail": "Add it using a device you already use.",
+  "welcomeSignedInBeforeTitle": "I've signed in here before",
+  "welcomeSignedInBeforeDetail": "Sign in with your username and password.",
+  "welcomeLostDevicesTitle": "I lost all my devices",
+  "welcomeLostDevicesDetail": "Get back in with your password and recovery key.",
 
   "qrScanLinkTitle": "Scan link QR",
   "qrToggleTorch": "Toggle torch",
   "qrSwitchCamera": "Switch camera",
   "qrPointCamera": "Point the camera at the QR code on your existing device (Settings → Link a new device).",
-  "qrPermissionDenied": "Camera permission is required to scan. Enable it in system settings, or type the link code manually.",
+  "qrPointCameraInvite": "Point the camera at the invite QR code.",
+  "qrPermissionDenied": "Veritra needs the camera to scan. Allow it in Settings, or type the code instead.",
   "qrUnsupported": "This device can’t scan QR codes. Type the link code manually.",
   "qrCameraFailed": "The camera could not be started. Type the link code manually.",
   "qrEnterManually": "Enter code manually",
+  "qrOpenSettings": "Open settings",
+  "qrOpenSettingsFailed": "Settings could not be opened. Allow the camera for Veritra in your device's settings.",
 
   "newConversationTitle": "New conversation",
   "newConversationDirect": "Direct message",
@@ -284,7 +337,7 @@
   "newConversationGroupName": "Group name",
   "newConversationWho": "Who do you want to message?",
   "newConversationAddMembers": "Add members",
-  "newConversationStartDm": "Start DM",
+  "newConversationStartDm": "Message",
   "newConversationCreateGroup": "Create group",
   "newConversationPickPerson": "Pick the person to message first.",
   "newConversationAddOneMember": "Add at least one other member.",
@@ -301,8 +354,10 @@
   "@blockedUnblockFailed": {"placeholders": {"label": {"type": "String"}}},
   "blockedLoadFailed": "Couldn’t load blocked accounts",
   "commonRetry": "Retry",
+  "commonUndo": "Undo",
 
   "accountPickerHelper": "Exact username, or paste an account ID (acct_…).",
+  "accountPickerKnown": "People you know",
   "accountPickerNoMatch": "No account found with that exact username.",
 
   "searchHint": "Search people, communities, channels…",
@@ -317,12 +372,19 @@
   "searchTypeCommunity": "Community",
   "searchTypeChannel": "Channel",
   "searchTypeAccount": "Account",
+  "searchHeadingCommunities": "Communities",
+  "@searchHeadingCommunities": {"description": "Heading over community results in the People search."},
+  "searchHeadingChannels": "Channels",
+  "@searchHeadingChannels": {"description": "Heading over channel results in the People search."},
+  "searchHeadingConversations": "Conversations",
+  "@searchHeadingConversations": {"description": "Heading over conversation results in the People search."},
   "searchUnblockAccount": "Unblock {label}",
   "@searchUnblockAccount": {"placeholders": {"label": {"type": "String"}}},
   "searchBlockAccount": "Block {label}",
   "@searchBlockAccount": {"placeholders": {"label": {"type": "String"}}},
   "searchBlocked": "{label} blocked.",
   "@searchBlocked": {"placeholders": {"label": {"type": "String"}}},
+  "searchBlockConfirm": "Block",
   "searchBlockFailed": "Could not update the block.",
 
   "inviteCreateSection": "Create an invite",
@@ -341,12 +403,39 @@
   "@inviteUsesPill": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
   "inviteUsesSemantics": "{uses} of {maxUses} uses",
   "@inviteUsesSemantics": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
+  "inviteUsedOf": "{uses} of {maxUses} used",
+  "@inviteUsedOf": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      },
+      "maxUses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "inviteUsedUnlimited": "{uses} used",
+  "@inviteUsedUnlimited": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "inviteNeverExpires": "Never expires",
   "inviteExpiresAt": "Expires {time}",
   "@inviteExpiresAt": {"placeholders": {"time": {"type": "String"}}},
   "inviteActions": "Invite actions",
   "inviteCodeCopied": "Invite code copied.",
   "inviteCopyCode": "Copy code",
+  "inviteCopyLink": "Copy link",
+  "inviteLinkCopied": "Invite link copied.",
+  "inviteShowQr": "Show QR code",
+  "inviteQrTitle": "Invite QR code",
+  "inviteQrHint": "On the new phone, open Veritra, tap “I have an invite” and scan this code.",
 
   "profileThisInstance": "this instance",
   "profileTitle": "Profile",
@@ -378,6 +467,7 @@
   "groupProfileHelp": "Members of this group can see its name and photo. The server can't read them.",
   "profileBlockNote": "In groups you share, they may still see your profile.",
   "profileSectionIdentity": "Identity",
+  "profileSectionAdvanced": "Advanced",
   "profileNotAvailable": "Not available",
   "profileCurrentDevice": "Current device",
   "profileInstanceRole": "Instance role",
@@ -402,6 +492,10 @@
   "shellResetDevice": "Reset this device",
 
   "communityNew": "New community",
+  "communityJoinAction": "Join",
+  "@communityJoinAction": {"description": "Short label of the Join action in the Communities top bar. Its tooltip and screen-reader name is the longer \"Join with a link\"."},
+  "communityNewAction": "New",
+  "@communityNewAction": {"description": "Short label of the New action in the Communities top bar. Its tooltip and screen-reader name is \"New community\"."},
   "communityEmptyTitle": "No communities yet",
   "communityEmptyMessage": "Create a community to organize people around shared channels — private by default, encrypted everywhere.",
   "communityOtherChannels": "Other channels you are in",
@@ -414,6 +508,8 @@
   "communityChannelCount": "{count, plural, =1{1 channel} other{{count} channels}}",
   "@communityChannelCount": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "communityNewChannel": "New channel",
+  "communityActionsTooltip": "Actions for {community}",
+  "@communityActionsTooltip": {"description": "Label of the menu on a community card that holds edit, categories, roles, reports and new channel.", "placeholders": {"community": {"type": "String"}}},
   "communityNoChannelsHint": "Use + to create the first one.",
   "communityPlaceholderName": "Community",
   "channelPlaceholderName": "Channel",
@@ -424,6 +520,8 @@
   "channelTopic": "Topic",
   "channelEditFailed": "Couldn't save the channel. Try again.",
   "channelSave": "Save",
+  "channelEditNotAllowed": "You cannot save changes here any more, because your role or account has changed.",
+  "@channelEditNotAllowed": {"description": "Edit community or channel: shown beside Save when Save is disabled because this account may no longer edit."},
   "communityNotMember": "You are not a member yet",
 
   "backupIntro": "A backup holds this device's keys and message history, encrypted on this device. The server stores it but cannot read it. Restoring it on a new device needs the recovery code shown when you make it.",
@@ -443,7 +541,7 @@
   "backupRestore": "Restore",
 
   "deviceLinkTitle": "Link a device",
-  "deviceLinkIntro": "Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.",
+  "deviceLinkIntro": "Add a new phone or computer to your account in three steps. On the new device, open Veritra and choose Link this device.",
   "deviceLinkCreate": "Create link",
   "deviceLinkCreateNew": "Create new link",
   "deviceLinkQrSemantics": "QR code containing the device link. Scan it with the new device.",
@@ -455,7 +553,27 @@
   "deviceLinkRefreshStatus": "Refresh status",
   "deviceLinkApproveDevice": "Approve device",
   "deviceLinkApprove": "Approve",
-  "deviceLinkApproveHint": "Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.",
+  "deviceLinkApproveHint": "The new device now shows an 8-digit code. Type it here.",
+  "deviceLinkApproveWarning": "Never use a code someone sent you or read out to you. Type only the code you see yourself on the new device's screen.",
+  "deviceLinkCodeField": "Code from the new device",
+  "deviceLinkCompareTitle": "Type the code from the new device",
+  "deviceLinkStepScan": "Scan",
+  "deviceLinkStepCompare": "Compare",
+  "deviceLinkStepDone": "Done",
+  "deviceLinkStepOf": "Step {step} of 3: {name}",
+  "@deviceLinkStepOf": {"placeholders": {"step": {"type": "int"}, "name": {"type": "String", "example": "Scan"}}},
+  "deviceLinkScanTitle": "Scan this code with the new device",
+  "deviceLinkExpiresAt": "This code works until {time}.",
+  "@deviceLinkExpiresAt": {"placeholders": {"time": {"type": "String", "example": "14 Nov 2026, 10:42"}}},
+  "deviceLinkWaitingClaim": "Waiting for the new device. This screen updates by itself.",
+  "deviceLinkCannotScan": "Cannot scan?",
+  "deviceLinkTypeCodeHint": "On the new device, choose to type the link code, then enter this one:",
+  "deviceLinkNewDevice": "New device: {name}",
+  "@deviceLinkNewDevice": {"placeholders": {"name": {"type": "String", "example": "Linked pixel 8"}}},
+  "deviceLinkChecking": "Checking the new device. If this does not change, try again.",
+  "deviceLinkDoneTitle": "Your new device is linked",
+  "deviceLinkDoneDetail": "Your chat history is copied to it, encrypted. Keep both devices online until it finishes.",
+  "deviceLinkEndedHere": "This link has ended. Create a new one to link a device.",
   "deviceLinkUnavailableHere": "Linking devices is not available in this build.",
   "deviceLinkAlreadyPending": "A device link is already waiting on this device. Check it or cancel it first.",
   "deviceLinkRecoveryInProgress": "An account recovery is waiting on this device, so a device cannot be linked here until it is finished or cancelled.",
@@ -464,7 +582,7 @@
   "deviceLinkCodeMismatch": "That code does not match the one on the new device. Check it and try again.",
   "deviceLinkRefreshFirst": "Refresh the status first, then approve the device.",
   "deviceLinkCancelWaiting": "Cancel this link",
-  "deviceLinkWaitingApproval": "Waiting for your other device to approve. Keep this screen open.",
+  "deviceLinkWaitingApproval": "Waiting for your other device to approve. This screen updates by itself.",
   "deviceLinkWaitingCode": "Waiting for your other device. The code to confirm appears here in a moment.",
   "deviceLinkCommitmentMismatch": "Your other device's link check did not match, so this device was not linked. Create a new link on your other device and try again.",
   "historyCopySendWorking": "Sending your history to the new device…",
@@ -521,10 +639,21 @@
   "chatListNewChat": "New chat",
   "chatListEmptyTitle": "No conversations yet",
   "chatListEmptyMessage": "Start a direct message or create a group. Everything is end-to-end encrypted.",
+  "chatListStartChat": "Start a chat",
+  "chatListInviteSomeone": "Invite someone",
+  "chatListArchivedEmptyTitle": "No archived chats",
+  "chatListArchivedEmptyMessage": "Chats you archive are kept here, out of your main list.",
   "chatListUnmute": "Unmute notifications",
   "chatListMute": "Mute notifications",
   "chatListDetails": "Conversation details",
   "chatListMuted": "Muted",
+  "chatPreviewYou": "You: {text}",
+  "@chatPreviewYou": {"placeholders": {"text": {"type": "String"}}},
+  "chatPreviewFrom": "{name}: {text}",
+  "@chatPreviewFrom": {"placeholders": {"name": {"type": "String"}, "text": {"type": "String"}}},
+  "chatPreviewPhoto": "Photo",
+  "chatPreviewVoiceNote": "Voice note",
+  "chatPreviewPoll": "Poll",
   "chatListDisappearingAfter": "Disappearing after {duration}",
   "@chatListDisappearingAfter": {"placeholders": {"duration": {"type": "String"}}},
   "chatListUnreadSpoken": "{count, plural, =1{1 unread message} other{{count} unread messages}}",
@@ -541,6 +670,15 @@
   "@durationHours": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationMinutes": "{count, plural, =1{1 minute} other{{count} minutes}}",
   "@durationMinutes": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
+  "durationSeconds": "{count, plural, =1{1 second} other{{count} seconds}}",
+  "@durationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "durationChipDays": "{count}d",
   "@durationChipDays": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationChipHours": "{count}h",
@@ -560,8 +698,8 @@
   "safetyCodesMatch": "The codes match.",
   "safetyCodesMatchVerified": "The codes match. Marked as verified.",
   "safetyTitle": "Safety number",
-  "safetyGroupIntro": "Every member of this group sees the same number. Compare it in person or scan each other's code.",
-  "safetyPeerIntro": "Compare this number with {peer} in person, or scan each other's code.",
+  "safetyGroupIntro": "Compare this number with the other members to be sure nobody else can read this chat.",
+  "safetyPeerIntro": "Compare this number with {peer} to be sure nobody else can read your chat.",
   "@safetyPeerIntro": {"placeholders": {"peer": {"type": "String"}}},
   "safetyUnavailable": "Safety number unavailable",
   "safetyUnavailableDetail": "This device has not joined the encrypted group yet, or its group state could not be read.",
@@ -577,6 +715,16 @@
   "safetyUnverified": "Not verified",
   "safetyScanTheirCode": "Scan their code",
   "safetyMarkVerified": "Mark as verified",
+  "safetyHowTitle": "How are you comparing?",
+  "safetyTogether": "We are together",
+  "safetyTogetherDetail": "Scan each other's code.",
+  "safetyOnCall": "We are on a call",
+  "safetyOnCallDetail": "Read the number aloud to each other.",
+  "safetyTogetherSteps": "Let them scan this code with their phone, then scan theirs.",
+  "safetyTogetherNoCamera": "Let them scan this code with their phone, or compare the numbers below.",
+  "safetyCompareByEye": "Or compare the numbers group by group. Every group must be the same:",
+  "safetyCallSteps": "Take turns reading the groups aloud, row by row. Every group must be the same. Only then mark the number as verified.",
+  "safetyOtherWay": "Compare another way",
 
   "detailsNotFound": "Conversation not found.",
   "detailsConversationIdLabel": "CONVERSATION ID",
@@ -584,7 +732,15 @@
   "detailsConversationId": "Conversation ID",
   "detailsCreatedLabel": "CREATED",
   "detailsMuteDetail": "Stops push for this conversation. Messages still arrive and still count as unread.",
+  "detailsActionMute": "Mute",
+  "detailsActionUnmute": "Unmute",
+  "detailsActionCall": "Call",
   "detailsSectionMembers": "Members",
+  "communityTabInvites": "Invites",
+  "@communityTabInvites": {"description": "Tab on a community page (admins): invitation links."},
+  "communityTabRequests": "Requests",
+  "@communityTabRequests": {"description": "Tab on a community page (admins): requests to join."},
+  "detailsSectionAdvanced": "Advanced",
   "detailsLoadingMembers": "Loading members…",
   "detailsMembersUnavailable": "Member list unavailable",
   "detailsMembersUnavailableDetail": "The server did not return the roster for this conversation.",
@@ -598,6 +754,8 @@
   "detailsLeaveDetail": "You stop receiving new messages. Messages already on other members' devices are not deleted.",
   "detailsSectionDisappearing": "Disappearing messages",
   "detailsDisappearingNote": "When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.",
+  "detailsRetentionLocked": "Only an owner, admin or moderator of this chat can change this.",
+  "detailsRetentionLockedDm": "Only the person who started this chat can change this.",
   "detailsRetentionOff": "Off",
   "detailsRemoveTitle": "Remove {label}?",
   "@detailsRemoveTitle": {"placeholders": {"label": {"type": "String"}}},
@@ -632,16 +790,19 @@
   "detailsBlockedDetail": "Their messages are hidden from this account until you unblock them.",
   "detailsBlockDetail": "The server stops delivering their messages to your account. They are not told, and messages already on your devices stay.",
 
-  "chatStatusMutedEncrypted": "MUTED · ENCRYPTED",
-  "chatStatusEncrypted": "ENCRYPTED",
+  "chatStatusMuted": "Muted",
   "chatNoConversationMessage": "Pick a conversation from the chat list.",
   "chatEmptyTitle": "No messages yet",
-  "chatEmptyMessage": "Messages are stored as encrypted envelopes only the members can read.",
+  "chatEmptyMessageDm": "Only you two can read this.",
+  "chatEmptyMessageGroup": "Only the members can read this.",
+  "chatNoticeEncryptedDm": "Messages here are end-to-end encrypted. Only you two can read them.",
+  "chatNoticeEncryptedGroup": "Messages here are end-to-end encrypted. Only the members can read them.",
   "chatJumpToLatest": "Jump to latest",
   "chatReact": "React {reaction}",
   "@chatReact": {"placeholders": {"reaction": {"type": "String"}}},
   "chatReply": "Reply",
   "chatCopyText": "Copy text",
+  "chatSelectText": "Select text",
   "chatEdit": "Edit",
   "chatDeleteForEveryone": "Delete for everyone",
   "chatDeleteTitle": "Delete for everyone?",
@@ -658,7 +819,7 @@
   "chatPendingFailedSemantics": "Encrypted message failed to send. Retry available.",
   "chatPendingSending": "Sending encrypted message",
   "chatPendingTerminal": "Message needs attention",
-  "chatPendingFailed": "Send failed",
+  "chatPendingNotSentRetry": "Not sent · Retry",
   "chatDiscard": "Discard",
   "chatSenderYou": "you",
   "chatAttachmentUnopenable": "This attachment cannot be opened.",
@@ -702,6 +863,7 @@
   "chatCancelReply": "Cancel reply",
   "chatSendingFile": "Sending file",
   "chatAttachFile": "Attach a file",
+  "chatAddTooltip": "Add a file or poll",
   "chatComposerHint": "Message",
   "chatPostingRestricted": "Only admins can post",
   "@chatPostingRestricted": {"description": "Hint shown in chat composer when posting is restricted to admins."},
@@ -879,7 +1041,7 @@
   "emojiGroupSymbols": "Symbols",
   "emojiGroupFlags": "Flags",
   "searchModeMessages": "Messages",
-  "searchModePeople": "People and communities",
+  "searchModePeople": "People",
   "searchMessagesHint": "Search messages on this device…",
   "searchMessagesIntroTitle": "Search this device",
   "searchMessagesIntroMessage": "Finds text in the messages this device holds. The search happens here and is never sent to the server.",
@@ -916,6 +1078,113 @@
   "@adminAccountSummary": {"placeholders": {"role": {"type": "String"}, "devices": {"type": "int"}, "storage": {"type": "String"}}},
   "adminEventBy": "By {actor}",
   "@adminEventBy": {"placeholders": {"actor": {"type": "String"}}},
+  "adminActorUnknown": "Someone",
+  "adminEventSuspended": "{actor} suspended {target}",
+  "@adminEventSuspended": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventReactivated": "{actor} reactivated {target}",
+  "@adminEventReactivated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventRegistered": "{actor} joined the server",
+  "@adminEventRegistered": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOwnerCreated": "{actor} created the owner account",
+  "@adminEventOwnerCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedIn": "{actor} signed in",
+  "@adminEventSignedIn": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOut": "{actor} signed out",
+  "@adminEventSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOutOthers": "{actor} signed out their other devices",
+  "@adminEventSignedOutOthers": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventPasswordChanged": "{actor} changed their password",
+  "@adminEventPasswordChanged": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventDeviceSignedOut": "{actor} signed out a device",
+  "@adminEventDeviceSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteCreated": "{actor} made an invite",
+  "@adminEventInviteCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteRevoked": "{actor} turned off an invite",
+  "@adminEventInviteRevoked": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOther": "{actor}: {event}",
+  "@adminEventOther": {
+    "description": "Fallback sentence for an audit event with no wording of its own.",
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "event": {
+        "type": "String"
+      }
+    }
+  },
   "adminLoadMore": "Load more",
   "adminNoAccounts": "No accounts",
   "adminNoEvents": "No audit events yet",
@@ -926,6 +1195,10 @@
   "@requestFrom": {"placeholders": {"name": {"type": "String"}}},
   "requestUnknownSender": "Someone you do not know",
   "requestExplanation": "Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.",
+  "requestSharedTitle": "What they can see",
+  "requestSharedNow": "Now: they are not told you opened this, and no read receipt is sent.",
+  "requestSharedAccept": "If you accept: they can see when you are typing and, if read receipts are on in Settings, when you read their messages.",
+  "requestSharedDelete": "If you delete: they are not told.",
   "requestAccept": "Accept",
   "requestBlock": "Block",
   "requestDelete": "Delete",
@@ -959,6 +1232,8 @@
     "w8Chats":  "Chats",
     "w8MentionsMuted":  "Mentions in muted chats",
     "w8MentionsMutedDetail":  "Notify when a member mentions you, even in a muted chat.",
+  "chatPreviewsSetting": "Last message on chats",
+  "chatPreviewsSettingDetail": "Read from this device only.",
     "b2LinkPreviews":  "Link previews",
     "b2LinkPreviewsDetail":  "When you send a link, this device can fetch the page and put a preview in the encrypted message. The site sees this device's address. The server and the people you write to never fetch it.",
     "b2LinkPreviewsOff":  "Off",
@@ -989,22 +1264,35 @@
   "recoveryKeyReplace": "Replace the recovery key",
   "recoveryKeyReplaceNote": "A new key replaces the old one at once and cancels any recovery that is waiting.",
   "recoveryKeyShowTitle": "Write down your recovery key",
-  "recoveryKeyShowDetail": "Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.",
-  "recoveryKeyWritten": "I wrote it down",
+  "recoveryKeyShowDetail": "Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.",
+  "recoveryKeyWritten": "I have saved it",
+  "recoveryKeyCopy": "Copy for a password manager",
+  "recoveryKeyCopied": "Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue, or after about a minute and a half.",
   "recoveryKeyConfirmTitle": "Type your recovery key",
-  "recoveryKeyConfirmDetail": "Type the whole key from your paper to check it. Dashes and spaces do not matter.",
+  "recoveryKeyConfirmDetail": "Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.",
   "recoveryKeyField": "Recovery key",
   "recoveryKeyRequired": "Enter the recovery key.",
   "recoveryKeyMismatch": "That is not the key shown. Check your paper and try again.",
+  "recoveryKeyGroupWrong": "Group {group} does not match. Check it on your copy.",
+  "@recoveryKeyGroupWrong": {"placeholders": {"group": {"type": "int"}}},
+  "recoveryKeyGroupsMatched": "{count} of 13 groups match.",
+  "@recoveryKeyGroupsMatched": {"placeholders": {"count": {"type": "int"}}},
+  "recoveryKeyTooLong": "This is longer than the key. Check for extra characters.",
   "recoveryKeyShowAgain": "Show the key again",
   "recoveryKeySave": "Save recovery key",
   "recoveryKeySaved": "Recovery key saved.",
   "recoveryFollowUpTitle": "Finish recovering your account",
+  "recoveryFollowUpStepOf": "Step {step} of {total}",
+  "@recoveryFollowUpStepOf": {"placeholders": {"step": {"type": "int"}, "total": {"type": "int"}}},
   "recoveryFollowUpKeyDetail": "Your account is back on this device, and your other devices were signed out. Before your chats open, replace your recovery key and then your password: someone else may know them.",
   "recoveryFollowUpPasswordDetail": "Last step: choose a new password.",
   "connectLostAllDevices": "Lost all your devices?",
   "recoveryStartTitle": "Recover your account",
   "recoveryStartDetail": "Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.",
+  "recoveryStartPointLost": "Use this only if you lost every device signed in to your account.",
+  "recoveryStartPointNeed": "You need your password and your recovery key.",
+  "recoveryStartPointWait": "If one of your devices was used in the last 7 days, you wait 7 days, and your devices can cancel the recovery.",
+  "recoveryStartHowItWorks": "How recovery works",
   "recoveryStartSubmit": "Start recovery",
   "recoveryKeyUnreadable": "That recovery key is not valid. Check it for a typo.",
   "recoveryKeyNotThisAccount": "That isn't this account's recovery key. Check your paper and try again.",
@@ -1020,6 +1308,8 @@
   "@recoveryWaitingDetail": {
     "placeholders": {"date": {"type": "String", "example": "8 Nov 2026, 10:00"}}
   },
+  "recoveryTimeLeft": "{time} left",
+  "@recoveryTimeLeft": {"placeholders": {"time": {"type": "String", "example": "6 days 4 hours"}}},
   "recoveryReadyDetail": "The wait is over. Check now to finish.",
   "recoveryCheckNow": "Check now",
   "recoveryAbandon": "Stop recovery",
@@ -1087,6 +1377,9 @@
   "membInviteUses": "{used} of {max} used · expires {date}",
   "@membInviteUses": {"placeholders": {"used": {"type": "int"}, "max": {"type": "int"}, "date": {"type": "String"}}},
   "membInviteRevoke": "Revoke link",
+  "membInviteTurnOff": "Turn off",
+  "membInviteTurnOffTitle": "Turn off this link?",
+  "membInviteTurnOffMessage": "No one can join with it any more. People who already asked keep their requests.",
   "joinReqSection": "Join requests",
   "joinReqNone": "No one is waiting.",
   "joinReqAskedAt": "Asked {date}",
@@ -1095,6 +1388,8 @@
   "@joinReqApprove": {"placeholders": {"username": {"type": "String"}}},
   "joinReqReject": "Decline {username}",
   "@joinReqReject": {"placeholders": {"username": {"type": "String"}}},
+  "joinReqDeclineButton": "Decline",
+  "joinReqApproveButton": "Approve",
   "joinReqRejectedSnack": "Request declined.",
   "communityRemoveTitle": "Remove {username} from the community?",
   "@communityRemoveTitle": {"placeholders": {"username": {"type": "String"}}},
@@ -1140,7 +1435,6 @@
   "callRinging": "Calling…",
   "callConnecting": "Connecting…",
   "callInProgress": "Call in progress",
-  "callRelayNote": "This call goes through the server's relay, so the other side never sees your network address.",
   "callAccept": "Accept",
   "callDecline": "Decline",
   "callHangUp": "Hang up",
@@ -1150,6 +1444,8 @@
   "callCameraOff": "Camera off",
   "callCameraOn": "Camera on",
   "callDismiss": "Dismiss",
+  "callBack": "Call back",
+  "@callBack": {"description": "Button on the missed-call card: starts a voice call to the same chat."},
   "callNoticeMissed": "Missed call from {name}",
   "@callNoticeMissed": {"placeholders": {"name": {"type": "String"}}},
   "callNoticeDeclined": "{name} declined the call",
@@ -1179,11 +1475,15 @@
   "@roomPeople": {"placeholders": {"count": {"type": "int"}}},
   "moderationTitle": "Moderation",
   "moderationDetail": "Bans, timeouts, slow mode, paused invitations and the activity log",
+  "moderationLoadFailed": "Could not load",
+  "@moderationLoadFailed": {"description": "Moderation screen: shown with Retry when the bans, slow mode, invitation state or activity log could not be read. Nothing is guessed in its place."},
   "memberModerateTooltip": "Moderate {username}",
   "@memberModerateTooltip": {"placeholders": {"username": {"type": "String"}}},
   "memberBanAction": "Ban…",
   "memberTimeoutAction": "Time out…",
   "memberTimeoutLift": "Lift timeout",
+  "memberTimedOutUntil": "Timed out until {time}",
+  "@memberTimedOutUntil": {"description": "Under a community member's name while the verified role record holds a timeout for them.", "placeholders": {"time": {"type": "String"}}},
   "banTitle": "Ban {username}?",
   "@banTitle": {"placeholders": {"username": {"type": "String"}}},
   "banMessage": "They are removed from the community and cannot return until the ban is lifted.",
@@ -1305,6 +1605,10 @@
   "@c6ReportsCommunityUnavailable": {"description": "C6 reports."},
   "c6ReportsFiled": "Reported {when}",
   "@c6ReportsFiled": {"description": "C6 reports.", "placeholders": {"when": {"type": "String"}}},
+  "c6ReportsFiledBy": "Reported by {reporter}, {when}",
+  "@c6ReportsFiledBy": {"description": "C6 reports: the second line of an inbox row.", "placeholders": {"reporter": {"type": "String"}, "when": {"type": "String"}}},
+  "c6ReportsWhere": "In {place}",
+  "@c6ReportsWhere": {"description": "C6 reports: the chat or channel the reported message was in.", "placeholders": {"place": {"type": "String"}}},
   "c6ReportsLocked": "Cannot open",
   "@c6ReportsLocked": {"description": "C6 reports."},
   "c6ReportsLockedNoSeed": "This device has no report key, so it cannot open this report. Open it on the device that made your key.",
@@ -1317,9 +1621,9 @@
   "@c6ReportsMessageLabel": {"description": "C6 reports."},
   "c6ReportsNoText": "Not a text message. Its details, including the key that opens the file, are in the report, not the file itself.",
   "@c6ReportsNoText": {"description": "C6 reports."},
-  "c6ReportsReporter": "Reported by account {account}",
+  "c6ReportsReporter": "Reported by {account}",
   "@c6ReportsReporter": {"description": "C6 reports.", "placeholders": {"account": {"type": "String"}}},
-  "c6ReportsSender": "Sent by account {account}",
+  "c6ReportsSender": "Sent by {account}",
   "@c6ReportsSender": {"description": "C6 reports.", "placeholders": {"account": {"type": "String"}}},
   "c6ReportsCheck": "Check against the server record",
   "@c6ReportsCheck": {"description": "C6 reports."},
@@ -1327,6 +1631,16 @@
   "@c6ReportsChecking": {"description": "C6 reports."},
   "c6ReportsCheckNote": "Checking tells the server which message this report is about.",
   "@c6ReportsCheckNote": {"description": "C6 reports."},
+  "c6ReportsWhyNotCertain": "Why not certain?",
+  "@c6ReportsWhyNotCertain": {"description": "C6 reports: opens the careful explanation under the verdict."},
+  "c6ReportsWhyNotCertainCommon": "Even a match shows only that the server's record agrees this account sent this exact message in this conversation. It cannot show what came before or after it, or what was meant, and it is only as trustworthy as that record.",
+  "@c6ReportsWhyNotCertainCommon": {"description": "C6 reports: what a franking check can and cannot show. Must not claim more than C6 does."},
+  "c6ReportsCopyText": "Copy message text",
+  "@c6ReportsCopyText": {"description": "C6 reports: next step beside Dismiss once a report holds up."},
+  "c6ReportsCopied": "Message text copied.",
+  "@c6ReportsCopied": {"description": "C6 reports."},
+  "c6ReportsNothingBacksUp": "Nothing here backs this report up. You can dismiss it.",
+  "@c6ReportsNothingBacksUp": {"description": "C6 reports: shown beside Dismiss when the check did not hold up."},
   "c6VerdictVerified": "Matches the server record",
   "@c6VerdictVerified": {"description": "C6 reports."},
   "c6VerdictVerifiedDetail": "The server recorded this exact message from this sender in this conversation. That is only as trustworthy as the server's own record.",
@@ -1422,6 +1736,7 @@
   "@k1RestoreEntry": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
   "k1RestoreEntryPrevious": "{device} · {date} (the copy before)",
   "@k1RestoreEntryPrevious": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
+  "k1RestoreOlderCopy": "Older copy",
   "k1RestoreDeviceUnnamed": "A device",
   "k1RestoreDeviceRevoked": "This device was removed from your account.",
   "k1RestoreDone": "History restored.",
@@ -1527,6 +1842,28 @@
   "rolesMakeModerator": "Make moderator",
   "rolesMakeMember": "Make member",
   "rolesStepDown": "Step down",
+  "rolesChangeTitle": "Change {name}'s role?",
+  "@rolesChangeTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeMessage": "{name} becomes {role}. Everyone in the group sees the change.",
+  "@rolesChangeMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeConfirm": "Change role",
+  "rolesStepDownTitle": "Step down?",
+  "rolesStepDownMessage": "You become a member. Only someone with a higher role can give your role back.",
   "rolesElectorOn": "Let them vote for a new owner",
   "rolesElectorOff": "Stop them voting for a new owner",
   "rolesTransfer": "Make owner",
@@ -1545,8 +1882,14 @@
   "channelHistoryTitle": "History for new members",
   "channelHistoryFullLabel": "People who join later can read earlier posts",
   "channelHistoryOnConfirm": "New posts can be read by people who join later.",
-  "channelHistoryOffConfirm": "People who join later won't see earlier posts. Members who already have them keep them.",
-  "channelHistoryProofConfirm": "Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author's: anyone who gets this channel's history, for example the server's stored copy together with a key from one member's device, can show who wrote each post. Authors cannot deny their posts.",
+  "channelHistoryOnEarlier": "Posts made before you turn this on stay hidden from them.",
+  "@channelHistoryOnEarlier": {"description": "Second point of the turn-on confirmation for history for new members (C7): newcomers read from the switch on."},
+  "channelHistoryOffConfirm": "People who join later won't see earlier posts.",
+  "channelHistoryOffKept": "Members who already have earlier posts keep them.",
+  "@channelHistoryOffKept": {"description": "Second point of the turn-off confirmation for history for new members (C7): existing members keep what they have."},
+  "channelHistoryOffAgain": "If you turn it back on later, new members will only see posts made after that.",
+  "@channelHistoryOffAgain": {"description": "Third point of the turn-off confirmation (C7): after off and on again, newcomers read only the newest period."},
+  "channelHistoryProofConfirm": "Posts are signed, so a post can be proven to be its author's. Anyone who gets this channel's history, for example the server's stored copy with a key from one member's device, can show who wrote each post. Authors cannot deny their posts.",
   "channelHistoryProofLine": "Posts can be proven to be their author's",
   "channelHistoryProofAccept": "Turn on",
   "channelHistoryLineFull": "New posts can be read by people who join later",
@@ -1598,24 +1941,35 @@
   "@l2SealedProvableNone": {"description": "L2-3 sealed sender."},
   "l2SealedProvableOwners": "A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: {count}. Only they can check the proof; it convinces no one else.",
   "@l2SealedProvableOwners": {"description": "L2-3 sealed sender.", "placeholders": {"count": {"type": "int"}}},
-  "l2SealedKeyTitle": "Sealed sender key",
+  "l2SealedKeyTitle": "Send without your name",
   "@l2SealedKeyTitle": {"description": "L2-3 sealed sender."},
   "l2SealedKeyTile": "Messages without your name",
   "@l2SealedKeyTile": {"description": "L2-3 sealed sender."},
+  "l2SealedOn": "On",
+  "l2SealedOff": "Off",
+  "l2SealedSummaryOn": "The server delivers your messages without learning who sent them.",
+  "l2SealedSummaryChanged": "Paused: the server's key changed. Your messages carry your name.",
+  "l2SealedSummaryNotOffered": "This server does not offer it right now, so your messages carry your name.",
+  "l2SealedTechnicalDetails": "Technical details",
   "l2SealedKeyIntro": "This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.",
   "@l2SealedKeyIntro": {"description": "L2-3 sealed sender."},
-  "l2SealedKeyOff": "This server does not offer sealed sending.",
+  "l2SealedKeyOff": "This server does not offer it, so your messages carry your name.",
   "@l2SealedKeyOff": {"description": "L2-3 sealed sender."},
-  "l2SealedKeyNone": "No key pinned yet. It is pinned on the next sync.",
+  "l2SealedKeyNone": "It turns on after the next sync with this server.",
   "@l2SealedKeyNone": {"description": "L2-3 sealed sender."},
   "l2SealedKeyPinned": "Pinned key",
   "@l2SealedKeyPinned": {"description": "L2-3 sealed sender."},
-  "l2SealedKeyChanged": "The server now shows a different key. Until you accept it, your messages are sent with your name, as before.",
+  "l2SealedKeyChanged": "Until you answer, your messages carry your name, as before. Say yes only if the server's operator told you: a key made just for you would let the server pick out your messages.",
   "@l2SealedKeyChanged": {"description": "L2-3 sealed sender."},
   "l2SealedKeyNew": "New key",
   "@l2SealedKeyNew": {"description": "L2-3 sealed sender."},
   "l2SealedKeyAccept": "Accept new key",
   "@l2SealedKeyAccept": {"description": "L2-3 sealed sender."},
+  "l2SealedKeyQuestion": "Did the server's operator tell you its key changed?",
+  "l2SealedKeyKeep": "No, or I am not sure",
+  "l2SealedKeyAcceptAnswer": "Yes, use the new key",
+  "l2SealedKeyKept": "Nothing changed. Your messages keep your name until you accept the new key.",
+  "l2SealedKeyChangeAnswer": "Change my answer",
   "l2SealedKeyAcceptWarning": "Accept only if the server's operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else's.",
   "@l2SealedKeyAcceptWarning": {"description": "L2-3 sealed sender."},
   "l2OwnerKeysReviewTile": "The owners' report keys changed. Review them.",
@@ -1630,8 +1984,10 @@
   "@l2OwnerKeyMissing": {"description": "L2-3 sealed sender owner keys.", "placeholders": {"account": {"type": "String"}}},
   "l2OwnerKeyAccept": "Accept",
   "@l2OwnerKeyAccept": {"description": "L2-3 sealed sender owner keys."},
-  "l2OwnerKeyReject": "Reject",
+  "l2OwnerKeyReject": "No, keep it as it was",
   "@l2OwnerKeyReject": {"description": "L2-3 sealed sender owner keys."},
+  "l2OwnerKeyQuestion": "Did you expect this change?",
+  "l2OwnerKeyAcceptAnswer": "Yes, accept it",
   "l2OwnerKeyAcceptWarning": "Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.",
   "@l2OwnerKeyAcceptWarning": {"description": "L2-3 sealed sender owner keys."},
   "l2OwnerKeyStale": "The list changed meanwhile. Look at it again.",

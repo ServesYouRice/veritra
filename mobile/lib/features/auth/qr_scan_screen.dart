@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/api_client.dart';
@@ -61,15 +62,35 @@ String? parseDeviceLinkOrigin(
   }
 }
 
+/// The Runner channel that opens this app's page in the system settings,
+/// where the camera can be allowed again (Android and iOS).
+const appSettingsChannel =
+    MethodChannel('org.veritra.private_messenger/app_settings');
+
+/// Opens this app's page in the system settings. False when nothing opened
+/// (a platform without the channel, or the system refused).
+Future<bool> openAppSettings() async {
+  try {
+    return await appSettingsChannel.invokeMethod<bool>('open') ?? false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}
+
 /// Full-screen camera scanner for QR codes (device links, safety numbers). Pops with the raw
 /// scanned string (a `veritra://device-link?code=…` URI or a bare code), or
 /// null if the user backs out. Parsing is left to the caller so this screen
 /// stays a thin camera surface.
 class QrScanScreen extends StatefulWidget {
-  const QrScanScreen({this.title, super.key});
+  const QrScanScreen({this.title, this.hint, super.key});
 
   /// The app bar title; defaults to the device-link wording.
   final String? title;
+
+  /// The line under the viewfinder; defaults to the device-link wording.
+  final String? hint;
 
   @override
   State<QrScanScreen> createState() => _QrScanScreenState();
@@ -129,36 +150,49 @@ class _QrScanScreenState extends State<QrScanScreen> {
           MobileScanner(
             controller: _controller,
             onDetect: _onDetect,
-            errorBuilder: (context, error) => _ScannerError(error: error),
+            errorBuilder: (context, error) => QrScannerError(error: error),
           ),
-          // Simple reticle to guide framing.
-          IgnorePointer(
-            child: Center(
-              child: Container(
-                width: 240,
-                height: 240,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white70, width: 2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                context.l10n.qrPointCamera,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.white,
-                  shadows: const <Shadow>[
-                    Shadow(blurRadius: 8, color: Colors.black87),
-                  ],
-                ),
-              ),
-            ),
+          // The frame and the hint only while the camera can scan: over the
+          // error page they would cover its text and buttons.
+          ValueListenableBuilder<MobileScannerState>(
+            valueListenable: _controller,
+            builder: (context, value, _) {
+              if (value.error != null) return const SizedBox.shrink();
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  // Simple reticle to guide framing.
+                  IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        width: 240,
+                        height: 240,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.white70, width: 2),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        widget.hint ?? context.l10n.qrPointCamera,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white,
+                          shadows: const <Shadow>[
+                            Shadow(blurRadius: 8, color: Colors.black87),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -166,14 +200,31 @@ class _QrScanScreenState extends State<QrScanScreen> {
   }
 }
 
-class _ScannerError extends StatelessWidget {
-  const _ScannerError({required this.error});
+/// What the scanner shows when the camera cannot be used: the reason, a way
+/// to the system settings when permission was refused, and the typed code.
+/// It scrolls, so the text stays inside the page at any width and text size.
+class QrScannerError extends StatelessWidget {
+  const QrScannerError({required this.error, this.openSettings, super.key});
 
   final MobileScannerException error;
+
+  /// Opens the system settings; replaced in tests.
+  @visibleForTesting
+  final Future<bool> Function()? openSettings;
+
+  Future<void> _openSettings(BuildContext context) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final fallback = context.l10n.qrOpenSettingsFailed;
+    final opened = await (openSettings ?? openAppSettings)();
+    if (!opened) {
+      messenger?.showSnackBar(SnackBar(content: Text(fallback)));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final denied = error.errorCode == MobileScannerErrorCode.permissionDenied;
     final message = switch (error.errorCode) {
       MobileScannerErrorCode.permissionDenied =>
         context.l10n.qrPermissionDenied,
@@ -182,27 +233,54 @@ class _ScannerError extends StatelessWidget {
     };
     return ColoredBox(
       color: Colors.black,
-      child: Center(
-        child: Padding(
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
           padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Icon(Icons.no_photography_outlined,
-                  size: 48, color: Colors.white70),
-              const SizedBox(height: 16),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style:
-                    theme.textTheme.bodyMedium?.copyWith(color: Colors.white),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight:
+                  constraints.maxHeight > 64 ? constraints.maxHeight - 64 : 0,
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Icon(Icons.no_photography_outlined,
+                      size: 48, color: Colors.white70),
+                  const SizedBox(height: 16),
+                  Text(
+                    message,
+                    key: const ValueKey<String>('qr-error-message'),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(height: 24),
+                  if (denied) ...<Widget>[
+                    FilledButton.icon(
+                      key: const ValueKey<String>('qr-open-settings'),
+                      onPressed: () => _openSettings(context),
+                      icon: const Icon(Icons.settings_outlined),
+                      label: Text(context.l10n.qrOpenSettings),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white70),
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(context.l10n.qrEnterManually),
+                    ),
+                  ] else
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(context.l10n.qrEnterManually),
+                    ),
+                ],
               ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(context.l10n.qrEnterManually),
-              ),
-            ],
+            ),
           ),
         ),
       ),

@@ -61,9 +61,17 @@ void main() {
     await tester.tap(find.text('Create a recovery key'));
     await tester.pumpAndSettle();
     expect(find.text('Write down your recovery key'), findsOneWidget);
-    expect(find.textContaining('ABCD EFGH JKMN PQRS'), findsOneWidget);
+    // U24: 13 numbered groups.
+    expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey<String>('recovery-key-group-1')))
+            .data,
+        'ABCD');
+    expect(find.byKey(const ValueKey<String>('recovery-key-group-13')),
+        findsOneWidget);
 
-    await tester.tap(find.text('I wrote it down'));
+    await tester.tap(find.text('I have saved it'));
     await tester.pumpAndSettle();
     await tester.enterText(
         find.byKey(const ValueKey<String>('recovery-key-confirm-field')),
@@ -121,13 +129,20 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('sign-in offers "Lost all your devices?" only with the engine',
+  testWidgets('sign-in offers "I lost all my devices" only with the engine',
       (tester) async {
     tall(tester);
+    // U20: the choice sits behind "I already have an account".
+    Future<void> openChoices() async {
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+      await tester.pumpAndSettle();
+    }
+
     final native = k0App(server, store, crypto);
     await tester.pumpWidget(app(ConnectScreen(state: native)));
-    await tester.pumpAndSettle();
-    expect(find.text('Lost all your devices?'), findsOneWidget);
+    await openChoices();
+    expect(find.text('I lost all my devices'), findsOneWidget);
     native.dispose();
 
     for (final closed in <CryptoService>[
@@ -135,9 +150,11 @@ void main() {
       TestOnlyCryptoService(),
     ]) {
       final state = k0App(server, store, closed);
-      await tester.pumpWidget(app(ConnectScreen(state: state)));
-      await tester.pumpAndSettle();
-      expect(find.text('Lost all your devices?'), findsNothing);
+      // A new screen, not the previous one rebuilt on its third step.
+      await tester
+          .pumpWidget(app(ConnectScreen(key: ObjectKey(state), state: state)));
+      await openChoices();
+      expect(find.text('I lost all my devices'), findsNothing);
       state.dispose();
     }
   });
@@ -157,6 +174,13 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(find.text('Recover your account'), findsOneWidget);
+    // U23: the wait is one of three points; the full text is behind
+    // "How recovery works".
+    expect(find.textContaining('you wait 7 days'), findsOneWidget);
+    expect(find.textContaining('this device joins only after 7 days'),
+        findsNothing);
+    await tester.tap(find.text('How recovery works'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('this device joins only after 7 days'),
         findsOneWidget);
 

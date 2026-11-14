@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/account_invite_link.dart';
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
@@ -170,6 +172,7 @@ class _InviteScreenState extends State<InviteScreen> {
                       for (final invite in invites)
                         _InviteRow(
                           invite: invite,
+                          link: _linkFor(invite),
                           onRevoke: () => _confirmRevoke(context, invite),
                         ),
                     ],
@@ -181,6 +184,14 @@ class _InviteScreenState extends State<InviteScreen> {
         );
       },
     );
+  }
+
+  /// U21: the invitation as one link (server and code), when the session's
+  /// server and the code can make one.
+  AccountInviteLink? _linkFor(Invite invite) {
+    final origin = widget.state.session?.baseUrl;
+    if (origin == null) return null;
+    return AccountInviteLink.forInvite(origin: origin, code: invite.code);
   }
 
   Future<void> _confirmRevoke(BuildContext context, Invite invite) async {
@@ -248,9 +259,14 @@ class _Labelled extends StatelessWidget {
 }
 
 class _InviteRow extends StatelessWidget {
-  const _InviteRow({required this.invite, required this.onRevoke});
+  const _InviteRow({
+    required this.invite,
+    required this.link,
+    required this.onRevoke,
+  });
 
   final Invite invite;
+  final AccountInviteLink? link;
   final VoidCallback onRevoke;
 
   @override
@@ -276,11 +292,12 @@ class _InviteRow extends StatelessWidget {
           // Uses are the fact that decides whether the code still works, so
           // they get the pill rather than a clause in the joined subtitle.
           StatusPill(
-            label: context.l10n.inviteUsesPill(invite.uses, invite.maxUses),
+            // U34: "3 of 5 used", not "3/5".
+            label: invite.maxUses > 0
+                ? context.l10n.inviteUsedOf(invite.uses, invite.maxUses)
+                : context.l10n.inviteUsedUnlimited(invite.uses),
             tone: exhausted ? StatusTone.warning : StatusTone.neutral,
             uppercase: false,
-            semanticsLabel:
-                context.l10n.inviteUsesSemantics(invite.uses, invite.maxUses),
           ),
         ],
       ),
@@ -300,6 +317,25 @@ class _InviteRow extends StatelessWidget {
               controller.isOpen ? controller.close() : controller.open(),
         ),
         menuChildren: <Widget>[
+          if (link case final link?) ...<Widget>[
+            MenuItemButton(
+              key: const ValueKey<String>('invite-copy-link'),
+              leadingIcon: const Icon(Icons.link),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: link.url));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(context.l10n.inviteLinkCopied)),
+                );
+              },
+              child: Text(context.l10n.inviteCopyLink),
+            ),
+            MenuItemButton(
+              key: const ValueKey<String>('invite-show-qr'),
+              leadingIcon: const Icon(Icons.qr_code_2),
+              onPressed: () => _showQr(context, link),
+              child: Text(context.l10n.inviteShowQr),
+            ),
+          ],
           MenuItemButton(
             leadingIcon: const Icon(Icons.copy_outlined),
             onPressed: () {
@@ -314,6 +350,52 @@ class _InviteRow extends StatelessWidget {
             leadingIcon: const Icon(Icons.block_outlined),
             onPressed: onRevoke,
             child: Text(context.l10n.commonRevoke),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The link as a QR code, for the joiner's "Scan QR code" (U21).
+  Future<void> _showQr(BuildContext context, AccountInviteLink link) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.l10n.inviteQrTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Semantics(
+              label: context.l10n.inviteQrTitle,
+              child: Container(
+                // QR codes need a light, uniform quiet zone to scan reliably,
+                // independent of app theme.
+                padding: const EdgeInsets.all(BoneSpacing.md),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(BoneRadii.md),
+                ),
+                child: SizedBox.square(
+                  dimension: 220,
+                  child: QrImageView(
+                    data: link.url,
+                    version: QrVersions.auto,
+                    size: 220,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: BoneSpacing.md),
+            Text(
+              context.l10n.inviteQrHint,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(context.l10n.commonOk),
           ),
         ],
       ),

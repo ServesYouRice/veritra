@@ -54,6 +54,7 @@ agree.
 | Muted | `#A89EA6` | `#6B6169` |
 | Outline | `#A89EA6` | `#8A808A` |
 | Accent | `#EDE4DA` | `#3A2E42` |
+| Own bubble | `#3A2B52` | `#ECE3F2` |
 | On accent | `#1E1620` | `#FFFFFF` |
 | Border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
 
@@ -80,8 +81,9 @@ covered separately.
 
 K2 is the second of five near-whites that differ only in temperature, plus a
 muted grey biased to match — a neutral leaning toward its own bone reads as
-chosen rather than inherited. All five are still used: `mobile/lib/ui/avatar.dart`
-hashes an account ID across them to tint avatars (see §3).
+chosen rather than inherited. Only K2 ships. The other four stay here as the
+record of the choice; since D131 (U39) avatars no longer use them (see
+"Avatar colours" below).
 
 | | Bone (dark) | Deep (light) | Muted | Character |
 | --- | --- | --- | --- | --- |
@@ -91,8 +93,31 @@ hashes an account ID across them to tint avatars (see §3).
 | **K4 · Ash** | `#E4DDEA` | `#372C43` | `#A79EB4` | Leans into the plum |
 | **K5 · Steel** | `#D8E0E8` | `#2C333B` | `#9FA8B4` | Coolest, most technical |
 
-The order of that table is the order of `boneTints` in `avatar.dart`.
-Reordering the list re-colours every existing avatar.
+### Avatar colours
+
+A default avatar takes one of **six hues** from the account ID (the
+conversation ID where there is no peer) through the 32-bit FNV-1a hash in
+`mobile/lib/ui/avatar.dart`. The six sit in the gaps between the state colours
+below, so no avatar reads as verified, warning, error or info. They were
+computed, not picked; method, sources and the checks are in
+`testing/evidence/UI-audit-2026-11-14.md` (palette approved in D131).
+
+| Slot | Dark fill | Dark initials | Light fill | Light initials |
+| --- | --- | --- | --- | --- |
+| Olive | `#8D9D0A` | `#16111F` | `#90A013` | `#16111F` |
+| Teal | `#0E9A94` | `#16111F` | `#16ABA4` | `#16111F` |
+| Iris | `#465DBB` | `#FFFFFF` | `#8CA6FB` | `#16111F` |
+| Lilac | `#A878DB` | `#16111F` | `#9868CA` | `#16111F` |
+| Plum | `#94457D` | `#FFFFFF` | `#E882C8` | `#16111F` |
+| Ochre | `#A35E16` | `#FFFFFF` | `#E2A16B` | `#16111F` |
+
+Rules: a photo replaces the colour; initials always show, at 4.5:1 or better on
+the fill; the colour is a hint, never a sign of identity (a look-alike account
+matches one time in six), and the verified pill stays the only identity signal.
+The order of the list is the order of `avatarHues`; reordering it, or changing
+its length, re-colours every existing avatar (going from five to six did so
+once). `chat_visuals_test.dart` pins the twelve fills, their contrast and their
+distance from the state colours.
 
 ### The state palette
 
@@ -121,9 +146,13 @@ Interaction states use the bone itself rather than a second hue: hover lifts it
 toward white, pressed drops it about 8%, disabled falls back to raised plum with
 muted text. All keep on-accent text above 4.5:1.
 
-**Sent bubbles stay on tone.** A near-white tiled down a whole column would blow
-out the ground the direction is built on, so mine and theirs separate by one
-tonal step plus a hairline, not by fill colour.
+**Own bubbles take a soft plum (U14, D131).** A near-white accent tiled down a
+whole column would blow out the ground the direction is built on, so the fill
+is not the accent: it is `BoneColors.darkOwnBubble` (`#3A2B52`) in dark and
+`BoneColors.lightOwnBubble` (`#ECE3F2`) in light, a plum one step off the
+surface. Theirs stay on the surface tone; both keep the hairline. Text on the
+own fill is 11.3:1 (dark) and 14.3:1 (light), muted text 4.9:1 and 4.8:1;
+`chat_visuals_test.dart` pins 4.5:1 for both and 3:1 for the read tick.
 
 **No gradients.** That instruction applied to the rejected A and C. K2 uses a
 single flat accent, so the `--grad` / `--grad-fill` split — and the contrast trap
@@ -166,6 +195,14 @@ from `em` to the logical pixels Flutter's `letterSpacing` expects.
 **The worst thing in the old app.** An identical lock icon + `Encrypted message`
 row rendered in every bubble.
 
+**Say "encrypted" once (U13).** Every chat is encrypted, so saying so on each
+row, each header and each bubble said nothing. The chat header carries no
+ENCRYPTED line (a muted chat keeps a plain "Muted" line), bubbles carry no
+padlock, and one notice opens each chat, at the top of its history (the empty
+chat's own message is that notice). A marker stays only where something is
+wrong: an unverified sender, a message this device cannot decrypt, a failed
+send.
+
 The fix is not to invent plaintext. The ciphertext renders as **redacted bars**,
 wrapping across up to three lines. The thread gets the rhythm and shape of a
 real conversation while staying completely honest about having nothing to show.
@@ -196,17 +233,18 @@ subtle background on the active row.
 - **Avatars tinted deterministically from the account ID** — computed locally,
   no server data involved. Previously every avatar was the same
   `secondaryContainer` colour, so the list had no visual anchors at all.
-- Initials instead of a generic person icon for DMs; `#` for channels.
+- Initials instead of a generic person icon for DMs and for named groups and
+  channels; the kind icon only when there is no name to take them from.
 - Unread: a **dot** for one, a count for more. The old `_UnreadBadge` always
   showed a number, which over-weights a single message.
 - Retention as its own chip rather than buried in a `' · '`-joined subtitle.
 - Display-sized screen title.
 
-**Deviation — avatars vary by bone temperature, not by hue.** The original spec
-assumed a hue wheel to hash into. Bone deliberately has none; that is exactly
-what keeps green, amber, red and blue free to mean verified, warning, error and
-info. The hash picks one of the five §K temperatures instead. Same anchoring
-effect, no collision with the state palette.
+**Deviation — avatars vary by six computed hues, not by bone temperature.** The
+original spec assumed a hue wheel to hash into. Bone deliberately has none;
+that is exactly what keeps green, amber, red and blue free to mean verified,
+warning, error and info. The hash picks one of six hues placed between the state
+colours (§K, "Avatar colours"; D131), replacing the five bone temperatures.
 
 **Deviation — no `Pinned` / `All` group headers.** `Conversation` has no pin
 concept and neither does the API (`mobile/lib/core/models.dart:64`). Adding the
@@ -230,12 +268,39 @@ the float can follow once there is a toolchain to check it on.
 ### §5 The connect screen
 
 Opened on a four-way `SegmentedButton` — Owner / Sign in / Join / Link — which
-read like a debug menu and was the first thing a new user saw.
+read like a debug menu and was the first thing a new user saw. A later
+version chose the path from the setup probe and hid the rest behind "Other
+ways to connect"; the UI audit (U20, owner decision D131) replaced that too,
+because the probe cannot tell a new phone from a returning one.
 
-- Leads with the brand mark, the wordmark, and one line of positioning.
-- Shows **one** path. The setup probe at `_probeSetupStatus` already detects
-  whether the instance needs an owner, so the right mode is chosen without
-  asking. The other three moved behind "Other ways to connect".
+- Opens on **two choices**: "I have an invite" and "I already have an
+  account", with "Set up a new server" as a quiet text link below. This is
+  the only step with the brand mark, the wordmark and the line of
+  positioning; every later step leads with a back arrow and the step's title.
+- "I already have an account" asks one question with three whole-row
+  answers: this is a new device (link it), I've signed in here before
+  (password or passkey), or I lost all my devices (recovery; shown only where
+  the build can recover). "Other ways to connect" is gone.
+- The person's choice holds. The setup probe still runs on the server
+  address, but it never switches the path: on a new server it shows the
+  new-server notice with a "Set up this server" action instead.
+- A device that has signed in before opens straight on sign-in, and a
+  device-link claim in progress reopens its own step; back (and the system
+  back gesture) reaches the choices from either.
+- "I have an invite" takes two steps (U21). Step 1 takes one pasted or
+  scanned invite link (`<server>/invite#v1.<code>`, see
+  [U21-account-invite-link](designs/U21-account-invite-link.md)), with
+  "Type the server address and code instead" as the fallback. Step 2 names
+  the server ("Joining chat.example.org", with Change) and asks only for
+  username, password and "Confirm password", so Join shows without scrolling
+  at 360 × 800.
+- A server answer that belongs to one field sits under that field and clears
+  when it is edited: a refused invite goes back to step 1 under the link or
+  code, a refused password under the password. Anything else stays in the
+  error card.
+- Optional lines (probe status, the new-server notice, "already on this
+  device") keep one list slot each, shown or not, so their appearing never
+  moves the field being typed in.
 - Fields carry a floating `micro` label above the value instead of a Material
   `labelText` notched into the border, which is what made the form look like a
   form. Every field gained a `hintText` to buy back the accessible name that
@@ -380,8 +445,9 @@ guarantee, and it survives scrolling.
 The remaining test files are pure unit tests over `AppState`, models, error
 mapping and the crypto bindings; they never call `pumpWidget`. `shortId`'s exact
 `acct_012…cdef` output (`ui/format.dart`) is the one format-layer contract.
-`chat_visuals_test.dart` covers bar bucketing, avatar tint stability and the
-retention labels.
+`chat_visuals_test.dart` covers bar bucketing, avatar colours (the twelve fills,
+their contrast and their distance from the state colours) and the retention
+labels.
 
 **Golden tests are the known gap.** None exist. A golden needs its reference PNG
 generated by a real `flutter test --update-goldens`, and no toolchain was

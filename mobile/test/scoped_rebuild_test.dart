@@ -99,7 +99,11 @@ void _expectChatUntouched(RebuildCounter counter, String change) {
     '_MessageBubble',
     '_Composer',
   ]) {
-    expect(counter.of(type), 0, reason: '$change rebuilt $type');
+    // A bubble the list mounts for the first time, because the pane grew a
+    // few pixels, is not a rebuild of one that was there.
+    final count =
+        type == '_MessageBubble' ? counter.rebuiltOf(type) : counter.of(type);
+    expect(count, 0, reason: '$change rebuilt $type');
   }
 }
 

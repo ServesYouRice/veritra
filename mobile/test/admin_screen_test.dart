@@ -63,7 +63,18 @@ class _AdminApi extends ApiClient {
       AdminAuditEvent(
         id: 1,
         eventType: 'account.status.updated',
-        metadata: const <String, String>{'status': 'suspended'},
+        actorAccountId: 'acct_me',
+        metadata: const <String, String>{
+          'status': 'suspended',
+          'target_account_id': 'acct_bob',
+        },
+      ),
+      // An event type with no wording of its own is spaced out, not shown
+      // as a code.
+      AdminAuditEvent(
+        id: 2,
+        eventType: 'report.dismissed',
+        actorAccountId: 'acct_bob',
       ),
     ], null);
   }
@@ -138,10 +149,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('@bob'), findsOneWidget);
-    // The signed-in owner cannot suspend themselves from here.
-    expect(find.text('Suspend'), findsOneWidget);
+    // U34: Suspend is not in the list; it lives on the person's page.
+    expect(find.text('Suspend'), findsNothing);
+    await tester.tap(find.text('@bob'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('admin-account-toggle')), findsOneWidget);
 
-    await tester.tap(find.text('Suspend'));
+    await tester.tap(find.byKey(const Key('admin-account-toggle')));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Suspend'));
     await tester.pumpAndSettle();
@@ -149,11 +163,18 @@ void main() {
     expect(reauths, 1);
     expect(api.statusCalls, <bool>[true, true]);
     expect(find.text('SUSPENDED'), findsOneWidget);
+    await tester.tap(find.text('@bob'));
+    await tester.pumpAndSettle();
     expect(find.text('Reactivate'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Audit log'));
     await tester.pumpAndSettle();
-    expect(find.text('account.status.updated'), findsOneWidget);
+    // The log reads as sentences with names.
+    expect(find.text('@alice suspended @bob'), findsOneWidget);
+    expect(find.text('@bob: report dismissed'), findsOneWidget);
+    expect(find.text('account.status.updated'), findsNothing);
   });
 
   Future<void> openAs(
@@ -192,15 +213,28 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('an admin or a second owner cannot suspend an owner',
-      (tester) async {
+  final toggle = find.byKey(const Key('admin-account-toggle'));
+
+  Future<void> openPerson(WidgetTester tester, String name) async {
+    await tester.tap(find.text(name));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('an admin can suspend a member but not an owner', (tester) async {
     // Rows: alice (owner) and bob (member).
     await openAs(tester, _AdminApi(), accountId: 'acct_admin', role: 'admin');
-    expect(find.text('Suspend'), findsOneWidget);
+    await openPerson(tester, '@bob');
+    expect(toggle, findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await openPerson(tester, '@alice');
+    expect(toggle, findsNothing);
+  });
 
+  testWidgets('a second owner cannot suspend an owner', (tester) async {
     await openAs(tester, _AdminApi(), accountId: 'acct_owner2', role: 'owner');
-    // Only the member row: an owner is not suspendable, even by an owner.
-    expect(find.text('Suspend'), findsOneWidget);
+    await openPerson(tester, '@alice');
+    expect(toggle, findsNothing);
   });
 
   group('each tab keeps its own error', () {
@@ -250,7 +284,8 @@ void main() {
 
       await tester.tap(find.text('Audit log'));
       await tester.pumpAndSettle();
-      expect(find.text('account.status.updated'), findsOneWidget);
+      // Without the accounts the names fall back to short ids.
+      expect(find.textContaining('suspended'), findsOneWidget);
       expect(find.text(unreachable), findsNothing);
     });
 
@@ -265,7 +300,7 @@ void main() {
       api.failEvents = false;
       await pullToRefresh(tester);
       expect(find.text(unreachable), findsNothing);
-      expect(find.text('account.status.updated'), findsOneWidget);
+      expect(find.text('@alice suspended @bob'), findsOneWidget);
     });
 
     testWidgets('a log that really is empty says so', (tester) async {

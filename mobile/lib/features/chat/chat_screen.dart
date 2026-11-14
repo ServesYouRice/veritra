@@ -6,7 +6,8 @@ import 'package:file_selector/file_selector.dart' show XFile;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart'
+    show kPrimaryButton, kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
@@ -29,6 +30,7 @@ import '../../sync/sync_recovery.dart' show SyncRecoveryChoice;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/account_recovery_banner.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
@@ -46,6 +48,7 @@ import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
 import 'poll_widgets.dart';
+import 'sender_colors.dart';
 import '../reports/report_message_screen.dart';
 import 'typing_line.dart';
 import 'voice_notes.dart';
@@ -373,40 +376,48 @@ class _ChatScreenState extends State<ChatScreen> {
                 titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
                 title: conversation == null
                     ? Text(context.l10n.searchTypeConversation)
-                    : Row(
-                        children: <Widget>[
-                          conversationAvatar(
-                            context,
-                            conversation,
-                            profiles: widget.state.profiles,
-                            radius: 17,
-                            // Only the pushed layout: see conversationAvatar.
-                            hero: widget.showBackButton,
-                          ),
-                          const SizedBox(width: BoneSpacing.md),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                Text(
-                                  conversationTitle(context.l10n, conversation,
-                                      profiles: widget.state.profiles),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                // The subtitle line is the honest one-word status
-                                // of the thread, in the micro style.
-                                Text(
-                                  widget.state.isMuted(conversation.id)
-                                      ? context.l10n.chatStatusMutedEncrypted
-                                      : context.l10n.chatStatusEncrypted,
-                                  style: theme.textTheme.labelSmall,
-                                ),
-                              ],
+                    // U29: the name opens the details, so it is the one big
+                    // tap target of the bar. Star and info sit in the menu.
+                    : InkWell(
+                        key: const Key('chat-title'),
+                        borderRadius: BorderRadius.circular(BoneRadii.sm),
+                        onTap: () => _openDetails(conversation.id),
+                        child: Row(
+                          children: <Widget>[
+                            conversationAvatar(
+                              context,
+                              conversation,
+                              profiles: widget.state.profiles,
+                              radius: 17,
+                              // Only the pushed layout: see conversationAvatar.
+                              hero: widget.showBackButton,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: BoneSpacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Text(
+                                    conversationTitle(
+                                        context.l10n, conversation,
+                                        profiles: widget.state.profiles),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  // Every chat is encrypted, and the chat's
+                                  // first line says so once (U13); the header
+                                  // names only a state that is not the default.
+                                  if (widget.state.isMuted(conversation.id))
+                                    Text(
+                                      context.l10n.chatStatusMuted,
+                                      style: theme.textTheme.labelSmall,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                 actions: <Widget>[
                   if (conversation != null && conversation.isDm && !readOnly)
@@ -453,24 +464,29 @@ class _ChatScreenState extends State<ChatScreen> {
                                   _openRoom(session, conversation.id)),
                               icon: const Icon(Icons.groups_outlined)),
                     ),
-                  IconButton(
-                      tooltip: context.l10n.w8StarredMessages,
-                      onPressed: _showStarredMessages,
-                      icon: const Icon(Icons.star_outline)),
-                  if (conversation != null)
-                    IconButton(
-                      tooltip: context.l10n.chatListDetails,
-                      onPressed: () => Navigator.of(context).push(
-                        sharedAxisRoute<void>(
-                          (_) => ConversationDetailsScreen(
-                            state: widget.state,
-                            conversationId: conversation.id,
-                          ),
-                        ),
+                  // Starred messages and the details page: two rarely used
+                  // actions behind one menu (U29).
+                  PopupMenuButton<String>(
+                    key: const Key('chat-menu'),
+                    onSelected: (value) {
+                      if (value == 'starred') {
+                        _showStarredMessages();
+                      } else if (conversation != null) {
+                        _openDetails(conversation.id);
+                      }
+                    },
+                    itemBuilder: (context) => <PopupMenuEntry<String>>[
+                      PopupMenuItem<String>(
+                        value: 'starred',
+                        child: Text(context.l10n.w8StarredMessages),
                       ),
-                      icon: const Icon(Icons.info_outline),
-                    ),
-                  const SizedBox(width: BoneSpacing.sm),
+                      if (conversation != null)
+                        PopupMenuItem<String>(
+                          value: 'details',
+                          child: Text(context.l10n.chatListDetails),
+                        ),
+                    ],
+                  ),
                 ],
               ),
               body: ChatDropZone(
@@ -481,6 +497,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 onFiles: _addFiles,
                 child: Column(
                   children: <Widget>[
+                    // U37: the account notices (a recovery waiting, a leaked
+                    // password, a passkey change) also show inside an open
+                    // chat. In the wide layout the shell's own banners are
+                    // already on screen, so only a pushed chat adds them.
+                    if (widget.showBackButton)
+                      AccountRecoveryBanner(state: widget.state),
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
                       Material(
                         color: Theme.of(context)
@@ -592,6 +614,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             !restricted && widget.state.messageActionsAvailable
                                 ? _createPoll
                                 : null,
+                        tray: _attachments,
                       ),
                   ],
                 ),
@@ -600,6 +623,17 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _openDetails(String conversationId) {
+    Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ConversationDetailsScreen(
+          state: widget.state,
+          conversationId: conversationId,
+        ),
+      ),
     );
   }
 
@@ -697,6 +731,13 @@ class _ChatScreenState extends State<ChatScreen> {
         accountLabel(accountId, member?.username);
   }
 
+  bool _isDm(String conversationId) =>
+      widget.state.conversations
+          .where((item) => item.id == conversationId)
+          .firstOrNull
+          ?.isDm ??
+      false;
+
   /// Message area for the selected conversation. Failures get an explicit
   /// error + retry instead of masquerading as "No messages yet".
   Widget _messagesPane(
@@ -731,7 +772,10 @@ class _ChatScreenState extends State<ChatScreen> {
         empty = EmptyState(
           icon: Icons.lock_outline,
           title: context.l10n.chatEmptyTitle,
-          message: context.l10n.chatEmptyMessage,
+          // The empty chat's own notice that it is encrypted (U13, U36).
+          message: _isDm(conversationId)
+              ? context.l10n.chatEmptyMessageDm
+              : context.l10n.chatEmptyMessageGroup,
         );
       }
       if (renewalBanner == null) return empty;
@@ -911,6 +955,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: Text(context.l10n.chatCopyText),
                 onTap: () => Navigator.of(sheetContext).pop('copy'),
               ),
+            if (actionable && message.kind == LocalMessageKind.text)
+              ListTile(
+                leading: const Icon(Icons.text_fields),
+                title: Text(context.l10n.chatSelectText),
+                onTap: () => Navigator.of(sheetContext).pop('select'),
+              ),
             if (actionable)
               ListTile(
                   leading: const Icon(Icons.forward_outlined),
@@ -1006,6 +1056,27 @@ class _ChatScreenState extends State<ChatScreen> {
       _setReplyTarget(message.key);
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
+    } else if (action == 'select') {
+      // U7: the bubble itself is not selectable, so a long-press anywhere on
+      // it opens this menu; selecting words happens here.
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter, 0, BoneSpacing.gutter, BoneSpacing.lg),
+            child: FormattedMessage(
+              key: const Key('select-text'),
+              selectable: true,
+              text: message.body ?? '',
+              formatJson: message.formatJson,
+              style: Theme.of(sheetContext).textTheme.bodyLarge,
+            ),
+          ),
+        ),
+      );
     } else if (action == 'star') {
       await state.toggleMessageStar(message);
     } else if (action == 'hide') {
@@ -1390,7 +1461,10 @@ class _MessageList extends StatelessWidget {
     // which is what preserves the scroll position across a page load. A day
     // separator is emitted whenever the calendar day changes relative to the
     // next-older message.
-    final footerCount = hasMore || loadingOlder || earlier ? 1 : 0;
+    // The oldest end of the thread is either the way to older history or,
+    // once there is none, the one notice that the chat is encrypted (U13).
+    final showHistoryFooter = hasMore || loadingOlder || earlier;
+    const footerCount = 1;
     return ListView.builder(
       controller: controller,
       reverse: true,
@@ -1404,6 +1478,7 @@ class _MessageList extends StatelessWidget {
       itemCount: pending.length + messages.length + footerCount,
       itemBuilder: (context, index) {
         if (index == pending.length + messages.length) {
+          if (!showHistoryFooter) return _EncryptionNotice(isDm: _isDm);
           return _HistoryFooter(
             loading: loadingOlder,
             label: hasMore ? null : context.l10n.channelHistoryEarlier,
@@ -1539,6 +1614,11 @@ class _MessageList extends StatelessWidget {
                     : () => onMessageActions!(local, mine),
                 // Review M2: a former member's name only when this device
                 // proved the device was that account's.
+                // A former member whose device was not proven keeps no colour
+                // either: nothing the server named for it shows (Review M2).
+                senderColorSeed: local?.c7Former == C7FormerMark.unnamed
+                    ? null
+                    : senderAccountId,
                 senderLabel: local?.c7Former == C7FormerMark.unnamed
                     ? context.l10n.channelHistoryFormerMemberUnnamed
                     : _senderLabel(senderAccountId),
@@ -1611,6 +1691,45 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
   // sequence.
   final characters = text.characters;
   return characters.length <= 80 ? text : '${characters.take(80)}…';
+}
+
+/// The one place a chat says it is encrypted (U13): the first line of its
+/// history. Bubbles and the header carry no padlock of their own.
+class _EncryptionNotice extends StatelessWidget {
+  const _EncryptionNotice({required this.isDm});
+
+  final bool isDm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          vertical: BoneSpacing.lg, horizontal: BoneSpacing.md),
+      child: Row(
+        key: const Key('chat-encryption-notice'),
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(Icons.lock_outline, size: 14, color: color),
+          ),
+          const SizedBox(width: BoneSpacing.sm),
+          Flexible(
+            child: Text(
+              isDm
+                  ? context.l10n.chatNoticeEncryptedDm
+                  : context.l10n.chatNoticeEncryptedGroup,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Top-of-list affordance for older history: a spinner while a page is in
@@ -1688,8 +1807,9 @@ class _PendingMessageBubble extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
           decoration: BoxDecoration(
-            color:
-                sending ? scheme.surfaceContainerHigh : scheme.errorContainer,
+            color: sending
+                ? BoneColors.ownBubble(theme.brightness)
+                : scheme.errorContainer,
             borderRadius: _bubbleRadius(mine: true),
             border: Border.all(
               color: sending ? scheme.outlineVariant : scheme.error,
@@ -1709,34 +1829,46 @@ class _PendingMessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (sending)
-                    const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(
-                      Icons.error_outline,
-                      size: 18,
-                      color: scheme.onErrorContainer,
-                    ),
-                  const SizedBox(width: BoneSpacing.sm),
-                  Text(
-                    sending
-                        ? l10n.chatPendingSending
-                        : terminal
-                            ? l10n.chatPendingTerminal
-                            : l10n.chatPendingFailed,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color:
-                          sending ? scheme.onSurface : scheme.onErrorContainer,
-                    ),
+              if (!sending && !terminal && onRetry != null)
+                // U29: one line says what happened and what to do, and the
+                // whole line is the button.
+                TextButton.icon(
+                  key: const Key('pending-not-sent-retry'),
+                  onPressed: onRetry,
+                  style: TextButton.styleFrom(
+                    foregroundColor: scheme.onErrorContainer,
                   ),
-                ],
-              ),
+                  icon: const Icon(Icons.error_outline, size: 18),
+                  label: Text(l10n.chatPendingNotSentRetry),
+                )
+              else
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (sending)
+                      const SizedBox.square(
+                        dimension: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      Icon(
+                        Icons.error_outline,
+                        size: 18,
+                        color: scheme.onErrorContainer,
+                      ),
+                    const SizedBox(width: BoneSpacing.sm),
+                    Text(
+                      sending
+                          ? l10n.chatPendingSending
+                          : l10n.chatPendingTerminal,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: sending
+                            ? scheme.onSurface
+                            : scheme.onErrorContainer,
+                      ),
+                    ),
+                  ],
+                ),
               if (failureMessage != null) ...<Widget>[
                 const SizedBox(height: BoneSpacing.xs),
                 Text(
@@ -1755,11 +1887,6 @@ class _PendingMessageBubble extends StatelessWidget {
                       TextButton(
                         onPressed: onSendNormally,
                         child: Text(l10n.chatSendNormally),
-                      ),
-                    if (onRetry != null)
-                      TextButton(
-                        onPressed: onRetry,
-                        child: Text(l10n.commonRetry),
                       ),
                     if (onCopy != null)
                       TextButton(
@@ -1839,11 +1966,75 @@ List<double> redactedBarFractions(int byteLength) {
   return shapes[bucket];
 }
 
+/// A swipe to the left across a message opens its actions, as a long-press
+/// does (U36). It only watches the pointer and joins no gesture, so it never
+/// competes with scrolling or the system's swipe back: a short, quick,
+/// mostly horizontal move toward the start of the line counts, anything else
+/// does not.
+class _SwipeForActions extends StatefulWidget {
+  const _SwipeForActions({required this.onSwipe, required this.child});
+
+  final VoidCallback? onSwipe;
+  final Widget child;
+
+  /// How far the finger must travel, in logical pixels.
+  static const double distance = 72;
+
+  /// How far it may drift up or down on the way.
+  static const double drift = 32;
+
+  /// How long it may take.
+  static const Duration within = Duration(milliseconds: 700);
+
+  @override
+  State<_SwipeForActions> createState() => _SwipeForActionsState();
+}
+
+class _SwipeForActionsState extends State<_SwipeForActions> {
+  int? _pointer;
+  Offset _start = Offset.zero;
+  Duration _startedAt = Duration.zero;
+
+  @override
+  Widget build(BuildContext context) {
+    final towardStart =
+        Directionality.of(context) == TextDirection.ltr ? -1.0 : 1.0;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        // A second finger, or a mouse button, is not a swipe.
+        if (_pointer != null || event.buttons != kPrimaryButton) {
+          _pointer = null;
+          return;
+        }
+        _pointer = event.pointer;
+        _start = event.position;
+        _startedAt = event.timeStamp;
+      },
+      onPointerUp: (event) {
+        if (event.pointer != _pointer) return;
+        _pointer = null;
+        final moved = event.position - _start;
+        if (moved.dx * towardStart >= _SwipeForActions.distance &&
+            moved.dy.abs() <= _SwipeForActions.drift &&
+            event.timeStamp - _startedAt <= _SwipeForActions.within) {
+          widget.onSwipe?.call();
+        }
+      },
+      onPointerCancel: (event) {
+        if (event.pointer == _pointer) _pointer = null;
+      },
+      child: widget.child,
+    );
+  }
+}
+
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     required this.mine,
     required this.senderLabel,
+    this.senderColorSeed,
     required this.showSender,
     this.local,
     this.replyPreview,
@@ -1898,6 +2089,10 @@ class _MessageBubble extends StatelessWidget {
   final List<({String reaction, int count, bool mine})> reactions;
   final bool mine;
   final String senderLabel;
+
+  /// Picks the colour of the sender's name in a group; null: the muted
+  /// default.
+  final String? senderColorSeed;
   final bool showSender;
 
   /// Horizontal padding inside the bubble, doubled — the amount the bars have
@@ -1922,23 +2117,25 @@ class _MessageBubble extends StatelessWidget {
             local?.kind == LocalMessageKind.poll
         ? null
         : local?.body;
-    // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
-    // whole column would blow out the plum ground the direction is built on
-    // (`docs/design.md` §K). Mine and theirs separate by one tonal step
-    // plus a hairline, not by fill colour.
-    final background =
-        mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
+    // Your own bubbles take the soft plum token (U14, D131); theirs stay on
+    // the surface tone. Both keep the hairline.
+    final background = mine
+        ? BoneColors.ownBubble(theme.brightness)
+        : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? context.l10n.chatSenderYou : senderLabel;
-    return Listener(
-        onPointerDown: (event) {
-          if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
-        },
-        child: GestureDetector(
-          onLongPress: onActions,
-          child: _bubble(context, theme, scheme, background, foreground, sender,
-              deleted, unverifiable, text),
-        ));
+    return _SwipeForActions(
+      onSwipe: onActions,
+      child: Listener(
+          onPointerDown: (event) {
+            if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
+          },
+          child: GestureDetector(
+            onLongPress: onActions,
+            child: _bubble(context, theme, scheme, background, foreground,
+                sender, deleted, unverifiable, text),
+          )),
+    );
   }
 
   /// The poll of a live poll bubble, when its stored JSON reads.
@@ -2142,8 +2339,14 @@ class _MessageBubble extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
                           senderLabel,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                          // Normal small text in the sender's own colour
+                          // (U36), not the capitalised micro style.
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: senderColorSeed == null
+                                ? scheme.onSurfaceVariant
+                                : senderNameColor(
+                                    senderColorSeed!, theme.brightness),
                           ),
                         ),
                       )),
@@ -2217,7 +2420,7 @@ class _MessageBubble extends StatelessWidget {
                         children: <Widget>[
                           Icon(
                               _isUndecryptable
-                                  ? Icons.lock_outline
+                                  ? Icons.visibility_off_outlined
                                   : local?.kind == LocalMessageKind.invalid
                                       ? Icons.warning_amber_outlined
                                       : Icons.update_outlined,
@@ -2303,9 +2506,8 @@ class _MessageBubble extends StatelessWidget {
   }
 
   // The raw crypto protocol identifier is debug info and stays out of the
-  // reading surface; the lock glyph carries the encrypted state now that the
-  // bars have replaced the `Encrypted message` row that used to say it in
-  // every single bubble.
+  // reading surface. A bubble carries no padlock: the chat says it is
+  // encrypted once, at its start (U13).
   Widget _metaLine(BuildContext context, ColorScheme scheme) {
     final theme = Theme.of(context);
     final parts = <String>[
@@ -2316,14 +2518,6 @@ class _MessageBubble extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (message.deletedAt == null && local?.deletedAt == null) ...<Widget>[
-          Icon(
-            Icons.lock_outline,
-            size: 12,
-            color: scheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 4),
-        ],
         Text(parts.join(' · '), style: theme.textTheme.labelSmall),
         if (tick != null) ...<Widget>[
           const SizedBox(width: 4),
@@ -2450,7 +2644,12 @@ class _Composer extends StatelessWidget {
     this.voiceListenable,
     this.onEditLast,
     this.onPoll,
+    this.tray,
   });
+
+  /// The files waiting to be sent. Send replaces the mic while there are any,
+  /// as it does while there is text.
+  final ComposerAttachments? tray;
 
   final bool enabled;
   final bool restricted;
@@ -2479,9 +2678,10 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: controller,
-      builder: (context, value, _) => _build(context, value.text),
+    return ListenableBuilder(
+      listenable:
+          Listenable.merge(<Listenable>[controller, if (tray != null) tray!]),
+      builder: (context, _) => _build(context, controller.text),
     );
   }
 
@@ -2522,6 +2722,84 @@ class _Composer extends StatelessWidget {
     );
   }
 
+  /// The one + that holds what else a message can be: a file or a poll
+  /// (U29). It keeps the reasons the two used to show on their own buttons.
+  Widget _addButton(BuildContext context) {
+    final l10n = context.l10n;
+    if (restricted) {
+      return IconButton(
+        key: const Key('composer-add'),
+        onPressed: null,
+        icon: const Icon(Icons.add),
+        tooltip: l10n.chatPostingRestricted,
+      );
+    }
+    if (onAttach == null && onPoll == null) {
+      // Attachments need the MLS path (demo builds); elsewhere the control
+      // stays visible but disabled, and the reason is reachable by focus,
+      // tap and screen reader.
+      return GatedExplanation(
+        message: l10n.gatedAttachmentsUnavailable,
+        child: const IconButton(
+          key: Key('composer-add'),
+          onPressed: null,
+          icon: Icon(Icons.add),
+        ),
+      );
+    }
+    return IconButton(
+      key: const Key('composer-add'),
+      onPressed: enabled && !attaching ? () => _openAddSheet(context) : null,
+      icon: attaching
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.add),
+      tooltip: attaching ? l10n.chatSendingFile : l10n.chatAddTooltip,
+    );
+  }
+
+  Future<void> _openAddSheet(BuildContext context) async {
+    final l10n = context.l10n;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              key: const Key('composer-add-file'),
+              enabled: onAttach != null,
+              leading: const Icon(Icons.attach_file),
+              title: Text(l10n.chatAttachFile),
+              subtitle: onAttach == null
+                  ? Text(l10n.gatedAttachmentsUnavailable)
+                  : null,
+              onTap: onAttach == null
+                  ? null
+                  : () => Navigator.of(sheetContext).pop('file'),
+            ),
+            if (onPoll != null)
+              ListTile(
+                key: const Key('composer-add-poll'),
+                enabled: !busy,
+                leading: const Icon(Icons.poll_outlined),
+                title: Text(l10n.pollComposerTitle),
+                onTap: () => Navigator.of(sheetContext).pop('poll'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'file') {
+      onAttach?.call();
+    } else if (choice == 'poll') {
+      onPoll?.call();
+    }
+  }
+
   Widget _build(BuildContext context, String text) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -2529,6 +2807,15 @@ class _Composer extends StatelessWidget {
     final nearLimit = length > maxAppTextLength * 0.9;
     final overLimit = length > maxAppTextLength;
     final canSend = enabled && !restricted && !busy && !overLimit;
+    // The mic and Send share one place (U29): the mic while there is nothing
+    // to send, Send from the first character or file on. Where voice notes
+    // are unavailable, Send is always there.
+    final showMic = onVoice != null &&
+        voiceListenable != null &&
+        !restricted &&
+        !busy &&
+        text.trim().isEmpty &&
+        !(tray?.isNotEmpty ?? false);
     return SafeArea(
       top: false,
       child: Padding(
@@ -2548,42 +2835,7 @@ class _Composer extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              if (restricted)
-                IconButton(
-                  onPressed: null,
-                  icon: const Icon(Icons.attach_file),
-                  tooltip: context.l10n.chatPostingRestricted,
-                )
-              else if (onAttach == null)
-                // Attachments need the MLS path (demo builds); elsewhere the
-                // control stays visible but disabled, and the reason is
-                // reachable by focus, tap and screen reader.
-                GatedExplanation(
-                  message: context.l10n.gatedAttachmentsUnavailable,
-                  child: const IconButton(
-                    onPressed: null,
-                    icon: Icon(Icons.attach_file),
-                  ),
-                )
-              else
-                IconButton(
-                  onPressed: enabled && !attaching ? onAttach : null,
-                  icon: attaching
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.attach_file),
-                  tooltip: attaching
-                      ? context.l10n.chatSendingFile
-                      : context.l10n.chatAttachFile,
-                ),
-              if (onPoll != null && !restricted)
-                IconButton(
-                  onPressed: enabled && !busy ? onPoll : null,
-                  icon: const Icon(Icons.poll_outlined),
-                  tooltip: context.l10n.pollComposerTitle,
-                ),
+              _addButton(context),
               Expanded(
                 child: _wrapDesktopInput(
                     canSend: canSend,
@@ -2643,31 +2895,33 @@ class _Composer extends StatelessWidget {
                       ),
                     )),
               ),
-              if (onVoice != null && voiceListenable != null && !restricted)
+              const SizedBox(width: BoneSpacing.xs),
+              if (showMic)
                 ListenableBuilder(
                   listenable: voiceListenable!,
-                  builder: (context, _) => IconButton(
+                  builder: (context, _) => IconButton.filled(
+                    key: const Key('composer-mic'),
                     onPressed: enabled && !voiceListenable!.isRecording
                         ? onVoice
                         : null,
                     icon: const Icon(Icons.mic_none),
                     tooltip: context.l10n.voiceNoteRecord,
                   ),
+                )
+              else
+                IconButton.filled(
+                  onPressed: canSend ? () => onSend() : null,
+                  icon: busy
+                      ? SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.send),
+                  tooltip: context.l10n.attachmentSend,
                 ),
-              const SizedBox(width: BoneSpacing.xs),
-              IconButton.filled(
-                onPressed: canSend ? () => onSend() : null,
-                icon: busy
-                    ? SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: scheme.onPrimary,
-                        ),
-                      )
-                    : const Icon(Icons.send),
-                tooltip: context.l10n.attachmentSend,
-              ),
             ],
           ),
         ),

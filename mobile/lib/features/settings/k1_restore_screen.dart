@@ -102,9 +102,16 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
                     leading: const Icon(Icons.cloud_download_outlined),
                     enabled: !_busy,
                     title: Text(_entryTitle(context, entry)),
-                    subtitle: entry.deviceRevoked
-                        ? Text(l10n.k1RestoreDeviceRevoked)
+                    // U37: an older copy says so in words; every row ends in
+                    // an arrow because it opens the restore.
+                    subtitle: entry.deviceRevoked || entry.superseded
+                        ? Text(<String>[
+                            if (entry.superseded) l10n.k1RestoreOlderCopy,
+                            if (entry.deviceRevoked)
+                              l10n.k1RestoreDeviceRevoked,
+                          ].join(' · '))
                         : null,
+                    trailing: const Icon(Icons.chevron_right),
                     onTap: _busy ? null : () => _restore(entry),
                   ),
               ],
@@ -125,8 +132,6 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
         ? l10n.k1RestoreDeviceUnnamed
         : entry.deviceName;
     final date = formatDateTime(context, entry.createdAt.toLocal());
-    return entry.superseded
-        ? l10n.k1RestoreEntryPrevious(device, date)
-        : l10n.k1RestoreEntry(device, date);
+    return l10n.k1RestoreEntry(device, date);
   }
 }

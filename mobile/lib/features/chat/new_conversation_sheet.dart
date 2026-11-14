@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../core/models.dart';
 import '../../l10n/l10n.dart';
+import '../../ui/format.dart';
 import '../../ui/validation.dart';
 import '../../ui/widgets/account_picker.dart';
 
-/// Bottom sheet for starting a DM or a private group. Members are picked by
-/// exact username via metadata search (or a pasted account ID as fallback).
-Future<void> showNewConversationSheet(
+/// Bottom sheet for starting a DM or a private group. It lists the people this
+/// device already shares chats with (U27); anyone else is found by exact
+/// username via metadata search (or a pasted account ID as fallback). Returns
+/// the conversation that was started, or null when the sheet was dismissed.
+Future<Conversation?> showNewConversationSheet(
   BuildContext context,
   AppState state,
 ) async {
-  await showModalBottomSheet<void>(
+  return showModalBottomSheet<Conversation>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
@@ -22,6 +26,61 @@ Future<void> showNewConversationSheet(
       child: _NewConversationForm(state: state),
     ),
   );
+}
+
+/// The people this device already shares a chat with, from local data only:
+/// the other person of every direct chat, and the members of every group whose
+/// member list this device holds. Never a stranger: a conversation that is
+/// still a message request, or hidden, contributes nobody, because starting a
+/// chat with someone accepts their request. Never yourself, a blocked account
+/// or a community channel's members. Sorted by name.
+@visibleForTesting
+List<SelectedAccount> knownPeople(AppState state) {
+  final own = state.session?.accountId;
+  // Someone whose direct chat is still a request stays out even when they
+  // also share a group with this person: a tap would accept the request.
+  final held = <String?>{
+    for (final conversation in state.conversations)
+      if (conversation.isDm &&
+          state.requestBucket(conversation) != RequestBucket.chat)
+        conversation.peerAccountId,
+  };
+  final people = <String, SelectedAccount>{};
+  void add(String accountId, String? username) {
+    if (accountId == own ||
+        held.contains(accountId) ||
+        state.isBlocked(accountId) ||
+        people.containsKey(accountId)) {
+      return;
+    }
+    // A shared name never stands in for who someone is (W11): it comes with
+    // the username, as in the member list.
+    final account = accountLabel(accountId, username);
+    final name = state.profileNameOf(accountId);
+    people[accountId] = SelectedAccount(
+      id: accountId,
+      label: name == null || name.isEmpty ? account : '$name ($account)',
+    );
+  }
+
+  for (final conversation in state.conversations) {
+    if (conversation.isCommunityShared ||
+        conversation.isChannel ||
+        state.requestBucket(conversation) != RequestBucket.chat) {
+      continue;
+    }
+    final peer = conversation.peerAccountId;
+    if (conversation.isDm && peer != null) {
+      add(peer, conversation.peerUsername);
+    }
+    if (conversation.isGroup) {
+      for (final member in state.membersFor(conversation.id)) {
+        add(member.accountId, member.username);
+      }
+    }
+  }
+  return people.values.toList()
+    ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
 }
 
 class _NewConversationForm extends StatefulWidget {
@@ -115,7 +174,10 @@ class _NewConversationFormState extends State<_NewConversationForm> {
                 ? l10n.newConversationWho
                 : l10n.newConversationAddMembers,
             maxSelection: kind == 'dm' ? 1 : null,
+            suggestions: knownPeople(widget.state),
             onChanged: (value) => setState(() => members = value),
+            // Tapping a person you know opens the chat; no second tap.
+            onSuggestionPicked: kind == 'dm' ? (_) => _submit() : null,
           ),
           if (footerError != null)
             Padding(
@@ -187,7 +249,7 @@ class _NewConversationFormState extends State<_NewConversationForm> {
       }
     });
     if (created != null) {
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(created);
     }
   }
 }

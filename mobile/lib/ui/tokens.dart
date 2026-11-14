@@ -27,6 +27,10 @@ class BoneColors {
   static const Color darkAccent = Color(0xffede4da);
   static const Color darkOnAccent = Color(0xff1e1620);
 
+  /// Your own message bubbles (U14, D131): a soft plum, one step toward the
+  /// ground's hue from [darkRaised]. Text on it: 11.3:1, muted text 4.9:1.
+  static const Color darkOwnBubble = Color(0xff3a2b52);
+
   /// Strong enough after compositing against canvas, surface and raised roles.
   static const Color darkBorder = Color(0x99a89ea6);
 
@@ -40,8 +44,16 @@ class BoneColors {
   static const Color lightAccent = Color(0xff3a2e42);
   static const Color lightOnAccent = Color(0xffffffff);
 
+  /// Your own message bubbles (U14, D131): a pale plum on white paper. Text
+  /// on it: 14.3:1, muted text 4.8:1.
+  static const Color lightOwnBubble = Color(0xffece3f2);
+
   /// Strong enough after compositing against the light surface roles.
   static const Color lightBorder = Color(0x801a1620);
+
+  /// The fill of a bubble you sent, for the theme's [brightness].
+  static Color ownBubble(Brightness brightness) =>
+      brightness == Brightness.dark ? darkOwnBubble : lightOwnBubble;
 
   // --- Error, as a Material role ------------------------------------------
   static const Color darkError = Color(0xfffb7185);
