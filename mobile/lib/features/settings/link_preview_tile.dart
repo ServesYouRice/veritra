@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/link_preview_service.dart';
 import '../../l10n/l10n.dart';
+import 'stacked_trailing_tile.dart';
 
 String linkPreviewModeLabel(AppLocalizations l10n, LinkPreviewMode mode) {
   return switch (mode) {
@@ -26,10 +27,20 @@ class LinkPreviewTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    return ListTile(
+    // The menu moves under the text when it would squeeze the title (U2).
+    var menuWidth = 0.0;
+    for (final option in LinkPreviewMode.values) {
+      final width = measureTextWidth(
+        context,
+        linkPreviewModeLabel(l10n, option),
+      );
+      if (width > menuWidth) menuWidth = width;
+    }
+    return StackedTrailingTile(
       leading: const Icon(Icons.link),
       title: Text(l10n.b2LinkPreviews),
       subtitle: Text(l10n.b2LinkPreviewsDetail),
+      trailingWidth: menuWidth + 24,
       trailing: PopupMenuButton<LinkPreviewMode>(
         key: const Key('link-preview-mode'),
         initialValue: mode,
@@ -44,7 +55,7 @@ class LinkPreviewTile extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Text(linkPreviewModeLabel(l10n, mode)),
+            Flexible(child: Text(linkPreviewModeLabel(l10n, mode))),
             const Icon(Icons.arrow_drop_down),
           ],
         ),
