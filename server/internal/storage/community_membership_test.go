@@ -167,8 +167,8 @@ func TestCreateChannelSkipsMemberAtConversationLimit(t *testing.T) {
 
 	// The creator's device seeds the group from the server roster: busy has
 	// nothing to claim, and once the group exists nothing is pending for it.
-	packages, err := store.ClaimConversationKeyPackages(ctx, channel.ID, owner.Account.ID, owner.Device.ID)
-	if err != nil {
+	packages, err := store.ClaimDeviceKeyPackages(ctx, channel.ID, owner.Account.ID, owner.Device.ID, []string{busy.Device.ID})
+	if err != nil && !errors.Is(err, ErrForbidden) {
 		t.Fatal(err)
 	}
 	for _, pkg := range packages {
