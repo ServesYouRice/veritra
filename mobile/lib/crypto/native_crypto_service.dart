@@ -1918,7 +1918,8 @@ class NativeCryptoService
         MlsCommitBundle? bundle;
         try {
           bundle = MlsCommitBundle.decode(item.payload);
-        } on FormatException {
+        } catch (_) {
+          // Not a bundle at all, or one with a malformed field.
           bundle = null;
         }
         await _requireNotPaused(item.conversationId);

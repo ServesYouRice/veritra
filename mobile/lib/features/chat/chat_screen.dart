@@ -2949,7 +2949,11 @@ class _PausedConversationNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final busy = state.isBusy(Ops.send);
+    final busy = state.isBusy(Ops.mlsUpdate);
+    // The update as the last outbox pass found it: Discard acts on that one
+    // only, and is not offered for a group's first update (D134).
+    final paused = state.pausedMlsUpdate(conversationId);
+    final discardable = paused?.discardable ?? false;
     return Semantics(
       liveRegion: true,
       container: true,
@@ -2965,7 +2969,9 @@ class _PausedConversationNotice extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              context.l10n.chatPausedNotice,
+              discardable
+                  ? context.l10n.chatPausedNotice
+                  : context.l10n.chatPausedNoticeRetryOnly,
               style: TextStyle(color: scheme.onErrorContainer),
             ),
             Wrap(
@@ -2973,23 +2979,52 @@ class _PausedConversationNotice extends StatelessWidget {
               children: <Widget>[
                 TextButton(
                   key: const ValueKey('mls-paused-retry'),
-                  onPressed:
-                      busy ? null : () => state.retryMlsUpdate(conversationId),
+                  onPressed: busy ? null : () => _retry(context),
                   child: Text(context.l10n.bannerTryAgain),
                 ),
-                TextButton(
-                  key: const ValueKey('mls-paused-discard'),
-                  onPressed: busy
-                      ? null
-                      : () => state.discardMlsUpdate(conversationId),
-                  child: Text(context.l10n.chatPausedDiscard),
-                ),
+                if (discardable)
+                  TextButton(
+                    key: const ValueKey('mls-paused-discard'),
+                    onPressed: busy
+                        ? null
+                        : () => _discard(context, paused!.idempotencyKey),
+                    child: Text(context.l10n.chatPausedDiscard),
+                  ),
               ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _retry(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await state.retryMlsUpdate(conversationId);
+    _showError(messenger);
+  }
+
+  Future<void> _discard(BuildContext context, String idempotencyKey) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final note = context.l10n.chatPausedRoleChangeNotMade;
+    final outcome =
+        await state.discardMlsUpdate(conversationId, idempotencyKey);
+    if (outcome == MlsUpdateDiscard.roleChangeNotMade) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(note)));
+      return;
+    }
+    _showError(messenger);
+  }
+
+  void _showError(ScaffoldMessengerState messenger) {
+    final error = state.errorFor(Ops.mlsUpdate);
+    if (error == null) return;
+    state.clearError(Ops.mlsUpdate);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error)));
   }
 }
 

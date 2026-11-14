@@ -18,6 +18,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -484,10 +485,14 @@ void main() {
       List<int>? payload,
       List<MlsDeviceRef> removed = const <MlsDeviceRef>[],
       bool held = true,
+      List<PendingMlsMessage> after = const <PendingMlsMessage>[],
+      int failures = 1,
+      int epoch = 3,
     }) async {
-      final h = await _Harness.start(
-          pending: const <String>{},
-          refuseOnce: <Object>[ArgumentError('bad bundle')]);
+      final h =
+          await _Harness.start(pending: const <String>{}, refuseOnce: <Object>[
+        for (var i = 0; i < failures; i++) ArgumentError('bad bundle'),
+      ], fakes: (_, crypto) => crypto.epochs['conv_a'] = epoch);
       await _settle();
       await _queue(h.store, <PendingMlsMessage>[
         PendingMlsMessage(
@@ -496,11 +501,12 @@ void main() {
           kind: MlsCommitBundle.kind,
           payload: payload ??
               MlsCommitBundle(
-                epoch: 3,
+                epoch: epoch,
                 commit: const <int>[1],
                 removed: removed,
               ).encode(),
         ),
+        ...after,
       ]);
       if (held) {
         await h.store.enqueueEnvelope(MessageEnvelope(
@@ -512,7 +518,8 @@ void main() {
       }
       h.sync.frame();
       await _waitFor(() => h.state.mlsConversationFailed('conv_a'));
-      expect((await h.store.pendingMlsMessages()).single.terminal, isTrue);
+      expect((await h.store.pendingMlsMessages()).first.terminal, isTrue);
+      expect(h.state.pausedMlsUpdate('conv_a')?.idempotencyKey, 'b1');
       return h;
     }
 
@@ -552,7 +559,7 @@ void main() {
     test('Discard drops the staged commit unsent, and held messages follow',
         () async {
       final h = await stuck();
-      await h.state.discardMlsUpdate('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
       expect(h.crypto.abandoned, 1);
       expect(h.crypto.completed, 0);
       expect(h.api.bundleKeys, <String>['b1']);
@@ -564,7 +571,7 @@ void main() {
 
     test('an update that no longer decodes can be discarded', () async {
       final h = await stuck(payload: const <int>[1]);
-      await h.state.discardMlsUpdate('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
       expect(h.crypto.abandoned, 1);
       expect(h.state.mlsConversationFailed('conv_a'), isFalse);
       await _waitFor(() => h.api.envelopes.contains('app1'));
@@ -576,7 +583,7 @@ void main() {
       h.api.hangBundles = true;
       unawaited(h.state.retryMlsUpdate('conv_a'));
       await _waitFor(() => h.api.bundleKeys.length == 2);
-      await h.state.discardMlsUpdate('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
       expect(h.crypto.abandoned, 0);
       final queued = (await h.store.pendingMlsMessages()).single;
       expect(queued.idempotencyKey, 'b1');
@@ -590,7 +597,7 @@ void main() {
       expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
       // The server still lists the removal: the commit never reached it.
       h.api.pendingRemoves.add('conv_a');
-      await h.state.discardMlsUpdate('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
       expect(h.crypto.abandoned, 1);
       expect(h.state.mlsConversationFailed('conv_a'), isFalse);
       expect(h.state.sendHeldForRemoval('conv_a'), isTrue);
@@ -627,7 +634,7 @@ void main() {
             ),
           ];
       expect(h.crypto.revocationCommits, 0);
-      await h.state.discardMlsUpdate('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
       expect(h.crypto.abandoned, 1);
       await _waitFor(() => h.api.revoked.contains('conv_a'));
       expect(h.crypto.revocationCommits, 1);
@@ -635,10 +642,116 @@ void main() {
       h.state.dispose();
     });
 
+    test('a group\'s first update cannot be discarded', () async {
+      final h = await stuck(epoch: 0);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isFalse);
+      final outcome = await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(outcome, MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      expect(h.state.errorFor(Ops.send), isNull);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect((await h.store.pendingMlsMessages()).first.idempotencyKey, 'b1');
+      expect(h.api.envelopes, isEmpty);
+      h.state.dispose();
+    });
+
+    test('nor can one that no longer decodes in a group at epoch 0', () async {
+      final h = await stuck(payload: const <int>[1], epoch: 0);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isFalse);
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a control message that is not a bundle stays in place', () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      h.api.messageFailures['w1'] = ArgumentError('bad welcome');
+      await _queue(h.store, <PendingMlsMessage>[_message('w1', 'conv_a')]);
+      h.sync.frame();
+      await _waitFor(() => h.state.mlsConversationFailed('conv_a'));
+      expect(h.state.pausedMlsUpdate('conv_a'),
+          (idempotencyKey: 'w1', discardable: false));
+      expect(await h.state.discardMlsUpdate('conv_a', 'w1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'w1');
+      expect(queued.terminal, isTrue);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a second tap never drops a later update the person has not seen',
+        () async {
+      final h =
+          await stuck(failures: 2, held: false, after: <PendingMlsMessage>[
+        PendingMlsMessage(
+          idempotencyKey: 'b2',
+          conversationId: 'conv_a',
+          kind: MlsCommitBundle.kind,
+          payload: const MlsCommitBundle(epoch: 3, commit: <int>[2]).encode(),
+        ),
+      ]);
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.discarded);
+      // b2 goes next, fails the same way, and pauses the chat again.
+      await _waitFor(
+          () => h.state.pausedMlsUpdate('conv_a')?.idempotencyKey == 'b2');
+      // The second tap still names b1, the update the person saw.
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 1);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'b2');
+      expect(queued.terminal, isTrue);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a discarded role change says it was not made', () async {
+      final h = await stuck(
+          payload: const MlsCommitBundle(
+        epoch: 3,
+        commit: <int>[1],
+        roleChange: true,
+      ).encode());
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.roleChangeNotMade);
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      h.state.dispose();
+    });
+
+    test('an undecodable update holds sends from before it is dropped',
+        () async {
+      final h = await stuck(payload: const <int>[1], held: false);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isTrue);
+      expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
+      bool? heldAtAbandon;
+      h.crypto.onAbandon =
+          (_) => heldAtAbandon = h.state.sendHeldForRemoval('conv_a');
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.discarded);
+      expect(heldAtAbandon, isTrue);
+      // The server lists no removal: the hold is released once reconcile
+      // has looked again after a complete fetch.
+      await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
+      h.state.dispose();
+    });
+
     test('only a paused conversation is touched', () async {
       final h = await stuck();
       await h.state.retryMlsUpdate('conv_b');
-      await h.state.discardMlsUpdate('conv_b');
+      await h.state.discardMlsUpdate('conv_b', 'b1');
       expect(h.crypto.abandoned, 0);
       expect(h.api.bundleKeys, <String>['b1']);
       expect(h.state.mlsConversationFailed('conv_a'), isTrue);
@@ -1095,9 +1208,13 @@ class _Crypto implements MlsConversationCryptoService {
     await store.removePendingMlsMessage(bundle.idempotencyKey);
   }
 
+  /// Called as a bundle is abandoned, before it leaves the queue.
+  void Function(PendingMlsMessage bundle)? onAbandon;
+
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage bundle) async {
     abandoned++;
+    onAbandon?.call(bundle);
     await store.removePendingMlsMessage(bundle.idempotencyKey);
   }
 

@@ -3987,6 +3987,24 @@ abstract class AppLocalizations {
   /// **'Discard update'**
   String get chatPausedDiscard;
 
+  /// Paused-chat notice when the stuck encryption update cannot be discarded (a group's first update, or one that is not a commit bundle).
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is paused here: an encryption update for this conversation could not be sent. Try it again. Other conversations still work.'**
+  String get chatPausedNoticeRetryOnly;
+
+  /// No description provided for @chatPausedDiscardRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'This encryption update cannot be discarded. Try it again, or leave the conversation.'**
+  String get chatPausedDiscardRefused;
+
+  /// No description provided for @chatPausedRoleChangeNotMade.
+  ///
+  /// In en, this message translates to:
+  /// **'The update was discarded, so the role change was not made. Make it again if you still want it.'**
+  String get chatPausedRoleChangeNotMade;
+
   /// No description provided for @chatSyncPausedNotice.
   ///
   /// In en, this message translates to:

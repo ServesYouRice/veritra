@@ -66,6 +66,7 @@ class _State extends AppState {
         );
 
   final List<String> choices = <String>[];
+  MlsUpdateDiscard outcome = MlsUpdateDiscard.discarded;
 
   @override
   Future<void> retryMlsUpdate(String conversationId) async {
@@ -74,9 +75,11 @@ class _State extends AppState {
   }
 
   @override
-  Future<void> discardMlsUpdate(String conversationId) async {
-    choices.add('discard:$conversationId');
+  Future<MlsUpdateDiscard> discardMlsUpdate(
+      String conversationId, String idempotencyKey) async {
+    choices.add('discard:$conversationId:$idempotencyKey');
     debugMlsConversationFailed(const <String>{});
+    return outcome;
   }
 }
 
@@ -142,8 +145,34 @@ void main() {
 
     await tester.tap(find.byKey(discard));
     await tester.pumpAndSettle();
-    expect(state.choices, <String>['discard:conv_a']);
+    // The update the notice was drawn for, by its key.
+    expect(state.choices, <String>['discard:conv_a:paused_conv_a']);
     expect(find.text(l10n.chatPausedNotice), findsNothing);
+    expect(find.text(l10n.chatPausedRoleChangeNotMade), findsNothing);
+    await close(tester);
+  });
+
+  testWidgets('a discarded role change says it was not made', (tester) async {
+    final state = await open(tester)
+      ..outcome = MlsUpdateDiscard.roleChangeNotMade;
+    state.debugMlsConversationFailed(const <String>{'conv_a'});
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(discard));
+    await tester.pumpAndSettle();
+    expect(find.text(l10n.chatPausedRoleChangeNotMade), findsOneWidget);
+    await close(tester);
+  });
+
+  testWidgets('a group\'s first update offers Retry only', (tester) async {
+    final state = await open(tester);
+    state.debugMlsConversationFailed(const <String>{'conv_a'},
+        discardable: false);
+    await tester.pumpAndSettle();
+    expect(find.text(l10n.chatPausedNoticeRetryOnly), findsOneWidget);
+    expect(find.text(l10n.chatPausedNotice), findsNothing);
+    expect(find.byKey(retry), findsOneWidget);
+    expect(find.byKey(discard), findsNothing);
     await close(tester);
   });
 }

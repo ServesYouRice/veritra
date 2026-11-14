@@ -457,6 +457,35 @@ void main() {
     expect((await bob.history()).last.body, 'still here');
   }, skip: skip);
 
+  test(
+      'D134: an undecodable bundle that is not the group\'s only one keeps '
+      'the pending commit', () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+    await _startConversation(alice, bob);
+    await bob.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    final staged = (await bob.store.pendingMlsMessages()).single;
+    // A second, damaged bundle of the same group: its epoch is unknown, so
+    // the pending commit may be the other bundle's.
+    const damaged = PendingMlsMessage(
+      idempotencyKey: 'damaged',
+      conversationId: 'conv_1',
+      kind: MlsCommitBundle.kind,
+      payload: <int>[1],
+      terminal: true,
+    );
+    bob.store.extraMls.add(damaged);
+
+    await bob.service.abandonCommitBundle(damaged);
+    final queued = await bob.store.pendingMlsMessages();
+    expect(queued.map((item) => item.idempotencyKey),
+        <String>[staged.idempotencyKey]);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: true));
+  }, skip: skip);
+
   test('an own commit echo merges the staged commit once', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
@@ -720,6 +749,36 @@ int _serverIds = 0;
 
 class _RemovalStore extends MemoryLocalStore {
   bool nativeRemovalReached = false;
+
+  /// Outbox entries queued by the test alone, after the real ones; one is
+  /// resolved as a real one would be.
+  final List<PendingMlsMessage> extraMls = <PendingMlsMessage>[];
+
+  @override
+  Future<List<PendingMlsMessage>> pendingMlsMessages() async =>
+      <PendingMlsMessage>[...await super.pendingMlsMessages(), ...extraMls];
+
+  @override
+  Future<void> commitLocalMlsState({
+    required int expectedCounter,
+    required int expectedCursor,
+    required StoredCryptoState state,
+    String? resolvedMlsOutboxKey,
+    GovernanceObservationChange? governanceObservation,
+    ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> c7Settings = const <String, String?>{},
+  }) async {
+    await super.commitLocalMlsState(
+      expectedCounter: expectedCounter,
+      expectedCursor: expectedCursor,
+      state: state,
+      resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+      governanceObservation: governanceObservation,
+      infoRemoval: infoRemoval,
+      c7Settings: c7Settings,
+    );
+    extraMls.removeWhere((item) => item.idempotencyKey == resolvedMlsOutboxKey);
+  }
 
   @override
   Future<void> commitMlsTransition(MlsStateTransition transition) {
