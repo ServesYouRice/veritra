@@ -129,6 +129,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionPrivacy => 'Privacy';
 
   @override
+  String get settingsSectionPrivacySafety => 'Privacy and safety';
+
+  @override
   String get settingsReadReceiptsTitle => 'Read receipts';
 
   @override
@@ -254,6 +257,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notifications say only that a message arrived.';
 
   @override
+  String get settingsTurnOn => 'Turn on';
+
+  @override
   String get settingsPushProvider => 'Push provider';
 
   @override
@@ -318,6 +324,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '\"$deviceName\" will lose access immediately.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Sign out \"$deviceName\"?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Sign out device';
 
   @override
   String get settingsSignOutTitle => 'Sign out?';
@@ -971,6 +985,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get profileSectionIdentity => 'Identity';
+
+  @override
+  String get profileSectionAdvanced => 'Advanced';
 
   @override
   String get profileNotAvailable => 'Not available';

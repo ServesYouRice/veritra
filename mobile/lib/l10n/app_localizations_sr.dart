@@ -130,6 +130,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsSectionPrivacy => 'Приватност';
 
   @override
+  String get settingsSectionPrivacySafety => 'Приватност и безбедност';
+
+  @override
   String get settingsReadReceiptsTitle => 'Потврде о читању';
 
   @override
@@ -256,6 +259,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Обавештења кажу само да је стигла порука.';
 
   @override
+  String get settingsTurnOn => 'Укључи';
+
+  @override
   String get settingsPushProvider => 'Push добављач';
 
   @override
@@ -319,6 +325,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ ће одмах изгубити приступ.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Одјавити „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Одјави уређај';
 
   @override
   String get settingsSignOutTitle => 'Одјавити се?';
@@ -978,6 +992,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get profileSectionIdentity => 'Идентитет';
+
+  @override
+  String get profileSectionAdvanced => 'Напредно';
 
   @override
   String get profileNotAvailable => 'Није доступно';
@@ -4776,6 +4793,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get settingsSectionPrivacy => 'Privatnost';
 
   @override
+  String get settingsSectionPrivacySafety => 'Privatnost i bezbednost';
+
+  @override
   String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
 
   @override
@@ -4902,6 +4922,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Obaveštenja kažu samo da je stigla poruka.';
 
   @override
+  String get settingsTurnOn => 'Uključi';
+
+  @override
   String get settingsPushProvider => 'Push dobavljač';
 
   @override
@@ -4965,6 +4988,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ će odmah izgubiti pristup.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Odjaviti „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Odjavi uređaj';
 
   @override
   String get settingsSignOutTitle => 'Odjaviti se?';
@@ -5624,6 +5655,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get profileSectionIdentity => 'Identitet';
+
+  @override
+  String get profileSectionAdvanced => 'Napredno';
 
   @override
   String get profileNotAvailable => 'Nije dostupno';

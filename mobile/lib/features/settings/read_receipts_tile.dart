@@ -31,19 +31,13 @@ class ReadReceiptsTile extends StatelessWidget {
         // lost at the next launch, so it says so instead of reverting
         // silently.
         subtitle: preferences.saveFailed
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(l10n.settingsReadReceiptsDetail),
-                  Text(
-                    l10n.settingsReadReceiptsNotSaved,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
+            ? Text(
+                l10n.settingsReadReceiptsNotSaved,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
               )
-            : Text(l10n.settingsReadReceiptsDetail),
+            : null,
         value: preferences.sendReadReceipts,
         onChanged: (value) async {
           final messenger = ScaffoldMessenger.maybeOf(context);

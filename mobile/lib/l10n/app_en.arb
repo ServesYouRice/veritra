@@ -83,6 +83,7 @@
   "trayQuit": "Quit",
 
   "settingsSectionPrivacy": "Privacy",
+  "settingsSectionPrivacySafety": "Privacy and safety",
   "settingsReadReceiptsTitle": "Read receipts",
   "settingsReadReceiptsDetail": "Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.",
   "settingsReadReceiptsFailed": "The setting could not be changed. Check your connection and try again.",
@@ -127,6 +128,7 @@
   "settingsExportSaved": "Account export saved locally.",
   "settingsAllowNotifications": "Allow notifications",
   "settingsAllowNotificationsDetail": "Notifications say only that a message arrived.",
+  "settingsTurnOn": "Turn on",
   "settingsPushProvider": "Push provider",
   "settingsPushProviderDetail": "Choose an Android UnifiedPush provider",
   "settingsTestPush": "Send a test notification",
@@ -155,6 +157,17 @@
   "@settingsRevokeDeviceMessage": {
     "placeholders": {"deviceName": {"type": "String", "example": "Pixel 8"}}
   },
+  "settingsSignOutDeviceTitle": "Sign out \"{deviceName}\"?",
+  "@settingsSignOutDeviceTitle": {
+    "description": "Title of the confirmation for signing a device out.",
+    "placeholders": {
+      "deviceName": {
+        "type": "String",
+        "example": "Pixel 8"
+      }
+    }
+  },
+  "settingsSignOutDeviceButton": "Sign out device",
   "settingsSignOutTitle": "Sign out?",
   "settingsSignOutMessage": "This device stops receiving messages until you sign in again with your password.",
   "settingsSignOutOthersTitle": "Sign out other devices?",
@@ -378,6 +391,7 @@
   "groupProfileHelp": "Members of this group can see its name and photo. The server can't read them.",
   "profileBlockNote": "In groups you share, they may still see your profile.",
   "profileSectionIdentity": "Identity",
+  "profileSectionAdvanced": "Advanced",
   "profileNotAvailable": "Not available",
   "profileCurrentDevice": "Current device",
   "profileInstanceRole": "Instance role",

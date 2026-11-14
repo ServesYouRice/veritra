@@ -321,6 +321,12 @@ abstract class AppLocalizations {
   /// **'Privacy'**
   String get settingsSectionPrivacy;
 
+  /// No description provided for @settingsSectionPrivacySafety.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy and safety'**
+  String get settingsSectionPrivacySafety;
+
   /// No description provided for @settingsReadReceiptsTitle.
   ///
   /// In en, this message translates to:
@@ -537,6 +543,12 @@ abstract class AppLocalizations {
   /// **'Notifications say only that a message arrived.'**
   String get settingsAllowNotificationsDetail;
 
+  /// No description provided for @settingsTurnOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on'**
+  String get settingsTurnOn;
+
   /// No description provided for @settingsPushProvider.
   ///
   /// In en, this message translates to:
@@ -650,6 +662,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'\"{deviceName}\" will lose access immediately.'**
   String settingsRevokeDeviceMessage(String deviceName);
+
+  /// Title of the confirmation for signing a device out.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out \"{deviceName}\"?'**
+  String settingsSignOutDeviceTitle(String deviceName);
+
+  /// No description provided for @settingsSignOutDeviceButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out device'**
+  String get settingsSignOutDeviceButton;
 
   /// No description provided for @settingsSignOutTitle.
   ///
@@ -1742,6 +1766,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Identity'**
   String get profileSectionIdentity;
+
+  /// No description provided for @profileSectionAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get profileSectionAdvanced;
 
   /// No description provided for @profileNotAvailable.
   ///

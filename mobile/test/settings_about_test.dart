@@ -118,6 +118,9 @@ void main() {
       final state = _state();
       await tester.pumpWidget(_App(state: state));
       await tester.scrollUntilVisible(find.text('Sign out'), 200);
+      // Sign out is the last row, so it is built before it is on screen.
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
       expect(find.text('Sign out?'), findsOneWidget);
@@ -125,10 +128,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(state.session, isNotNull);
 
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Sign out'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Sign out'));
-      await tester.pumpAndSettle();
+      // Settings keeps a loading spinner running, so settle by hand.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(state.session, isNull);
     });
 

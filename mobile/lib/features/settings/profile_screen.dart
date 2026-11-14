@@ -132,6 +132,21 @@ class ProfileScreen extends StatelessWidget {
                     : '@${session!.username}',
               ),
               _IdentityRow(
+                icon: Icons.admin_panel_settings_outlined,
+                label: l10n.profileInstanceRole,
+                // Left exactly as the server reports it. Title-casing a role
+                // makes it look like a display name rather than the literal
+                // value, and `profile_screen_test.dart` pins the lowercase.
+                value: session?.role ?? 'member',
+              ),
+            ],
+          ),
+          // U18: the account ID is for support and debugging, so it lives
+          // under Advanced instead of on the Settings tab.
+          SectionHeader(l10n.profileSectionAdvanced),
+          TileGroup(
+            children: <Widget>[
+              _IdentityRow(
                 icon: Icons.badge_outlined,
                 label: l10n.settingsAccountId,
                 value: accountId == null
@@ -148,14 +163,6 @@ class ProfileScreen extends StatelessWidget {
                         ? l10n.profileNotAvailable
                         : shortId(session!.deviceId!)),
                 copyValue: session?.deviceId,
-              ),
-              _IdentityRow(
-                icon: Icons.admin_panel_settings_outlined,
-                label: l10n.profileInstanceRole,
-                // Left exactly as the server reports it. Title-casing a role
-                // makes it look like a display name rather than the literal
-                // value, and `profile_screen_test.dart` pins the lowercase.
-                value: session?.role ?? 'member',
               ),
             ],
           ),

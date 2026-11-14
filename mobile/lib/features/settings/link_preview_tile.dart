@@ -39,7 +39,6 @@ class LinkPreviewTile extends StatelessWidget {
     return StackedTrailingTile(
       leading: const Icon(Icons.link),
       title: Text(l10n.b2LinkPreviews),
-      subtitle: Text(l10n.b2LinkPreviewsDetail),
       trailingWidth: menuWidth + 24,
       trailing: PopupMenuButton<LinkPreviewMode>(
         key: const Key('link-preview-mode'),
