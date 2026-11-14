@@ -263,7 +263,7 @@ void main() {
   });
 
   group('membership', () {
-    testWidgets('the roster is listed and add-member is hidden on a DM',
+    testWidgets('a DM leads with the person: no roster, roles or add-member',
         (tester) async {
       final api = _FakeApi()
         ..members = <ConversationMember>[
@@ -294,8 +294,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.text('@owner'), findsOneWidget);
+      // The page opens on the other person; a chat of two lists no members and
+      // shows no roles (U30).
       expect(find.text('@alice'), findsWidgets);
+      expect(find.text('@owner'), findsNothing);
+      expect(find.text('Members'), findsNothing);
+      expect(find.text('OWNER'), findsNothing);
       // A DM is a fixed pair; offering "Add member" here silently converts it
       // into a group.
       expect(find.text('Add member'), findsNothing);
@@ -520,7 +524,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(state.isMuted('conv_1'), isFalse);
-      await tester.tap(find.text('Mute notifications'));
+      await tester.tap(find.byKey(const Key('details-mute')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('For 8 hours'));
       await tester.pumpAndSettle();

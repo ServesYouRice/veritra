@@ -809,7 +809,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newConversationAddMembers => 'Add members';
 
   @override
-  String get newConversationStartDm => 'Start DM';
+  String get newConversationStartDm => 'Message';
 
   @override
   String get newConversationCreateGroup => 'Create group';
@@ -857,6 +857,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get accountPickerHelper =>
       'Exact username, or paste an account ID (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'People you know';
 
   @override
   String get accountPickerNoMatch =>
@@ -1612,6 +1615,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Start a direct message or create a group. Everything is end-to-end encrypted.';
 
   @override
+  String get chatListStartChat => 'Start a chat';
+
+  @override
+  String get chatListInviteSomeone => 'Invite someone';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'No archived chats';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Chats you archive are kept here, out of your main list.';
+
+  @override
   String get chatListUnmute => 'Unmute notifications';
 
   @override
@@ -1622,6 +1638,25 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatListMuted => 'Muted';
+
+  @override
+  String chatPreviewYou(String text) {
+    return 'You: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Photo';
+
+  @override
+  String get chatPreviewVoiceNote => 'Voice note';
+
+  @override
+  String get chatPreviewPoll => 'Poll';
 
   @override
   String chatListDisappearingAfter(String duration) {
@@ -1855,6 +1890,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Stops push for this conversation. Messages still arrive and still count as unread.';
 
   @override
+  String get detailsActionMute => 'Mute';
+
+  @override
+  String get detailsActionUnmute => 'Unmute';
+
+  @override
+  String get detailsActionCall => 'Call';
+
+  @override
   String get detailsSectionMembers => 'Members';
 
   @override
@@ -1862,6 +1906,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get communityTabRequests => 'Requests';
+
+  @override
+  String get detailsSectionAdvanced => 'Advanced';
 
   @override
   String get detailsLoadingMembers => 'Loading members…';
@@ -1906,6 +1953,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get detailsDisappearingNote =>
       'When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Only an owner, admin or moderator of this chat can change this.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Only the person who started this chat can change this.';
 
   @override
   String get detailsRetentionOff => 'Off';
@@ -3100,6 +3155,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get w8MentionsMutedDetail =>
       'Notify when a member mentions you, even in a muted chat.';
+
+  @override
+  String get chatPreviewsSetting => 'Last message on chats';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Show the start of the last message under each chat. It is read from this device only.';
 
   @override
   String get b2LinkPreviews => 'Link previews';

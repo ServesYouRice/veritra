@@ -26,6 +26,8 @@ class AccountPicker extends StatefulWidget {
     required this.onChanged,
     this.maxSelection,
     this.label,
+    this.suggestions = const <SelectedAccount>[],
+    this.onSuggestionPicked,
     super.key,
   });
 
@@ -38,6 +40,16 @@ class AccountPicker extends StatefulWidget {
 
   /// The field label; defaults to "Username".
   final String? label;
+
+  /// People to offer before anything is typed, such as everyone this device
+  /// already shares a chat with (U27). Typing filters them by name or ID; the
+  /// exact-username lookup below them still runs for anyone else. Empty keeps
+  /// the plain lookup field.
+  final List<SelectedAccount> suggestions;
+
+  /// Called after a person picked from [suggestions] was added and
+  /// [onChanged] ran, so a one-person picker can go on at once.
+  final ValueChanged<SelectedAccount>? onSuggestionPicked;
 
   @override
   State<AccountPicker> createState() => _AccountPickerState();
@@ -120,6 +132,19 @@ class _AccountPickerState extends State<AccountPicker> {
     });
   }
 
+  /// The suggestions still open to pick that match what is typed.
+  List<SelectedAccount> get _known {
+    final query = controller.text.trim().toLowerCase();
+    return <SelectedAccount>[
+      for (final account in widget.suggestions)
+        if (!selected.any((existing) => existing.id == account.id) &&
+            (query.isEmpty ||
+                account.label.toLowerCase().contains(query) ||
+                account.id.toLowerCase().contains(query)))
+          account,
+    ];
+  }
+
   void _add(SelectedAccount account) {
     final alreadyChosen = selected.any((existing) => existing.id == account.id);
     // The field is off at the limit, but a tap on a tile drawn before it was
@@ -154,6 +179,7 @@ class _AccountPickerState extends State<AccountPicker> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final rawId = controller.text.trim();
+    final known = _known;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -193,16 +219,41 @@ class _AccountPickerState extends State<AccountPicker> {
                 : null,
           ),
         ),
-        if (matches.isNotEmpty)
-          for (final account in matches)
+        if (known.isNotEmpty) ...<Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Text(
+              context.l10n.accountPickerKnown,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          for (final account in known)
             ListTile(
+              key: ValueKey<String>('known-${account.id}'),
               dense: true,
               leading: const Icon(Icons.person_outline),
               title: Text(account.label),
               subtitle: Text(shortId(account.id)),
-              onTap: () => _add(account),
-            )
-        else if (searched && !searching && rawId.isNotEmpty)
+              onTap: () {
+                _add(account);
+                widget.onSuggestionPicked?.call(account);
+              },
+            ),
+        ],
+        if (matches.isNotEmpty) ...<Widget>[
+          for (final account in matches)
+            // Someone already listed above is not listed twice.
+            if (!known.any((listed) => listed.id == account.id))
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.person_outline),
+                title: Text(account.label),
+                subtitle: Text(shortId(account.id)),
+                onTap: () => _add(account),
+              ),
+        ] else if (searched && !searching && rawId.isNotEmpty && known.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(

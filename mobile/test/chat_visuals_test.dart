@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
@@ -57,29 +59,157 @@ void main() {
     });
   });
 
-  group('avatar tints', () {
-    test('the five temperatures are the ones directions.md §K names', () {
-      expect(
-        boneTints.map((tint) => tint.name),
-        <String>['Chalk', 'Bone', 'Greige', 'Ash', 'Steel'],
+  group('avatar colours', () {
+    // The twelve fills and their initials colours, as the evidence file lists
+    // them (UI audit 2026-11-14, D131). Changing one means redoing its checks.
+    const dark = <String, (int, int)>{
+      'Olive': (0xff8d9d0a, 0xff16111f),
+      'Teal': (0xff0e9a94, 0xff16111f),
+      'Iris': (0xff465dbb, 0xffffffff),
+      'Lilac': (0xffa878db, 0xff16111f),
+      'Plum': (0xff94457d, 0xffffffff),
+      'Ochre': (0xffa35e16, 0xffffffff),
+    };
+    const light = <String, (int, int)>{
+      'Olive': (0xff90a013, 0xff16111f),
+      'Teal': (0xff16aba4, 0xff16111f),
+      'Iris': (0xff8ca6fb, 0xff16111f),
+      'Lilac': (0xff9868ca, 0xff16111f),
+      'Plum': (0xffe882c8, 0xff16111f),
+      'Ochre': (0xffe2a16b, 0xff16111f),
+    };
+
+    test('the six hues are the ones the evidence file names, in order', () {
+      expect(avatarHues.map((hue) => hue.name), <String>[
+        'Olive',
+        'Teal',
+        'Iris',
+        'Lilac',
+        'Plum',
+        'Ochre',
+      ]);
+    });
+
+    test('the twelve fills and initials colours are pinned', () {
+      for (final hue in avatarHues) {
+        expect(hue.darkFill.toARGB32(), dark[hue.name]!.$1, reason: hue.name);
+        expect(
+          hue.darkInitials.toARGB32(),
+          dark[hue.name]!.$2,
+          reason: hue.name,
+        );
+        expect(hue.lightFill.toARGB32(), light[hue.name]!.$1, reason: hue.name);
+        expect(
+          hue.lightInitials.toARGB32(),
+          light[hue.name]!.$2,
+          reason: hue.name,
+        );
+      }
+    });
+
+    test('initials clear 4.5:1 on every fill', () {
+      for (final hue in avatarHues) {
+        expect(
+          contrastRatio(hue.darkInitials, hue.darkFill),
+          greaterThanOrEqualTo(4.5),
+          reason: '${hue.name} dark',
+        );
+        expect(
+          contrastRatio(hue.lightInitials, hue.lightFill),
+          greaterThanOrEqualTo(4.5),
+          reason: '${hue.name} light',
+        );
+      }
+    });
+
+    test('no fill sits near a state colour of its theme', () {
+      // Euclidean in OKLab x 100. The evidence file measured 17 or more in
+      // dark and 16 or more in light against verified, warning, error, info.
+      void check(
+        List<Color> fills,
+        List<Color> states,
+        double floor,
+        String theme,
+      ) {
+        for (final fill in fills) {
+          for (final state in states) {
+            expect(
+              _oklabDistance(fill, state),
+              greaterThanOrEqualTo(floor),
+              reason:
+                  '$theme ${fill.toARGB32().toRadixString(16)} vs '
+                  '${state.toARGB32().toRadixString(16)}',
+            );
+          }
+        }
+      }
+
+      check(
+        <Color>[for (final hue in avatarHues) hue.darkFill],
+        <Color>[
+          VeritraStateColors.dark.verified,
+          VeritraStateColors.dark.warning,
+          VeritraStateColors.dark.info,
+          BoneColors.darkError,
+        ],
+        17,
+        'dark',
+      );
+      check(
+        <Color>[for (final hue in avatarHues) hue.lightFill],
+        <Color>[
+          VeritraStateColors.light.verified,
+          VeritraStateColors.light.warning,
+          VeritraStateColors.light.info,
+          BoneColors.lightError,
+        ],
+        16,
+        'light',
       );
     });
 
-    test('a seed maps to a fixed temperature, not a per-run one', () {
-      // Pinned so a switch to String.hashCode is caught: Dart seeds string
-      // hashing per process, which would re-colour every contact on launch.
-      expect(boneTintFor('acct_alice').name, 'Bone');
-      expect(boneTintFor('acct_bob').name, 'Ash');
-      expect(boneTintFor('conv_1').name, 'Chalk');
-      expect(boneTintFor('conv_2').name, 'Steel');
+    test('no two fills of a theme sit close together', () {
+      for (final fills in <List<Color>>[
+        <Color>[for (final hue in avatarHues) hue.darkFill],
+        <Color>[for (final hue in avatarHues) hue.lightFill],
+      ]) {
+        for (var i = 0; i < fills.length; i++) {
+          for (var j = i + 1; j < fills.length; j++) {
+            expect(
+              _oklabDistance(fills[i], fills[j]),
+              greaterThanOrEqualTo(15),
+              reason: '$i vs $j',
+            );
+          }
+        }
+      }
     });
 
-    test('tints spread across all five temperatures', () {
+    test('a seed maps to a fixed hue, not a per-run one', () {
+      // Pinned so a switch to String.hashCode is caught: Dart seeds string
+      // hashing per process, which would re-colour every contact on launch.
+      expect(avatarHueFor('acct_alice').name, 'Ochre');
+      expect(avatarHueFor('acct_bob').name, 'Iris');
+      expect(avatarHueFor('conv_1').name, 'Teal');
+      expect(avatarHueFor('conv_2').name, 'Olive');
+    });
+
+    test('hues spread across all six slots', () {
       final seen = <String>{};
       for (var i = 0; i < 500; i++) {
-        seen.add(boneTintFor('acct_$i').name);
+        seen.add(avatarHueFor('acct_$i').name);
       }
-      expect(seen, hasLength(boneTints.length));
+      expect(seen, hasLength(avatarHues.length));
+    });
+
+    test('a name gives up to two initials, and nothing gives none', () {
+      expect(nameInitials('Family'), 'F');
+      expect(nameInitials('book club'), 'BC');
+      expect(nameInitials('  ·· Ana  Maria Lopez'), 'AM');
+      expect(nameInitials('Жика'), 'Ж');
+      expect(nameInitials('🙂'), isNull);
+      expect(nameInitials(''), isNull);
+      expect(nameInitials(null), isNull);
     });
   });
 
@@ -214,4 +344,33 @@ void main() {
       }
     });
   });
+}
+
+/// Euclidean distance between two sRGB colours in OKLab, times 100 (the
+/// measure the avatar palette was computed with).
+double _oklabDistance(Color a, Color b) {
+  final (l1, a1, b1) = _oklab(a);
+  final (l2, a2, b2) = _oklab(b);
+  final dl = l1 - l2, da = a1 - a2, db = b1 - b2;
+  return 100 * math.sqrt(dl * dl + da * da + db * db);
+}
+
+(double, double, double) _oklab(Color color) {
+  double linear(double c) =>
+      c <= 0.04045 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
+  final r = linear(color.r), g = linear(color.g), bl = linear(color.b);
+  final l = math
+      .pow(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl, 1 / 3)
+      .toDouble();
+  final m = math
+      .pow(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * bl, 1 / 3)
+      .toDouble();
+  final s = math
+      .pow(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * bl, 1 / 3)
+      .toDouble();
+  return (
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+  );
 }

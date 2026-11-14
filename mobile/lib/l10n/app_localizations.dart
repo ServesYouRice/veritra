@@ -1524,7 +1524,7 @@ abstract class AppLocalizations {
   /// No description provided for @newConversationStartDm.
   ///
   /// In en, this message translates to:
-  /// **'Start DM'**
+  /// **'Message'**
   String get newConversationStartDm;
 
   /// No description provided for @newConversationCreateGroup.
@@ -1604,6 +1604,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Exact username, or paste an account ID (acct_…).'**
   String get accountPickerHelper;
+
+  /// No description provided for @accountPickerKnown.
+  ///
+  /// In en, this message translates to:
+  /// **'People you know'**
+  String get accountPickerKnown;
 
   /// No description provided for @accountPickerNoMatch.
   ///
@@ -2763,6 +2769,30 @@ abstract class AppLocalizations {
   /// **'Start a direct message or create a group. Everything is end-to-end encrypted.'**
   String get chatListEmptyMessage;
 
+  /// No description provided for @chatListStartChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a chat'**
+  String get chatListStartChat;
+
+  /// No description provided for @chatListInviteSomeone.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite someone'**
+  String get chatListInviteSomeone;
+
+  /// No description provided for @chatListArchivedEmptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No archived chats'**
+  String get chatListArchivedEmptyTitle;
+
+  /// No description provided for @chatListArchivedEmptyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats you archive are kept here, out of your main list.'**
+  String get chatListArchivedEmptyMessage;
+
   /// No description provided for @chatListUnmute.
   ///
   /// In en, this message translates to:
@@ -2786,6 +2816,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Muted'**
   String get chatListMuted;
+
+  /// No description provided for @chatPreviewYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You: {text}'**
+  String chatPreviewYou(String text);
+
+  /// No description provided for @chatPreviewFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}: {text}'**
+  String chatPreviewFrom(String name, String text);
+
+  /// No description provided for @chatPreviewPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo'**
+  String get chatPreviewPhoto;
+
+  /// No description provided for @chatPreviewVoiceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice note'**
+  String get chatPreviewVoiceNote;
+
+  /// No description provided for @chatPreviewPoll.
+  ///
+  /// In en, this message translates to:
+  /// **'Poll'**
+  String get chatPreviewPoll;
 
   /// No description provided for @chatListDisappearingAfter.
   ///
@@ -3069,6 +3129,24 @@ abstract class AppLocalizations {
   /// **'Stops push for this conversation. Messages still arrive and still count as unread.'**
   String get detailsMuteDetail;
 
+  /// No description provided for @detailsActionMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get detailsActionMute;
+
+  /// No description provided for @detailsActionUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get detailsActionUnmute;
+
+  /// No description provided for @detailsActionCall.
+  ///
+  /// In en, this message translates to:
+  /// **'Call'**
+  String get detailsActionCall;
+
   /// No description provided for @detailsSectionMembers.
   ///
   /// In en, this message translates to:
@@ -3086,6 +3164,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Requests'**
   String get communityTabRequests;
+
+  /// No description provided for @detailsSectionAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get detailsSectionAdvanced;
 
   /// No description provided for @detailsLoadingMembers.
   ///
@@ -3164,6 +3248,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.'**
   String get detailsDisappearingNote;
+
+  /// No description provided for @detailsRetentionLocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Only an owner, admin or moderator of this chat can change this.'**
+  String get detailsRetentionLocked;
+
+  /// No description provided for @detailsRetentionLockedDm.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the person who started this chat can change this.'**
+  String get detailsRetentionLockedDm;
 
   /// No description provided for @detailsRetentionOff.
   ///
@@ -5036,6 +5132,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Notify when a member mentions you, even in a muted chat.'**
   String get w8MentionsMutedDetail;
+
+  /// No description provided for @chatPreviewsSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Last message on chats'**
+  String get chatPreviewsSetting;
+
+  /// No description provided for @chatPreviewsSettingDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the start of the last message under each chat. It is read from this device only.'**
+  String get chatPreviewsSettingDetail;
 
   /// No description provided for @b2LinkPreviews.
   ///

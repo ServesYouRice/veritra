@@ -817,7 +817,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get newConversationAddMembers => 'Додај чланове';
 
   @override
-  String get newConversationStartDm => 'Започни разговор';
+  String get newConversationStartDm => 'Порука';
 
   @override
   String get newConversationCreateGroup => 'Направи групу';
@@ -865,6 +865,9 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get accountPickerHelper =>
       'Унесите тачно корисничко име или налепите ИД налога (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'Људи које знате';
 
   @override
   String get accountPickerNoMatch =>
@@ -1625,6 +1628,19 @@ class AppLocalizationsSr extends AppLocalizations {
       'Започните директну поруку или направите групу. Све је шифровано с краја на крај.';
 
   @override
+  String get chatListStartChat => 'Започни ћаскање';
+
+  @override
+  String get chatListInviteSomeone => 'Позови некога';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Нема архивираних ћаскања';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ћаскања која архивирате чувају се овде, ван главне листе.';
+
+  @override
   String get chatListUnmute => 'Укључи обавештења';
 
   @override
@@ -1635,6 +1651,25 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatListMuted => 'Утишано';
+
+  @override
+  String chatPreviewYou(String text) {
+    return 'Ви: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Фотографија';
+
+  @override
+  String get chatPreviewVoiceNote => 'Гласовна порука';
+
+  @override
+  String get chatPreviewPoll => 'Анкета';
 
   @override
   String chatListDisappearingAfter(String duration) {
@@ -1873,6 +1908,15 @@ class AppLocalizationsSr extends AppLocalizations {
       'Зауставља push обавештења за овај разговор. Поруке и даље стижу и рачунају се као непрочитане.';
 
   @override
+  String get detailsActionMute => 'Утишај';
+
+  @override
+  String get detailsActionUnmute => 'Укључи';
+
+  @override
+  String get detailsActionCall => 'Позови';
+
+  @override
   String get detailsSectionMembers => 'Чланови';
 
   @override
@@ -1880,6 +1924,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get communityTabRequests => 'Захтеви';
+
+  @override
+  String get detailsSectionAdvanced => 'Напредно';
 
   @override
   String get detailsLoadingMembers => 'Учитавање чланова…';
@@ -1924,6 +1971,14 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get detailsDisappearingNote =>
       'Када је ово подешено, поруке послате од тада бришу се са сервера након овог временског периода. Постојеће поруке задржавају тајмер са којим су послате.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ово могу да мењају само власник, администратор или модератор овог ћаскања.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Ово може да мења само особа која је започела ово ћаскање.';
 
   @override
   String get detailsRetentionOff => 'Искључено';
@@ -3122,6 +3177,13 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get w8MentionsMutedDetail =>
       'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
+
+  @override
+  String get chatPreviewsSetting => 'Последња порука у ћаскањима';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Прикажи почетак последње поруке испод сваког ћаскања. Чита се само са овог уређаја.';
 
   @override
   String get b2LinkPreviews => 'Прегледи веза';
@@ -5844,7 +5906,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get newConversationAddMembers => 'Dodaj članove';
 
   @override
-  String get newConversationStartDm => 'Započni razgovor';
+  String get newConversationStartDm => 'Poruka';
 
   @override
   String get newConversationCreateGroup => 'Napravi grupu';
@@ -5892,6 +5954,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get accountPickerHelper =>
       'Unesite tačno korisničko ime ili nalepite ID naloga (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'Ljudi koje znate';
 
   @override
   String get accountPickerNoMatch =>
@@ -6652,6 +6717,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Započnite direktnu poruku ili napravite grupu. Sve je šifrovano s kraja na kraj.';
 
   @override
+  String get chatListStartChat => 'Započni ćaskanje';
+
+  @override
+  String get chatListInviteSomeone => 'Pozovi nekoga';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Nema arhiviranih ćaskanja';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ćaskanja koja arhivirate čuvaju se ovde, van glavne liste.';
+
+  @override
   String get chatListUnmute => 'Uključi obaveštenja';
 
   @override
@@ -6662,6 +6740,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatListMuted => 'Utišano';
+
+  @override
+  String chatPreviewYou(String text) {
+    return 'Vi: $text';
+  }
+
+  @override
+  String chatPreviewFrom(String name, String text) {
+    return '$name: $text';
+  }
+
+  @override
+  String get chatPreviewPhoto => 'Fotografija';
+
+  @override
+  String get chatPreviewVoiceNote => 'Glasovna poruka';
+
+  @override
+  String get chatPreviewPoll => 'Anketa';
 
   @override
   String chatListDisappearingAfter(String duration) {
@@ -6900,6 +6997,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Zaustavlja push obaveštenja za ovaj razgovor. Poruke i dalje stižu i računaju se kao nepročitane.';
 
   @override
+  String get detailsActionMute => 'Utišaj';
+
+  @override
+  String get detailsActionUnmute => 'Uključi';
+
+  @override
+  String get detailsActionCall => 'Pozovi';
+
+  @override
   String get detailsSectionMembers => 'Članovi';
 
   @override
@@ -6907,6 +7013,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityTabRequests => 'Zahtevi';
+
+  @override
+  String get detailsSectionAdvanced => 'Napredno';
 
   @override
   String get detailsLoadingMembers => 'Učitavanje članova…';
@@ -6951,6 +7060,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get detailsDisappearingNote =>
       'Kada je ovo podešeno, poruke poslate od tada brišu se sa servera nakon ovog vremenskog perioda. Postojeće poruke zadržavaju tajmer sa kojim su poslate.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ovo mogu da menjaju samo vlasnik, administrator ili moderator ovog ćaskanja.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Ovo može da menja samo osoba koja je započela ovo ćaskanje.';
 
   @override
   String get detailsRetentionOff => 'Isključeno';
@@ -8152,6 +8269,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get w8MentionsMutedDetail =>
       'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
+
+  @override
+  String get chatPreviewsSetting => 'Poslednja poruka u ćaskanjima';
+
+  @override
+  String get chatPreviewsSettingDetail =>
+      'Prikaži početak poslednje poruke ispod svakog ćaskanja. Čita se samo sa ovog uređaja.';
 
   @override
   String get b2LinkPreviews => 'Pregledi veza';

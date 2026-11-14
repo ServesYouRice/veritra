@@ -126,6 +126,7 @@ part 'app_state_l1_joins.dart';
 part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
+part 'app_state_previews.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -571,7 +572,6 @@ class AppState extends ChangeNotifier
   @visibleForTesting
   VerifiedRoleSource? debugInfoRoleSource;
   Set<String> starredMessages = {};
-  bool showArchivedChats = false;
 
   /// Conversation descriptors copied from another device (K2). Historical
   /// metadata only: never a live conversation, member list or permission.
@@ -581,6 +581,17 @@ class AppState extends ChangeNotifier
   /// Whether Android FLAG_SECURE protects chats against AI-assistant screen
   /// reading and screenshots. Stored under `screen_guard_chats`. Defaults to true.
   bool screenGuardChats = true;
+
+  /// Whether chat rows quote the last message (U12, D131). Stored under
+  /// `u12.chat_previews`. Defaults to true.
+  bool showChatPreviews = true;
+
+  /// The message each chat row quotes, by conversation. `source` is the
+  /// history it was taken from (null: read straight from the local store), so
+  /// a newer history is noticed by identity.
+  final Map<String, ({ConversationHistory? source, LocalMessage? row})>
+      _previewMemo = {};
+  final Set<String> _previewLoading = <String>{};
 
   int _activeChatViews = 0;
 
@@ -793,10 +804,6 @@ class AppState extends ChangeNotifier
 
   bool canPinMessages(String id) => pinAllowed(
       kind: conversationKind(id), role: roleOf(id, session?.accountId ?? ''));
-  void toggleArchivedChats() {
-    showArchivedChats = !showArchivedChats;
-    notifyListeners();
-  }
 
   Future<void> setMentionsInMutedChats(bool value) async {
     mentionsInMutedChats = value;
@@ -2087,6 +2094,8 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('b2.link_preview'));
       screenGuardChats =
           await localStore.loadSetting('screen_guard_chats') != 'false';
+      showChatPreviews =
+          await localStore.loadSetting(_chatPreviewsSetting) != 'false';
       _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
@@ -2140,6 +2149,7 @@ class AppState extends ChangeNotifier
       conversationsLoaded = false;
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
       _history.clear();
+      _previewMemo.clear();
       composerDrafts.clear();
       lifecycle = SessionLifecycle.recoveryRequired;
       localStoreFailure =
@@ -2558,12 +2568,14 @@ class AppState extends ChangeNotifier
     final String? mentionsMuted;
     final String? previewMode;
     final String? screenGuardPref;
+    final String? previewsPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
       mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
       previewMode = await localStore.loadSetting('b2.link_preview');
       screenGuardPref = await localStore.loadSetting('screen_guard_chats');
+      previewsPref = await localStore.loadSetting(_chatPreviewsSetting);
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -2578,6 +2590,7 @@ class AppState extends ChangeNotifier
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
     screenGuardChats = screenGuardPref != 'false';
+    showChatPreviews = previewsPref != 'false';
     _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
@@ -6392,6 +6405,8 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('b2.link_preview'));
       screenGuardChats =
           await localStore.loadSetting('screen_guard_chats') != 'false';
+      showChatPreviews =
+          await localStore.loadSetting(_chatPreviewsSetting) != 'false';
       _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
@@ -9105,6 +9120,8 @@ class AppState extends ChangeNotifier
     _lastKnownNoPeer.clear();
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
+    _previewMemo.clear();
+    _previewLoading.clear();
     composerDrafts.clear();
     receipts.clear();
     typing.clear();
@@ -9143,7 +9160,6 @@ class AppState extends ChangeNotifier
     conversationPrefs = {};
     _pins.clear();
     starredMessages = {};
-    showArchivedChats = false;
     _copiedHistory = {};
     _resetDeviceLinkState();
     communities = <Community>[];
@@ -9230,6 +9246,8 @@ class AppState extends ChangeNotifier
         next[entry.key] = live;
       }
       if (changed) messagesByConversation = next;
+      // A row quoted on the chat list may be one that was just purged.
+      touched.forEach(_previewMemo.remove);
       final reload = <String>{...touched, ..._historyReloadPending};
       if (_mlsCrypto != null && reload.isNotEmpty) {
         var failed = false;
