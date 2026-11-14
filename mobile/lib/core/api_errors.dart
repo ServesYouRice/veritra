@@ -89,7 +89,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'blob_not_found': ApiErrorKind.notFound,
   'message_expired': ApiErrorKind.notFound,
   'no_push_subscription': ApiErrorKind.notFound,
-  'key_package_unavailable': ApiErrorKind.notFound,
   'invalid_invite': ApiErrorKind.notFound,
   'invalid_device_link': ApiErrorKind.notFound,
   // Conflict.
@@ -218,7 +217,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
-  'key_package_claim_limit': ApiErrorKind.rateLimited,
   'mls_self_update_limit': ApiErrorKind.rateLimited,
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
