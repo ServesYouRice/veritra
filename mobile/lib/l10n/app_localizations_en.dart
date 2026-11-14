@@ -3058,6 +3058,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recoveryFollowUpTitle => 'Finish recovering your account';
 
   @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Step $step of $total';
+  }
+
+  @override
   String get recoveryFollowUpKeyDetail =>
       'Your account is back on this device, and your other devices were signed out. Before your chats open, replace your recovery key and then your password: someone else may know them.';
 
@@ -3074,6 +3079,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryStartDetail =>
       'Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Use this only if you lost every device signed in to your account.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'You need your password and your recovery key.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'If one of your devices was used in the last 7 days, you wait 7 days, and your devices can cancel the recovery.';
+
+  @override
+  String get recoveryStartHowItWorks => 'How recovery works';
 
   @override
   String get recoveryStartSubmit => 'Start recovery';
@@ -3117,6 +3137,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String recoveryWaitingDetail(String date) {
     return 'This device joins your account after $date. The app checks by itself while it is open. Your other devices can cancel this recovery.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return '$time left';
   }
 
   @override

@@ -31,6 +31,7 @@ class _PasswordDialog extends StatefulWidget {
 
 class _PasswordDialogState extends State<_PasswordDialog> {
   final _controller = TextEditingController();
+  bool _shown = false;
 
   @override
   void dispose() {
@@ -46,10 +47,15 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
-        obscureText: true,
+        obscureText: !_shown,
         autofillHints: const <String>[AutofillHints.password],
-        decoration:
-            InputDecoration(labelText: context.l10n.settingsReauthField),
+        decoration: InputDecoration(
+          labelText: context.l10n.settingsReauthField,
+          suffixIcon: SecretRevealButton(
+            shown: _shown,
+            onPressed: () => setState(() => _shown = !_shown),
+          ),
+        ),
         onSubmitted: (value) => Navigator.of(context).pop(value),
       ),
       actions: <Widget>[
@@ -62,6 +68,26 @@ class _PasswordDialogState extends State<_PasswordDialog> {
           child: Text(context.l10n.commonContinue),
         ),
       ],
+    );
+  }
+}
+
+/// U23: shows or hides a password field's text.
+class SecretRevealButton extends StatelessWidget {
+  const SecretRevealButton(
+      {required this.shown, required this.onPressed, super.key});
+
+  final bool shown;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return IconButton(
+      tooltip: shown ? l10n.connectHidePassword : l10n.connectShowPassword,
+      icon: Icon(
+          shown ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+      onPressed: onPressed,
     );
   }
 }

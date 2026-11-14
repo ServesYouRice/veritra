@@ -25,26 +25,62 @@ class RecoveryFollowUpScreen extends StatelessWidget {
       builder: (context, _) {
         final l10n = context.l10n;
         final step = state.recoveryFollowUp;
+        final (number, total) = recoveryFollowUpPosition(step,
+            restoreOffered: state.k1RestoreSupported);
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: false,
             title: Text(l10n.recoveryFollowUpTitle),
           ),
           body: SafeArea(
-            child: switch (step) {
-              RecoveryFollowUpStep.restore => _RestoreStep(state: state),
-              RecoveryFollowUpStep.password => _NewPasswordStep(state: state),
-              _ => RecoveryKeySetup(
-                  state: state,
-                  intro: l10n.recoveryFollowUpKeyDetail,
-                  onSaved: () {},
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                // U23: where the user is in the forced steps.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      BoneSpacing.xl, BoneSpacing.md, BoneSpacing.xl, 0),
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      l10n.recoveryFollowUpStepOf(number, total),
+                      key: const ValueKey<String>('follow-up-step'),
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.primary),
+                    ),
+                  ),
                 ),
-            },
+                Expanded(
+                  child: switch (step) {
+                    RecoveryFollowUpStep.restore => _RestoreStep(state: state),
+                    RecoveryFollowUpStep.password =>
+                      _NewPasswordStep(state: state),
+                    _ => RecoveryKeySetup(
+                        state: state,
+                        intro: l10n.recoveryFollowUpKeyDetail,
+                        onSaved: () {},
+                      ),
+                  },
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
+}
+
+/// The follow-up [step]'s number and the number of steps: three when the
+/// history restore is offered, else two.
+(int, int) recoveryFollowUpPosition(RecoveryFollowUpStep? step,
+    {required bool restoreOffered}) {
+  final total = restoreOffered || step == RecoveryFollowUpStep.restore ? 3 : 2;
+  return switch (step) {
+    RecoveryFollowUpStep.restore => (1, total),
+    RecoveryFollowUpStep.password => (total, total),
+    _ => (total - 1, total),
+  };
 }
 
 /// K1-4: bring the history back from the lost devices' backups before the
@@ -122,6 +158,7 @@ class _NewPasswordStepState extends State<_NewPasswordStep> {
   final _password = TextEditingController();
   final _confirmation = TextEditingController();
   bool _working = false;
+  bool _shown = false;
 
   @override
   void dispose() {
@@ -172,18 +209,23 @@ class _NewPasswordStepState extends State<_NewPasswordStep> {
           const SizedBox(height: BoneSpacing.lg),
           TextFormField(
             controller: _password,
-            obscureText: true,
+            obscureText: !_shown,
             autofillHints: const <String>[AutofillHints.newPassword],
             validator: _validate,
             decoration: InputDecoration(
               labelText: l10n.settingsNewPassword,
               helperText: l10n.settingsNewPasswordHelper,
+              // One toggle shows both fields.
+              suffixIcon: SecretRevealButton(
+                shown: _shown,
+                onPressed: () => setState(() => _shown = !_shown),
+              ),
             ),
           ),
           const SizedBox(height: BoneSpacing.md),
           TextFormField(
             controller: _confirmation,
-            obscureText: true,
+            obscureText: !_shown,
             validator: (value) => (value ?? '') != _password.text
                 ? l10n.settingsPasswordsMismatch
                 : null,

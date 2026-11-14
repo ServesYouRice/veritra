@@ -3075,6 +3075,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get recoveryFollowUpTitle => 'Завршите опоравак налога';
 
   @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Корак $step од $total';
+  }
+
+  @override
   String get recoveryFollowUpKeyDetail =>
       'Ваш налог је враћен на овај уређај, а ваши други уређаји су одјављени. Пре него што се разговори отворе, замените кључ за опоравак, а затим лозинку: можда их неко други зна.';
 
@@ -3091,6 +3096,21 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryStartDetail =>
       'Користите ово само ако сте изгубили сваки уређај пријављен на ваш налог. Потребни су вам лозинка и кључ за опоравак. Ако је неки ваш уређај коришћен у последњих 7 дана, овај уређај се придружује тек после 7 дана, а ти уређаји могу да откажу опоравак. Историја порука се враћа само из резервне копије враћене на овај уређај.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Користите ово само ако сте изгубили сваки уређај пријављен на ваш налог.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'Потребни су вам лозинка и кључ за опоравак.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'Ако је неки ваш уређај коришћен у последњих 7 дана, чекате 7 дана, а ваши уређаји могу да откажу опоравак.';
+
+  @override
+  String get recoveryStartHowItWorks => 'Како опоравак ради';
 
   @override
   String get recoveryStartSubmit => 'Започни опоравак';
@@ -3133,6 +3153,11 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String recoveryWaitingDetail(String date) {
     return 'Овај уређај се придружује вашем налогу после $date. Апликација сама проверава док је отворена. Ваши други уређаји могу да откажу овај опоравак.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return 'Преостало: $time';
   }
 
   @override
@@ -7839,17 +7864,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Zapišite ova 52 znaka na papir i čuvajte ga na sigurnom. Svako ko ima ovaj ključ i vašu lozinku može da preuzme vaš nalog. Ne pravite snimak ekrana i ne čuvajte ga u razgovoru.';
+      'Zapišite ova 52 znaka na papir ili ih sačuvajte u menadžeru lozinki. Svako ko ima ovaj ključ i vašu lozinku može da preuzme vaš nalog. Ne pravite snimak ekrana i ne čuvajte ga u razgovoru.';
 
   @override
-  String get recoveryKeyWritten => 'Ključ je zapisan';
+  String get recoveryKeyWritten => 'Ključ je sačuvan';
+
+  @override
+  String get recoveryKeyCopy => 'Kopiraj za menadžer lozinki';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Kopirano. Nalepite ga sada u menadžer lozinki. Aplikacija ga briše iz ostave kada nastavite.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Unesite ključ za oporavak';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Unesite ceo ključ sa papira da biste ga proverili. Crtice i razmaci nisu bitni.';
+      'Unesite ceo ključ sa papira ili iz menadžera lozinki da biste ga proverili. Crtice i razmaci nisu bitni.';
 
   @override
   String get recoveryKeyField => 'Ključ za oporavak';
@@ -7862,6 +7894,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'To nije prikazani ključ. Proverite papir i pokušajte ponovo.';
 
   @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Grupa $group se ne poklapa. Proverite je na svom zapisu.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return 'Poklapa se $count od 13 grupa.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'Ovo je duže od ključa. Proverite da li ima viška znakova.';
+
+  @override
   String get recoveryKeyShowAgain => 'Prikaži ključ ponovo';
 
   @override
@@ -7872,6 +7918,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryFollowUpTitle => 'Završite oporavak naloga';
+
+  @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Korak $step od $total';
+  }
 
   @override
   String get recoveryFollowUpKeyDetail =>
@@ -7890,6 +7941,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryStartDetail =>
       'Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog. Potrebni su vam lozinka i ključ za oporavak. Ako je neki vaš uređaj korišćen u poslednjih 7 dana, ovaj uređaj se pridružuje tek posle 7 dana, a ti uređaji mogu da otkažu oporavak. Istorija poruka se vraća samo iz rezervne kopije vraćene na ovaj uređaj.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'Potrebni su vam lozinka i ključ za oporavak.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'Ako je neki vaš uređaj korišćen u poslednjih 7 dana, čekate 7 dana, a vaši uređaji mogu da otkažu oporavak.';
+
+  @override
+  String get recoveryStartHowItWorks => 'Kako oporavak radi';
 
   @override
   String get recoveryStartSubmit => 'Započni oporavak';
@@ -7932,6 +7998,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String recoveryWaitingDetail(String date) {
     return 'Ovaj uređaj se pridružuje vašem nalogu posle $date. Aplikacija sama proverava dok je otvorena. Vaši drugi uređaji mogu da otkažu ovaj oporavak.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return 'Preostalo: $time';
   }
 
   @override

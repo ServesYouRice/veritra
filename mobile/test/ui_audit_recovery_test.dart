@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/features/auth/account_recovery_screen.dart';
+import 'package:private_messenger/features/auth/recovery_follow_up_screen.dart';
+import 'package:private_messenger/features/settings/reauth_dialog.dart';
 import 'package:private_messenger/features/settings/recovery_key_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/ui/theme.dart';
 
@@ -282,6 +286,254 @@ void main() {
                 find.byKey(const ValueKey<String>('recovery-key-group-1')))
             .data,
         groups[0]);
+    state.dispose();
+  });
+
+  bool obscured(WidgetTester tester, Finder field) => tester
+      .widget<EditableText>(
+          find.descendant(of: field, matching: find.byType(EditableText)))
+      .obscureText;
+
+  group('U23: recovery start in three points', () {
+    for (final scale in <double>[1, 2]) {
+      testWidgets('three points, the fine print behind a toggle, scale $scale',
+          (tester) async {
+        phone(tester, height: 800);
+        final state = k0App(server, store, crypto);
+        await tester.pumpWidget(app(
+            AccountRecoveryStartScreen(state: state, initialServer: k0Origin),
+            scale: scale));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+            find.text('Use this only if you lost every device signed in to '
+                'your account.'),
+            findsOneWidget);
+        expect(find.text('You need your password and your recovery key.'),
+            findsOneWidget);
+        // The wait and who can cancel it stay in sight.
+        expect(
+            find.textContaining('you wait 7 days, and your devices can '
+                'cancel'),
+            findsOneWidget);
+        expect(
+            find.textContaining('comes back only from a backup'), findsNothing);
+        await tester.scrollUntilVisible(find.text('How recovery works'), 100,
+            scrollable: find.byType(Scrollable).first);
+        await tester.tap(find.text('How recovery works'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('comes back only from a backup'),
+            findsOneWidget);
+        expect(tester.takeException(), isNull);
+        state.dispose();
+      });
+    }
+
+    testWidgets('the password can be shown; the key field is never hidden',
+        (tester) async {
+      phone(tester);
+      final state = k0App(server, store, crypto);
+      await tester.pumpWidget(app(AccountRecoveryStartScreen(state: state)));
+      await tester.pumpAndSettle();
+      final password = find.byType(TextFormField).at(2);
+      expect(obscured(tester, password), isTrue);
+      await tester.tap(find.byTooltip('Show password'));
+      await tester.pump();
+      expect(obscured(tester, password), isFalse);
+      await tester.tap(find.byTooltip('Hide password'));
+      await tester.pump();
+      expect(obscured(tester, password), isTrue);
+      expect(
+          obscured(
+              tester, find.byKey(const ValueKey<String>('recovery-key-field'))),
+          isFalse);
+      state.dispose();
+    });
+  });
+
+  group('U23: the wait counts down', () {
+    Future<AppState> waiting() async {
+      final state = k0App(server, store, crypto);
+      await state.startAccountRecovery(
+          baseUrl: k0Origin,
+          username: 'alice',
+          password: 'pw',
+          recoveryKey: k0Display);
+      return state;
+    }
+
+    testWidgets('shows the time left beside the date, and redraws',
+        (tester) async {
+      phone(tester);
+      final state = await waiting();
+      final readyAt = state.pendingAccountRecovery!.readyAt;
+      var now = readyAt.subtract(const Duration(days: 6, minutes: 30));
+      await tester.pumpWidget(
+          app(AccountRecoveryWaitingScreen(state: state, clock: () => now)));
+      await tester.pumpAndSettle();
+      expect(
+          tester
+              .widget<Text>(
+                  find.byKey(const ValueKey<String>('recovery-countdown')))
+              .data,
+          '6 days 1 hour left');
+      expect(find.textContaining('This device joins your account after'),
+          findsOneWidget);
+
+      final polls = server.recoveryPolls;
+      now = readyAt.subtract(const Duration(minutes: 3, seconds: 10));
+      await tester.pump(recoveryCountdownInterval);
+      expect(
+          tester
+              .widget<Text>(
+                  find.byKey(const ValueKey<String>('recovery-countdown')))
+              .data,
+          '4 minutes left');
+      expect(server.recoveryPolls, polls,
+          reason: 'the countdown only redraws; it does not poll');
+
+      now = readyAt.add(const Duration(seconds: 1));
+      await tester.pump(recoveryCountdownInterval);
+      expect(find.byKey(const ValueKey<String>('recovery-countdown')),
+          findsNothing);
+      expect(
+          find.text('The wait is over. Check now to finish.'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    test('the time left is rounded up and never reads zero', () {
+      final l10n = englishL10n;
+      expect(recoveryTimeLeftText(l10n, Duration.zero), '1 minute');
+      expect(
+          recoveryTimeLeftText(l10n, const Duration(seconds: 61)), '2 minutes');
+      expect(recoveryTimeLeftText(l10n, const Duration(minutes: 60)), '1 hour');
+      expect(recoveryTimeLeftText(l10n, const Duration(hours: 2, minutes: 5)),
+          '2 hours 5 minutes');
+      expect(
+          recoveryTimeLeftText(
+              l10n, const Duration(hours: 23, minutes: 59, seconds: 30)),
+          '1 day');
+      expect(recoveryTimeLeftText(l10n, const Duration(days: 7)), '7 days');
+      expect(
+          recoveryTimeLeftText(
+              l10n, const Duration(days: 6, hours: 23, minutes: 1)),
+          '7 days');
+    });
+
+    testWidgets('the sign-in password can be shown', (tester) async {
+      phone(tester);
+      final state = await waiting();
+      server.statusAnswers.add(const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completedWithoutToken,
+          accountId: 'acct_me',
+          deviceId: 'dev_new'));
+      await state.checkAccountRecovery();
+      await tester.pumpWidget(app(AccountRecoveryWaitingScreen(state: state)));
+      await tester.pumpAndSettle();
+      final field = find.byType(TextField);
+      expect(obscured(tester, field), isTrue);
+      await tester.tap(find.byTooltip('Show password'));
+      await tester.pump();
+      expect(obscured(tester, field), isFalse);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+  });
+
+  group('U23: the follow-up shows its step', () {
+    test('three steps with the restore, two without', () {
+      expect(
+          recoveryFollowUpPosition(RecoveryFollowUpStep.restore,
+              restoreOffered: true),
+          (1, 3));
+      expect(
+          recoveryFollowUpPosition(RecoveryFollowUpStep.recoveryKey,
+              restoreOffered: true),
+          (2, 3));
+      expect(
+          recoveryFollowUpPosition(RecoveryFollowUpStep.password,
+              restoreOffered: true),
+          (3, 3));
+      expect(
+          recoveryFollowUpPosition(RecoveryFollowUpStep.recoveryKey,
+              restoreOffered: false),
+          (1, 2));
+      expect(
+          recoveryFollowUpPosition(RecoveryFollowUpStep.password,
+              restoreOffered: false),
+          (2, 2));
+    });
+
+    testWidgets('step n of total on each step', (tester) async {
+      phone(tester);
+      final state = signedIn()..recoveryFollowUp = RecoveryFollowUpStep.restore;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      expect(find.text('Step 1 of 3'), findsOneWidget);
+      state.dispose();
+
+      final last = signedIn()..recoveryFollowUp = RecoveryFollowUpStep.password;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: last)));
+      await tester.pumpAndSettle();
+      final total = last.k1RestoreSupported ? 3 : 2;
+      expect(find.text('Step $total of $total'), findsOneWidget);
+      last.dispose();
+    });
+
+    testWidgets('Back on the key step stays in the flow', (tester) async {
+      phone(tester);
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.recoveryKey;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create a recovery key'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('recovery-key-back')));
+      await tester.pumpAndSettle();
+      expect(find.byType(RecoveryFollowUpScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('recovery-key-show-draft')),
+          findsOneWidget);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      state.dispose();
+    });
+
+    testWidgets('one toggle shows both new-password fields', (tester) async {
+      phone(tester);
+      final state = signedIn()
+        ..recoveryFollowUp = RecoveryFollowUpStep.password;
+      await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+      await tester.pumpAndSettle();
+      final fields = find.byType(TextFormField);
+      expect(obscured(tester, fields.at(0)), isTrue);
+      expect(obscured(tester, fields.at(1)), isTrue);
+      await tester.tap(find.byTooltip('Show password'));
+      await tester.pump();
+      expect(obscured(tester, fields.at(0)), isFalse);
+      expect(obscured(tester, fields.at(1)), isFalse);
+      state.dispose();
+    });
+  });
+
+  testWidgets('U23: the password dialog can show the password', (tester) async {
+    phone(tester);
+    final state = signedIn();
+    await tester.pumpWidget(app(Builder(
+      builder: (context) => TextButton(
+        onPressed: () => confirmPasswordForRecentAuth(context, state),
+        child: const Text('open'),
+      ),
+    )));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    final field = find.descendant(
+        of: find.byType(AlertDialog), matching: find.byType(TextField));
+    expect(obscured(tester, field), isTrue);
+    await tester.tap(find.byTooltip('Show password'));
+    await tester.pump();
+    expect(obscured(tester, field), isFalse);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
     state.dispose();
   });
 }

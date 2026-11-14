@@ -165,6 +165,13 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(find.text('Recover your account'), findsOneWidget);
+    // U23: the wait is one of three points; the full text is behind
+    // "How recovery works".
+    expect(find.textContaining('you wait 7 days'), findsOneWidget);
+    expect(find.textContaining('this device joins only after 7 days'),
+        findsNothing);
+    await tester.tap(find.text('How recovery works'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('this device joins only after 7 days'),
         findsOneWidget);
 
