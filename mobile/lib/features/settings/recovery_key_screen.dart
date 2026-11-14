@@ -47,11 +47,18 @@ class RecoveryKeySetup extends StatefulWidget {
     required this.state,
     required this.onSaved,
     this.intro,
+    this.onBack,
     super.key,
   });
 
   final AppState state;
   final VoidCallback onSaved;
+
+  /// U23: the forced follow-up's way back to its previous step, or null
+  /// (Settings, or a step with nothing to go back to). Offered only on the
+  /// overview while no key is held: Back must not drop a key that may
+  /// already be written down, which would leave the paper wrong.
+  final VoidCallback? onBack;
 
   /// Replaces the usual introduction (the follow-up explains why).
   final String? intro;
@@ -343,6 +350,15 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
             configured ? l10n.recoveryKeyReplace : l10n.recoveryKeyCreate,
           ),
         ),
+      if (widget.onBack != null && _draft == null) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        TextButton.icon(
+          key: const ValueKey<String>('follow-up-back'),
+          onPressed: _working ? null : widget.onBack,
+          icon: const Icon(Icons.arrow_back),
+          label: Text(MaterialLocalizations.of(context).backButtonTooltip),
+        ),
+      ],
     ];
   }
 

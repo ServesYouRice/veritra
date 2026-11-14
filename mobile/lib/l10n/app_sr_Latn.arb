@@ -766,6 +766,7 @@
   "errorPasswordLoginNeedsLink": "Novi telefon? Dodajte ga pomoću uređaja koji već koristite.",
   "attachmentSendFailedState": "Prilog nije mogao da se pošalje.",
   "errorRelinkRequired": "Ovaj uređaj mora ponovo da se poveže.",
+  "recoveryKeyStepMovedBack": "Vratili ste se na korak vraćanja, pa ovaj ključ za oporavak nije sačuvan. Završite ili preskočite vraćanje, pa postavite ključ.",
   "pushTestSent": "Proba je poslata. Obaveštenje bi trebalo da stigne u roku od jednog minuta.",
   "pushTestGone": "Usluga dostave više ne prihvata ovaj uređaj. Registracija se ponavlja.",
   "pushTestRejected": "Usluga dostave nije prihvatila probu. Pokušajte ponovo kasnije.",

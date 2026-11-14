@@ -9,6 +9,12 @@ part of 'app_state.dart';
 /// Settings in the encrypted local metadata. None is in a backup (D71). The
 /// waiting claim itself is the device's pending enrollment (schema 17).
 const String _recoveryFollowUpSetting = 'k0.recovery_follow_up';
+
+/// U23: whether the follow-up began with the restore step, scoped to the
+/// account and device like the follow-up ('1' or '0'). A separate setting,
+/// so the follow-up's own three-part value stays readable by earlier builds
+/// (a fourth part would make them drop the follow-up and open the chats).
+const String _recoveryFollowUpRestoreSetting = 'k0.recovery_follow_up_restore';
 const String _passwordLeakSetting = 'k0.password_leak_day';
 const String _passwordLeakDismissedSetting = 'k0.password_leak_dismissed';
 
@@ -114,6 +120,45 @@ extension AccountRecoveryActions on AppState {
     await _saveRecoveryFollowUp(RecoveryFollowUpStep.recoveryKey);
   }
 
+  /// U23: whether this follow-up has the restore step. It is fixed when the
+  /// recovery finishes, so the step counter does not change under the user
+  /// when [k1RestoreSupported] differs later (another build after an update).
+  /// A follow-up from an earlier build, which stored nothing, falls back to
+  /// what this build offers.
+  bool get recoveryFollowUpIncludesRestore =>
+      recoveryFollowUp == RecoveryFollowUpStep.restore ||
+      (_recoveryFollowUpWithRestore ?? k1RestoreSupported);
+
+  /// U23: whether the follow-up may go back from the recovery key step to
+  /// the restore step. Only there: before the key is replaced nothing
+  /// one-time has happened, so the restore can still be done or skipped
+  /// again. The restore step is the first (what came before it, the
+  /// recovery itself, cannot be undone), and the password step comes after
+  /// the key was replaced on the server and wiped here: going back from it
+  /// could only mean replacing the key again. This build must also be able
+  /// to restore, or going back would lead nowhere.
+  bool get canGoBackToRecoveryRestore =>
+      recoveryFollowUp == RecoveryFollowUpStep.recoveryKey &&
+      recoveryFollowUpIncludesRestore &&
+      k1RestoreSupported &&
+      !isBusy(Ops.recoveryKey);
+
+  /// U23: goes back from the recovery key step to the restore step, when
+  /// [canGoBackToRecoveryRestore]. It waits behind a key save in flight and
+  /// checks again, so a save that finished moves on to the password and is
+  /// never followed by a second key. Returns whether it went back.
+  Future<bool> backToRecoveryRestoreStep() async {
+    final current = session;
+    if (current == null) return false;
+    var moved = false;
+    await _enqueueSessionTransition(() async {
+      if (!identical(session, current) || !canGoBackToRecoveryRestore) return;
+      await _saveRecoveryFollowUp(RecoveryFollowUpStep.restore);
+      moved = true;
+    });
+    return moved;
+  }
+
   /// A fresh recovery key to show. The caller disposes it.
   Future<RecoveryKeyDraft> createRecoveryKeyDraft() async {
     final crypto = _recoveryCrypto;
@@ -160,6 +205,12 @@ extension AccountRecoveryActions on AppState {
       final client = api;
       if (current == null || client == null || draft._disposed) {
         throw UserFacingException(l10n.errorRelinkRequired);
+      }
+      // U23: Back ran first (it was queued before this save) and the
+      // follow-up is on the restore step again. The save must not replace
+      // the key behind a screen that no longer shows it.
+      if (recoveryFollowUp == RecoveryFollowUpStep.restore) {
+        throw UserFacingException(l10n.recoveryKeyStepMovedBack);
       }
       final values = await _recoveryCrypto.deriveRecoveryKey(draft._entropy);
       try {
@@ -552,6 +603,9 @@ extension AccountRecoveryActions on AppState {
         recovered.token.isEmpty) {
       throw StateError('Recovery identity was substituted');
     }
+    // The restore flag first: a stop between the two leaves a flag no
+    // follow-up reads, never a follow-up without its flag.
+    await _saveRecoveryFollowUpRestore(k1RestoreSupported, recovered);
     await _saveRecoveryFollowUp(
       k1RestoreSupported
           ? RecoveryFollowUpStep.restore
@@ -715,9 +769,12 @@ extension AccountRecoveryActions on AppState {
     if (current == null) return;
     try {
       recoveryFollowUp = _decodeFollowUp(
-        await localStore.loadSetting(_recoveryFollowUpSetting),
-        current,
-      );
+          await localStore.loadSetting(_recoveryFollowUpSetting), current);
+      _recoveryFollowUpWithRestore = recoveryFollowUp == null
+          ? null
+          : _decodeFollowUpRestore(
+              await localStore.loadSetting(_recoveryFollowUpRestoreSetting),
+              current);
       final day = _scopedLeakDay(
         await localStore.loadSetting(_passwordLeakSetting),
         current,
@@ -757,13 +814,32 @@ extension AccountRecoveryActions on AppState {
     return null;
   }
 
-  Future<void> _saveRecoveryFollowUp(
-    RecoveryFollowUpStep? step, {
-    Session? owner,
-  }) async {
+  bool? _decodeFollowUpRestore(String? raw, Session current) {
+    if (raw == null || raw.isEmpty) return null;
+    final parts = raw.split('\u0000');
+    if (parts.length != 3 ||
+        parts[0] != current.accountId ||
+        parts[1] != current.deviceId) {
+      return null;
+    }
+    return switch (parts[2]) { '1' => true, '0' => false, _ => null };
+  }
+
+  Future<void> _saveRecoveryFollowUpRestore(
+      bool withRestore, Session owner) async {
+    final flag = withRestore ? '1' : '0';
+    await localStore.saveSetting(_recoveryFollowUpRestoreSetting,
+        '${owner.accountId}\u0000${owner.deviceId}\u0000$flag');
+    _recoveryFollowUpWithRestore = withRestore;
+  }
+
+  Future<void> _saveRecoveryFollowUp(RecoveryFollowUpStep? step,
+      {Session? owner}) async {
     final current = owner ?? session;
     if (step == null || current == null) {
       await localStore.saveSetting(_recoveryFollowUpSetting, '');
+      await localStore.saveSetting(_recoveryFollowUpRestoreSetting, '');
+      _recoveryFollowUpWithRestore = null;
     } else {
       await localStore.saveSetting(
         _recoveryFollowUpSetting,

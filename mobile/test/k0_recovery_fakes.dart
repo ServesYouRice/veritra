@@ -5,6 +5,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart'
+    show BackupHeaderInfo, OpenedBackup;
 import 'package:private_messenger/storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import 'package:private_messenger/storage/local_store.dart';
@@ -145,6 +147,22 @@ class K0Crypto extends TestOnlyCryptoService
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// A [K0Crypto] in a build that can open K1 backups: the recovery follow-up
+/// then starts with the restore step (K1-4).
+class K0RestoringCrypto extends K0Crypto implements BackupOpenCryptoService {
+  @override
+  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
+
+  @override
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) async =>
+      throw UnimplementedError();
 }
 
 /// A [K0Crypto] that promotes the way the native engine does: one store

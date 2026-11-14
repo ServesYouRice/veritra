@@ -2871,6 +2871,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get errorRelinkRequired => 'This device must be linked again.';
 
   @override
+  String get recoveryKeyStepMovedBack =>
+      'You went back to the restore step, so this recovery key was not saved. Finish or skip the restore, then set a key.';
+
+  @override
   String get pushTestSent =>
       'Test sent. A notification should arrive within a minute.';
 

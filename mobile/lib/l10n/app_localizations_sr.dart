@@ -2892,6 +2892,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get errorRelinkRequired => 'Овај уређај мора поново да се повеже.';
 
   @override
+  String get recoveryKeyStepMovedBack =>
+      'Вратили сте се на корак враћања, па овај кључ за опоравак није сачуван. Завршите или прескочите враћање, па поставите кључ.';
+
+  @override
   String get pushTestSent =>
       'Проба је послата. Обавештење би требало да стигне у року од једног минута.';
 
@@ -8258,6 +8262,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get errorRelinkRequired => 'Ovaj uređaj mora ponovo da se poveže.';
+
+  @override
+  String get recoveryKeyStepMovedBack =>
+      'Vratili ste se na korak vraćanja, pa ovaj ključ za oporavak nije sačuvan. Završite ili preskočite vraćanje, pa postavite ključ.';
 
   @override
   String get pushTestSent =>

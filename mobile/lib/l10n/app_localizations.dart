@@ -4689,6 +4689,12 @@ abstract class AppLocalizations {
   /// **'This device must be linked again.'**
   String get errorRelinkRequired;
 
+  /// Shown when saving a new recovery key is refused because the recovery follow-up went back to its restore step first (Back was tapped while the save waited).
+  ///
+  /// In en, this message translates to:
+  /// **'You went back to the restore step, so this recovery key was not saved. Finish or skip the restore, then set a key.'**
+  String get recoveryKeyStepMovedBack;
+
   /// No description provided for @pushTestSent.
   ///
   /// In en, this message translates to:
