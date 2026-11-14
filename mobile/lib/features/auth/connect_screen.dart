@@ -458,15 +458,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
               padding: const EdgeInsets.only(top: BoneSpacing.sm),
               child: _ProbeStatus(result: _probeResult),
             ),
-      _sharesServerWithAnotherAccount
-          ? Padding(
-              padding: const EdgeInsets.only(top: BoneSpacing.sm),
-              child: Text(context.l10n.accountsSameServer,
-                  key: const ValueKey<String>('connect-same-server'),
-                  style: theme.textTheme.bodySmall),
-            )
-          : const SizedBox.shrink(),
+      _sameServerNotice(theme),
     ];
+  }
+
+  /// O10: this server already holds another account on this device.
+  Widget _sameServerNotice(ThemeData theme) {
+    if (!_sharesServerWithAnotherAccount) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: BoneSpacing.sm),
+      child: Text(context.l10n.accountsSameServer,
+          key: const ValueKey<String>('connect-same-server'),
+          style: theme.textTheme.bodySmall),
+    );
   }
 
   Widget _submitButton(DeviceLinkClaimView? pendingLink) {
@@ -628,6 +632,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
               padding: const EdgeInsets.only(bottom: BoneSpacing.sm),
               child: _ProbeStatus(result: _probeResult),
             ),
+      _sameServerNotice(theme),
       const SizedBox(height: BoneSpacing.md),
       _freshInstanceNotice(),
       ..._credentialFields(),

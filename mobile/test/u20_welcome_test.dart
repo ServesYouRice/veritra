@@ -74,6 +74,31 @@ void main() {
     expect(find.byType(VeritraMark), findsNothing);
   });
 
+  testWidgets('both choice screens meet the tap-target and contrast guidelines',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    await open(tester);
+    Future<void> check() async {
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+    }
+
+    await check();
+    await tester.tap(key('welcome-account'));
+    await tester.pumpAndSettle();
+    await check();
+    // Each choice reads as one button named by its words.
+    expect(
+        tester.getSemantics(key('welcome-new-device')),
+        isSemantics(
+          isButton: true,
+          hasTapAction: true,
+          label: 'This is a new device\nAdd it using a device you already use.',
+        ));
+    semantics.dispose();
+  });
+
   testWidgets('back and the system back gesture step back through the flow',
       (tester) async {
     await open(tester);

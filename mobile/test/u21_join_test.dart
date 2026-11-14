@@ -13,6 +13,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/features/auth/connect_screen.dart';
+import 'package:private_messenger/features/auth/qr_scan_screen.dart';
 import 'package:private_messenger/features/settings/invite_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -88,6 +89,18 @@ void main() {
     await fillAccount(tester);
     await join(tester);
     expect(state.joins, <String>['$_origin|$_code|alice|correct-horse-1']);
+  });
+
+  testWidgets('a scanned link fills the server and the code', (tester) async {
+    await openJoin(tester);
+    await tester.tap(key('connect-invite-scan'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    // The scanner pops with what the camera read.
+    Navigator.of(tester.element(find.byType(QrScanScreen))).pop(_link);
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    expect(find.text('Joining chat.example.org'), findsOneWidget);
   });
 
   testWidgets('Join is visible without scrolling at 360 x 800', (tester) async {
@@ -224,6 +237,65 @@ void main() {
     expect(find.text('I have an invite'), findsOneWidget);
   });
 
+  testWidgets('both join steps meet the tap-target and contrast guidelines',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    await openJoin(tester);
+    Future<void> check() async {
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+    }
+
+    await check();
+    await pasteLink(tester, _link);
+    await check();
+    semantics.dispose();
+  });
+
+  group('through the real registration path', () {
+    // The screen places an error by its message, so these run the real
+    // registerWithInvite (its _run and describeError) against a client that
+    // answers as the server does.
+    Future<void> joinAgainst(WidgetTester tester, String serverCode) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final state = AppState(
+        apiClientFactory: (_) => _RefusingApi(serverCode),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => _QuietSync(),
+      );
+      addTearDown(state.dispose);
+      await tester.pumpWidget(MaterialApp(
+        theme: veritraLightTheme(),
+        home: ConnectScreen(state: state),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(key('welcome-invite'));
+      await tester.pumpAndSettle();
+      await pasteLink(tester, _link);
+      await fillAccount(tester);
+      await join(tester);
+      expect(state.error, isNotNull);
+    }
+
+    testWidgets('400 invalid_invite lands under the link', (tester) async {
+      await joinAgainst(tester, 'invalid_invite');
+      expect(errorUnder(tester, key('connect-invite-link')),
+          englishL10n.apiErrorInvalidInvite);
+      expect(find.text(englishL10n.apiErrorInvalidInvite), findsOneWidget);
+    });
+
+    testWidgets('400 weak_password lands under the password', (tester) async {
+      await joinAgainst(tester, 'weak_password');
+      expect(errorUnder(tester, find.byType(TextFormField).at(1)),
+          englishL10n.apiErrorWeakPassword);
+      expect(find.text(englishL10n.apiErrorWeakPassword), findsOneWidget);
+    });
+  });
+
   group('the invitations page', () {
     testWidgets('copies the invitation as one link that the joiner reads back',
         (tester) async {
@@ -338,6 +410,24 @@ class _JoinState extends AppState {
     joins.add('$baseUrl|$inviteCode|$username|$password');
     error = answer;
     notifyListeners();
+  }
+}
+
+/// A server with users that refuses the registration with [code] (HTTP 400),
+/// the way `POST /api/v1/register/enrollment` answers.
+class _RefusingApi extends ApiClient {
+  _RefusingApi(this.code) : super(baseUrl: _origin);
+
+  final String code;
+
+  @override
+  Future<Map<String, Object?>> setupStatus() async =>
+      <String, Object?>{'setup_required': false};
+
+  @override
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+      String inviteCode) async {
+    throw ApiException(400, '{"error":"$code"}');
   }
 }
 

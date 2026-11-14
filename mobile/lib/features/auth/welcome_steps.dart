@@ -128,50 +128,55 @@ class _ChoiceTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final radius = BorderRadius.circular(BoneRadii.lg);
-    return Material(
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: radius,
-        side: BorderSide(color: scheme.outlineVariant),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(BoneSpacing.lg),
-          child: Row(
-            children: <Widget>[
-              ExcludeSemantics(
-                child: Icon(icon, color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(width: BoneSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(title, style: theme.textTheme.titleMedium),
-                    const SizedBox(height: BoneSpacing.xs),
-                    Text(
-                      detail,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
+    // One button to a screen reader, named by its title and detail.
+    return MergeSemantics(
+        child: Semantics(
+      button: true,
+      child: Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(BoneSpacing.lg),
+            child: Row(
+              children: <Widget>[
+                ExcludeSemantics(
+                  child: Icon(icon, color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(width: BoneSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(title, style: theme.textTheme.titleMedium),
+                      const SizedBox(height: BoneSpacing.xs),
+                      Text(
+                        detail,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: BoneSpacing.sm),
-              ExcludeSemantics(
-                child: Icon(
-                  Icons.chevron_right,
-                  color: scheme.onSurfaceVariant,
+                const SizedBox(width: BoneSpacing.sm),
+                ExcludeSemantics(
+                  child: Icon(
+                    Icons.chevron_right,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
-    );
+    ));
   }
 }
 
