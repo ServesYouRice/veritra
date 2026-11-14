@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -159,8 +160,9 @@ func TestCreateChannelSkipsMemberAtConversationLimit(t *testing.T) {
 	if events(busy.Account.ID) != 0 || events(free.Account.ID) != 1 {
 		t.Fatalf("membership events busy=%d free=%d, want 0 and 1", events(busy.Account.ID), events(free.Account.ID))
 	}
-	if got := rejections(store, admission.Conversations); got != 1 {
-		t.Fatalf("conversation-limit rejections = %d, want 1", got)
+	// Leaving a member out is not a refusal, so the refusal metric stays put.
+	if got := rejections(store, admission.Conversations); got != 0 {
+		t.Fatalf("conversation-limit rejections after a skip = %d, want 0", got)
 	}
 
 	// The creator's device seeds the group from the server roster: busy has
@@ -231,6 +233,9 @@ func TestCommunityRoleChangeKeepsTheConversationLimitForALeftOutMember(t *testin
 	if got := conversationCount(t, ctx, store, busy.Account.ID); got != 3 {
 		t.Fatalf("busy conversations after the role change = %d, want 3", got)
 	}
+	if got := rejections(store, admission.Conversations); got != 0 {
+		t.Fatalf("conversation-limit rejections after a role change that skipped = %d, want 0", got)
+	}
 	if got := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM memberships m JOIN conversations c ON c.id = m.conversation_id
 		WHERE c.community_id = ? AND m.account_id = ? AND m.role = ?`, communityID, busy.Account.ID, domain.RoleModerator); got != 1 {
 		t.Fatalf("channels where busy is a moderator = %d, want 1 (the one it holds)", got)
@@ -247,6 +252,165 @@ func TestCommunityRoleChangeKeepsTheConversationLimitForALeftOutMember(t *testin
 	}
 	if got := conversationCount(t, ctx, store, busy.Account.ID); got != 3 {
 		t.Fatalf("busy conversations after the join = %d, want 3", got)
+	}
+}
+
+// D134, patch A: the community owner is never left out of a legacy channel.
+// An owner at the conversation limit refuses a channel an admin makes, as
+// every member at the limit did before D134, and the refusal is counted.
+func TestCreateChannelRefusesWhenTheOwnerIsAtConversationLimit(t *testing.T) {
+	ctx := context.Background()
+	store := newLimitedStore(t, config.Limits{ConversationsPerAccount: 3})
+	owner := createTestOwner(t, ctx, store)
+	members := registerMembers(t, ctx, store, owner, "maker", "free")
+	maker := members[0]
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, maker.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, members[1].Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	// The owner sits at the limit after two groups and the first channel.
+	for i := 0; i < 2; i++ {
+		if _, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID}); err != nil {
+			t.Fatalf("owner group %d: %v", i, err)
+		}
+	}
+	if _, _, skipped, err := store.CreateChannelSkippingFullMembers(ctx, community.ID, "", maker.Account.ID); err != nil || skipped != 0 {
+		t.Fatalf("channel below every member's limit: skipped=%d err=%v", skipped, err)
+	}
+	snapshot := func() [4]int {
+		var counts [4]int
+		for i, query := range []string{
+			`SELECT COUNT(*) FROM channels`,
+			`SELECT COUNT(*) FROM conversations`,
+			`SELECT COUNT(*) FROM memberships`,
+			`SELECT COUNT(*) FROM sync_events`,
+		} {
+			counts[i] = testRowCount(t, ctx, store, query)
+		}
+		return counts
+	}
+	before := snapshot()
+	_, _, _, err = store.CreateChannelSkippingFullMembers(ctx, community.ID, "", maker.Account.ID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("channel with the owner at the limit: err = %v, want %v", err, ErrForbidden)
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("refused channel changed rows: channels/conversations/memberships/sync_events %v -> %v", before, after)
+	}
+	if got := rejections(store, admission.Conversations); got != 1 {
+		t.Fatalf("conversation-limit rejections = %d, want 1", got)
+	}
+}
+
+// ownerEverywhere checks that owner holds the owner role in the community and
+// in every one of its legacy channels.
+func ownerEverywhere(t *testing.T, ctx context.Context, store *Store, communityID, accountID string) {
+	t.Helper()
+	if got := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM memberships WHERE community_id = ? AND account_id = ? AND role = ?`, communityID, accountID, domain.RoleOwner); got != 1 {
+		t.Fatalf("community owner rows for %s = %d, want 1", accountID, got)
+	}
+	channels := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM conversations WHERE community_id = ? AND kind = 'community_channel'`, communityID)
+	owned := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM memberships m JOIN conversations c ON c.id = m.conversation_id
+		WHERE c.community_id = ? AND m.account_id = ? AND m.role = ?`, communityID, accountID, domain.RoleOwner)
+	if owned != channels {
+		t.Fatalf("channels owned by %s = %d, want all %d", accountID, owned, channels)
+	}
+}
+
+// D134, patch A: ownership never moves to an admin that was left out of a
+// legacy channel and still has no room for it, by transfer or by the owner's
+// succession handover; the old owner keeps every channel. With room, the new
+// owner joins the channel it lacked as its owner.
+func TestOwnershipRefusesAnAdminLeftOutAtConversationLimit(t *testing.T) {
+	ctx := context.Background()
+	store, owner, busy, _, communityID, channel, busyGroup := fullMemberChannel(t, ctx)
+	if _, err := store.ManageCommunityMember(ctx, communityID, owner.Account.ID, busy.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatalf("promote busy to admin: %v", err)
+	}
+	if channelMember(t, ctx, store, channel.ID, busy.Account.ID) {
+		t.Fatal("promotion added a member at the limit to the channel it was left out of")
+	}
+	if got := rejections(store, admission.Conversations); got != 0 {
+		t.Fatalf("conversation-limit rejections before the transfer = %d, want 0", got)
+	}
+
+	if _, err := store.ManageCommunityMember(ctx, communityID, owner.Account.ID, busy.Account.ID, domain.RoleOwner); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("transfer to an admin at the limit: err = %v, want %v", err, ErrForbidden)
+	}
+	ownerEverywhere(t, ctx, store, communityID, owner.Account.ID)
+	if got := rejections(store, admission.Conversations); got != 1 {
+		t.Fatalf("conversation-limit rejections after the refused transfer = %d, want 1", got)
+	}
+	if _, _, err := store.RequestCommunitySuccession(ctx, communityID, owner.Account.ID, busy.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("succession handover to an admin at the limit: err = %v, want %v", err, ErrForbidden)
+	}
+	ownerEverywhere(t, ctx, store, communityID, owner.Account.ID)
+
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM memberships WHERE conversation_id = ? AND account_id = ?`, busyGroup, busy.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, communityID, owner.Account.ID, busy.Account.ID, domain.RoleOwner); err != nil {
+		t.Fatalf("transfer to an admin with room: %v", err)
+	}
+	ownerEverywhere(t, ctx, store, communityID, busy.Account.ID)
+}
+
+// D134: a member left out of a legacy channel that joins it later takes its
+// community role there, not the role the add named, and an actor may not
+// bring in a role above its own. Neither refusal here is a limit refusal.
+func TestLateChannelJoinTakesTheCommunityRole(t *testing.T) {
+	ctx := context.Background()
+	store, owner, busy, free, communityID, channel, busyGroup := fullMemberChannel(t, ctx)
+	for _, change := range []struct {
+		account AccountDevice
+		role    string
+	}{{busy, domain.RoleAdmin}, {free, domain.RoleModerator}} {
+		if _, err := store.ManageCommunityMember(ctx, communityID, owner.Account.ID, change.account.Account.ID, change.role); err != nil {
+			t.Fatalf("set %s to %s: %v", change.account.Account.Username, change.role, err)
+		}
+	}
+	if channelMember(t, ctx, store, channel.ID, busy.Account.ID) {
+		t.Fatal("promotion added a member at the limit to the channel it was left out of")
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM memberships WHERE conversation_id = ? AND account_id = ?`, busyGroup, busy.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A moderator may not bring an admin in, even as a plain member.
+	if _, _, err := store.ManageConversationMemberRole(ctx, channel.ID, free.Account.ID, busy.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("moderator adding an admin late: err = %v, want %v", err, ErrForbidden)
+	}
+	if channelMember(t, ctx, store, channel.ID, busy.Account.ID) {
+		t.Fatal("refused late add left a membership")
+	}
+	eventID, role, err := store.ManageConversationMemberRole(ctx, channel.ID, owner.Account.ID, busy.Account.ID, domain.RoleMember)
+	if err != nil {
+		t.Fatalf("late add with room: %v", err)
+	}
+	if role != domain.RoleAdmin {
+		t.Fatalf("late add returned role %q, want %q", role, domain.RoleAdmin)
+	}
+	if got := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ? AND role = ?`, channel.ID, busy.Account.ID, domain.RoleAdmin); got != 1 {
+		t.Fatalf("busy admin rows in the channel = %d, want 1", got)
+	}
+	var payloadJSON string
+	if err := store.db.QueryRowContext(ctx, `SELECT payload_json FROM sync_events WHERE id = ?`, eventID).Scan(&payloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["role"] != domain.RoleAdmin || payload["account_id"] != busy.Account.ID {
+		t.Fatalf("late add event payload = %v, want busy as admin", payload)
+	}
+	if got := rejections(store, admission.Conversations); got != 0 {
+		t.Fatalf("conversation-limit rejections = %d, want 0", got)
 	}
 }
 

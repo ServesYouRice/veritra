@@ -17,8 +17,9 @@ import (
 // A community is in one of two layouts (migration 0049):
 //
 //   - legacy: one conversation per channel, every member in every channel,
-//     except a member at the conversation limit when a channel was made
-//     (D134, CreateChannelSkippingFullMembers). Nothing about it changes here.
+//     except a member (never the owner) at the conversation limit when a
+//     channel was made (D134, CreateChannelSkippingFullMembers). Nothing
+//     about it changes here.
 //   - active: one shared conversation (effective kind community_shared) for
 //     all open and announcement channels, and one conversation per private
 //     channel. Only the community_layouts, community_conversation_layouts and

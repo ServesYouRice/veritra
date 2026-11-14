@@ -333,14 +333,16 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "invalid_role")
 			return
 		}
-		eventID, err := a.Store.ManageConversationMember(r.Context(), conversationID, principal.AccountID, req.AccountID, req.Role)
+		// The stored role can differ from the requested one: a member joining a
+		// legacy channel late takes its community role (D134).
+		eventID, role, err := a.Store.ManageConversationMemberRole(r.Context(), conversationID, principal.AccountID, req.AccountID, req.Role)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": req.Role, "mls_coordination": "pending"}
+		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": role, "mls_coordination": "pending"}
 		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
-		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": req.Role})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_updated", "mls_coordination": "pending"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
 		limit := normalizeLimit(messageQueryLimit(r), 100, 200)
