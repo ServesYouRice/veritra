@@ -536,6 +536,44 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInviteCodeHint => 'From an admin on this instance';
 
   @override
+  String get connectInviteLink => 'Invite link';
+
+  @override
+  String get connectInviteLinkHint => 'Paste the link you were sent';
+
+  @override
+  String get connectInviteLinkRequired => 'Paste the invite link you received.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'This is not a Veritra invite link. Check that you copied all of it.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Type the server address and code instead';
+
+  @override
+  String get connectInviteLinkInstead => 'Paste an invite link instead';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Paste the invite link you were sent, or scan its QR code.';
+
+  @override
+  String get connectJoinAccountTitle => 'Choose a username and password';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Joining $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Change';
+
+  @override
+  String get connectScanInviteTitle => 'Scan invite QR';
+
+  @override
   String get connectUsername => 'Username';
 
   @override
@@ -543,6 +581,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectUsernameHint => 'Your name on this instance';
+
+  @override
+  String get connectUsernameInvalid => 'Use 3 to 32 letters, digits, _ or -.';
 
   @override
   String get connectPassword => 'Password';
@@ -698,6 +739,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get qrPointCamera =>
       'Point the camera at the QR code on your existing device (Settings → Link a new device).';
+
+  @override
+  String get qrPointCameraInvite => 'Point the camera at the invite QR code.';
 
   @override
   String get qrPermissionDenied =>
@@ -932,6 +976,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get inviteCopyCode => 'Copy code';
+
+  @override
+  String get inviteCopyLink => 'Copy link';
+
+  @override
+  String get inviteLinkCopied => 'Invite link copied.';
+
+  @override
+  String get inviteShowQr => 'Show QR code';
+
+  @override
+  String get inviteQrTitle => 'Invite QR code';
+
+  @override
+  String get inviteQrHint =>
+      'On the new phone, open Veritra, tap “I have an invite” and scan this code.';
 
   @override
   String get profileThisInstance => 'this instance';

@@ -538,6 +538,45 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectInviteCodeHint => 'Од администратора ове инстанце';
 
   @override
+  String get connectInviteLink => 'Линк позивнице';
+
+  @override
+  String get connectInviteLinkHint => 'Налепите линк који сте добили';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Налепите линк позивнице који сте добили.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ово није Veritra линк позивнице. Проверите да сте га копирали цео.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Уместо тога унесите адресу сервера и код';
+
+  @override
+  String get connectInviteLinkInstead => 'Уместо тога налепите линк позивнице';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Налепите линк позивнице који сте добили или скенирајте његов QR код.';
+
+  @override
+  String get connectJoinAccountTitle => 'Изаберите корисничко име и лозинку';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Придружујете се серверу $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Промени';
+
+  @override
+  String get connectScanInviteTitle => 'Скенирај QR код позивнице';
+
+  @override
   String get connectUsername => 'Корисничко име';
 
   @override
@@ -545,6 +584,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectUsernameHint => 'Ваше име на овој инстанци';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Користите од 3 до 32 латинична слова, цифре, _ или -.';
 
   @override
   String get connectPassword => 'Лозинка';
@@ -704,6 +747,9 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get qrPointCamera =>
       'Усмерите камеру ка QR коду на постојећем уређају (Подешавања → Повежи нови уређај).';
+
+  @override
+  String get qrPointCameraInvite => 'Усмерите камеру ка QR коду позивнице.';
 
   @override
   String get qrPermissionDenied =>
@@ -939,6 +985,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get inviteCopyCode => 'Копирај код';
+
+  @override
+  String get inviteCopyLink => 'Копирај линк';
+
+  @override
+  String get inviteLinkCopied => 'Линк позивнице је копиран.';
+
+  @override
+  String get inviteShowQr => 'Прикажи QR код';
+
+  @override
+  String get inviteQrTitle => 'QR код позивнице';
+
+  @override
+  String get inviteQrHint =>
+      'На новом телефону отворите Veritra, додирните „Имам позивницу“ и скенирајте овај код.';
 
   @override
   String get profileThisInstance => 'ова инстанца';
@@ -5223,6 +5285,45 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectInviteCodeHint => 'Od administratora ove instance';
 
   @override
+  String get connectInviteLink => 'Link pozivnice';
+
+  @override
+  String get connectInviteLinkHint => 'Nalepite link koji ste dobili';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Nalepite link pozivnice koji ste dobili.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ovo nije Veritra link pozivnice. Proverite da ste ga kopirali ceo.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Umesto toga unesite adresu servera i kod';
+
+  @override
+  String get connectInviteLinkInstead => 'Umesto toga nalepite link pozivnice';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Nalepite link pozivnice koji ste dobili ili skenirajte njegov QR kod.';
+
+  @override
+  String get connectJoinAccountTitle => 'Izaberite korisničko ime i lozinku';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Pridružujete se serveru $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Promeni';
+
+  @override
+  String get connectScanInviteTitle => 'Skeniraj QR kod pozivnice';
+
+  @override
   String get connectUsername => 'Korisničko ime';
 
   @override
@@ -5230,6 +5331,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectUsernameHint => 'Vaše ime na ovoj instanci';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Koristite od 3 do 32 latinična slova, cifre, _ ili -.';
 
   @override
   String get connectPassword => 'Lozinka';
@@ -5389,6 +5494,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get qrPointCamera =>
       'Usmerite kameru ka QR kodu na postojećem uređaju (Podešavanja → Poveži novi uređaj).';
+
+  @override
+  String get qrPointCameraInvite => 'Usmerite kameru ka QR kodu pozivnice.';
 
   @override
   String get qrPermissionDenied =>
@@ -5624,6 +5732,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get inviteCopyCode => 'Kopiraj kod';
+
+  @override
+  String get inviteCopyLink => 'Kopiraj link';
+
+  @override
+  String get inviteLinkCopied => 'Link pozivnice je kopiran.';
+
+  @override
+  String get inviteShowQr => 'Prikaži QR kod';
+
+  @override
+  String get inviteQrTitle => 'QR kod pozivnice';
+
+  @override
+  String get inviteQrHint =>
+      'Na novom telefonu otvorite Veritra, dodirnite „Imam pozivnicu“ i skenirajte ovaj kod.';
 
   @override
   String get profileThisInstance => 'ova instanca';

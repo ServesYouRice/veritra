@@ -66,10 +66,13 @@ String? parseDeviceLinkOrigin(
 /// null if the user backs out. Parsing is left to the caller so this screen
 /// stays a thin camera surface.
 class QrScanScreen extends StatefulWidget {
-  const QrScanScreen({this.title, super.key});
+  const QrScanScreen({this.title, this.hint, super.key});
 
   /// The app bar title; defaults to the device-link wording.
   final String? title;
+
+  /// The line under the viewfinder; defaults to the device-link wording.
+  final String? hint;
 
   @override
   State<QrScanScreen> createState() => _QrScanScreenState();
@@ -149,7 +152,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
-                context.l10n.qrPointCamera,
+                widget.hint ?? context.l10n.qrPointCamera,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.white,

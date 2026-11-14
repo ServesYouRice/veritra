@@ -170,6 +170,10 @@ void main() {
       // The person picks joining, although this device is linked there.
       await openRoute(tester, 'welcome-invite');
       expect(find.text('JOIN WITH AN INVITE'), findsOneWidget);
+      // U21: the server address field is behind "type it instead".
+      await tester
+          .tap(find.byKey(const ValueKey<String>('connect-invite-manual')));
+      await tester.pumpAndSettle();
       await tester.enterText(
           find.byType(TextFormField).first, 'https://one.example.org');
       await tester.pump(const Duration(milliseconds: 700));

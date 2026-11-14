@@ -1029,6 +1029,72 @@ abstract class AppLocalizations {
   /// **'From an admin on this instance'**
   String get connectInviteCodeHint;
 
+  /// No description provided for @connectInviteLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link'**
+  String get connectInviteLink;
+
+  /// No description provided for @connectInviteLinkHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the link you were sent'**
+  String get connectInviteLinkHint;
+
+  /// No description provided for @connectInviteLinkRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the invite link you received.'**
+  String get connectInviteLinkRequired;
+
+  /// No description provided for @connectInviteLinkInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not a Veritra invite link. Check that you copied all of it.'**
+  String get connectInviteLinkInvalid;
+
+  /// No description provided for @connectInviteTypeInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the server address and code instead'**
+  String get connectInviteTypeInstead;
+
+  /// No description provided for @connectInviteLinkInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste an invite link instead'**
+  String get connectInviteLinkInstead;
+
+  /// No description provided for @connectJoinLinkDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the invite link you were sent, or scan its QR code.'**
+  String get connectJoinLinkDetail;
+
+  /// No description provided for @connectJoinAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a username and password'**
+  String get connectJoinAccountTitle;
+
+  /// No description provided for @connectJoiningServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining {server}'**
+  String connectJoiningServer(String server);
+
+  /// No description provided for @connectJoinChangeServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get connectJoinChangeServer;
+
+  /// No description provided for @connectScanInviteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan invite QR'**
+  String get connectScanInviteTitle;
+
   /// No description provided for @connectUsername.
   ///
   /// In en, this message translates to:
@@ -1046,6 +1112,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your name on this instance'**
   String get connectUsernameHint;
+
+  /// No description provided for @connectUsernameInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use 3 to 32 letters, digits, _ or -.'**
+  String get connectUsernameInvalid;
 
   /// No description provided for @connectPassword.
   ///
@@ -1328,6 +1400,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Point the camera at the QR code on your existing device (Settings → Link a new device).'**
   String get qrPointCamera;
+
+  /// No description provided for @qrPointCameraInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the invite QR code.'**
+  String get qrPointCameraInvite;
 
   /// No description provided for @qrPermissionDenied.
   ///
@@ -1676,6 +1754,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy code'**
   String get inviteCopyCode;
+
+  /// No description provided for @inviteCopyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get inviteCopyLink;
+
+  /// No description provided for @inviteLinkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link copied.'**
+  String get inviteLinkCopied;
+
+  /// No description provided for @inviteShowQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR code'**
+  String get inviteShowQr;
+
+  /// No description provided for @inviteQrTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite QR code'**
+  String get inviteQrTitle;
+
+  /// No description provided for @inviteQrHint.
+  ///
+  /// In en, this message translates to:
+  /// **'On the new phone, open Veritra, tap “I have an invite” and scan this code.'**
+  String get inviteQrHint;
 
   /// No description provided for @profileThisInstance.
   ///
