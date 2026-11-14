@@ -2823,11 +2823,35 @@ abstract class AppLocalizations {
   /// **'Stops push for this conversation. Messages still arrive and still count as unread.'**
   String get detailsMuteDetail;
 
+  /// No description provided for @detailsActionMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get detailsActionMute;
+
+  /// No description provided for @detailsActionUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get detailsActionUnmute;
+
+  /// No description provided for @detailsActionCall.
+  ///
+  /// In en, this message translates to:
+  /// **'Call'**
+  String get detailsActionCall;
+
   /// No description provided for @detailsSectionMembers.
   ///
   /// In en, this message translates to:
   /// **'Members'**
   String get detailsSectionMembers;
+
+  /// No description provided for @detailsSectionAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get detailsSectionAdvanced;
 
   /// No description provided for @detailsLoadingMembers.
   ///
@@ -2906,6 +2930,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.'**
   String get detailsDisappearingNote;
+
+  /// No description provided for @detailsRetentionLocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Only an owner, admin or moderator of this chat can change this.'**
+  String get detailsRetentionLocked;
 
   /// No description provided for @detailsRetentionOff.
   ///

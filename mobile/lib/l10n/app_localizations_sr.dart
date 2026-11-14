@@ -1708,7 +1708,19 @@ class AppLocalizationsSr extends AppLocalizations {
       'Зауставља push обавештења за овај разговор. Поруке и даље стижу и рачунају се као непрочитане.';
 
   @override
+  String get detailsActionMute => 'Утишај';
+
+  @override
+  String get detailsActionUnmute => 'Укључи';
+
+  @override
+  String get detailsActionCall => 'Позови';
+
+  @override
   String get detailsSectionMembers => 'Чланови';
+
+  @override
+  String get detailsSectionAdvanced => 'Напредно';
 
   @override
   String get detailsLoadingMembers => 'Учитавање чланова…';
@@ -1753,6 +1765,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get detailsDisappearingNote =>
       'Када је ово подешено, поруке послате од тада бришу се са сервера након овог временског периода. Постојеће поруке задржавају тајмер са којим су послате.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ово могу да мењају само власник, администратор или модератор овог ћаскања.';
 
   @override
   String get detailsRetentionOff => 'Искључено';
@@ -6396,7 +6412,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Zaustavlja push obaveštenja za ovaj razgovor. Poruke i dalje stižu i računaju se kao nepročitane.';
 
   @override
+  String get detailsActionMute => 'Utišaj';
+
+  @override
+  String get detailsActionUnmute => 'Uključi';
+
+  @override
+  String get detailsActionCall => 'Pozovi';
+
+  @override
   String get detailsSectionMembers => 'Članovi';
+
+  @override
+  String get detailsSectionAdvanced => 'Napredno';
 
   @override
   String get detailsLoadingMembers => 'Učitavanje članova…';
@@ -6441,6 +6469,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get detailsDisappearingNote =>
       'Kada je ovo podešeno, poruke poslate od tada brišu se sa servera nakon ovog vremenskog perioda. Postojeće poruke zadržavaju tajmer sa kojim su poslate.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Ovo mogu da menjaju samo vlasnik, administrator ili moderator ovog ćaskanja.';
 
   @override
   String get detailsRetentionOff => 'Isključeno';

@@ -1694,7 +1694,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Stops push for this conversation. Messages still arrive and still count as unread.';
 
   @override
+  String get detailsActionMute => 'Mute';
+
+  @override
+  String get detailsActionUnmute => 'Unmute';
+
+  @override
+  String get detailsActionCall => 'Call';
+
+  @override
   String get detailsSectionMembers => 'Members';
+
+  @override
+  String get detailsSectionAdvanced => 'Advanced';
 
   @override
   String get detailsLoadingMembers => 'Loading members…';
@@ -1739,6 +1751,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get detailsDisappearingNote =>
       'When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.';
+
+  @override
+  String get detailsRetentionLocked =>
+      'Only an owner, admin or moderator of this chat can change this.';
 
   @override
   String get detailsRetentionOff => 'Off';
