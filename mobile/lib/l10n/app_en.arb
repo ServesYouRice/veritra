@@ -582,6 +582,15 @@
   "@durationHours": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationMinutes": "{count, plural, =1{1 minute} other{{count} minutes}}",
   "@durationMinutes": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
+  "durationSeconds": "{count, plural, =1{1 second} other{{count} seconds}}",
+  "@durationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "durationChipDays": "{count}d",
   "@durationChipDays": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationChipHours": "{count}h",
@@ -1575,6 +1584,7 @@
   "@k1RestoreEntry": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
   "k1RestoreEntryPrevious": "{device} · {date} (the copy before)",
   "@k1RestoreEntryPrevious": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
+  "k1RestoreOlderCopy": "Older copy",
   "k1RestoreDeviceUnnamed": "A device",
   "k1RestoreDeviceRevoked": "This device was removed from your account.",
   "k1RestoreDone": "History restored.",
@@ -1680,6 +1690,28 @@
   "rolesMakeModerator": "Make moderator",
   "rolesMakeMember": "Make member",
   "rolesStepDown": "Step down",
+  "rolesChangeTitle": "Change {name}'s role?",
+  "@rolesChangeTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeMessage": "{name} becomes {role}. Everyone in the group sees the change.",
+  "@rolesChangeMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeConfirm": "Change role",
+  "rolesStepDownTitle": "Step down?",
+  "rolesStepDownMessage": "You become a member. Only someone with a higher role can give your role back.",
   "rolesElectorOn": "Let them vote for a new owner",
   "rolesElectorOff": "Stop them voting for a new owner",
   "rolesTransfer": "Make owner",

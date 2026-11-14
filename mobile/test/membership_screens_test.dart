@@ -278,7 +278,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Time out…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 h'));
+      await tester.tap(find.text('1 hour'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['timeout:comm_1:acct_alice:3600']);
 
@@ -357,7 +357,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('@bob'), findsWidgets);
-      expect(find.text('One message every 30 s'), findsOneWidget);
+      expect(find.text('One message every 30 seconds'), findsOneWidget);
       expect(find.text('@owner banned @bob'), findsOneWidget);
       expect(find.text('Invitation links work normally.'), findsOneWidget);
 
@@ -367,13 +367,13 @@ void main() {
       expect(find.text('Channel'), findsOneWidget);
       await tester.tap(find.text('Channel'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('5 min'));
+      await tester.tap(find.text('5 minutes'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['slow:comm_1:chan_1:300']);
 
       await tester.tap(find.text('Pause invitations'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 d'));
+      await tester.tap(find.text('1 day'));
       await tester.pumpAndSettle();
       expect(api.moderation.last, 'pause:comm_1:86400');
 

@@ -2601,6 +2601,12 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 minute} other{{count} minutes}}'**
   String durationMinutes(int count);
 
+  /// No description provided for @durationSeconds.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 second} other{{count} seconds}}'**
+  String durationSeconds(int count);
+
   /// No description provided for @durationChipDays.
   ///
   /// In en, this message translates to:
@@ -6813,6 +6819,12 @@ abstract class AppLocalizations {
   /// **'{device} · {date} (the copy before)'**
   String k1RestoreEntryPrevious(String device, String date);
 
+  /// No description provided for @k1RestoreOlderCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Older copy'**
+  String get k1RestoreOlderCopy;
+
   /// No description provided for @k1RestoreDeviceUnnamed.
   ///
   /// In en, this message translates to:
@@ -7382,6 +7394,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Step down'**
   String get rolesStepDown;
+
+  /// No description provided for @rolesChangeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change {name}\'s role?'**
+  String rolesChangeTitle(String name);
+
+  /// No description provided for @rolesChangeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} becomes {role}. Everyone in the group sees the change.'**
+  String rolesChangeMessage(String name, String role);
+
+  /// No description provided for @rolesChangeConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Change role'**
+  String get rolesChangeConfirm;
+
+  /// No description provided for @rolesStepDownTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Step down?'**
+  String get rolesStepDownTitle;
+
+  /// No description provided for @rolesStepDownMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You become a member. Only someone with a higher role can give your role back.'**
+  String get rolesStepDownMessage;
 
   /// No description provided for @rolesElectorOn.
   ///

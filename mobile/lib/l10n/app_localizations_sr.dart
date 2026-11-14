@@ -1576,6 +1576,22 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString секунди',
+      few: '$countString секунде',
+      one: '$countString секунда',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String durationChipDays(int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4187,6 +4203,9 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get k1RestoreOlderCopy => 'Старија копија';
+
+  @override
   String get k1RestoreDeviceUnnamed => 'Уређај';
 
   @override
@@ -4517,6 +4536,26 @@ class AppLocalizationsSr extends AppLocalizations {
   String get rolesStepDown => 'Одступи';
 
   @override
+  String rolesChangeTitle(String name) {
+    return 'Променити улогу: $name?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name постаје $role. Сви у групи виде промену.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Промени улогу';
+
+  @override
+  String get rolesStepDownTitle => 'Одустати од улоге?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'Постајете члан. Само неко са вишом улогом може да вам врати улогу.';
+
+  @override
   String get rolesElectorOn => 'Дозволи гласање за новог власника';
 
   @override
@@ -4791,6 +4830,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get commonRevoke => 'Opozovi';
+
+  @override
+  String get commonUndo => 'Opozovi radnju';
 
   @override
   String get listTimeYesterday => 'Juče';
@@ -5588,6 +5630,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String searchBlocked(String label) {
     return 'Nalog $label je blokiran.';
   }
+
+  @override
+  String get searchBlockConfirm => 'Blokiraj';
 
   @override
   String get searchBlockFailed => 'Blokiranje nije moglo da se ažurira.';
@@ -8073,6 +8118,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get membInviteRevoke => 'Opozovi link';
 
   @override
+  String get membInviteTurnOff => 'Isključi';
+
+  @override
+  String get membInviteTurnOffTitle => 'Isključiti ovu vezu?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'Niko više ne može da se pridruži pomoću nje. Osobe koje su već zatražile zadržavaju svoje zahteve.';
+
+  @override
   String get joinReqSection => 'Zahtevi za pridruživanje';
 
   @override
@@ -8092,6 +8147,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String joinReqReject(String username) {
     return 'Odbij $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Odbij';
+
+  @override
+  String get joinReqApproveButton => 'Odobri';
 
   @override
   String get joinReqRejectedSnack => 'Zahtev je odbijen.';

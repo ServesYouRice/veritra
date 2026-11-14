@@ -199,8 +199,12 @@ class _SlotTile extends StatelessWidget {
     return ListTile(
       key: ValueKey<String>('account-${slot.namespace}'),
       contentPadding: EdgeInsets.zero,
-      leading:
-          Icon(isOpen ? Icons.account_circle : Icons.account_circle_outlined),
+      // U37: the account that is open carries a tick.
+      leading: isOpen
+          ? Icon(Icons.check_circle,
+              key: const ValueKey<String>('account-active-tick'),
+              color: Theme.of(context).colorScheme.primary)
+          : const Icon(Icons.account_circle_outlined),
       title: Text(_label(context, slot)),
       subtitle: status == null ? null : Text(status),
       onTap: host.switching || isOpen ? null : () => _switch(context),

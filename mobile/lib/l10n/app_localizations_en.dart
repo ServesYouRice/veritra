@@ -1563,6 +1563,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString seconds',
+      one: '1 second',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String durationChipDays(int count) {
     final intl.NumberFormat countNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -4169,6 +4184,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get k1RestoreOlderCopy => 'Older copy';
+
+  @override
   String get k1RestoreDeviceUnnamed => 'A device';
 
   @override
@@ -4498,6 +4516,26 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesStepDown => 'Step down';
+
+  @override
+  String rolesChangeTitle(String name) {
+    return 'Change $name\'s role?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name becomes $role. Everyone in the group sees the change.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Change role';
+
+  @override
+  String get rolesStepDownTitle => 'Step down?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'You become a member. Only someone with a higher role can give your role back.';
 
   @override
   String get rolesElectorOn => 'Let them vote for a new owner';

@@ -667,7 +667,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
             context,
             title: l10n.timeoutTitle(label),
             choices: timeoutChoices,
-            label: shortDuration,
+            label: (s) => durationWords(l10n, s),
           );
     if (seconds == null || !mounted) return;
     await state.timeoutCommunityMember(_communityId, member.accountId, seconds);
