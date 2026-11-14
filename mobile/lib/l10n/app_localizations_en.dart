@@ -349,7 +349,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsSignOutDeviceButton => 'Sign out device';
+  String get settingsSignOutDeviceButton => 'Sign out';
 
   @override
   String get settingsSignOutTitle => 'Sign out?';
@@ -3264,8 +3264,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatPreviewsSetting => 'Last message on chats';
 
   @override
-  String get chatPreviewsSettingDetail =>
-      'Show the start of the last message under each chat. It is read from this device only.';
+  String get chatPreviewsSettingDetail => 'Read from this device only.';
 
   @override
   String get b2LinkPreviews => 'Link previews';

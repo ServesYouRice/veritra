@@ -350,7 +350,7 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get settingsSignOutDeviceButton => 'Одјави уређај';
+  String get settingsSignOutDeviceButton => 'Одјави';
 
   @override
   String get settingsSignOutTitle => 'Одјавити се?';
@@ -3286,8 +3286,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatPreviewsSetting => 'Последња порука у ћаскањима';
 
   @override
-  String get chatPreviewsSettingDetail =>
-      'Прикажи почетак последње поруке испод сваког ћаскања. Чита се само са овог уређаја.';
+  String get chatPreviewsSettingDetail => 'Чита се само са овог уређаја.';
 
   @override
   String get b2LinkPreviews => 'Прегледи веза';
@@ -5634,7 +5633,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get settingsSignOutDeviceButton => 'Odjavi uređaj';
+  String get settingsSignOutDeviceButton => 'Odjavi';
 
   @override
   String get settingsSignOutTitle => 'Odjaviti se?';
@@ -8573,8 +8572,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatPreviewsSetting => 'Poslednja poruka u ćaskanjima';
 
   @override
-  String get chatPreviewsSettingDetail =>
-      'Prikaži početak poslednje poruke ispod svakog ćaskanja. Čita se samo sa ovog uređaja.';
+  String get chatPreviewsSettingDetail => 'Čita se samo sa ovog uređaja.';
 
   @override
   String get b2LinkPreviews => 'Pregledi veza';

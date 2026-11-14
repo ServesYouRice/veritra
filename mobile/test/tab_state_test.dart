@@ -102,20 +102,8 @@ Future<void> _awayFromChats(
 
 /// Opens the message actions of the bubble showing [text] and picks Reply.
 Future<void> _chooseReply(WidgetTester tester, String text) async {
-  // Long-pressing the text selects it; the bubble around it opens the
-  // message actions.
-  final bubble = find
-      .ancestor(
-        of: find.ancestor(
-          of: find.text(text),
-          matching: find.byType(SelectableText),
-        ),
-        matching: find.byType(DecoratedBox),
-      )
-      .first;
-  final rect = tester.getRect(bubble);
-  // In the left padding, clear of the rounded corners and the text.
-  await tester.longPressAt(Offset(rect.left + 7, rect.center.dy));
+  // U7: a long-press anywhere on a bubble, text included, opens the menu.
+  await tester.longPress(find.text(text).first);
   await tester.pumpAndSettle();
   await tester.tap(find.text('Reply'));
   await tester.pumpAndSettle();

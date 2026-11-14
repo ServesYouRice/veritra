@@ -73,410 +73,427 @@ class SettingsScreen extends StatelessWidget {
             data: ListTileTheme.of(context)
                 .copyWith(visualDensity: VisualDensity.compact),
             child: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              BoneSpacing.gutter,
-              BoneSpacing.sm,
-              BoneSpacing.gutter,
-              BoneSpacing.xl,
-            ),
-            children: <Widget>[
-              _IdentityHeader(
-                session: session,
-                onTap: session?.username == null
-                    ? null
-                    : () => _open(context, (_) => ProfileScreen(state: state)),
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.sm,
+                BoneSpacing.gutter,
+                BoneSpacing.xl,
               ),
-              // U18: eight groups (Account, Devices, Privacy and safety,
-              // Notifications, Appearance, Updates, Admin, About), then Sign
-              // out on its own, last. Rows that open a page carry an arrow;
-              // rows that open a dialog or act do not.
-              SectionHeader(l10n.settingsSectionAccount),
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.password_outlined),
-                    title: Text(l10n.settingsChangePassword),
-                    onTap: state.busy ? null : () => _changePassword(context),
-                  ),
-                  if (state.k1BackupSupported)
-                    ListTile(
-                      key: const ValueKey<String>('settings-auto-backup'),
-                      leading: const Icon(Icons.cloud_upload_outlined),
-                      title: Text(l10n.autoBackupTitle),
-                      subtitle: Text(autoBackupStatusText(context, state)),
-                      trailing: state.k1BackupNeedsAttention
-                          ? Icon(Icons.error_outline,
-                              color: Theme.of(context).colorScheme.error)
-                          : _chevron,
-                      onTap: () => _open(
-                        context,
-                        (_) => AutoBackupScreen(state: state),
-                      ),
-                    ),
-                  if (AccountHostScope.maybeOf(context) case final host?)
-                    ListTile(
-                      key: const ValueKey<String>('settings-accounts'),
-                      leading: const Icon(Icons.switch_account_outlined),
-                      title: Text(l10n.settingsAccounts),
-                      trailing: _chevron,
-                      onTap: () => _open(
-                        context,
-                        (_) => AccountsScreen(host: host),
-                      ),
-                    ),
-                  if (state.passkeyClient.platformSupported)
-                    ListTile(
-                      key: const ValueKey<String>('settings-passkeys'),
-                      leading: const Icon(Icons.fingerprint),
-                      title: Text(l10n.settingsPasskeys),
-                      trailing: _chevron,
-                      onTap: () => _open(
-                        context,
-                        (_) => PasskeysScreen(state: state),
-                      ),
-                    ),
-                  if (state.recoveryAvailable)
-                    ListTile(
-                      key: const ValueKey<String>('settings-recovery-key'),
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.settingsRecoveryKey),
-                      subtitle: Text(_recoveryKeySubtitle(context)),
-                      trailing: _chevron,
-                      onTap: () => _open(
-                        context,
-                        (_) => RecoveryKeyScreen(state: state),
-                      ),
-                    ),
-                  ListTile(
-                    leading: const Icon(Icons.download_outlined),
-                    title: Text(l10n.settingsExport),
-                    onTap: state.busy ? null : () => _exportAccount(context),
-                  ),
-                  ListTile(
-                    key: const ValueKey<String>('settings-delete-account'),
-                    leading: Icon(
-                      Icons.delete_forever_outlined,
-                      color: theme.colorScheme.error,
-                    ),
-                    title: Text(
-                      l10n.settingsDeleteAccount,
-                      style: TextStyle(color: theme.colorScheme.error),
-                    ),
-                    onTap: state.busy
-                        ? null
-                        : () => _confirmDeleteAccount(context),
-                  ),
-                ],
-              ),
-              SectionHeader(l10n.settingsSectionDevices),
-              TileGroup(
-                children: <Widget>[
-                  if (state.ownDeviceListMissing)
-                    ListTile(
-                      leading: const Icon(Icons.verified_user_outlined),
-                      title: Text(l10n.settingsDeviceListSetup),
-                      subtitle: Text(l10n.settingsDeviceListSetupDetail),
-                      onTap: () => _reviewDeviceList(context),
-                    ),
-                  if (state.recoveryListNeedsRetype)
-                    ListTile(
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.settingsRecoveryRetype),
-                      subtitle: Text(l10n.settingsRecoveryRetypeDetail),
-                      onTap: () => _retypeRecoveryKey(context),
-                    ),
-                  if (state.recoveryKeyNeedsConfirmation)
-                    ListTile(
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.settingsRecoveryConfirm),
-                      subtitle: Text(l10n.settingsRecoveryConfirmDetail),
-                      onTap: () => _confirmPreL1RecoveryKey(context),
-                    ),
-                  if (state.membershipChangesAvailable)
-                    ListTile(
-                      leading: const Icon(Icons.qr_code_2),
-                      title: Text(l10n.settingsLinkDevice),
-                      trailing: _chevron,
-                      onTap: () async {
-                        if (await _reauthenticate(context) && context.mounted) {
-                          _open(context, (_) => DeviceLinkScreen(state: state));
-                        }
-                      },
-                    ),
-                  if (state.devices.isEmpty && !state.devicesLoaded)
-                    ListTile(
-                      leading: const SizedBox.square(
-                        dimension: 24,
-                        child: Center(
-                          child: SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      ),
-                      title: Text(l10n.settingsLoadingDevices),
-                    ),
-                  for (final device in state.devices)
-                    _DeviceTile(
-                      device: device,
-                      isCurrent: device.id == session?.deviceId,
-                      busy: state.busy,
-                      onRevoke: () => _confirmRevoke(context, device),
-                    ),
-                  ListTile(
-                    leading: const Icon(Icons.phonelink_erase_outlined),
-                    title: Text(l10n.settingsSignOutOthers),
-                    onTap:
-                        state.busy ? null : () => _confirmLogoutOthers(context),
-                  ),
-                ],
-              ),
-              SectionHeader(l10n.settingsSectionPrivacySafety),
-              TileGroup(
-                children: <Widget>[
-                  ReadReceiptsTile(
-                    preferences: state.receiptPreferences,
-                    onChanged: state.setSendReadReceipts,
-                  ),
-                  if (state.sealedSender != null)
-                    ListTile(
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.l2SealedKeyTitle),
-                      // L2-3: owner report keys waiting for a decision.
-                      subtitle: state.ownerKeyReview.isEmpty
-                          ? null
-                          : Text(
-                              l10n.l2OwnerKeysReviewTile,
-                              key: const ValueKey('owner-key-review-tile'),
-                              style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error),
-                            ),
-                      trailing: _chevron,
-                      onTap: () => _open(
-                        context,
-                        (_) => SealedKeyScreen(state: state),
-                      ),
-                    ),
-                  SwitchListTile(
-                      secondary: const Icon(Icons.alternate_email),
-                      title: Text(l10n.w8MentionsMuted),
-                      value: state.mentionsInMutedChats,
-                      onChanged: state.setMentionsInMutedChats),
-                  LinkPreviewTile(
-                      mode: state.linkPreviewMode,
-                      onChanged: state.setLinkPreviewMode),
-                  SwitchListTile(
-                    key: const ValueKey<String>('settings-chat-previews'),
-                    secondary: const Icon(Icons.short_text),
-                    title: Text(l10n.chatPreviewsSetting),
-                    subtitle: Text(l10n.chatPreviewsSettingDetail),
-                    value: state.showChatPreviews,
-                    onChanged: state.setShowChatPreviews,
-                  ),
-                  if (defaultTargetPlatform == TargetPlatform.android)
-                    SwitchListTile(
-                      key: const ValueKey<String>('settings-screen-guard'),
-                      secondary: const Icon(Icons.shield_outlined),
-                      title: Text(l10n.settingsScreenGuard),
-                      value: state.screenGuardChats,
-                      onChanged: state.setScreenGuardChats,
-                    ),
-                  // How a call is routed, said once here rather than on
-                  // every call screen (U36).
-                  ListTile(
-                    key: const ValueKey<String>('settings-calls-relay'),
-                    leading: const Icon(Icons.call_outlined),
-                    title: Text(l10n.settingsCallsRelayTitle),
-                    subtitle: Text(l10n.settingsCallsRelayNote),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.block_outlined),
-                    title: Text(l10n.settingsBlockedAccounts),
-                    // A count only when there is something to count (U18).
-                    subtitle: state.blocksLoaded &&
-                            state.blockedAccounts.isNotEmpty
-                        ? Text(l10n.settingsBlockedCount(
-                            state.blockedAccounts.length,
-                          ))
-                        : null,
-                    trailing: _chevron,
-                    onTap: () => _open(
-                      context,
-                      (_) => BlockedAccountsScreen(state: state),
-                    ),
-                  ),
-                ],
-              ),
-              SectionHeader(l10n.settingsSectionNotifications),
-              TileGroup(
-                children: <Widget>[
-                  _PushStatusRow(state: state),
-                  if (defaultTargetPlatform == TargetPlatform.android &&
-                      (state.pushProviders.contains('webpush') ||
-                          state.pushProviders.contains('unifiedpush')))
-                    ListTile(
-                      enabled: state.pushConfigured && !state.busy,
-                      leading: const Icon(Icons.hub_outlined),
-                      title: Text(l10n.settingsPushProvider),
-                      onTap: state.choosePushDistributor,
-                    ),
-                  if (notifications != null)
-                    SwitchListTile(
-                      secondary: const Icon(Icons.notifications_outlined),
-                      title: Text(l10n.settingsHideNotificationPreview),
-                      value: notifications.hidePreview,
-                      onChanged: notifications.setHidePreview,
-                    ),
-                  // Only once this device is registered: a disabled row that
-                  // says "available once registered" is noise (U18).
-                  if (state.pushState == PushState.registered)
-                    ListTile(
-                      enabled: !state.isBusy(Ops.pushTest),
-                      leading: const Icon(Icons.send_outlined),
-                      title: Text(l10n.settingsTestPush),
-                      subtitle: Text(
-                        state.pushTestResult ??
-                            (state.pushProvider == null
-                                ? l10n.settingsTestPushUnavailable
-                                : l10n.settingsTestPushRegistered(
-                                    _providerName(state.pushProvider!),
-                                  )),
-                      ),
-                      onTap: state.sendTestPush,
-                    ),
-                ],
-              ),
-              if (appearance != null) ...<Widget>[
-                SectionHeader(l10n.settingsSectionAppearance),
-                _AppearanceRow(controller: appearance),
-              ],
-              if (updates != null) ...<Widget>[
-                SectionHeader(l10n.settingsSectionUpdates),
-                AnimatedBuilder(
-                  animation:
-                      Listenable.merge([updates.settings, updates.service]),
-                  builder: (context, _) => TileGroup(
-                    children: <Widget>[
-                      SwitchListTile(
-                        key: const ValueKey<String>(
-                            'settings-auto-update-check'),
-                        secondary: const Icon(Icons.system_update_outlined),
-                        title: Text(l10n.settingsAutoUpdateCheck),
-                        value: updates.settings.autoCheckEnabled,
-                        onChanged: (value) =>
-                            updates.settings.setAutoCheckEnabled(value),
-                      ),
-                      ListTile(
-                        key: const ValueKey<String>(
-                            'settings-check-for-updates'),
-                        leading: const Icon(Icons.refresh_outlined),
-                        title: Text(l10n.settingsCheckForUpdates),
-                        subtitle: Text(
-                          _updateStatusText(context, updates.service.status),
-                        ),
-                        onTap: updates.service.isChecking
-                            ? null
-                            : () =>
-                                updates.service.checkForUpdates(force: true),
-                      ),
-                    ],
-                  ),
+              children: <Widget>[
+                _IdentityHeader(
+                  session: session,
+                  onTap: session?.username == null
+                      ? null
+                      : () =>
+                          _open(context, (_) => ProfileScreen(state: state)),
                 ),
-              ],
-              if (isAdmin ||
-                  (state.reportsAvailable &&
-                      state.isInstanceOwner)) ...<Widget>[
-                SectionHeader(l10n.settingsAdmin),
+                // U18: eight groups (Account, Devices, Privacy and safety,
+                // Notifications, Appearance, Updates, Admin, About), then Sign
+                // out on its own, last. Rows that open a page carry an arrow;
+                // rows that open a dialog or act do not.
+                _header(l10n.settingsSectionAccount),
                 TileGroup(
                   children: <Widget>[
-                    if (isAdmin)
+                    ListTile(
+                      leading: const Icon(Icons.password_outlined),
+                      title: Text(l10n.settingsChangePassword),
+                      onTap: state.busy ? null : () => _changePassword(context),
+                    ),
+                    if (state.k1BackupSupported)
                       ListTile(
-                        leading: const Icon(Icons.card_giftcard_outlined),
-                        title: Text(l10n.settingsInvites),
-                        trailing: _chevron,
-                        onTap: () async {
-                          if (await _reauthenticate(context) &&
-                              context.mounted) {
-                            _open(context, (_) => InviteScreen(state: state));
-                          }
-                        },
+                        key: const ValueKey<String>('settings-auto-backup'),
+                        leading: const Icon(Icons.cloud_upload_outlined),
+                        title: Text(l10n.autoBackupTitle),
+                        subtitle: Text(autoBackupStatusText(context, state)),
+                        trailing: state.k1BackupNeedsAttention
+                            ? Icon(Icons.error_outline,
+                                color: Theme.of(context).colorScheme.error)
+                            : _chevron,
+                        onTap: () => _open(
+                          context,
+                          (_) => AutoBackupScreen(state: state),
+                        ),
                       ),
-                    if (state.reportsAvailable && state.isInstanceOwner)
+                    if (AccountHostScope.maybeOf(context) case final host?)
                       ListTile(
-                        leading: const Icon(Icons.flag_outlined),
-                        title: Text(l10n.c6ReportsTitle),
+                        key: const ValueKey<String>('settings-accounts'),
+                        leading: const Icon(Icons.switch_account_outlined),
+                        title: Text(l10n.settingsAccounts),
                         trailing: _chevron,
                         onTap: () => _open(
                           context,
-                          (_) => OwnerReportsScreen(
-                            state: state,
-                            reauthenticate: _reauthenticate,
-                          ),
+                          (_) => AccountsScreen(host: host),
                         ),
                       ),
-                    if (isAdmin)
+                    if (state.passkeyClient.platformSupported)
                       ListTile(
-                        leading:
-                            const Icon(Icons.admin_panel_settings_outlined),
-                        title: Text(l10n.settingsAdminDetail),
+                        key: const ValueKey<String>('settings-passkeys'),
+                        leading: const Icon(Icons.fingerprint),
+                        title: Text(l10n.settingsPasskeys),
+                        trailing: _chevron,
+                        onTap: () => _open(
+                          context,
+                          (_) => PasskeysScreen(state: state),
+                        ),
+                      ),
+                    if (state.recoveryAvailable)
+                      ListTile(
+                        key: const ValueKey<String>('settings-recovery-key'),
+                        leading: const Icon(Icons.key_outlined),
+                        title: Text(l10n.settingsRecoveryKey),
+                        subtitle: Text(_recoveryKeySubtitle(context)),
+                        trailing: _chevron,
+                        onTap: () => _open(
+                          context,
+                          (_) => RecoveryKeyScreen(state: state),
+                        ),
+                      ),
+                    ListTile(
+                      leading: const Icon(Icons.download_outlined),
+                      title: Text(l10n.settingsExport),
+                      onTap: state.busy ? null : () => _exportAccount(context),
+                    ),
+                    ListTile(
+                      key: const ValueKey<String>('settings-delete-account'),
+                      leading: Icon(
+                        Icons.delete_forever_outlined,
+                        color: theme.colorScheme.error,
+                      ),
+                      title: Text(
+                        l10n.settingsDeleteAccount,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                      onTap: state.busy
+                          ? null
+                          : () => _confirmDeleteAccount(context),
+                    ),
+                  ],
+                ),
+                _header(l10n.settingsSectionDevices),
+                TileGroup(
+                  children: <Widget>[
+                    if (state.ownDeviceListMissing)
+                      ListTile(
+                        leading: const Icon(Icons.verified_user_outlined),
+                        title: Text(l10n.settingsDeviceListSetup),
+                        subtitle: Text(l10n.settingsDeviceListSetupDetail),
+                        onTap: () => _reviewDeviceList(context),
+                      ),
+                    if (state.recoveryListNeedsRetype)
+                      ListTile(
+                        leading: const Icon(Icons.key_outlined),
+                        title: Text(l10n.settingsRecoveryRetype),
+                        subtitle: Text(l10n.settingsRecoveryRetypeDetail),
+                        onTap: () => _retypeRecoveryKey(context),
+                      ),
+                    if (state.recoveryKeyNeedsConfirmation)
+                      ListTile(
+                        leading: const Icon(Icons.key_outlined),
+                        title: Text(l10n.settingsRecoveryConfirm),
+                        subtitle: Text(l10n.settingsRecoveryConfirmDetail),
+                        onTap: () => _confirmPreL1RecoveryKey(context),
+                      ),
+                    if (state.membershipChangesAvailable)
+                      ListTile(
+                        leading: const Icon(Icons.qr_code_2),
+                        title: Text(l10n.settingsLinkDevice),
                         trailing: _chevron,
                         onTap: () async {
                           if (await _reauthenticate(context) &&
                               context.mounted) {
                             _open(
-                              context,
-                              (_) => AdminScreen(
-                                state: state,
-                                reauthenticate: _reauthenticate,
-                              ),
-                            );
+                                context, (_) => DeviceLinkScreen(state: state));
                           }
                         },
                       ),
+                    if (state.devices.isEmpty && !state.devicesLoaded)
+                      ListTile(
+                        leading: const SizedBox.square(
+                          dimension: 24,
+                          child: Center(
+                            child: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                        title: Text(l10n.settingsLoadingDevices),
+                      ),
+                    for (final device in state.devices)
+                      _DeviceTile(
+                        device: device,
+                        isCurrent: device.id == session?.deviceId,
+                        busy: state.busy,
+                        onRevoke: () => _confirmRevoke(context, device),
+                      ),
+                    ListTile(
+                      leading: const Icon(Icons.phonelink_erase_outlined),
+                      title: Text(l10n.settingsSignOutOthers),
+                      onTap: state.busy
+                          ? null
+                          : () => _confirmLogoutOthers(context),
+                    ),
+                  ],
+                ),
+                _header(l10n.settingsSectionPrivacySafety),
+                TileGroup(
+                  children: <Widget>[
+                    ReadReceiptsTile(
+                      preferences: state.receiptPreferences,
+                      onChanged: state.setSendReadReceipts,
+                    ),
+                    if (state.sealedSender != null)
+                      ListTile(
+                        leading: const Icon(Icons.key_outlined),
+                        title: Text(l10n.l2SealedKeyTitle),
+                        // L2-3: owner report keys waiting for a decision.
+                        subtitle: state.ownerKeyReview.isEmpty
+                            ? null
+                            : Text(
+                                l10n.l2OwnerKeysReviewTile,
+                                key: const ValueKey('owner-key-review-tile'),
+                                style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error),
+                              ),
+                        trailing: _chevron,
+                        onTap: () => _open(
+                          context,
+                          (_) => SealedKeyScreen(state: state),
+                        ),
+                      ),
+                    SwitchListTile(
+                        secondary: const Icon(Icons.alternate_email),
+                        title: Text(l10n.w8MentionsMuted),
+                        value: state.mentionsInMutedChats,
+                        onChanged: state.setMentionsInMutedChats),
+                    LinkPreviewTile(
+                        mode: state.linkPreviewMode,
+                        onChanged: state.setLinkPreviewMode),
+                    SwitchListTile(
+                      key: const ValueKey<String>('settings-chat-previews'),
+                      secondary: const Icon(Icons.short_text),
+                      title: Text(l10n.chatPreviewsSetting),
+                      subtitle: Text(l10n.chatPreviewsSettingDetail),
+                      value: state.showChatPreviews,
+                      onChanged: state.setShowChatPreviews,
+                    ),
+                    if (defaultTargetPlatform == TargetPlatform.android)
+                      SwitchListTile(
+                        key: const ValueKey<String>('settings-screen-guard'),
+                        secondary: const Icon(Icons.shield_outlined),
+                        title: Text(l10n.settingsScreenGuard),
+                        value: state.screenGuardChats,
+                        onChanged: state.setScreenGuardChats,
+                      ),
+                    // How a call is routed, said once here rather than on
+                    // every call screen (U36).
+                    ListTile(
+                      key: const ValueKey<String>('settings-calls-relay'),
+                      leading: const Icon(Icons.call_outlined),
+                      title: Text(l10n.settingsCallsRelayTitle),
+                      subtitle: Text(l10n.settingsCallsRelayNote),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.block_outlined),
+                      title: Text(l10n.settingsBlockedAccounts),
+                      // A count only when there is something to count (U18).
+                      subtitle:
+                          state.blocksLoaded && state.blockedAccounts.isNotEmpty
+                              ? Text(l10n.settingsBlockedCount(
+                                  state.blockedAccounts.length,
+                                ))
+                              : null,
+                      trailing: _chevron,
+                      onTap: () => _open(
+                        context,
+                        (_) => BlockedAccountsScreen(state: state),
+                      ),
+                    ),
+                  ],
+                ),
+                _header(l10n.settingsSectionNotifications),
+                TileGroup(
+                  children: <Widget>[
+                    _PushStatusRow(state: state),
+                    if (defaultTargetPlatform == TargetPlatform.android &&
+                        (state.pushProviders.contains('webpush') ||
+                            state.pushProviders.contains('unifiedpush')))
+                      ListTile(
+                        enabled: state.pushConfigured && !state.busy,
+                        leading: const Icon(Icons.hub_outlined),
+                        title: Text(l10n.settingsPushProvider),
+                        onTap: state.choosePushDistributor,
+                      ),
+                    if (notifications != null)
+                      SwitchListTile(
+                        secondary: const Icon(Icons.notifications_outlined),
+                        title: Text(l10n.settingsHideNotificationPreview),
+                        value: notifications.hidePreview,
+                        onChanged: notifications.setHidePreview,
+                      ),
+                    // Only once this device is registered: a disabled row that
+                    // says "available once registered" is noise (U18).
+                    if (state.pushState == PushState.registered)
+                      ListTile(
+                        enabled: !state.isBusy(Ops.pushTest),
+                        leading: const Icon(Icons.send_outlined),
+                        title: Text(l10n.settingsTestPush),
+                        subtitle: Text(
+                          state.pushTestResult ??
+                              (state.pushProvider == null
+                                  ? l10n.settingsTestPushUnavailable
+                                  : l10n.settingsTestPushRegistered(
+                                      _providerName(state.pushProvider!),
+                                    )),
+                        ),
+                        onTap: state.sendTestPush,
+                      ),
+                  ],
+                ),
+                if (appearance != null) ...<Widget>[
+                  _header(l10n.settingsSectionAppearance),
+                  _AppearanceRow(controller: appearance),
+                ],
+                if (updates != null) ...<Widget>[
+                  _header(l10n.settingsSectionUpdates),
+                  AnimatedBuilder(
+                    animation:
+                        Listenable.merge([updates.settings, updates.service]),
+                    builder: (context, _) => TileGroup(
+                      children: <Widget>[
+                        SwitchListTile(
+                          key: const ValueKey<String>(
+                              'settings-auto-update-check'),
+                          secondary: const Icon(Icons.system_update_outlined),
+                          title: Text(l10n.settingsAutoUpdateCheck),
+                          value: updates.settings.autoCheckEnabled,
+                          onChanged: (value) =>
+                              updates.settings.setAutoCheckEnabled(value),
+                        ),
+                        ListTile(
+                          key: const ValueKey<String>(
+                              'settings-check-for-updates'),
+                          leading: const Icon(Icons.refresh_outlined),
+                          title: Text(l10n.settingsCheckForUpdates),
+                          subtitle: Text(
+                            _updateStatusText(context, updates.service.status),
+                          ),
+                          onTap: updates.service.isChecking
+                              ? null
+                              : () =>
+                                  updates.service.checkForUpdates(force: true),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (isAdmin ||
+                    (state.reportsAvailable &&
+                        state.isInstanceOwner)) ...<Widget>[
+                  _header(l10n.settingsAdmin),
+                  TileGroup(
+                    children: <Widget>[
+                      if (isAdmin)
+                        ListTile(
+                          leading: const Icon(Icons.card_giftcard_outlined),
+                          title: Text(l10n.settingsInvites),
+                          trailing: _chevron,
+                          onTap: () async {
+                            if (await _reauthenticate(context) &&
+                                context.mounted) {
+                              _open(context, (_) => InviteScreen(state: state));
+                            }
+                          },
+                        ),
+                      if (state.reportsAvailable && state.isInstanceOwner)
+                        ListTile(
+                          leading: const Icon(Icons.flag_outlined),
+                          title: Text(l10n.c6ReportsTitle),
+                          trailing: _chevron,
+                          onTap: () => _open(
+                            context,
+                            (_) => OwnerReportsScreen(
+                              state: state,
+                              reauthenticate: _reauthenticate,
+                            ),
+                          ),
+                        ),
+                      if (isAdmin)
+                        ListTile(
+                          leading:
+                              const Icon(Icons.admin_panel_settings_outlined),
+                          title: Text(l10n.settingsAdminDetail),
+                          trailing: _chevron,
+                          onTap: () async {
+                            if (await _reauthenticate(context) &&
+                                context.mounted) {
+                              _open(
+                                context,
+                                (_) => AdminScreen(
+                                  state: state,
+                                  reauthenticate: _reauthenticate,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+                ],
+                _header(l10n.settingsSectionAbout),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.info_outline),
+                      title: Text(l10n.aboutTitle(veritraProductName)),
+                      subtitle: Text(
+                        l10n.aboutVersion(veritraVersion, veritraLicenseName),
+                      ),
+                      onTap: () => showVeritraAbout(context),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.description_outlined),
+                      title: Text(l10n.aboutLicenses),
+                      trailing: _chevron,
+                      onTap: () => showVeritraLicenses(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: BoneSpacing.sm),
+                // Last, and red: it ends this device's session.
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      key: const ValueKey<String>('settings-sign-out'),
+                      leading:
+                          Icon(Icons.logout, color: theme.colorScheme.error),
+                      title: Text(
+                        l10n.settingsSignOut,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                      onTap: state.busy ? null : () => _confirmLogout(context),
+                    ),
                   ],
                 ),
               ],
-              SectionHeader(l10n.settingsSectionAbout),
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.info_outline),
-                    title: Text(l10n.aboutTitle(veritraProductName)),
-                    subtitle: Text(
-                      l10n.aboutVersion(veritraVersion, veritraLicenseName),
-                    ),
-                    onTap: () => showVeritraAbout(context),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.description_outlined),
-                    title: Text(l10n.aboutLicenses),
-                    trailing: _chevron,
-                    onTap: () => showVeritraLicenses(context),
-                  ),
-                ],
-              ),
-              const SizedBox(height: BoneSpacing.sm),
-              // Last, and red: it ends this device's session.
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    key: const ValueKey<String>('settings-sign-out'),
-                    leading: Icon(Icons.logout, color: theme.colorScheme.error),
-                    title: Text(
-                      l10n.settingsSignOut,
-                      style: TextStyle(color: theme.colorScheme.error),
-                    ),
-                    onTap: state.busy ? null : () => _confirmLogout(context),
-                  ),
-                ],
-              ),
-            ],
-          ),
+            ),
           ),
         );
       },
     );
   }
+
+  /// A group header with tighter spacing than the default, so the tab keeps
+  /// fitting two screens at 360 x 800 (U18).
+  static Widget _header(String title) => SectionHeader(
+        title,
+        padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.xs,
+          BoneSpacing.md,
+          BoneSpacing.xs,
+          BoneSpacing.xs,
+        ),
+      );
 
   void _open(BuildContext context, WidgetBuilder builder) {
     Navigator.of(context).push(sharedAxisRoute<void>(builder));
@@ -1148,30 +1165,30 @@ class _DeviceTile extends StatelessWidget {
       color: revoked ? theme.disabledColor : null,
     );
     final title = Wrap(
-        spacing: BoneSpacing.sm,
-        runSpacing: BoneSpacing.xs,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          Text(
-            device.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: revoked
-                ? TextStyle(
-                    color: theme.disabledColor,
-                    decoration: TextDecoration.lineThrough,
-                  )
-                : null,
-          ),
-          if (revoked)
-            StatusPill(
-              label: context.l10n.settingsDeviceRevoked,
-              tone: StatusTone.error,
-            )
-          else if (isCurrent)
-            StatusPill(label: context.l10n.settingsDeviceCurrent),
-        ],
-      );
+      spacing: BoneSpacing.sm,
+      runSpacing: BoneSpacing.xs,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        Text(
+          device.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: revoked
+              ? TextStyle(
+                  color: theme.disabledColor,
+                  decoration: TextDecoration.lineThrough,
+                )
+              : null,
+        ),
+        if (revoked)
+          StatusPill(
+            label: context.l10n.settingsDeviceRevoked,
+            tone: StatusTone.error,
+          )
+        else if (isCurrent)
+          StatusPill(label: context.l10n.settingsDeviceCurrent),
+      ],
+    );
     final subtitle = Text(
       details.join(' · '),
       style: theme.textTheme.bodySmall?.copyWith(

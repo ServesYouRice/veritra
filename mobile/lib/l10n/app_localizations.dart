@@ -702,7 +702,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsSignOutDeviceButton.
   ///
   /// In en, this message translates to:
-  /// **'Sign out device'**
+  /// **'Sign out'**
   String get settingsSignOutDeviceButton;
 
   /// No description provided for @settingsSignOutTitle.
@@ -5316,7 +5316,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatPreviewsSettingDetail.
   ///
   /// In en, this message translates to:
-  /// **'Show the start of the last message under each chat. It is read from this device only.'**
+  /// **'Read from this device only.'**
   String get chatPreviewsSettingDetail;
 
   /// No description provided for @b2LinkPreviews.

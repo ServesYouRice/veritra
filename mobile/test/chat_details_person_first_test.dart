@@ -259,7 +259,8 @@ void main() {
     expect(find.text(englishL10n.detailsSectionMembers.toUpperCase()),
         findsOneWidget);
     expect(find.text('@alice'), findsOneWidget);
-    expect(find.text('OWNER'), findsOneWidget);
+    // U15: the role shows under the name, in words.
+    expect(find.textContaining(englishL10n.roleOwner), findsOneWidget);
   });
 
   testWidgets('IDs and the membership note sit under Advanced', (tester) async {
