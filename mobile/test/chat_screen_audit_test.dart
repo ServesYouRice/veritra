@@ -10,10 +10,36 @@ import 'package:private_messenger/features/chat/formatted_message.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/ui/tokens.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 /// UI-audit cards U7, U13, U14, U29 and U36 on the chat screen.
 void main() {
+  for (final brightness in Brightness.values) {
+    testWidgets(
+        'U14: your own bubble is filled with the plum token, $brightness',
+        (tester) async {
+      final store = MemoryLocalStore(), state = _state();
+      state.localStoreOverride = store;
+      await _seed(store);
+      await state.refreshHistory('conv');
+      await tester.pumpWidget(MaterialApp(
+          theme: ThemeData(brightness: brightness),
+          home: ChatScreen(state: state, conversationId: 'conv')));
+      await tester.pumpAndSettle();
+      expect(
+          find.ancestor(
+              of: find.text('hello'),
+              matching: find.byWidgetPredicate((widget) =>
+                  widget is Container &&
+                  (widget.decoration as BoxDecoration?)?.color ==
+                      BoneColors.ownBubble(brightness))),
+          findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+  }
+
   testWidgets('U7: a long-press on the message text opens the action sheet',
       (tester) async {
     final store = MemoryLocalStore(), state = _state();
@@ -34,8 +60,7 @@ void main() {
     final selectable = find.byKey(const Key('select-text'));
     expect(selectable, findsOneWidget);
     expect(
-        find.descendant(
-            of: selectable, matching: find.byType(SelectableText)),
+        find.descendant(of: selectable, matching: find.byType(SelectableText)),
         findsOneWidget);
     // No bubble in the thread is selectable by itself.
     await tester.tapAt(const Offset(10, 10));

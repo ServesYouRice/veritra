@@ -1021,8 +1021,8 @@ class _ChatScreenState extends State<ChatScreen> {
         isScrollControlled: true,
         builder: (sheetContext) => SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(BoneSpacing.gutter, 0,
-                BoneSpacing.gutter, BoneSpacing.lg),
+            padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter, 0, BoneSpacing.gutter, BoneSpacing.lg),
             child: FormattedMessage(
               key: const Key('select-text'),
               selectable: true,
@@ -1715,8 +1715,9 @@ class _PendingMessageBubble extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
           decoration: BoxDecoration(
-            color:
-                sending ? scheme.surfaceContainerHigh : scheme.errorContainer,
+            color: sending
+                ? BoneColors.ownBubble(theme.brightness)
+                : scheme.errorContainer,
             borderRadius: _bubbleRadius(mine: true),
             border: Border.all(
               color: sending ? scheme.outlineVariant : scheme.error,
@@ -1949,12 +1950,11 @@ class _MessageBubble extends StatelessWidget {
             local?.kind == LocalMessageKind.poll
         ? null
         : local?.body;
-    // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
-    // whole column would blow out the plum ground the direction is built on
-    // (`docs/design.md` §K). Mine and theirs separate by one tonal step
-    // plus a hairline, not by fill colour.
-    final background =
-        mine ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow;
+    // Your own bubbles take the soft plum token (U14, D131); theirs stay on
+    // the surface tone. Both keep the hairline.
+    final background = mine
+        ? BoneColors.ownBubble(theme.brightness)
+        : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? context.l10n.chatSenderYou : senderLabel;
     return Listener(

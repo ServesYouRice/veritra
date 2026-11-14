@@ -98,6 +98,38 @@ void main() {
     });
   });
 
+  group('own bubble tint (U14)', () {
+    test('text on your own bubble clears 4.5:1 in both themes', () {
+      for (final theme in <ThemeData>[
+        veritraLightTheme(),
+        veritraDarkTheme(),
+      ]) {
+        final scheme = theme.colorScheme;
+        final own = BoneColors.ownBubble(theme.brightness);
+        // Body text, muted text (meta line, reply preview, placeholders) and
+        // the accent used by links and mentions all read on the fill.
+        expect(contrastRatio(scheme.onSurface, own), greaterThanOrEqualTo(4.5));
+        expect(contrastRatio(scheme.onSurfaceVariant, own),
+            greaterThanOrEqualTo(4.5));
+        expect(contrastRatio(scheme.primary, own), greaterThanOrEqualTo(4.5));
+        // The read tick is a glyph, so 3:1.
+        expect(contrastRatio(scheme.primary, own), greaterThanOrEqualTo(3));
+      }
+    });
+
+    test('the tint is not the surface tone of their bubbles', () {
+      for (final theme in <ThemeData>[
+        veritraLightTheme(),
+        veritraDarkTheme(),
+      ]) {
+        expect(BoneColors.ownBubble(theme.brightness),
+            isNot(theme.colorScheme.surfaceContainerLow));
+        expect(BoneColors.ownBubble(theme.brightness),
+            isNot(theme.colorScheme.surfaceContainerHigh));
+      }
+    });
+  });
+
   group('non-text control contrast', () {
     test('opaque and composited boundaries clear 3:1 in both palettes', () {
       for (final theme in <ThemeData>[

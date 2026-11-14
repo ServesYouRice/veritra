@@ -54,6 +54,7 @@ agree.
 | Muted | `#A89EA6` | `#6B6169` |
 | Outline | `#A89EA6` | `#8A808A` |
 | Accent | `#EDE4DA` | `#3A2E42` |
+| Own bubble | `#3A2B52` | `#ECE3F2` |
 | On accent | `#1E1620` | `#FFFFFF` |
 | Border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
 
@@ -121,9 +122,13 @@ Interaction states use the bone itself rather than a second hue: hover lifts it
 toward white, pressed drops it about 8%, disabled falls back to raised plum with
 muted text. All keep on-accent text above 4.5:1.
 
-**Sent bubbles stay on tone.** A near-white tiled down a whole column would blow
-out the ground the direction is built on, so mine and theirs separate by one
-tonal step plus a hairline, not by fill colour.
+**Own bubbles take a soft plum (U14, D131).** A near-white accent tiled down a
+whole column would blow out the ground the direction is built on, so the fill
+is not the accent: it is `BoneColors.darkOwnBubble` (`#3A2B52`) in dark and
+`BoneColors.lightOwnBubble` (`#ECE3F2`) in light, a plum one step off the
+surface. Theirs stay on the surface tone; both keep the hairline. Text on the
+own fill is 11.3:1 (dark) and 14.3:1 (light), muted text 4.9:1 and 4.8:1;
+`chat_visuals_test.dart` pins 4.5:1 for both and 3:1 for the read tick.
 
 **No gradients.** That instruction applied to the rejected A and C. K2 uses a
 single flat accent, so the `--grad` / `--grad-fill` split — and the contrast trap
@@ -165,6 +170,14 @@ from `em` to the logical pixels Flutter's `letterSpacing` expects.
 
 **The worst thing in the old app.** An identical lock icon + `Encrypted message`
 row rendered in every bubble.
+
+**Say "encrypted" once (U13).** Every chat is encrypted, so saying so on each
+row, each header and each bubble said nothing. The chat header carries no
+ENCRYPTED line (a muted chat keeps a plain "Muted" line), bubbles carry no
+padlock, and one notice opens each chat, at the top of its history (the empty
+chat's own message is that notice). A marker stays only where something is
+wrong: an unverified sender, a message this device cannot decrypt, a failed
+send.
 
 The fix is not to invent plaintext. The ciphertext renders as **redacted bars**,
 wrapping across up to three lines. The thread gets the rhythm and shape of a
