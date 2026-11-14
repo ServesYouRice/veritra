@@ -797,7 +797,8 @@ is refused is skipped, never fatal.
   identified message carrying `d` is `invalid`. No native call, and no leaf
   key is read.
 - **Report.** The reveal (schema 43) and the v2 report body keep `d` and
-  the sender account; nothing else is added. The owner checks, in order:
+  the sender account; nothing else is added. (Since 2026-11-14 written as
+  v3, which adds the reporter's `reason`; change log, "C6 report body v3".) The owner checks, in order:
   the context and the first-stored envelope's key (review low b); `c`
   recomputes and equals the stored commitment; its report seed is loaded
   and its own `kid` is in `d` (else **notDesignated**, with no list fetch);
