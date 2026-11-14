@@ -276,11 +276,12 @@ class _InviteRow extends StatelessWidget {
           // Uses are the fact that decides whether the code still works, so
           // they get the pill rather than a clause in the joined subtitle.
           StatusPill(
-            label: context.l10n.inviteUsesPill(invite.uses, invite.maxUses),
+            // U34: "3 of 5 used", not "3/5".
+            label: invite.maxUses > 0
+                ? context.l10n.inviteUsedOf(invite.uses, invite.maxUses)
+                : context.l10n.inviteUsedUnlimited(invite.uses),
             tone: exhausted ? StatusTone.warning : StatusTone.neutral,
             uppercase: false,
-            semanticsLabel:
-                context.l10n.inviteUsesSemantics(invite.uses, invite.maxUses),
           ),
         ],
       ),

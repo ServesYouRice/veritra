@@ -337,9 +337,9 @@ void main() {
       // A moderator outranks neither an owner nor an admin, and never
       // removes itself here.
       expect(find.text('@owner'), findsOneWidget);
-      expect(find.byTooltip('Remove @alice'), findsNothing);
-      expect(find.byTooltip('Remove @owner'), findsNothing);
-      expect(find.byTooltip('Remove @me'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsNothing);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @me'), findsNothing);
     });
 
     testWidgets('an owner can remove a ranked-below member', (tester) async {
@@ -366,9 +366,18 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.byTooltip('Remove @alice'), findsOneWidget);
-      await tester.tap(find.byTooltip('Remove @alice'));
+      // U15: the role is written under the name, and Remove sits in a
+      // per-member menu that ends in a red confirmation.
+      expect(find.textContaining('Member'), findsWidgets);
+      expect(find.byTooltip('Moderate @alice'), findsOneWidget);
+      await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'));
+      await tester.pumpAndSettle();
+      final confirm = tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, 'Remove'));
+      expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
+          Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.error);
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
 
@@ -454,9 +463,20 @@ void main() {
       expect(find.text('Block @alice'), findsOneWidget);
       await tester.tap(find.text('Block @alice'));
       await tester.pumpAndSettle();
+      // U16: blocking asks first; nothing is sent until it is confirmed.
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(api.blocked, isEmpty);
+      await tester.tap(find.widgetWithText(FilledButton, 'Block'));
+      await tester.pumpAndSettle();
 
       expect(api.blocked, <String>['acct_alice']);
       expect(find.text('Unblock @alice'), findsOneWidget);
+
+      // ...and the snackbar offers Undo, which unblocks again.
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.unblocked, <String>['acct_alice']);
+      expect(find.text('Block @alice'), findsOneWidget);
     });
 
     testWidgets('the blocked-accounts screen lists blocks and unblocks them',
@@ -476,6 +496,12 @@ void main() {
 
       expect(api.unblocked, <String>['acct_alice']);
       expect(find.text('No blocked accounts'), findsOneWidget);
+
+      // U16: the snackbar offers Undo, which blocks them again.
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.blocked, <String>['acct_alice']);
+      expect(find.text('No blocked accounts'), findsNothing);
     });
   });
 

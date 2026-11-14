@@ -24,6 +24,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get commonRevoke => 'Опозови';
 
   @override
+  String get commonUndo => 'Опозови радњу';
+
+  @override
   String get listTimeYesterday => 'Јуче';
 
   @override
@@ -128,6 +131,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsSectionPrivacy => 'Приватност';
+
+  @override
+  String get settingsSectionPrivacySafety => 'Приватност и безбедност';
 
   @override
   String get settingsReadReceiptsTitle => 'Потврде о читању';
@@ -256,6 +262,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Обавештења кажу само да је стигла порука.';
 
   @override
+  String get settingsTurnOn => 'Укључи';
+
+  @override
   String get settingsPushProvider => 'Push добављач';
 
   @override
@@ -326,6 +335,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ ће одмах изгубити приступ.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Одјавити „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Одјави уређај';
 
   @override
   String get settingsSignOutTitle => 'Одјавити се?';
@@ -823,6 +840,9 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get searchBlockConfirm => 'Блокирај';
+
+  @override
   String get searchBlockFailed => 'Блокирање није могло да се ажурира.';
 
   @override
@@ -878,9 +898,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -891,15 +910,35 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String maxUsesString = maxUsesNumberFormat.format(maxUses);
 
     return 'Искоришћено $usesString од $maxUsesString';
+  }
+
+  @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString од $maxUsesString искоришћено';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString искоришћено';
   }
 
   @override
@@ -996,6 +1035,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get profileSectionIdentity => 'Идентитет';
+
+  @override
+  String get profileSectionAdvanced => 'Напредно';
 
   @override
   String get profileNotAvailable => 'Није доступно';
@@ -1221,13 +1263,16 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'на чекању',
-      'claimed': 'преузето',
-      'approved': 'одобрено',
-      'expired': 'истекло',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'на чекању',
+        'claimed': 'преузето',
+        'approved': 'одобрено',
+        'expired': 'истекло',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -1416,9 +1461,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1426,9 +1470,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1438,9 +1481,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -1546,6 +1587,22 @@ class AppLocalizationsSr extends AppLocalizations {
       other: '$countString минута',
       few: '$countString минута',
       one: '$countString минут',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString секунди',
+      few: '$countString секунде',
+      one: '$countString секунда',
     );
     return '$_temp0';
   }
@@ -2072,9 +2129,8 @@ class AppLocalizationsSr extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -2747,6 +2803,69 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get adminActorUnknown => 'Неко';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor је суспендовао/ла $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor је поново активирао/ла $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor се придружио/ла серверу';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor је направио/ла налог власника';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor се пријавио/ла';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor се одјавио/ла';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor је одјавио/ла остале своје уређаје';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor је променио/ла лозинку';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor је одјавио/ла један уређај';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor је направио/ла позивницу';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor је искључио/ла позивницу';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
+  }
+
+  @override
   String get adminLoadMore => 'Учитај још';
 
   @override
@@ -3246,6 +3365,16 @@ class AppLocalizationsSr extends AppLocalizations {
   String get membInviteRevoke => 'Опозови линк';
 
   @override
+  String get membInviteTurnOff => 'Искључи';
+
+  @override
+  String get membInviteTurnOffTitle => 'Искључити ову везу?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'Нико више не може да се придружи помоћу ње. Особе које су већ затражиле задржавају своје захтеве.';
+
+  @override
   String get joinReqSection => 'Захтеви за придруживање';
 
   @override
@@ -3265,6 +3394,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String joinReqReject(String username) {
     return 'Одбиј $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Одбиј';
+
+  @override
+  String get joinReqApproveButton => 'Одобри';
 
   @override
   String get joinReqRejectedSnack => 'Захтев је одбијен.';
@@ -4137,6 +4272,9 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get k1RestoreOlderCopy => 'Старија копија';
+
+  @override
   String get k1RestoreDeviceUnnamed => 'Уређај';
 
   @override
@@ -4467,6 +4605,26 @@ class AppLocalizationsSr extends AppLocalizations {
   String get rolesStepDown => 'Одступи';
 
   @override
+  String rolesChangeTitle(String name) {
+    return 'Променити улогу: $name?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name постаје $role. Сви у групи виде промену.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Промени улогу';
+
+  @override
+  String get rolesStepDownTitle => 'Одустати од улоге?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'Постајете члан. Само неко са вишом улогом може да вам врати улогу.';
+
+  @override
   String get rolesElectorOn => 'Дозволи гласање за новог власника';
 
   @override
@@ -4743,6 +4901,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get commonRevoke => 'Opozovi';
 
   @override
+  String get commonUndo => 'Opozovi radnju';
+
+  @override
   String get listTimeYesterday => 'Juče';
 
   @override
@@ -4847,6 +5008,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsSectionPrivacy => 'Privatnost';
+
+  @override
+  String get settingsSectionPrivacySafety => 'Privatnost i bezbednost';
 
   @override
   String get settingsReadReceiptsTitle => 'Potvrde o čitanju';
@@ -4975,6 +5139,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Obaveštenja kažu samo da je stigla poruka.';
 
   @override
+  String get settingsTurnOn => 'Uključi';
+
+  @override
   String get settingsPushProvider => 'Push dobavljač';
 
   @override
@@ -5045,6 +5212,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '„$deviceName“ će odmah izgubiti pristup.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Odjaviti „$deviceName“?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Odjavi uređaj';
 
   @override
   String get settingsSignOutTitle => 'Odjaviti se?';
@@ -5542,6 +5717,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get searchBlockConfirm => 'Blokiraj';
+
+  @override
   String get searchBlockFailed => 'Blokiranje nije moglo da se ažurira.';
 
   @override
@@ -5597,9 +5775,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5610,15 +5787,35 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String maxUsesString = maxUsesNumberFormat.format(maxUses);
 
     return 'Iskorišćeno $usesString od $maxUsesString';
+  }
+
+  @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString od $maxUsesString iskorišćeno';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString iskorišćeno';
   }
 
   @override
@@ -5715,6 +5912,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get profileSectionIdentity => 'Identitet';
+
+  @override
+  String get profileSectionAdvanced => 'Napredno';
 
   @override
   String get profileNotAvailable => 'Nije dostupno';
@@ -5940,13 +6140,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'na čekanju',
-      'claimed': 'preuzeto',
-      'approved': 'odobreno',
-      'expired': 'isteklo',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'na čekanju',
+        'claimed': 'preuzeto',
+        'approved': 'odobreno',
+        'expired': 'isteklo',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -6135,9 +6338,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -6145,9 +6347,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -6157,9 +6358,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -6265,6 +6464,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       other: '$countString minuta',
       few: '$countString minuta',
       one: '$countString minut',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString sekundi',
+      few: '$countString sekunde',
+      one: '$countString sekunda',
     );
     return '$_temp0';
   }
@@ -6791,9 +7006,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -7469,6 +7683,69 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get adminActorUnknown => 'Neko';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor je suspendovao/la $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor je ponovo aktivirao/la $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor se pridružio/la serveru';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor je napravio/la nalog vlasnika';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor se prijavio/la';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor se odjavio/la';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor je odjavio/la ostale svoje uređaje';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor je promenio/la lozinku';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor je odjavio/la jedan uređaj';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor je napravio/la pozivnicu';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor je isključio/la pozivnicu';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
+  }
+
+  @override
   String get adminLoadMore => 'Učitaj još';
 
   @override
@@ -7969,6 +8246,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get membInviteRevoke => 'Opozovi link';
 
   @override
+  String get membInviteTurnOff => 'Isključi';
+
+  @override
+  String get membInviteTurnOffTitle => 'Isključiti ovu vezu?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'Niko više ne može da se pridruži pomoću nje. Osobe koje su već zatražile zadržavaju svoje zahteve.';
+
+  @override
   String get joinReqSection => 'Zahtevi za pridruživanje';
 
   @override
@@ -7988,6 +8275,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String joinReqReject(String username) {
     return 'Odbij $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Odbij';
+
+  @override
+  String get joinReqApproveButton => 'Odobri';
 
   @override
   String get joinReqRejectedSnack => 'Zahtev je odbijen.';
@@ -8861,6 +9154,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get k1RestoreOlderCopy => 'Starija kopija';
+
+  @override
   String get k1RestoreDeviceUnnamed => 'Uređaj';
 
   @override
@@ -9189,6 +9485,26 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesStepDown => 'Odstupi';
+
+  @override
+  String rolesChangeTitle(String name) {
+    return 'Promeniti ulogu: $name?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name postaje $role. Svi u grupi vide promenu.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Promeni ulogu';
+
+  @override
+  String get rolesStepDownTitle => 'Odustati od uloge?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'Postajete član. Samo neko sa višom ulogom može da vam vrati ulogu.';
 
   @override
   String get rolesElectorOn => 'Dozvoli glasanje za novog vlasnika';

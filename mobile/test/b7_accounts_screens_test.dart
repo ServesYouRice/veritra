@@ -210,6 +210,8 @@ void main() {
       expect(find.text('userone@a.example'), findsOneWidget);
       expect(find.text('usertwo@b.example'), findsOneWidget);
       expect(find.text('Open now'), findsOneWidget);
+      // U37: the open account is ticked, and only that one.
+      expect(find.byKey(const ValueKey('account-active-tick')), findsOneWidget);
       expect(find.byKey(const ValueKey('same-server')), findsNothing);
     });
 

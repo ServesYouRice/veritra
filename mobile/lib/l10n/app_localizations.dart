@@ -63,7 +63,7 @@ import 'app_localizations_sr.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,17 +86,17 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-        delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-      ];
+    delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+  ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -128,6 +128,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Revoke'**
   String get commonRevoke;
+
+  /// Snackbar action that reverses what was just done.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get commonUndo;
 
   /// Chat list timestamp for activity on the previous calendar day.
   ///
@@ -320,6 +326,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Privacy'**
   String get settingsSectionPrivacy;
+
+  /// No description provided for @settingsSectionPrivacySafety.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy and safety'**
+  String get settingsSectionPrivacySafety;
 
   /// No description provided for @settingsReadReceiptsTitle.
   ///
@@ -537,6 +549,12 @@ abstract class AppLocalizations {
   /// **'Notifications say only that a message arrived.'**
   String get settingsAllowNotificationsDetail;
 
+  /// No description provided for @settingsTurnOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on'**
+  String get settingsTurnOn;
+
   /// No description provided for @settingsPushProvider.
   ///
   /// In en, this message translates to:
@@ -662,6 +680,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'\"{deviceName}\" will lose access immediately.'**
   String settingsRevokeDeviceMessage(String deviceName);
+
+  /// Title of the confirmation for signing a device out.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out \"{deviceName}\"?'**
+  String settingsSignOutDeviceTitle(String deviceName);
+
+  /// No description provided for @settingsSignOutDeviceButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out device'**
+  String get settingsSignOutDeviceButton;
 
   /// No description provided for @settingsSignOutTitle.
   ///
@@ -1527,6 +1557,12 @@ abstract class AppLocalizations {
   /// **'{label} blocked.'**
   String searchBlocked(String label);
 
+  /// No description provided for @searchBlockConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get searchBlockConfirm;
+
   /// No description provided for @searchBlockFailed.
   ///
   /// In en, this message translates to:
@@ -1604,6 +1640,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{uses} of {maxUses} uses'**
   String inviteUsesSemantics(int uses, int maxUses);
+
+  /// No description provided for @inviteUsedOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{uses} of {maxUses} used'**
+  String inviteUsedOf(int uses, int maxUses);
+
+  /// No description provided for @inviteUsedUnlimited.
+  ///
+  /// In en, this message translates to:
+  /// **'{uses} used'**
+  String inviteUsedUnlimited(int uses);
 
   /// No description provided for @inviteNeverExpires.
   ///
@@ -1772,6 +1820,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Identity'**
   String get profileSectionIdentity;
+
+  /// No description provided for @profileSectionAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get profileSectionAdvanced;
 
   /// No description provided for @profileNotAvailable.
   ///
@@ -2576,6 +2630,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 minute} other{{count} minutes}}'**
   String durationMinutes(int count);
+
+  /// No description provided for @durationSeconds.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 second} other{{count} seconds}}'**
+  String durationSeconds(int count);
 
   /// No description provided for @durationChipDays.
   ///
@@ -4449,6 +4509,84 @@ abstract class AppLocalizations {
   /// **'By {actor}'**
   String adminEventBy(String actor);
 
+  /// No description provided for @adminActorUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone'**
+  String get adminActorUnknown;
+
+  /// No description provided for @adminEventSuspended.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} suspended {target}'**
+  String adminEventSuspended(String actor, String target);
+
+  /// No description provided for @adminEventReactivated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} reactivated {target}'**
+  String adminEventReactivated(String actor, String target);
+
+  /// No description provided for @adminEventRegistered.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} joined the server'**
+  String adminEventRegistered(String actor);
+
+  /// No description provided for @adminEventOwnerCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} created the owner account'**
+  String adminEventOwnerCreated(String actor);
+
+  /// No description provided for @adminEventSignedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed in'**
+  String adminEventSignedIn(String actor);
+
+  /// No description provided for @adminEventSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out'**
+  String adminEventSignedOut(String actor);
+
+  /// No description provided for @adminEventSignedOutOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out their other devices'**
+  String adminEventSignedOutOthers(String actor);
+
+  /// No description provided for @adminEventPasswordChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} changed their password'**
+  String adminEventPasswordChanged(String actor);
+
+  /// No description provided for @adminEventDeviceSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out a device'**
+  String adminEventDeviceSignedOut(String actor);
+
+  /// No description provided for @adminEventInviteCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} made an invite'**
+  String adminEventInviteCreated(String actor);
+
+  /// No description provided for @adminEventInviteRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} turned off an invite'**
+  String adminEventInviteRevoked(String actor);
+
+  /// Fallback sentence for an audit event with no wording of its own.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor}: {event}'**
+  String adminEventOther(String actor, String event);
+
   /// No description provided for @adminLoadMore.
   ///
   /// In en, this message translates to:
@@ -5319,6 +5457,24 @@ abstract class AppLocalizations {
   /// **'Revoke link'**
   String get membInviteRevoke;
 
+  /// No description provided for @membInviteTurnOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get membInviteTurnOff;
+
+  /// No description provided for @membInviteTurnOffTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off this link?'**
+  String get membInviteTurnOffTitle;
+
+  /// No description provided for @membInviteTurnOffMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'No one can join with it any more. People who already asked keep their requests.'**
+  String get membInviteTurnOffMessage;
+
   /// No description provided for @joinReqSection.
   ///
   /// In en, this message translates to:
@@ -5348,6 +5504,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Decline {username}'**
   String joinReqReject(String username);
+
+  /// No description provided for @joinReqDeclineButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline'**
+  String get joinReqDeclineButton;
+
+  /// No description provided for @joinReqApproveButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get joinReqApproveButton;
 
   /// No description provided for @joinReqRejectedSnack.
   ///
@@ -6771,6 +6939,12 @@ abstract class AppLocalizations {
   /// **'{device} · {date} (the copy before)'**
   String k1RestoreEntryPrevious(String device, String date);
 
+  /// No description provided for @k1RestoreOlderCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Older copy'**
+  String get k1RestoreOlderCopy;
+
   /// No description provided for @k1RestoreDeviceUnnamed.
   ///
   /// In en, this message translates to:
@@ -7341,6 +7515,36 @@ abstract class AppLocalizations {
   /// **'Step down'**
   String get rolesStepDown;
 
+  /// No description provided for @rolesChangeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change {name}\'s role?'**
+  String rolesChangeTitle(String name);
+
+  /// No description provided for @rolesChangeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} becomes {role}. Everyone in the group sees the change.'**
+  String rolesChangeMessage(String name, String role);
+
+  /// No description provided for @rolesChangeConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Change role'**
+  String get rolesChangeConfirm;
+
+  /// No description provided for @rolesStepDownTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Step down?'**
+  String get rolesStepDownTitle;
+
+  /// No description provided for @rolesStepDownMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You become a member. Only someone with a higher role can give your role back.'**
+  String get rolesStepDownMessage;
+
   /// No description provided for @rolesElectorOn.
   ///
   /// In en, this message translates to:
@@ -7801,9 +8005,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-    'an issue with the localizations generation tool. Please file an issue '
-    'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
-  );
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
 }

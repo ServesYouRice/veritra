@@ -163,7 +163,9 @@ void main() {
           () => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump();
       expect(find.text('Work phone'), findsOneWidget);
-      expect(find.textContaining('Backed up'), findsOneWidget);
+      // U37: one fact per row.
+      expect(find.textContaining('Added'), findsOneWidget);
+      expect(find.textContaining('Backed up'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey<String>('passkeys-add')));
       await tester.pump();

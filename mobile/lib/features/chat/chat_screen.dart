@@ -30,6 +30,7 @@ import '../../sync/sync_recovery.dart' show SyncRecoveryChoice;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/account_recovery_banner.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
@@ -496,6 +497,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 onFiles: _addFiles,
                 child: Column(
                   children: <Widget>[
+                    // U37: the account notices (a recovery waiting, a leaked
+                    // password, a passkey change) also show inside an open
+                    // chat. In the wide layout the shell's own banners are
+                    // already on screen, so only a pushed chat adds them.
+                    if (widget.showBackButton)
+                      AccountRecoveryBanner(state: widget.state),
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
                       Material(
                         color: Theme.of(context)

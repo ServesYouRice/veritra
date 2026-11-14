@@ -24,6 +24,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get commonRevoke => 'Revoke';
 
   @override
+  String get commonUndo => 'Undo';
+
+  @override
   String get listTimeYesterday => 'Yesterday';
 
   @override
@@ -127,6 +130,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsSectionPrivacy => 'Privacy';
+
+  @override
+  String get settingsSectionPrivacySafety => 'Privacy and safety';
 
   @override
   String get settingsReadReceiptsTitle => 'Read receipts';
@@ -254,6 +260,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notifications say only that a message arrived.';
 
   @override
+  String get settingsTurnOn => 'Turn on';
+
+  @override
   String get settingsPushProvider => 'Push provider';
 
   @override
@@ -325,6 +334,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String settingsRevokeDeviceMessage(String deviceName) {
     return '\"$deviceName\" will lose access immediately.';
   }
+
+  @override
+  String settingsSignOutDeviceTitle(String deviceName) {
+    return 'Sign out \"$deviceName\"?';
+  }
+
+  @override
+  String get settingsSignOutDeviceButton => 'Sign out device';
 
   @override
   String get settingsSignOutTitle => 'Sign out?';
@@ -818,6 +835,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get searchBlockConfirm => 'Block';
+
+  @override
   String get searchBlockFailed => 'Could not update the block.';
 
   @override
@@ -872,9 +892,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -885,15 +904,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String maxUsesString = maxUsesNumberFormat.format(maxUses);
 
     return '$usesString of $maxUsesString uses';
+  }
+
+  @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString of $maxUsesString used';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString used';
   }
 
   @override
@@ -989,6 +1028,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get profileSectionIdentity => 'Identity';
+
+  @override
+  String get profileSectionAdvanced => 'Advanced';
 
   @override
   String get profileNotAvailable => 'Not available';
@@ -1211,13 +1253,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'pending',
-      'claimed': 'claimed',
-      'approved': 'approved',
-      'expired': 'expired',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'pending',
+        'claimed': 'claimed',
+        'approved': 'approved',
+        'expired': 'expired',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -1406,9 +1451,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1416,9 +1460,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1428,9 +1471,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -1533,6 +1574,21 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: '$countString minutes',
       one: '1 minute',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String durationSeconds(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString seconds',
+      one: '1 second',
     );
     return '$_temp0';
   }
@@ -2057,9 +2113,8 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -2729,6 +2784,69 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get adminActorUnknown => 'Someone';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor suspended $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor reactivated $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor joined the server';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor created the owner account';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor signed in';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor signed out';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor signed out their other devices';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor changed their password';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor signed out a device';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor made an invite';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor turned off an invite';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
+  }
+
+  @override
   String get adminLoadMore => 'Load more';
 
   @override
@@ -3232,6 +3350,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get membInviteRevoke => 'Revoke link';
 
   @override
+  String get membInviteTurnOff => 'Turn off';
+
+  @override
+  String get membInviteTurnOffTitle => 'Turn off this link?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'No one can join with it any more. People who already asked keep their requests.';
+
+  @override
   String get joinReqSection => 'Join requests';
 
   @override
@@ -3251,6 +3379,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String joinReqReject(String username) {
     return 'Decline $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Decline';
+
+  @override
+  String get joinReqApproveButton => 'Approve';
 
   @override
   String get joinReqRejectedSnack => 'Request declined.';
@@ -4119,6 +4253,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get k1RestoreOlderCopy => 'Older copy';
+
+  @override
   String get k1RestoreDeviceUnnamed => 'A device';
 
   @override
@@ -4448,6 +4585,26 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesStepDown => 'Step down';
+
+  @override
+  String rolesChangeTitle(String name) {
+    return 'Change $name\'s role?';
+  }
+
+  @override
+  String rolesChangeMessage(String name, String role) {
+    return '$name becomes $role. Everyone in the group sees the change.';
+  }
+
+  @override
+  String get rolesChangeConfirm => 'Change role';
+
+  @override
+  String get rolesStepDownTitle => 'Step down?';
+
+  @override
+  String get rolesStepDownMessage =>
+      'You become a member. Only someone with a higher role can give your role back.';
 
   @override
   String get rolesElectorOn => 'Let them vote for a new owner';

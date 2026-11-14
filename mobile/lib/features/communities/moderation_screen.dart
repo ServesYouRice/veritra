@@ -11,13 +11,13 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 
-/// A length in seconds as a short, language-neutral label: "30 s", "5 min",
-/// "6 h", "7 d".
-String shortDuration(int seconds) {
-  if (seconds < 60) return '$seconds s';
-  if (seconds < 3600) return '${seconds ~/ 60} min';
-  if (seconds < 86400) return '${seconds ~/ 3600} h';
-  return '${seconds ~/ 86400} d';
+/// A length in seconds written in words: "30 seconds", "10 minutes",
+/// "6 hours", "7 days" (U37).
+String durationWords(AppLocalizations l10n, int seconds) {
+  if (seconds < 60) return l10n.durationSeconds(seconds);
+  if (seconds < 3600) return l10n.durationMinutes(seconds ~/ 60);
+  if (seconds < 86400) return l10n.durationHours(seconds ~/ 3600);
+  return l10n.durationDays(seconds ~/ 86400);
 }
 
 /// The lengths offered for a timeout and for pausing invitations.
@@ -140,7 +140,8 @@ class _ModerationScreenState extends State<ModerationScreen> {
       context,
       title: l10n.moderationSlowTitle(_channelName(channel)),
       choices: slowModeChoices,
-      label: (s) => s == 0 ? l10n.moderationSlowOff : shortDuration(s),
+      label: (s) =>
+          s == 0 ? l10n.moderationSlowOff : durationWords(l10n, s),
     );
     if (seconds == null || !mounted) return;
     if (await state.setChannelSlowMode(_communityId, channel.id, seconds)) {
@@ -154,7 +155,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
       context,
       title: l10n.moderationPauseInvites,
       choices: pauseChoices,
-      label: shortDuration,
+      label: (s) => durationWords(l10n, s),
     );
     if (seconds == null || !mounted) return;
     if (await state.setInvitesPaused(_communityId, seconds)) await _load();
@@ -264,8 +265,8 @@ class _ModerationScreenState extends State<ModerationScreen> {
                       subtitle: Text(
                         (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
                             ? l10n.moderationSlowOff
-                            : l10n.moderationSlowEvery(shortDuration(
-                                moderation!.slowModeSeconds[channel.id]!)),
+                            : l10n.moderationSlowEvery(durationWords(
+                                l10n, moderation!.slowModeSeconds[channel.id]!)),
                       ),
                       onTap: busy ? null : () => _setSlowMode(channel),
                     ),

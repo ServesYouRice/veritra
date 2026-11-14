@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../core/roles/governance.dart';
 import '../../crypto/crypto_service.dart' show GovernanceView;
 import '../../l10n/l10n.dart';
+import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
@@ -71,6 +72,23 @@ class _RolesScreenState extends State<RolesScreen> {
   Future<void> _run(Future<bool> Function() action) async {
     await action();
     await _reload();
+  }
+
+  /// U37: a role change asks first, naming the person and the new role.
+  Future<void> _confirmThenRun(
+    BuildContext context, {
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required Future<bool> Function() action,
+  }) async {
+    final confirmed = await confirmAction(
+      context,
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
+    );
+    if (confirmed && mounted) await _run(action);
   }
 
   @override
@@ -146,8 +164,14 @@ class _RolesScreenState extends State<RolesScreen> {
           record.roleOf(self) != BuiltInRole.member) {
         actions.add(_RoleAction(
             l10n.rolesStepDown,
-            () => _run(
-                () => state.setVerifiedRole(id, self, BuiltInRole.member))));
+            () => _confirmThenRun(
+                  context,
+                  title: l10n.rolesStepDownTitle,
+                  message: l10n.rolesStepDownMessage,
+                  confirmLabel: l10n.rolesStepDown,
+                  action: () =>
+                      state.setVerifiedRole(id, self, BuiltInRole.member),
+                )));
       }
       return actions;
     }
@@ -166,7 +190,15 @@ class _RolesScreenState extends State<RolesScreen> {
           _ => l10n.rolesMakeMember,
         };
         actions.add(_RoleAction(
-            label, () => _run(() => state.setVerifiedRole(id, account, role))));
+            label,
+            () => _confirmThenRun(
+                  context,
+                  title: l10n.rolesChangeTitle(_name(account)),
+                  message: l10n.rolesChangeMessage(
+                      _name(account), roleLabel(l10n, role.name)),
+                  confirmLabel: l10n.rolesChangeConfirm,
+                  action: () => state.setVerifiedRole(id, account, role),
+                )));
       }
     }
     if (record.owner == self && record.admins.containsKey(account)) {

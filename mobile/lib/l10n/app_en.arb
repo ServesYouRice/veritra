@@ -11,6 +11,10 @@
   "@commonRefresh": {"description": "Tooltip for a button that reloads the current screen."},
   "commonRevoke": "Revoke",
   "@commonRevoke": {"description": "Button or tooltip that revokes a device or invite."},
+  "commonUndo": "Undo",
+  "@commonUndo": {
+    "description": "Snackbar action that reverses what was just done."
+  },
 
   "listTimeYesterday": "Yesterday",
   "@listTimeYesterday": {"description": "Chat list timestamp for activity on the previous calendar day."},
@@ -83,6 +87,7 @@
   "trayQuit": "Quit",
 
   "settingsSectionPrivacy": "Privacy",
+  "settingsSectionPrivacySafety": "Privacy and safety",
   "settingsReadReceiptsTitle": "Read receipts",
   "settingsReadReceiptsDetail": "Applies to all your devices. When off, you send no read receipts and you do not see when others have read your messages. Sent and delivered ticks stay.",
   "settingsReadReceiptsFailed": "The setting could not be changed. Check your connection and try again.",
@@ -127,6 +132,7 @@
   "settingsExportSaved": "Account export saved locally.",
   "settingsAllowNotifications": "Allow notifications",
   "settingsAllowNotificationsDetail": "Notifications say only that a message arrived.",
+  "settingsTurnOn": "Turn on",
   "settingsPushProvider": "Push provider",
   "settingsPushProviderDetail": "Choose an Android UnifiedPush provider",
   "settingsTestPush": "Send a test notification",
@@ -157,6 +163,17 @@
   "@settingsRevokeDeviceMessage": {
     "placeholders": {"deviceName": {"type": "String", "example": "Pixel 8"}}
   },
+  "settingsSignOutDeviceTitle": "Sign out \"{deviceName}\"?",
+  "@settingsSignOutDeviceTitle": {
+    "description": "Title of the confirmation for signing a device out.",
+    "placeholders": {
+      "deviceName": {
+        "type": "String",
+        "example": "Pixel 8"
+      }
+    }
+  },
+  "settingsSignOutDeviceButton": "Sign out device",
   "settingsSignOutTitle": "Sign out?",
   "settingsSignOutMessage": "This device stops receiving messages until you sign in again with your password.",
   "settingsSignOutOthersTitle": "Sign out other devices?",
@@ -331,6 +348,7 @@
   "@searchBlockAccount": {"placeholders": {"label": {"type": "String"}}},
   "searchBlocked": "{label} blocked.",
   "@searchBlocked": {"placeholders": {"label": {"type": "String"}}},
+  "searchBlockConfirm": "Block",
   "searchBlockFailed": "Could not update the block.",
 
   "inviteCreateSection": "Create an invite",
@@ -349,6 +367,28 @@
   "@inviteUsesPill": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
   "inviteUsesSemantics": "{uses} of {maxUses} uses",
   "@inviteUsesSemantics": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
+  "inviteUsedOf": "{uses} of {maxUses} used",
+  "@inviteUsedOf": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      },
+      "maxUses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "inviteUsedUnlimited": "{uses} used",
+  "@inviteUsedUnlimited": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "inviteNeverExpires": "Never expires",
   "inviteExpiresAt": "Expires {time}",
   "@inviteExpiresAt": {"placeholders": {"time": {"type": "String"}}},
@@ -386,6 +426,7 @@
   "groupProfileHelp": "Members of this group can see its name and photo. The server can't read them.",
   "profileBlockNote": "In groups you share, they may still see your profile.",
   "profileSectionIdentity": "Identity",
+  "profileSectionAdvanced": "Advanced",
   "profileNotAvailable": "Not available",
   "profileCurrentDevice": "Current device",
   "profileInstanceRole": "Instance role",
@@ -549,6 +590,15 @@
   "@durationHours": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationMinutes": "{count, plural, =1{1 minute} other{{count} minutes}}",
   "@durationMinutes": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
+  "durationSeconds": "{count, plural, =1{1 second} other{{count} seconds}}",
+  "@durationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "durationChipDays": "{count}d",
   "@durationChipDays": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "durationChipHours": "{count}h",
@@ -928,6 +978,113 @@
   "@adminAccountSummary": {"placeholders": {"role": {"type": "String"}, "devices": {"type": "int"}, "storage": {"type": "String"}}},
   "adminEventBy": "By {actor}",
   "@adminEventBy": {"placeholders": {"actor": {"type": "String"}}},
+  "adminActorUnknown": "Someone",
+  "adminEventSuspended": "{actor} suspended {target}",
+  "@adminEventSuspended": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventReactivated": "{actor} reactivated {target}",
+  "@adminEventReactivated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventRegistered": "{actor} joined the server",
+  "@adminEventRegistered": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOwnerCreated": "{actor} created the owner account",
+  "@adminEventOwnerCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedIn": "{actor} signed in",
+  "@adminEventSignedIn": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOut": "{actor} signed out",
+  "@adminEventSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOutOthers": "{actor} signed out their other devices",
+  "@adminEventSignedOutOthers": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventPasswordChanged": "{actor} changed their password",
+  "@adminEventPasswordChanged": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventDeviceSignedOut": "{actor} signed out a device",
+  "@adminEventDeviceSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteCreated": "{actor} made an invite",
+  "@adminEventInviteCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteRevoked": "{actor} turned off an invite",
+  "@adminEventInviteRevoked": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOther": "{actor}: {event}",
+  "@adminEventOther": {
+    "description": "Fallback sentence for an audit event with no wording of its own.",
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "event": {
+        "type": "String"
+      }
+    }
+  },
   "adminLoadMore": "Load more",
   "adminNoAccounts": "No accounts",
   "adminNoEvents": "No audit events yet",
@@ -1103,6 +1260,9 @@
   "membInviteUses": "{used} of {max} used · expires {date}",
   "@membInviteUses": {"placeholders": {"used": {"type": "int"}, "max": {"type": "int"}, "date": {"type": "String"}}},
   "membInviteRevoke": "Revoke link",
+  "membInviteTurnOff": "Turn off",
+  "membInviteTurnOffTitle": "Turn off this link?",
+  "membInviteTurnOffMessage": "No one can join with it any more. People who already asked keep their requests.",
   "joinReqSection": "Join requests",
   "joinReqNone": "No one is waiting.",
   "joinReqAskedAt": "Asked {date}",
@@ -1111,6 +1271,8 @@
   "@joinReqApprove": {"placeholders": {"username": {"type": "String"}}},
   "joinReqReject": "Decline {username}",
   "@joinReqReject": {"placeholders": {"username": {"type": "String"}}},
+  "joinReqDeclineButton": "Decline",
+  "joinReqApproveButton": "Approve",
   "joinReqRejectedSnack": "Request declined.",
   "communityRemoveTitle": "Remove {username} from the community?",
   "@communityRemoveTitle": {"placeholders": {"username": {"type": "String"}}},
@@ -1453,6 +1615,7 @@
   "@k1RestoreEntry": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
   "k1RestoreEntryPrevious": "{device} · {date} (the copy before)",
   "@k1RestoreEntryPrevious": {"placeholders": {"device": {"type": "String", "example": "Phone"}, "date": {"type": "String", "example": "1 Nov 2026"}}},
+  "k1RestoreOlderCopy": "Older copy",
   "k1RestoreDeviceUnnamed": "A device",
   "k1RestoreDeviceRevoked": "This device was removed from your account.",
   "k1RestoreDone": "History restored.",
@@ -1558,6 +1721,28 @@
   "rolesMakeModerator": "Make moderator",
   "rolesMakeMember": "Make member",
   "rolesStepDown": "Step down",
+  "rolesChangeTitle": "Change {name}'s role?",
+  "@rolesChangeTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeMessage": "{name} becomes {role}. Everyone in the group sees the change.",
+  "@rolesChangeMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "role": {
+        "type": "String"
+      }
+    }
+  },
+  "rolesChangeConfirm": "Change role",
+  "rolesStepDownTitle": "Step down?",
+  "rolesStepDownMessage": "You become a member. Only someone with a higher role can give your role back.",
   "rolesElectorOn": "Let them vote for a new owner",
   "rolesElectorOff": "Stop them voting for a new owner",
   "rolesTransfer": "Make owner",

@@ -143,14 +143,13 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.fingerprint),
                       title: Text(passkey.name),
-                      subtitle: Text(<String>[
-                        l10n.passkeyCreated(formatDateTime(
-                            context, passkey.createdAt.toLocal())),
-                        if (passkey.lastUsedAt != null)
-                          l10n.passkeyLastUsed(formatDateTime(
-                              context, passkey.lastUsedAt!.toLocal())),
-                        if (passkey.synced) l10n.passkeyBackedUp,
-                      ].join(' · ')),
+                      // U37: one fact per row: when it was last used, or
+                      // when it was added if it never has been.
+                      subtitle: Text(passkey.lastUsedAt != null
+                          ? l10n.passkeyLastUsed(formatDateTime(
+                              context, passkey.lastUsedAt!.toLocal()))
+                          : l10n.passkeyCreated(formatDateTime(
+                              context, passkey.createdAt.toLocal()))),
                       trailing: PopupMenuButton<String>(
                         onSelected: (value) => value == 'rename'
                             ? _rename(passkey)

@@ -127,10 +127,7 @@ void main() {
       final switchTile = tester.widget<SwitchListTile>(tileFinder);
       expect(switchTile.value, isTrue);
       expect(find.text('Screen guard'), findsOneWidget);
-      expect(
-          find.text(
-              'Block screenshots and AI-assistant screen reading in chats.'),
-          findsOneWidget);
+      // U18 dropped the explanation line from the row.
 
       // Tap to toggle off
       await tester.tap(tileFinder);
