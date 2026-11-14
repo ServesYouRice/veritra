@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
@@ -143,34 +146,33 @@ void main() {
   });
 
   group('folding', () {
+    final copying = HistoryTransferStatus(
+        incoming: true, phase: HistoryTransferPhase.working);
+
     testWidgets('several notices show as one plus "N more"', (tester) async {
       final state = signedIn()
         ..connectionStatus = ConnectionStatus.offline
-        ..passkeyNotice = PasskeyNotice.added
-        ..historyTransferStatus = const HistoryTransferStatus(
-            incoming: true, phase: HistoryTransferPhase.working);
+        ..historyTransferStatus = copying;
       addTearDown(state.dispose);
       await tester
           .pumpWidget(shell(veritraLightTheme(), NoticeStack(state: state)));
 
-      // The most urgent one shows; the others are behind the button.
+      // The most urgent one shows; the other is behind the button.
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.textContaining('A passkey was added'), findsNothing);
       expect(find.textContaining('Receiving your history'), findsNothing);
-      expect(find.text('2 more'), findsOneWidget);
+      expect(find.text('1 more'), findsOneWidget);
 
-      await tester.tap(find.text('2 more'));
+      await tester.tap(find.text('1 more'));
       await tester.pump();
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.textContaining('A passkey was added'), findsOneWidget);
       expect(find.textContaining('Receiving your history'), findsOneWidget);
       expect(find.text('Show fewer'), findsOneWidget);
-      expect(find.text('2 more'), findsNothing);
+      expect(find.text('1 more'), findsNothing);
 
       await tester.tap(find.text('Show fewer'));
       await tester.pump();
-      expect(find.textContaining('A passkey was added'), findsNothing);
-      expect(find.text('2 more'), findsOneWidget);
+      expect(find.textContaining('Receiving your history'), findsNothing);
+      expect(find.text('1 more'), findsOneWidget);
     });
 
     testWidgets('one notice shows alone, with no "more" button',
@@ -188,33 +190,62 @@ void main() {
         (tester) async {
       final state = signedIn()
         ..connectionStatus = ConnectionStatus.offline
-        ..passkeyNotice = PasskeyNotice.added;
+        ..historyTransferStatus = copying;
       addTearDown(state.dispose);
       await tester
           .pumpWidget(shell(veritraLightTheme(), NoticeStack(state: state)));
       expect(find.text('1 more'), findsOneWidget);
       await tester.tap(find.text('1 more'));
       await tester.pump();
-      expect(find.textContaining('A passkey was added'), findsOneWidget);
-      // Dismissing the passkey notice folds the stack back to one.
-      state.dismissPasskeyNotice();
+      expect(find.textContaining('Receiving your history'), findsOneWidget);
+      // The copy ending folds the stack back to one.
+      state.historyTransferStatus = null;
+      state.notifyListeners();
       await tester.pump();
-      expect(find.textContaining('A passkey was added'), findsNothing);
+      expect(find.textContaining('Receiving your history'), findsNothing);
       expect(find.text('Offline'), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('notice-stack-toggle')),
           findsNothing);
     });
 
-    testWidgets('the pushed chat repeats only the account notices',
+    testWidgets('a passkey change and a leaked password are never folded',
+        (tester) async {
+      final state = signedIn()
+        ..connectionStatus = ConnectionStatus.offline
+        ..historyTransferStatus = copying
+        ..passkeyNotice = PasskeyNotice.added;
+      final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+      await store.saveSetting(
+          'k0.password_leak_day', '$k0Origin\u0000acct_me\u0000$today');
+      await state.refreshRecoveryNotices();
+      await tester
+          .pumpWidget(shell(veritraLightTheme(), NoticeStack(state: state)));
+      expect(find.textContaining('A passkey was added'), findsOneWidget);
+      expect(find.byType(PasswordLeakBanner), findsOneWidget);
+      expect(find.text('Offline'), findsOneWidget);
+      // Only the connection and the history copy fold.
+      expect(find.textContaining('Receiving your history'), findsNothing);
+      expect(find.text('1 more'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    testWidgets('the pushed chat shows the account notices unfolded',
         (tester) async {
       final state = signedIn()
         ..connectionStatus = ConnectionStatus.offline
         ..passkeyNotice = PasskeyNotice.removed;
       addTearDown(state.dispose);
-      await tester.pumpWidget(shell(veritraLightTheme(),
-          NoticeStack(state: state, notices: ShellNotice.account)));
+      await tester.pumpWidget(MaterialApp(
+          theme: veritraLightTheme(),
+          home: ChatScreen(
+              state: state, conversationId: 'conv', showBackButton: true)));
+      await tester.pumpAndSettle();
       expect(find.text('Offline'), findsNothing);
       expect(find.textContaining('A passkey was removed'), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('notice-stack-toggle')),
+          findsNothing);
+      await tester.pumpWidget(const SizedBox());
     });
   });
 
@@ -261,11 +292,41 @@ void main() {
       addTearDown(state.dispose);
       await tester
           .pumpWidget(shell(veritraDarkTheme(), NoticeStack(state: state)));
-      // The attempt shows in full; the other three fold to one plus 2 more.
+      // The attempt and the passkey notice show in full; the other two fold
+      // to one plus 1 more.
       expect(find.text('Account recovery attempt'), findsOneWidget);
       expect(find.text('This is not me'), findsOneWidget);
+      expect(find.textContaining('A passkey was added'), findsOneWidget);
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.text('2 more'), findsOneWidget);
+      expect(find.text('1 more'), findsOneWidget);
+    });
+
+    testWidgets('"This is not me" is off while a cancel runs, then back on',
+        (tester) async {
+      final state = signedIn()..recoveryKeyStatus = waiting();
+      addTearDown(state.dispose);
+      server
+        ..recentAuth = true
+        ..cancelGate = Completer<void>()
+        ..cancelFailure = ApiException(404, 'proxy says no');
+      await tester.pumpWidget(
+          shell(veritraLightTheme(), RecoveryAttemptCard(state: state)));
+      FilledButton notMe() => tester.widget<FilledButton>(
+          find.byKey(const ValueKey<String>('recovery-attempt-not-me')));
+      expect(notMe().onPressed, isNotNull);
+
+      final cancelling = state.cancelAccountRecoveryRequest('arr_9');
+      await tester.pump();
+      expect(state.isBusy(Ops.accountRecovery), isTrue);
+      expect(notMe().onPressed, isNull);
+
+      server.cancelGate!.complete();
+      await cancelling;
+      await tester.pump();
+      expect(state.isBusy(Ops.accountRecovery), isFalse);
+      // The recovery is still waiting, and the button works again.
+      expect(find.text('This is not me'), findsOneWidget);
+      expect(notMe().onPressed, isNotNull);
     });
 
     testWidgets('on its own it has no "more" button', (tester) async {

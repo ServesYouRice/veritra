@@ -24,11 +24,18 @@ class RecoveryAttemptCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Rebuilds only when what it draws changes (T49C-1).
-    return ListenableSelector<(String?, String?, DateTime?)>(
+    return ListenableSelector<(String?, String?, DateTime?, bool)>(
       listenable: state,
       select: () {
         final pending = state.recoveryKeyStatus?.pending;
-        return (pending?.id, pending?.deviceName, pending?.readyAt);
+        // The busy flag too, so "This is not me" enables again when the
+        // cancel it started has ended.
+        return (
+          pending?.id,
+          pending?.deviceName,
+          pending?.readyAt,
+          state.isBusy(Ops.accountRecovery),
+        );
       },
       builder: (context, _, __) {
         final pending = state.recoveryKeyStatus?.pending;

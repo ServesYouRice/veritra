@@ -9,51 +9,42 @@ import 'history_copy_banner.dart';
 import 'listenable_selector.dart';
 import 'recovery_key_prompt_banner.dart';
 
-/// The notices the stack can fold, most urgent first.
+/// The notices the stack can fold, most urgent first. A leaked-password
+/// warning and a passkey change are about the account's security and are
+/// never folded (see [NoticeStack]).
 enum ShellNotice {
-  passwordLeak,
   connection,
-  passkey,
   historyCopy,
   recoveryKeyPrompt;
 
   bool isActive(AppState state) => switch (this) {
-        passwordLeak => PasswordLeakBanner.active(state),
         connection => ConnectionBanner.active(state),
-        passkey => PasskeyNoticeBanner.active(state),
         historyCopy => HistoryCopyBanner.active(state),
         recoveryKeyPrompt => RecoveryKeyPromptBanner.active(state),
       };
 
   Widget build(AppState state) => switch (this) {
-        passwordLeak => PasswordLeakBanner(state: state),
         connection => ConnectionBanner(state: state),
-        passkey => PasskeyNoticeBanner(state: state),
         historyCopy => HistoryCopyBanner(state: state),
         recoveryKeyPrompt => RecoveryKeyPromptBanner(state: state),
       };
-
-  /// The notices about the account itself, which an open chat repeats (U37).
-  static const List<ShellNotice> account = <ShellNotice>[passwordLeak, passkey];
 }
 
 /// Everything the app wants to say at the top of the screen (U17).
 ///
 /// An account-recovery attempt is always its own card above the rest and is
-/// never folded: it may be an attack. Every other notice that is showing
-/// folds into one, the most urgent, with a "2 more" button that opens the
-/// rest and a "Show fewer" button that closes them again.
+/// never folded: it may be an attack. A leaked-password warning and a passkey
+/// change follow it, also unfolded: they are about the account's security.
+/// Every other notice that is showing folds into one, the most urgent, with a
+/// "2 more" button that opens the rest and a "Show fewer" button that closes
+/// them again.
 class NoticeStack extends StatefulWidget {
   const NoticeStack({
     required this.state,
-    this.notices = ShellNotice.values,
     super.key,
   });
 
   final AppState state;
-
-  /// The notices this stack may show, most urgent first.
-  final List<ShellNotice> notices;
 
   @override
   State<NoticeStack> createState() => _NoticeStackState();
@@ -65,17 +56,18 @@ class _NoticeStackState extends State<NoticeStack> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    final notices = widget.notices;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         RecoveryAttemptCard(state: state),
+        PasswordLeakBanner(state: state),
+        PasskeyNoticeBanner(state: state),
         // Rebuilds only when the set of notices showing changes (T49C-1);
         // each notice watches its own details.
         ListenableSelector<List<ShellNotice>>(
           listenable: state,
           select: () => <ShellNotice>[
-            for (final notice in notices)
+            for (final notice in ShellNotice.values)
               if (notice.isActive(state)) notice,
           ],
           equals: _sameNotices,
