@@ -6750,7 +6750,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.'**
+  /// **'This sends this one message and the reason you pick, with what is needed to check it, to the people who handle reports here. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.'**
   String get c6ReportIntro;
 
   /// C6 reports.
@@ -7110,7 +7110,7 @@ abstract class AppLocalizations {
   /// C6 reports (U33): an opened report from before reasons existed.
   ///
   /// In en, this message translates to:
-  /// **'No reason given. It was sent by an older app.'**
+  /// **'No reason given. Reports from older app versions carry none.'**
   String get c6ReportsReasonNone;
 
   /// C6 reports (U33): under the reason. Must not suggest the franking check says anything about the reason.

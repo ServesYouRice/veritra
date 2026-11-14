@@ -4122,7 +4122,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportIntro =>
-      'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
+      'This sends this one message and the reason you pick, with what is needed to check it, to the people who handle reports here. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
 
   @override
   String get c6ReportPreviewLabel => 'This message will be sent';
@@ -4346,7 +4346,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportsReasonNone =>
-      'No reason given. It was sent by an older app.';
+      'No reason given. Reports from older app versions carry none.';
 
   @override
   String get c6ReportsReasonNotChecked =>

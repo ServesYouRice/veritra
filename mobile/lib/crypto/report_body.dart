@@ -88,7 +88,7 @@ class ReportBody {
   final List<int> payload;
   final List<int> frankKey;
 
-  /// Set only for a sealed message (version 2); [designation] is then
+  /// Set only for a sealed message (version 2, or version 3 with the sealed pair); [designation] is then
   /// non-null and empty for the plain form.
   final String? senderAccountId;
   final List<int>? designation;
@@ -97,8 +97,8 @@ class ReportBody {
   /// 2 body (sent before reasons existed).
   final ReportReason? reason;
 
-  /// Whether the report is about a sealed message (explicit: version 2 and
-  /// its sender account, never inferred from what the designation holds).
+  /// Whether the report is about a sealed message (explicit: the version 2 form, or version 3 with
+  /// `sender_account_id`; never inferred from what the designation holds).
   bool get sealed => senderAccountId != null;
 
   /// Writes a version 3 body. Refuses a body without a [reason]: the writer

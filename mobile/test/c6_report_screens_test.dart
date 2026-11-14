@@ -592,7 +592,9 @@ void main() {
 
     await tester.tap(find.text('old words'));
     await tester.pumpAndSettle();
-    expect(find.text('No reason given. It was sent by an older app.'),
+    expect(
+        find.text(
+            'No reason given. Reports from older app versions carry none.'),
         findsOneWidget);
     expect(find.text('The check covers the message only, not the reason.'),
         findsNothing);

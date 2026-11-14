@@ -170,6 +170,11 @@ void main() {
         'free text beside it': {...good(), 'reason_text': 'x'},
         'half the sealed pair': {...good(), 'sender_account_id': 'acct_1'},
         'the other half': {...good(), 'designation': ''},
+        'sealed pair with a stranger for designation': {
+          ...good(),
+          'sender_account_id': 'acct_1',
+          'x': ''
+        },
         'a newer version': {...good(), 'v': 4},
         'a version as a double': {...good(), 'v': 3.0},
       };

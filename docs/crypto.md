@@ -1316,7 +1316,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   neither). `decode` still reads version 1 (7) and version 2 (9), which
   have no reason, and refuses a `reason` in them; a v3 `reason` that is
   missing, not an integer or out of range refuses the whole body. A new
-  reason is a new body version, never a new value under v3. The reason is
+  reason is a new body version, never a new value under v3. Writers then emit the lowest body version whose reason set holds the chosen reason, so a report with a v3 reason stays readable to v3-era recipients. The reason is
   the reporter's claim: it is not franked and not in the aad (the AEAD
   covers it), it never changes the inbox, the recipients or the number of
   copies, and the inbox shows it apart from the verdict. Rust and Go treat

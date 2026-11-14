@@ -4141,7 +4141,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportIntro =>
-      'Овим се шаље само ова једна порука, са доказом да је аутентична, власницима овог сервера. Запечаћена је, па је сам сервер не може прочитати. Ништа друго из ћаскања се не шаље.';
+      'Овим се шаље ова једна порука и разлог који изаберете, са оним што је потребно да се провери, људима који овде обрађују пријаве. Запечаћена је, па је сам сервер не може прочитати. Ништа друго из ћаскања се не шаље.';
 
   @override
   String get c6ReportPreviewLabel => 'Ова порука ће бити послата';
@@ -4365,7 +4365,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportsReasonNone =>
-      'Разлог није наведен. Послата је из старије апликације.';
+      'Разлог није наведен. Пријаве из старијих верзија апликације га немају.';
 
   @override
   String get c6ReportsReasonNotChecked =>
@@ -9480,7 +9480,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportIntro =>
-      'Ovim se šalje samo ova jedna poruka, sa dokazom da je autentična, vlasnicima ovog servera. Zapečaćena je, pa je sam server ne može pročitati. Ništa drugo iz ćaskanja se ne šalje.';
+      'Ovim se šalje ova jedna poruka i razlog koji izaberete, sa onim što je potrebno da se proveri, ljudima koji ovde obrađuju prijave. Zapečaćena je, pa je sam server ne može pročitati. Ništa drugo iz ćaskanja se ne šalje.';
 
   @override
   String get c6ReportPreviewLabel => 'Ova poruka će biti poslata';
@@ -9704,7 +9704,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsReasonNone =>
-      'Razlog nije naveden. Poslata je iz starije aplikacije.';
+      'Razlog nije naveden. Prijave iz starijih verzija aplikacije ga nemaju.';
 
   @override
   String get c6ReportsReasonNotChecked =>

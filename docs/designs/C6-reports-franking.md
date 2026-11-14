@@ -594,10 +594,10 @@ version. Design and build on branch `u33-report-reasons`.
   and never writes version 1 or 2 again.
 - **Old bodies still open.** `decode` accepts version 1 (exactly 7 fields),
   version 2 (exactly 9) and version 3 (exactly 8, or 10 with the sealed
-  pair). A version 1 or 2 body has no reason and reads "No reason given";
+  pair). A version 1 or 2 body has no reason and reads "No reason given. Reports from older app versions carry none.";
   a `reason` member in one is refused.
 - **Fail closed.** The reason set is fixed per body version: a reason
-  added later is a new body version (v4), never a new value under v3. So a
+  added later is a new body version (v4), never a new value under v3. Writers then emit the lowest body version whose reason set holds the chosen reason, so a report with a v3 reason stays readable to v3-era recipients. So a
   v3 body whose `reason` is missing, not an integer (`3.0`, `"3"`), or
   outside 1 to 9 is refused whole, as malformed (`invalidBody`, "damaged"),
   never shown with a guessed or blank reason. An unknown version is refused
@@ -636,7 +636,7 @@ version. Design and build on branch `u33-report-reasons`.
   the sealed pair, literal v1 and v2 bodies, every malformed reason, equal
   lengths for every reason), `c6_report_screens_test.dart` (the form needs
   a reason and keeps it across the trust reload; the inbox and detail show
-  it; a literal v1 body opens with "No reason given").
+  it; a literal v1 body opens with "No reason given. Reports from older app versions carry none.").
 
 ## Owner decisions (2026-11-01)
 
