@@ -6,6 +6,7 @@ param(
   [string]$OutDir,
   [string]$SignToolCommand,
   [string]$IsccPath,
+  [string]$CryptoBuildInfo,
   [switch]$BuildApp,
   [switch]$DryRun
 )

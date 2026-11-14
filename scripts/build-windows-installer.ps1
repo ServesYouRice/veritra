@@ -7,6 +7,10 @@
 #   .\scripts\build-windows-installer.ps1 -DryRun
 #   .\scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /f cert.pfx /p secret $f'
 #
+# The installer is refused unless the crypto library was built from committed
+# sources (D134): build-desktop-crypto.ps1 records source_tree_dirty in
+# mobile\windows\crypto\metadata\build-info.txt. -DryRun does not package, so it skips the check.
+#
 # Signing stays a placeholder until the owner acquires and configures a code-signing certificate.
 [CmdletBinding()]
 param(
@@ -15,6 +19,7 @@ param(
   [string]$OutDir,
   [string]$SignToolCommand,
   [string]$IsccPath,
+  [string]$CryptoBuildInfo,
   [switch]$BuildApp,
   [switch]$DryRun
 )
@@ -62,6 +67,20 @@ if (-not (Test-Path -LiteralPath $Executable)) {
     if ($LASTEXITCODE -ne 0) { throw "Windows app build failed with exit code $LASTEXITCODE" }
   } elseif (-not $DryRun) {
     throw "Windows application executable not found at '$Executable'. Run scripts\repro\build.ps1 first, or pass -BuildApp."
+  }
+}
+
+# Release packaging refuses a crypto library built from uncommitted changes (D134).
+if (-not $DryRun) {
+  if (-not $CryptoBuildInfo) {
+    $CryptoBuildInfo = Join-Path $Root "mobile\windows\crypto\metadata\build-info.txt"
+  }
+  if (-not (Test-Path -LiteralPath $CryptoBuildInfo)) {
+    throw "Crypto build record not found: $CryptoBuildInfo. Run scripts\build-desktop-crypto.ps1 first."
+  }
+  $DirtyFlags = @(Get-Content -LiteralPath $CryptoBuildInfo | Where-Object { $_ -like "source_tree_dirty=*" })
+  if ($DirtyFlags.Count -ne 1 -or $DirtyFlags[0] -cne "source_tree_dirty=false") {
+    throw "Refusing to package: the crypto library was not built from committed sources (need exactly one source_tree_dirty=false in $CryptoBuildInfo). Commit the changes and rebuild with scripts\build-desktop-crypto.ps1."
   }
 }
 

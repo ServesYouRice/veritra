@@ -104,7 +104,9 @@ class WindowsInstallerScriptTest(unittest.TestCase):
                 f'exit /b 0\n'
             )
 
-            result = self.run_ps(
+            info = tmp_path / "build-info.txt"
+            info.write_text("source_revision=" + "0" * 40 + "\nsource_tree_dirty=false\n")
+            args = [
                 "-AppDir",
                 str(app_dir),
                 "-AppVersion",
@@ -113,7 +115,24 @@ class WindowsInstallerScriptTest(unittest.TestCase):
                 str(out_dir),
                 "-IsccPath",
                 str(mock_iscc),
-            )
+                "-CryptoBuildInfo",
+                str(info),
+            ]
+
+            # D134: a dirty, malformed or missing crypto build record refuses packaging.
+            for text in ("source_tree_dirty=true\n", "no flag\n", "source_tree_dirty=false\nsource_tree_dirty=true\n"):
+                info.write_text(text)
+                refused = self.run_ps(*args)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("not built from committed sources", refused.stderr)
+                self.assertFalse(target_installer.exists())
+            info.unlink()
+            missing = self.run_ps(*args)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("Crypto build record not found", missing.stderr)
+            info.write_text("source_revision=" + "0" * 40 + "\nsource_tree_dirty=false\n")
+
+            result = self.run_ps(*args)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(target_installer.exists())
 
