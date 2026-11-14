@@ -77,6 +77,13 @@ void main() {
       theme: veritraLightTheme(),
       home: ConnectScreen(state: state),
     ));
+    // U20: sign-in sits behind "I already have an account".
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await tester.pumpAndSettle();
     await tester.enterText(
         find.byType(TextFormField).first, 'https://chat.example.com');
     await tester.pump(const Duration(milliseconds: 700));

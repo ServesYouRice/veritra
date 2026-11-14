@@ -352,6 +352,13 @@ void main() {
         home: ConnectScreen(state: probing),
       ),
     ));
+    // U20: the server field opens behind "I already have an account".
+    await pumpAsync(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+    await pumpAsync(tester);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await pumpAsync(tester);
     await tester.enterText(
         find.byType(TextFormField).first, 'https://a.example');
     await tester.pump(const Duration(milliseconds: 700));
@@ -365,6 +372,41 @@ void main() {
     await pumpAsync(tester);
     expect(find.byKey(const ValueKey<String>('connect-same-server')),
         findsNothing);
+  });
+
+  testWidgets(
+      'U21: a pasted invite link to a server already on this device says so '
+      'on the join step', (tester) async {
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final host = await openApp(tester);
+    addTearDown(host.dispose);
+    await signIn(tester, host, 'one', origin: 'https://a.example');
+    await tester.runAsync(() => host.beginAdd());
+    await pumpAsync(tester);
+    final probing = _ProbeState();
+    addTearDown(probing.dispose);
+    await tester.pumpWidget(AccountHostScope(
+      host: host,
+      child: MaterialApp(
+        theme: veritraLightTheme(),
+        home: ConnectScreen(state: probing),
+      ),
+    ));
+    await pumpAsync(tester);
+    await tester.tap(find.byKey(const ValueKey<String>('welcome-invite')));
+    await pumpAsync(tester);
+    await tester.enterText(
+        find.byKey(const ValueKey<String>('connect-invite-link')),
+        'https://a.example/invite#v1.MFRGGZDFMZTWQ2LKNNWG23TPOA');
+    await tester
+        .tap(find.byKey(const ValueKey<String>('connect-join-continue')));
+    await tester.pump(const Duration(milliseconds: 700));
+    await pumpAsync(tester);
+    expect(find.text('Joining a.example'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('connect-same-server')),
+        findsOneWidget);
   });
 }
 

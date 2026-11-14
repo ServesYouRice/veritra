@@ -243,12 +243,39 @@ the float can follow once there is a toolchain to check it on.
 ### §5 The connect screen
 
 Opened on a four-way `SegmentedButton` — Owner / Sign in / Join / Link — which
-read like a debug menu and was the first thing a new user saw.
+read like a debug menu and was the first thing a new user saw. A later
+version chose the path from the setup probe and hid the rest behind "Other
+ways to connect"; the UI audit (U20, owner decision D131) replaced that too,
+because the probe cannot tell a new phone from a returning one.
 
-- Leads with the brand mark, the wordmark, and one line of positioning.
-- Shows **one** path. The setup probe at `_probeSetupStatus` already detects
-  whether the instance needs an owner, so the right mode is chosen without
-  asking. The other three moved behind "Other ways to connect".
+- Opens on **two choices**: "I have an invite" and "I already have an
+  account", with "Set up a new server" as a quiet text link below. This is
+  the only step with the brand mark, the wordmark and the line of
+  positioning; every later step leads with a back arrow and the step's title.
+- "I already have an account" asks one question with three whole-row
+  answers: this is a new device (link it), I've signed in here before
+  (password or passkey), or I lost all my devices (recovery; shown only where
+  the build can recover). "Other ways to connect" is gone.
+- The person's choice holds. The setup probe still runs on the server
+  address, but it never switches the path: on a new server it shows the
+  new-server notice with a "Set up this server" action instead.
+- A device that has signed in before opens straight on sign-in, and a
+  device-link claim in progress reopens its own step; back (and the system
+  back gesture) reaches the choices from either.
+- "I have an invite" takes two steps (U21). Step 1 takes one pasted or
+  scanned invite link (`<server>/invite#v1.<code>`, see
+  [U21-account-invite-link](designs/U21-account-invite-link.md)), with
+  "Type the server address and code instead" as the fallback. Step 2 names
+  the server ("Joining chat.example.org", with Change) and asks only for
+  username, password and "Confirm password", so Join shows without scrolling
+  at 360 × 800.
+- A server answer that belongs to one field sits under that field and clears
+  when it is edited: a refused invite goes back to step 1 under the link or
+  code, a refused password under the password. Anything else stays in the
+  error card.
+- Optional lines (probe status, the new-server notice, "already on this
+  device") keep one list slot each, shown or not, so their appearing never
+  moves the field being typed in.
 - Fields carry a floating `micro` label above the value instead of a Material
   `labelText` notched into the border, which is what made the form look like a
   form. Every field gained a `hintText` to buy back the accessible name that

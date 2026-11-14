@@ -121,13 +121,20 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('sign-in offers "Lost all your devices?" only with the engine',
+  testWidgets('sign-in offers "I lost all my devices" only with the engine',
       (tester) async {
     tall(tester);
+    // U20: the choice sits behind "I already have an account".
+    Future<void> openChoices() async {
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+      await tester.pumpAndSettle();
+    }
+
     final native = k0App(server, store, crypto);
     await tester.pumpWidget(app(ConnectScreen(state: native)));
-    await tester.pumpAndSettle();
-    expect(find.text('Lost all your devices?'), findsOneWidget);
+    await openChoices();
+    expect(find.text('I lost all my devices'), findsOneWidget);
     native.dispose();
 
     for (final closed in <CryptoService>[
@@ -135,9 +142,11 @@ void main() {
       TestOnlyCryptoService(),
     ]) {
       final state = k0App(server, store, closed);
-      await tester.pumpWidget(app(ConnectScreen(state: state)));
-      await tester.pumpAndSettle();
-      expect(find.text('Lost all your devices?'), findsNothing);
+      // A new screen, not the previous one rebuilt on its third step.
+      await tester
+          .pumpWidget(app(ConnectScreen(key: ObjectKey(state), state: state)));
+      await openChoices();
+      expect(find.text('I lost all my devices'), findsNothing);
       state.dispose();
     }
   });

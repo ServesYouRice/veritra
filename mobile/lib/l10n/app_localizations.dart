@@ -981,6 +981,12 @@ abstract class AppLocalizations {
   /// **'No owner account exists yet — create it below.'**
   String get connectFreshInstanceMessage;
 
+  /// No description provided for @connectFreshInstanceAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up this server'**
+  String get connectFreshInstanceAction;
+
   /// No description provided for @connectInstanceUrl.
   ///
   /// In en, this message translates to:
@@ -1065,6 +1071,72 @@ abstract class AppLocalizations {
   /// **'From an admin on this instance'**
   String get connectInviteCodeHint;
 
+  /// No description provided for @connectInviteLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link'**
+  String get connectInviteLink;
+
+  /// No description provided for @connectInviteLinkHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the link you were sent'**
+  String get connectInviteLinkHint;
+
+  /// No description provided for @connectInviteLinkRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the invite link you received.'**
+  String get connectInviteLinkRequired;
+
+  /// No description provided for @connectInviteLinkInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not a Veritra invite link. Check that you copied all of it.'**
+  String get connectInviteLinkInvalid;
+
+  /// No description provided for @connectInviteTypeInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the server address and code instead'**
+  String get connectInviteTypeInstead;
+
+  /// No description provided for @connectInviteLinkInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste an invite link instead'**
+  String get connectInviteLinkInstead;
+
+  /// No description provided for @connectJoinLinkDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the invite link you were sent, or scan its QR code.'**
+  String get connectJoinLinkDetail;
+
+  /// No description provided for @connectJoinAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a username and password'**
+  String get connectJoinAccountTitle;
+
+  /// No description provided for @connectJoiningServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining {server}'**
+  String connectJoiningServer(String server);
+
+  /// No description provided for @connectJoinChangeServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get connectJoinChangeServer;
+
+  /// No description provided for @connectScanInviteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan invite QR'**
+  String get connectScanInviteTitle;
+
   /// No description provided for @connectUsername.
   ///
   /// In en, this message translates to:
@@ -1082,6 +1154,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your name on this instance'**
   String get connectUsernameHint;
+
+  /// No description provided for @connectUsernameInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use 3 to 32 letters, digits, _ or -.'**
+  String get connectUsernameInvalid;
 
   /// No description provided for @connectPassword.
   ///
@@ -1275,6 +1353,72 @@ abstract class AppLocalizations {
   /// **'Self-hosted, end-to-end encrypted messaging'**
   String get connectTagline;
 
+  /// No description provided for @connectStepBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get connectStepBack;
+
+  /// No description provided for @welcomeHaveInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'I have an invite'**
+  String get welcomeHaveInvite;
+
+  /// No description provided for @welcomeHaveAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'I already have an account'**
+  String get welcomeHaveAccount;
+
+  /// No description provided for @welcomeSetUpServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up a new server'**
+  String get welcomeSetUpServer;
+
+  /// No description provided for @welcomeAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How do you want to sign in?'**
+  String get welcomeAccountTitle;
+
+  /// No description provided for @welcomeNewDeviceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a new device'**
+  String get welcomeNewDeviceTitle;
+
+  /// No description provided for @welcomeNewDeviceDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Add it using a device you already use.'**
+  String get welcomeNewDeviceDetail;
+
+  /// No description provided for @welcomeSignedInBeforeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'I\'ve signed in here before'**
+  String get welcomeSignedInBeforeTitle;
+
+  /// No description provided for @welcomeSignedInBeforeDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your username and password.'**
+  String get welcomeSignedInBeforeDetail;
+
+  /// No description provided for @welcomeLostDevicesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'I lost all my devices'**
+  String get welcomeLostDevicesTitle;
+
+  /// No description provided for @welcomeLostDevicesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Get back in with your password and recovery key.'**
+  String get welcomeLostDevicesDetail;
+
   /// No description provided for @qrScanLinkTitle.
   ///
   /// In en, this message translates to:
@@ -1298,6 +1442,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Point the camera at the QR code on your existing device (Settings → Link a new device).'**
   String get qrPointCamera;
+
+  /// No description provided for @qrPointCameraInvite.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the invite QR code.'**
+  String get qrPointCameraInvite;
 
   /// No description provided for @qrPermissionDenied.
   ///
@@ -1682,6 +1832,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy code'**
   String get inviteCopyCode;
+
+  /// No description provided for @inviteCopyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get inviteCopyLink;
+
+  /// No description provided for @inviteLinkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite link copied.'**
+  String get inviteLinkCopied;
+
+  /// No description provided for @inviteShowQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR code'**
+  String get inviteShowQr;
+
+  /// No description provided for @inviteQrTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite QR code'**
+  String get inviteQrTitle;
+
+  /// No description provided for @inviteQrHint.
+  ///
+  /// In en, this message translates to:
+  /// **'On the new phone, open Veritra, tap “I have an invite” and scan this code.'**
+  String get inviteQrHint;
 
   /// No description provided for @profileThisInstance.
   ///

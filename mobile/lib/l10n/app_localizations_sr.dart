@@ -514,6 +514,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Налог власника још не постоји — направите га испод.';
 
   @override
+  String get connectFreshInstanceAction => 'Подеси овај сервер';
+
+  @override
   String get connectInstanceUrl => 'URL инстанце';
 
   @override
@@ -559,6 +562,45 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectInviteCodeHint => 'Од администратора ове инстанце';
 
   @override
+  String get connectInviteLink => 'Линк позивнице';
+
+  @override
+  String get connectInviteLinkHint => 'Налепите линк који сте добили';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Налепите линк позивнице који сте добили.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ово није Veritra линк позивнице. Проверите да сте га копирали цео.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Уместо тога унесите адресу сервера и код';
+
+  @override
+  String get connectInviteLinkInstead => 'Уместо тога налепите линк позивнице';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Налепите линк позивнице који сте добили или скенирајте његов QR код.';
+
+  @override
+  String get connectJoinAccountTitle => 'Изаберите корисничко име и лозинку';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Придружујете се серверу $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Промени';
+
+  @override
+  String get connectScanInviteTitle => 'Скенирај QR код позивнице';
+
+  @override
   String get connectUsername => 'Корисничко име';
 
   @override
@@ -566,6 +608,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectUsernameHint => 'Ваше име на овој инстанци';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Користите од 3 до 32 латинична слова, цифре, _ или -.';
 
   @override
   String get connectPassword => 'Лозинка';
@@ -678,6 +724,42 @@ class AppLocalizationsSr extends AppLocalizations {
       'Самостално хостована размена порука, шифрована с краја на крај';
 
   @override
+  String get connectStepBack => 'Назад';
+
+  @override
+  String get welcomeHaveInvite => 'Имам позивницу';
+
+  @override
+  String get welcomeHaveAccount => 'Већ имам налог';
+
+  @override
+  String get welcomeSetUpServer => 'Подеси нови сервер';
+
+  @override
+  String get welcomeAccountTitle => 'Како желите да се пријавите?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ово је нов уређај';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Додајте га помоћу уређаја који већ користите.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Већ користим овај уређај';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Пријавите се корисничким именом и лозинком.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Немам више ниједан уређај';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Вратите се помоћу лозинке и кључа за опоравак.';
+
+  @override
   String get qrScanLinkTitle => 'Скенирај QR код за повезивање';
 
   @override
@@ -689,6 +771,9 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get qrPointCamera =>
       'Усмерите камеру ка QR коду на постојећем уређају (Подешавања → Повежи нови уређај).';
+
+  @override
+  String get qrPointCameraInvite => 'Усмерите камеру ка QR коду позивнице.';
 
   @override
   String get qrPermissionDenied =>
@@ -957,6 +1042,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get inviteCopyCode => 'Копирај код';
+
+  @override
+  String get inviteCopyLink => 'Копирај линк';
+
+  @override
+  String get inviteLinkCopied => 'Линк позивнице је копиран.';
+
+  @override
+  String get inviteShowQr => 'Прикажи QR код';
+
+  @override
+  String get inviteQrTitle => 'QR код позивнице';
+
+  @override
+  String get inviteQrHint =>
+      'На новом телефону отворите Veritra, додирните „Имам позивницу“ и скенирајте овај код.';
 
   @override
   String get profileThisInstance => 'ова инстанца';
@@ -5391,6 +5492,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nalog vlasnika još ne postoji — napravite ga ispod.';
 
   @override
+  String get connectFreshInstanceAction => 'Podesi ovaj server';
+
+  @override
   String get connectInstanceUrl => 'URL instance';
 
   @override
@@ -5436,6 +5540,45 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectInviteCodeHint => 'Od administratora ove instance';
 
   @override
+  String get connectInviteLink => 'Link pozivnice';
+
+  @override
+  String get connectInviteLinkHint => 'Nalepite link koji ste dobili';
+
+  @override
+  String get connectInviteLinkRequired =>
+      'Nalepite link pozivnice koji ste dobili.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'Ovo nije Veritra link pozivnice. Proverite da ste ga kopirali ceo.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Umesto toga unesite adresu servera i kod';
+
+  @override
+  String get connectInviteLinkInstead => 'Umesto toga nalepite link pozivnice';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Nalepite link pozivnice koji ste dobili ili skenirajte njegov QR kod.';
+
+  @override
+  String get connectJoinAccountTitle => 'Izaberite korisničko ime i lozinku';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Pridružujete se serveru $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Promeni';
+
+  @override
+  String get connectScanInviteTitle => 'Skeniraj QR kod pozivnice';
+
+  @override
   String get connectUsername => 'Korisničko ime';
 
   @override
@@ -5443,6 +5586,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectUsernameHint => 'Vaše ime na ovoj instanci';
+
+  @override
+  String get connectUsernameInvalid =>
+      'Koristite od 3 do 32 latinična slova, cifre, _ ili -.';
 
   @override
   String get connectPassword => 'Lozinka';
@@ -5555,6 +5702,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Samostalno hostovana razmena poruka, šifrovana s kraja na kraj';
 
   @override
+  String get connectStepBack => 'Nazad';
+
+  @override
+  String get welcomeHaveInvite => 'Imam pozivnicu';
+
+  @override
+  String get welcomeHaveAccount => 'Već imam nalog';
+
+  @override
+  String get welcomeSetUpServer => 'Podesi novi server';
+
+  @override
+  String get welcomeAccountTitle => 'Kako želite da se prijavite?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'Ovo je nov uređaj';
+
+  @override
+  String get welcomeNewDeviceDetail =>
+      'Dodajte ga pomoću uređaja koji već koristite.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'Već koristim ovaj uređaj';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Prijavite se korisničkim imenom i lozinkom.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'Nemam više nijedan uređaj';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Vratite se pomoću lozinke i ključa za oporavak.';
+
+  @override
   String get qrScanLinkTitle => 'Skeniraj QR kod za povezivanje';
 
   @override
@@ -5566,6 +5749,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get qrPointCamera =>
       'Usmerite kameru ka QR kodu na postojećem uređaju (Podešavanja → Poveži novi uređaj).';
+
+  @override
+  String get qrPointCameraInvite => 'Usmerite kameru ka QR kodu pozivnice.';
 
   @override
   String get qrPermissionDenied =>
@@ -5834,6 +6020,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get inviteCopyCode => 'Kopiraj kod';
+
+  @override
+  String get inviteCopyLink => 'Kopiraj link';
+
+  @override
+  String get inviteLinkCopied => 'Link pozivnice je kopiran.';
+
+  @override
+  String get inviteShowQr => 'Prikaži QR kod';
+
+  @override
+  String get inviteQrTitle => 'QR kod pozivnice';
+
+  @override
+  String get inviteQrHint =>
+      'Na novom telefonu otvorite Veritra, dodirnite „Imam pozivnicu“ i skenirajte ovaj kod.';
 
   @override
   String get profileThisInstance => 'ova instanca';

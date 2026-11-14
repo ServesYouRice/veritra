@@ -4,20 +4,25 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
+import '../../core/account_invite_link.dart';
 import '../../core/api_client.dart';
 import '../../core/account_host.dart';
 import '../../core/app_state.dart';
 import '../../storage/account_slots.dart';
 import '../settings/accounts_screen.dart' show AccountsShortcut;
-import '../../ui/about.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
-import '../../ui/widgets/veritra_mark.dart';
 import 'account_recovery_screen.dart';
 import 'qr_scan_screen.dart';
+import 'welcome_steps.dart';
 import '../../l10n/l10n.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
+
+/// U20: where the person is in the signed-out flow. [loading] lasts until the
+/// stored-device lookup answers, so a returning device does not flash the
+/// welcome step before its sign-in form.
+enum _Step { loading, welcome, accountChoice, form }
 
 /// The placeholder origin shown in server fields; never translated.
 const exampleServerOrigin = 'https://chat.example.org';
@@ -40,9 +45,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final setupToken = TextEditingController();
   final inviteCode = TextEditingController();
   final linkCode = TextEditingController();
-  // An unlinked device cannot use password sign-in. The probe promotes this
-  // to owner for a fresh instance, or sign-in when local device credentials
-  // match the probed origin.
+  // U21: joining takes two steps. Step 1 reads one invite link (or, typed by
+  // hand, the server address and code); step 2 asks for name and password.
+  final inviteLink = TextEditingController();
+  bool _joinDetails = false;
+  bool _joinManual = false;
+  // Errors placed under a field, each cleared when that field is edited.
+  String? _inviteLinkError;
+  String? _inviteCodeError;
+  String? _passwordError;
+  // The app-wide error already shown under a field, so the card skips it.
+  String? _placedError;
+  // Whether the last submission reached the action (not only the pre-flight).
+  bool _actionRan = false;
+  // U20: the person picks the path (welcome, then the account choices); a
+  // returning device opens on sign-in. Once picked, neither a URL edit nor
+  // the probe changes it ([_modeManuallySelected] stays true).
+  _Step _step = _Step.loading;
   AuthMode mode = AuthMode.join;
   bool showPassword = false;
   SetupProbeResult _probeResult = const SetupProbeResult.idle();
@@ -80,6 +99,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     setupToken.dispose();
     inviteCode.dispose();
     linkCode.dispose();
+    inviteLink.dispose();
     super.dispose();
   }
 
@@ -87,7 +107,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (url.text == _lastUrlText) return;
     _lastUrlText = url.text;
     _passkeysOffered = false;
-    _modeManuallySelected = false;
     _setupProbeDebounce?.cancel();
     _setupProbeGeneration++;
     final target = url.text.trim();
@@ -95,6 +114,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       setState(() {
         _probeResult = const SetupProbeResult.idle();
         setupRequired = null;
+        if (_modeManuallySelected) return;
         if (_hasStoredDevice) {
           mode = AuthMode.signIn;
         } else {
@@ -116,8 +136,54 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!mounted) return;
     setState(() {
       _hasStoredDevice = linked;
-      if (url.text.trim().isEmpty && !_modeManuallySelected) {
-        mode = linked ? AuthMode.signIn : AuthMode.join;
+      if (_step != _Step.loading) return;
+      // A device-link claim in progress resumes where it was; a device that
+      // has signed in before skips the welcome step (back reaches it).
+      if (widget.state.pendingDeviceLinkClaim != null) {
+        _choose(AuthMode.linkDevice);
+      } else if (linked) {
+        _choose(AuthMode.signIn);
+      } else {
+        _step = _Step.welcome;
+      }
+    });
+  }
+
+  /// Opens the form for [chosen] and fixes the path: the probe and URL edits
+  /// no longer change it. Call inside setState.
+  void _choose(AuthMode chosen) {
+    _modeManuallySelected = true;
+    mode = chosen;
+    _step = _Step.form;
+  }
+
+  /// The step a back press returns to, or null on the first step.
+  _Step? get _previousStep {
+    switch (_step) {
+      case _Step.loading:
+      case _Step.welcome:
+        return null;
+      case _Step.accountChoice:
+        return _Step.welcome;
+      case _Step.form:
+        // A device-link claim in progress is left with "Cancel waiting".
+        if (widget.state.pendingDeviceLinkClaim != null) return null;
+        // Join step 2 goes back to step 1, on the same form.
+        if (mode == AuthMode.join && _joinDetails) return _Step.form;
+        return mode == AuthMode.signIn || mode == AuthMode.linkDevice
+            ? _Step.accountChoice
+            : _Step.welcome;
+    }
+  }
+
+  void _goBack() {
+    final previous = _previousStep;
+    if (previous == null) return;
+    setState(() {
+      if (previous == _Step.form) {
+        _joinDetails = false;
+      } else {
+        _step = previous;
       }
     });
   }
@@ -158,190 +224,518 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   Widget _build(BuildContext context) {
-    final theme = Theme.of(context);
     final pendingLink = widget.state.pendingDeviceLinkClaim;
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Form(
-              key: formKey,
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.all(BoneSpacing.xl),
-                children: <Widget>[
-                  if (_pendingSlotHost case final host?)
-                    Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: TextButton.icon(
-                        key: const ValueKey<String>('connect-back'),
-                        onPressed:
-                            host.switching ? null : () => _backToAccounts(host),
-                        icon: const Icon(Icons.arrow_back),
-                        label: Text(context.l10n.accountsBack),
-                      ),
-                    )
-                  else
-                    // A signed-out account (an expired session, a sign-out)
-                    // still reaches the other accounts on this device.
-                    const AccountsShortcut(),
-                  const _BrandHeader(),
-                  const SizedBox(height: BoneSpacing.xl + BoneSpacing.sm),
-                  // One path, chosen by the probe rather than asked for. The
-                  // four-way SegmentedButton this replaces read as a debug
-                  // menu and was the first thing a new user saw
-                  // (`docs/design.md` §5).
-                  SectionHeader(
-                    _modeTitle,
-                    padding: const EdgeInsets.only(bottom: BoneSpacing.xs),
-                  ),
-                  Text(
-                    _modeDescription,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: BoneSpacing.xl),
-                  if (setupRequired == true) ...<Widget>[
-                    _Callout(
-                      icon: Icons.rocket_launch_outlined,
-                      title: context.l10n.connectFreshInstanceTitle,
-                      message: context.l10n.connectFreshInstanceMessage,
-                    ),
-                    const SizedBox(height: BoneSpacing.lg),
+    // A claim restored after the screen opened takes the person back to it.
+    if (pendingLink != null &&
+        _step != _Step.loading &&
+        !(_step == _Step.form && mode == AuthMode.linkDevice)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.state.pendingDeviceLinkClaim == null) return;
+        setState(() => _choose(AuthMode.linkDevice));
+      });
+    }
+    final previous = _previousStep;
+    return PopScope(
+      // The system back gesture steps back through the flow first.
+      canPop: previous == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Form(
+                key: formKey,
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(BoneSpacing.xl),
+                  children: <Widget>[
+                    _topBar(previous),
+                    ..._stepChildren(pendingLink),
                   ],
-                  _Field(
-                    label: context.l10n.connectInstanceUrl,
-                    child: TextFormField(
-                      controller: url,
-                      keyboardType: TextInputType.url,
-                      autocorrect: false,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                      validator: _validateUrl,
-                      decoration: const InputDecoration(
-                        hintText: exampleServerOrigin,
-                        prefixIcon: Icon(Icons.dns_outlined),
-                      ),
-                    ),
-                  ),
-                  if (_probeResult.state != SetupProbeState.idle) ...<Widget>[
-                    const SizedBox(height: BoneSpacing.sm),
-                    _ProbeStatus(result: _probeResult),
-                  ],
-                  if (_sharesServerWithAnotherAccount) ...<Widget>[
-                    const SizedBox(height: BoneSpacing.sm),
-                    Text(context.l10n.accountsSameServer,
-                        key: const ValueKey<String>('connect-same-server'),
-                        style: theme.textTheme.bodySmall),
-                  ],
-                  const SizedBox(height: BoneSpacing.lg),
-                  if (mode == AuthMode.linkDevice)
-                    ..._linkDeviceFields(theme, pendingLink)
-                  else
-                    ..._credentialFields(),
-                  const SizedBox(height: BoneSpacing.xl),
-                  SizedBox(
-                    width: double.infinity,
-                    child: mode == AuthMode.linkDevice && pendingLink != null
-                        ? FilledButton.icon(
-                            onPressed:
-                                widget.state.busy ? null : _completeDeviceLink,
-                            icon: const Icon(Icons.sync),
-                            label: Text(context.l10n.connectCheckApproval),
-                          )
-                        : FilledButton.icon(
-                            onPressed: widget.state.busy || _submitting
-                                ? null
-                                : _submit,
-                            icon: widget.state.busy || _submitting
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Icon(mode == AuthMode.linkDevice
-                                    ? Icons.qr_code_2
-                                    : Icons.login),
-                            label: Text(_submitLabel),
-                          ),
-                  ),
-                  if (mode == AuthMode.signIn &&
-                      _hasStoredDevice &&
-                      _passkeysOffered) ...<Widget>[
-                    const SizedBox(height: BoneSpacing.md),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        key: const ValueKey<String>('connect-passkey'),
-                        onPressed: widget.state.busy || _submitting
-                            ? null
-                            : _signInWithPasskey,
-                        icon: const Icon(Icons.fingerprint),
-                        label: Text(context.l10n.connectSignInPasskey),
-                      ),
-                    ),
-                  ],
-                  if (widget.state.error != null) ...<Widget>[
-                    const SizedBox(height: BoneSpacing.lg),
-                    _ErrorCard(
-                      message: widget.state.error!,
-                      action: _suggestsLinking(widget.state.error!)
-                          ? TextButton(
-                              onPressed: () => setState(() {
-                                _modeManuallySelected = true;
-                                mode = AuthMode.linkDevice;
-                              }),
-                              child: Text(context.l10n.connectLinkInstead),
-                            )
-                          : null,
-                    ),
-                  ],
-                  const SizedBox(height: BoneSpacing.sm),
-                  Center(
-                    child: TextButton(
-                      onPressed: _showOtherWays,
-                      child: Text(context.l10n.connectOtherWays),
-                    ),
-                  ),
-                  // K0 R4: someone who lost every device recovers with the
-                  // password and recovery key.
-                  if (widget.state.recoveryAvailable)
-                    Center(
-                      child: TextButton(
-                        key: const ValueKey<String>('connect-lost-devices'),
-                        onPressed: widget.state.busy
-                            ? null
-                            : () => Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => AccountRecoveryStartScreen(
-                                      state: widget.state,
-                                      initialServer: url.text.trim(),
-                                    ),
-                                  ),
-                                ),
-                        child: Text(context.l10n.connectLostAllDevices),
-                      ),
-                    ),
-                  if (widget.state.errorFor(Ops.accountRecovery)
-                      case final recoveryError?)
-                    Padding(
-                      padding: const EdgeInsets.only(top: BoneSpacing.sm),
-                      child: Text(
-                        recoveryError,
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.error),
-                      ),
-                    ),
-                ],
+                ),
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// Back one step, and the way to the other accounts on this device.
+  Widget _topBar(_Step? previous) {
+    final Widget accounts;
+    if (_pendingSlotHost case final host?) {
+      accounts = Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextButton.icon(
+          key: const ValueKey<String>('connect-back'),
+          onPressed: host.switching ? null : () => _backToAccounts(host),
+          icon: const Icon(Icons.arrow_back),
+          label: Text(context.l10n.accountsBack),
+        ),
+      );
+    } else {
+      // A signed-out account (an expired session, a sign-out) still reaches
+      // the other accounts on this device.
+      accounts = const AccountsShortcut();
+    }
+    if (previous == null) return accounts;
+    return Row(
+      children: <Widget>[
+        IconButton(
+          key: const ValueKey<String>('connect-step-back'),
+          tooltip: context.l10n.connectStepBack,
+          onPressed: _goBack,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        Expanded(child: accounts),
+      ],
+    );
+  }
+
+  List<Widget> _stepChildren(DeviceLinkClaimView? pendingLink) {
+    switch (_step) {
+      case _Step.loading:
+        return const <Widget>[];
+      case _Step.welcome:
+        return <Widget>[
+          WelcomeChoices(
+            onInvite: () => setState(() {
+              _choose(AuthMode.join);
+              _joinDetails = false;
+            }),
+            onAccount: () => setState(() => _step = _Step.accountChoice),
+            onSetUpServer: () => setState(() => _choose(AuthMode.owner)),
+          ),
+        ];
+      case _Step.accountChoice:
+        return _accountChoiceChildren();
+      case _Step.form:
+        return _formChildren(pendingLink);
+    }
+  }
+
+  List<Widget> _accountChoiceChildren() {
+    final theme = Theme.of(context);
+    return <Widget>[
+      const SizedBox(height: BoneSpacing.lg),
+      AccountChoices(
+        onNewDevice: () => setState(() => _choose(AuthMode.linkDevice)),
+        onSignedInBefore: () => setState(() => _choose(AuthMode.signIn)),
+        // K0 R4: someone who lost every device recovers with the password
+        // and recovery key.
+        onLostDevices: widget.state.recoveryAvailable
+            ? () {
+                if (widget.state.busy) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => AccountRecoveryStartScreen(
+                      state: widget.state,
+                      initialServer: url.text.trim(),
+                    ),
+                  ),
+                );
+              }
+            : null,
+      ),
+      if (widget.state.errorFor(Ops.accountRecovery) case final recoveryError?)
+        Padding(
+          padding: const EdgeInsets.only(top: BoneSpacing.md),
+          child: Text(
+            recoveryError,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.error),
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _formChildren(DeviceLinkClaimView? pendingLink) {
+    final theme = Theme.of(context);
+    if (mode == AuthMode.join) {
+      return _joinDetails ? _joinAccountChildren(theme) : _joinLinkChildren();
+    }
+    return <Widget>[
+      ..._formHeader(theme, _modeTitle, _modeDescription),
+      _freshInstanceNotice(),
+      ..._serverFieldChildren(theme),
+      const SizedBox(height: BoneSpacing.lg),
+      if (mode == AuthMode.linkDevice)
+        ..._linkDeviceFields(theme, pendingLink)
+      else
+        ..._credentialFields(),
+      const SizedBox(height: BoneSpacing.xl),
+      _submitButton(pendingLink),
+      if (mode == AuthMode.signIn &&
+          _hasStoredDevice &&
+          _passkeysOffered) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            key: const ValueKey<String>('connect-passkey'),
+            onPressed:
+                widget.state.busy || _submitting ? null : _signInWithPasskey,
+            icon: const Icon(Icons.fingerprint),
+            label: Text(context.l10n.connectSignInPasskey),
+          ),
+        ),
+      ],
+      ..._errorCard(),
+    ];
+  }
+
+  /// The step's title and, when given, one line under it.
+  List<Widget> _formHeader(ThemeData theme, String title, String? detail) {
+    return <Widget>[
+      const SizedBox(height: BoneSpacing.md),
+      SectionHeader(
+        title,
+        padding: const EdgeInsets.only(bottom: BoneSpacing.xs),
+      ),
+      if (detail != null) ...<Widget>[
+        Text(
+          detail,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: BoneSpacing.xl),
+      ],
+    ];
+  }
+
+  // The optional notices below each take one list slot, shown or not: a
+  // ListView child list matches elements by index, so a notice inserted
+  // above a field would rebuild that field and drop its focus mid-typing.
+
+  Widget _freshInstanceNotice() {
+    if (setupRequired != true) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: BoneSpacing.lg),
+      child: _Callout(
+        icon: Icons.rocket_launch_outlined,
+        title: context.l10n.connectFreshInstanceTitle,
+        message: context.l10n.connectFreshInstanceMessage,
+        // A new server has no accounts to sign in to or join yet.
+        child: mode == AuthMode.owner
+            ? null
+            : Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton(
+                  key: const ValueKey<String>('connect-set-up-this-server'),
+                  onPressed: () => setState(() => _choose(AuthMode.owner)),
+                  child: Text(context.l10n.connectFreshInstanceAction),
+                ),
+              ),
+      ),
+    );
+  }
+
+  List<Widget> _serverFieldChildren(ThemeData theme) {
+    return <Widget>[
+      _Field(
+        label: context.l10n.connectInstanceUrl,
+        child: TextFormField(
+          controller: url,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          validator: _validateUrl,
+          decoration: const InputDecoration(
+            hintText: exampleServerOrigin,
+            prefixIcon: Icon(Icons.dns_outlined),
+          ),
+        ),
+      ),
+      _probeResult.state == SetupProbeState.idle
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(top: BoneSpacing.sm),
+              child: _ProbeStatus(result: _probeResult),
+            ),
+      _sameServerNotice(theme),
+    ];
+  }
+
+  /// O10: this server already holds another account on this device.
+  Widget _sameServerNotice(ThemeData theme) {
+    if (!_sharesServerWithAnotherAccount) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: BoneSpacing.sm),
+      child: Text(context.l10n.accountsSameServer,
+          key: const ValueKey<String>('connect-same-server'),
+          style: theme.textTheme.bodySmall),
+    );
+  }
+
+  Widget _submitButton(DeviceLinkClaimView? pendingLink) {
+    return SizedBox(
+      width: double.infinity,
+      child: mode == AuthMode.linkDevice && pendingLink != null
+          ? FilledButton.icon(
+              onPressed: widget.state.busy ? null : _completeDeviceLink,
+              icon: const Icon(Icons.sync),
+              label: Text(context.l10n.connectCheckApproval),
+            )
+          : FilledButton.icon(
+              key: const ValueKey<String>('connect-submit'),
+              onPressed: widget.state.busy || _submitting ? null : _submit,
+              icon: widget.state.busy || _submitting
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Icon(mode == AuthMode.linkDevice
+                      ? Icons.qr_code_2
+                      : Icons.login),
+              label: Text(_submitLabel),
+            ),
+    );
+  }
+
+  /// The app-wide error, unless it already sits under its field.
+  List<Widget> _errorCard() {
+    final error = widget.state.error;
+    if (error == null || error == _placedError) return const <Widget>[];
+    return <Widget>[
+      const SizedBox(height: BoneSpacing.lg),
+      _ErrorCard(
+        message: error,
+        action: _suggestsLinking(error)
+            ? TextButton(
+                onPressed: () => setState(() {
+                  _modeManuallySelected = true;
+                  mode = AuthMode.linkDevice;
+                }),
+                child: Text(context.l10n.connectLinkInstead),
+              )
+            : null,
+      ),
+    ];
+  }
+
+  /// U21 join, step 1: one invite link, or the server address and code.
+  List<Widget> _joinLinkChildren() {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      ..._formHeader(
+        theme,
+        l10n.connectModeJoinTitle,
+        _joinManual ? l10n.connectModeJoinDetail : l10n.connectJoinLinkDetail,
+      ),
+      if (!_joinManual) ...<Widget>[
+        _Field(
+          label: l10n.connectInviteLink,
+          child: TextFormField(
+            key: const ValueKey<String>('connect-invite-link'),
+            controller: inviteLink,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            enableSuggestions: false,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: (value) => value == null || value.trim().isEmpty
+                ? l10n.connectInviteLinkRequired
+                : null,
+            forceErrorText: _inviteLinkError,
+            onChanged: (_) {
+              if (_inviteLinkError != null) {
+                setState(() => _inviteLinkError = null);
+              }
+            },
+            onFieldSubmitted: (_) => _continueJoin(),
+            decoration: InputDecoration(
+              hintText: l10n.connectInviteLinkHint,
+              prefixIcon: const Icon(Icons.link),
+            ),
+          ),
+        ),
+        if (_canScanQr) ...<Widget>[
+          const SizedBox(height: BoneSpacing.md),
+          OutlinedButton.icon(
+            key: const ValueKey<String>('connect-invite-scan'),
+            onPressed: _scanInviteLink,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: Text(l10n.connectScanQr),
+          ),
+        ],
+      ] else ...<Widget>[
+        ..._serverFieldChildren(theme),
+        const SizedBox(height: BoneSpacing.lg),
+        _inviteCodeField(),
+      ],
+      const SizedBox(height: BoneSpacing.xl),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const ValueKey<String>('connect-join-continue'),
+          onPressed: _continueJoin,
+          icon: const Icon(Icons.arrow_forward),
+          label: Text(l10n.commonContinue),
+        ),
+      ),
+      const SizedBox(height: BoneSpacing.sm),
+      Center(
+        child: TextButton(
+          key: ValueKey<String>(
+              _joinManual ? 'connect-invite-paste' : 'connect-invite-manual'),
+          onPressed: () => setState(() {
+            _joinManual = !_joinManual;
+            _inviteLinkError = null;
+            _inviteCodeError = null;
+          }),
+          child: Text(_joinManual
+              ? l10n.connectInviteLinkInstead
+              : l10n.connectInviteTypeInstead),
+        ),
+      ),
+    ];
+  }
+
+  /// U21 join, step 2: the server named, then name and password. Kept short
+  /// enough that Join shows without scrolling at 360 x 800.
+  List<Widget> _joinAccountChildren(ThemeData theme) {
+    final l10n = context.l10n;
+    return <Widget>[
+      ..._formHeader(theme, l10n.connectJoinAccountTitle, null),
+      Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              l10n.connectJoiningServer(_serverLabel),
+              key: const ValueKey<String>('connect-join-server'),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey<String>('connect-join-change'),
+            onPressed: () => setState(() => _joinDetails = false),
+            child: Text(l10n.connectJoinChangeServer),
+          ),
+        ],
+      ),
+      // Only a server that cannot be reached needs saying here.
+      _probeResult.state == SetupProbeState.idle ||
+              _probeResult.state == SetupProbeState.probing ||
+              _probeResult.isReachable
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(bottom: BoneSpacing.sm),
+              child: _ProbeStatus(result: _probeResult),
+            ),
+      _sameServerNotice(theme),
+      const SizedBox(height: BoneSpacing.md),
+      _freshInstanceNotice(),
+      ..._credentialFields(),
+      const SizedBox(height: BoneSpacing.xl),
+      _submitButton(null),
+      ..._errorCard(),
+    ];
+  }
+
+  /// The server the join will reach, as host (and port), for step 2.
+  String get _serverLabel {
+    final raw = url.text.trim();
+    final authority = Uri.tryParse(raw)?.authority ?? '';
+    return authority.isEmpty ? raw : authority;
+  }
+
+  Widget _inviteCodeField() {
+    return _Field(
+      label: context.l10n.connectInviteCode,
+      child: TextFormField(
+        controller: inviteCode,
+        autocorrect: false,
+        autovalidateMode: AutovalidateMode.onUserInteraction,
+        validator: (value) => value == null || value.trim().isEmpty
+            ? context.l10n.connectInviteCodeRequired
+            : null,
+        forceErrorText: _inviteCodeError,
+        onChanged: (_) {
+          if (_inviteCodeError != null) {
+            setState(() => _inviteCodeError = null);
+          }
+        },
+        style: BoneType.mono,
+        decoration: InputDecoration(
+          hintText: context.l10n.connectInviteCodeHint,
+          prefixIcon: const Icon(Icons.card_giftcard_outlined),
+        ),
+      ),
+    );
+  }
+
+  /// Step 1 to step 2: a link fills the server address and the code; typed
+  /// by hand, the two fields are checked as they are. Only the setup probe
+  /// reaches the server before Join.
+  void _continueJoin() {
+    if (!(formKey.currentState?.validate() ?? false)) return;
+    if (!_joinManual) {
+      final link = AccountInviteLink.tryParse(
+        inviteLink.text,
+        transport: widget.state.config.transport,
+      );
+      if (link == null) {
+        setState(
+            () => _inviteLinkError = context.l10n.connectInviteLinkInvalid);
+        return;
+      }
+      url.text = link.origin;
+      inviteCode.text = link.code;
+    }
+    setState(() => _joinDetails = true);
+  }
+
+  Future<void> _scanInviteLink() async {
+    final scanned = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => QrScanScreen(
+          title: context.l10n.connectScanInviteTitle,
+          hint: context.l10n.qrPointCameraInvite,
+        ),
+      ),
+    );
+    if (!mounted || scanned == null || scanned.isEmpty) return;
+    setState(() {
+      inviteLink.text = scanned;
+      _inviteLinkError = null;
+    });
+    _continueJoin();
+  }
+
+  /// Puts a server answer that belongs to one field under that field (U21):
+  /// an invite the server refuses goes back to step 1, a password it refuses
+  /// goes under the password. Anything else stays in the card.
+  void _placeFieldError(AuthMode submitMode) {
+    final error = widget.state.error;
+    if (error == null) return;
+    final l10n = context.l10n;
+    if (submitMode == AuthMode.join && error == l10n.apiErrorInvalidInvite) {
+      setState(() {
+        _placedError = error;
+        _joinDetails = false;
+        if (_joinManual) {
+          _inviteCodeError = error;
+        } else {
+          _inviteLinkError = error;
+        }
+      });
+    } else if ((submitMode == AuthMode.join || submitMode == AuthMode.owner) &&
+        error == l10n.apiErrorWeakPassword) {
+      setState(() {
+        _placedError = error;
+        _passwordError = error;
+      });
+    }
   }
 
   List<Widget> _linkDeviceFields(
@@ -415,25 +809,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   List<Widget> _credentialFields() {
     return <Widget>[
-      if (mode == AuthMode.join) ...<Widget>[
-        _Field(
-          label: context.l10n.connectInviteCode,
-          child: TextFormField(
-            controller: inviteCode,
-            autocorrect: false,
-            autovalidateMode: AutovalidateMode.onUserInteraction,
-            validator: (value) => value == null || value.trim().isEmpty
-                ? context.l10n.connectInviteCodeRequired
-                : null,
-            style: BoneType.mono,
-            decoration: InputDecoration(
-              hintText: context.l10n.connectInviteCodeHint,
-              prefixIcon: const Icon(Icons.card_giftcard_outlined),
-            ),
-          ),
-        ),
-        const SizedBox(height: BoneSpacing.lg),
-      ],
       _Field(
         label: context.l10n.connectUsername,
         child: TextFormField(
@@ -441,9 +816,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
           autofillHints: const <String>[AutofillHints.username],
           autocorrect: false,
           autovalidateMode: AutovalidateMode.onUserInteraction,
-          validator: (value) => value == null || value.trim().isEmpty
-              ? context.l10n.connectUsernameRequired
-              : null,
+          validator: _validateUsername,
           decoration: InputDecoration(
             hintText: context.l10n.connectUsernameHint,
             prefixIcon: const Icon(Icons.person_outline),
@@ -463,6 +836,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
           obscureText: !showPassword,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: _validatePassword,
+          forceErrorText: _passwordError,
+          onChanged: (_) {
+            if (_passwordError != null) setState(() => _passwordError = null);
+          },
           decoration: InputDecoration(
             hintText: _isRegistration ? context.l10n.connectPasswordHint : null,
             prefixIcon: const Icon(Icons.lock_outline),
@@ -514,54 +891,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     ];
   }
 
-  /// The three paths that are not the probed one, behind a single link.
-  ///
-  /// The gating is the same as the old segmented button's `enabled` flags:
-  /// a mode that can only fail against this instance is not offered.
-  Future<void> _showOtherWays() async {
-    final chosen = await showModalBottomSheet<AuthMode>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        final available = <AuthMode>[
-          if (setupRequired != false) AuthMode.owner,
-          if (setupRequired != true) AuthMode.signIn,
-          if (setupRequired != true) AuthMode.join,
-          if (setupRequired != true) AuthMode.linkDevice,
-        ]..remove(mode);
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.xl),
-                child: SectionHeader(context.l10n.connectOtherWays),
-              ),
-              for (final option in available)
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: BoneSpacing.xl,
-                  ),
-                  leading: Icon(_modeIcon(option)),
-                  title: Text(_titleFor(option)),
-                  subtitle: Text(_descriptionFor(option)),
-                  onTap: () => Navigator.of(sheetContext).pop(option),
-                ),
-              const SizedBox(height: BoneSpacing.lg),
-            ],
-          ),
-        );
-      },
-    );
-    if (chosen != null && mounted) {
-      setState(() {
-        _modeManuallySelected = true;
-        mode = chosen;
-      });
-    }
-  }
-
   bool get _isRegistration => mode == AuthMode.owner || mode == AuthMode.join;
 
   /// Whether [error] says password sign-in needs a linked device.
@@ -590,6 +919,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return widget.state.config.transport.allowLoopbackHttp
           ? context.l10n.connectUrlLoopbackOnly
           : context.l10n.connectUrlHttpsRequired;
+    }
+    return null;
+  }
+
+  /// The server's rule for a new username (`validUsername`): 3 to 32 ASCII
+  /// letters, digits, `_` or `-`. Sign-in only needs one.
+  static final RegExp _usernamePattern = RegExp(r'^[A-Za-z0-9_-]{3,32}$');
+
+  String? _validateUsername(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) return context.l10n.connectUsernameRequired;
+    if (_isRegistration && !_usernamePattern.hasMatch(raw)) {
+      return context.l10n.connectUsernameInvalid;
     }
     return null;
   }
@@ -641,19 +983,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
-  static IconData _modeIcon(AuthMode mode) {
-    switch (mode) {
-      case AuthMode.owner:
-        return Icons.rocket_launch_outlined;
-      case AuthMode.signIn:
-        return Icons.login;
-      case AuthMode.join:
-        return Icons.card_giftcard_outlined;
-      case AuthMode.linkDevice:
-        return Icons.qr_code_2;
-    }
-  }
-
   Future<void> _submit() async {
     // One submission at a time: the pre-flight below awaits twice before the
     // action sets the app's own busy flag.
@@ -661,12 +990,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!(formKey.currentState?.validate() ?? false)) {
       return;
     }
-    setState(() => _submitting = true);
+    final submitMode = mode;
+    setState(() {
+      _submitting = true;
+      _placedError = null;
+      _actionRan = false;
+    });
     try {
       await _submitForm();
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+    if (mounted && _actionRan) _placeFieldError(submitMode);
   }
 
   /// The account switcher's host, when this screen belongs to an account
@@ -766,6 +1101,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       setupRequired = result.setupRequired;
       _hasStoredDevice = linked;
     });
+    _actionRan = true;
     switch (submitMode) {
       case AuthMode.owner:
         return widget.state.createOwner(raw, ownerName, secret, setupSecret);
@@ -890,37 +1226,6 @@ class _Field extends StatelessWidget {
         Semantics(
           label: label,
           child: child,
-        ),
-      ],
-    );
-  }
-}
-
-/// Brand moment. One of the few places a direction this restrained shows the
-/// mark at all, so it gets the wordmark and a line of positioning rather than
-/// a tinted circle with a stock shield in it.
-class _BrandHeader extends StatelessWidget {
-  const _BrandHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      children: <Widget>[
-        VeritraMark(size: 72, color: theme.colorScheme.onSurface),
-        const SizedBox(height: BoneSpacing.lg),
-        Text(
-          veritraProductName,
-          style: theme.textTheme.displayMedium,
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: BoneSpacing.xs),
-        Text(
-          context.l10n.connectTagline,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-          textAlign: TextAlign.center,
         ),
       ],
     );

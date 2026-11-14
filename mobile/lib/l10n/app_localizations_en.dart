@@ -513,6 +513,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'No owner account exists yet — create it below.';
 
   @override
+  String get connectFreshInstanceAction => 'Set up this server';
+
+  @override
   String get connectInstanceUrl => 'Instance URL';
 
   @override
@@ -557,6 +560,44 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInviteCodeHint => 'From an admin on this instance';
 
   @override
+  String get connectInviteLink => 'Invite link';
+
+  @override
+  String get connectInviteLinkHint => 'Paste the link you were sent';
+
+  @override
+  String get connectInviteLinkRequired => 'Paste the invite link you received.';
+
+  @override
+  String get connectInviteLinkInvalid =>
+      'This is not a Veritra invite link. Check that you copied all of it.';
+
+  @override
+  String get connectInviteTypeInstead =>
+      'Type the server address and code instead';
+
+  @override
+  String get connectInviteLinkInstead => 'Paste an invite link instead';
+
+  @override
+  String get connectJoinLinkDetail =>
+      'Paste the invite link you were sent, or scan its QR code.';
+
+  @override
+  String get connectJoinAccountTitle => 'Choose a username and password';
+
+  @override
+  String connectJoiningServer(String server) {
+    return 'Joining $server';
+  }
+
+  @override
+  String get connectJoinChangeServer => 'Change';
+
+  @override
+  String get connectScanInviteTitle => 'Scan invite QR';
+
+  @override
   String get connectUsername => 'Username';
 
   @override
@@ -564,6 +605,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectUsernameHint => 'Your name on this instance';
+
+  @override
+  String get connectUsernameInvalid => 'Use 3 to 32 letters, digits, _ or -.';
 
   @override
   String get connectPassword => 'Password';
@@ -673,6 +717,41 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectTagline => 'Self-hosted, end-to-end encrypted messaging';
 
   @override
+  String get connectStepBack => 'Back';
+
+  @override
+  String get welcomeHaveInvite => 'I have an invite';
+
+  @override
+  String get welcomeHaveAccount => 'I already have an account';
+
+  @override
+  String get welcomeSetUpServer => 'Set up a new server';
+
+  @override
+  String get welcomeAccountTitle => 'How do you want to sign in?';
+
+  @override
+  String get welcomeNewDeviceTitle => 'This is a new device';
+
+  @override
+  String get welcomeNewDeviceDetail => 'Add it using a device you already use.';
+
+  @override
+  String get welcomeSignedInBeforeTitle => 'I\'ve signed in here before';
+
+  @override
+  String get welcomeSignedInBeforeDetail =>
+      'Sign in with your username and password.';
+
+  @override
+  String get welcomeLostDevicesTitle => 'I lost all my devices';
+
+  @override
+  String get welcomeLostDevicesDetail =>
+      'Get back in with your password and recovery key.';
+
+  @override
   String get qrScanLinkTitle => 'Scan link QR';
 
   @override
@@ -684,6 +763,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get qrPointCamera =>
       'Point the camera at the QR code on your existing device (Settings → Link a new device).';
+
+  @override
+  String get qrPointCameraInvite => 'Point the camera at the invite QR code.';
 
   @override
   String get qrPermissionDenied =>
@@ -951,6 +1033,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get inviteCopyCode => 'Copy code';
+
+  @override
+  String get inviteCopyLink => 'Copy link';
+
+  @override
+  String get inviteLinkCopied => 'Invite link copied.';
+
+  @override
+  String get inviteShowQr => 'Show QR code';
+
+  @override
+  String get inviteQrTitle => 'Invite QR code';
+
+  @override
+  String get inviteQrHint =>
+      'On the new phone, open Veritra, tap “I have an invite” and scan this code.';
 
   @override
   String get profileThisInstance => 'this instance';
