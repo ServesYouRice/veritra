@@ -4122,7 +4122,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportIntro =>
-      'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
+      'This sends this one message and the reason you pick, with what is needed to check it, to the people who handle reports here. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
 
   @override
   String get c6ReportPreviewLabel => 'This message will be sent';
@@ -4130,6 +4130,41 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get c6ReportPreviewNoText =>
       'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.';
+
+  @override
+  String get c6ReportReasonLabel => 'Why are you reporting it?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Only the people who get the report see the reason. It is sealed with the message.';
+
+  @override
+  String get c6ReportReasonSpam => 'Spam or scam';
+
+  @override
+  String get c6ReportReasonHarassment => 'Harassment or bullying';
+
+  @override
+  String get c6ReportReasonHate => 'Hate speech';
+
+  @override
+  String get c6ReportReasonViolence => 'Threats or violence';
+
+  @override
+  String get c6ReportReasonSexual => 'Sexual content';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Puts a child at risk';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Self-harm or suicide';
+
+  @override
+  String get c6ReportReasonPrivateInfo =>
+      'Shares someone\'s private information';
+
+  @override
+  String get c6ReportReasonOther => 'Something else';
 
   @override
   String get c6ReportSend => 'Send report';
@@ -4298,6 +4333,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String c6ReportsReporter(String account) {
     return 'Reported by $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Reason given by the reporter: $reason';
+  }
+
+  @override
+  String c6ReportsRowReason(String reason) {
+    return 'Reporter\'s reason: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'No reason given. Reports from older app versions carry none.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'The check covers the message only, not the reason.';
 
   @override
   String c6ReportsSender(String account) {

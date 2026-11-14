@@ -4141,7 +4141,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportIntro =>
-      'Овим се шаље само ова једна порука, са доказом да је аутентична, власницима овог сервера. Запечаћена је, па је сам сервер не може прочитати. Ништа друго из ћаскања се не шаље.';
+      'Овим се шаље ова једна порука и разлог који изаберете, са оним што је потребно да се провери, људима који овде обрађују пријаве. Запечаћена је, па је сам сервер не може прочитати. Ништа друго из ћаскања се не шаље.';
 
   @override
   String get c6ReportPreviewLabel => 'Ова порука ће бити послата';
@@ -4149,6 +4149,40 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get c6ReportPreviewNoText =>
       'Порука без текста, на пример прилог. Шаљу се њени подаци, укључујући кључ којим се датотека отвара, али не и сама датотека.';
+
+  @override
+  String get c6ReportReasonLabel => 'Зашто пријављујеш ову поруку?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Разлог виде само они који добију пријаву. Запечаћен је заједно са поруком.';
+
+  @override
+  String get c6ReportReasonSpam => 'Нежељене поруке или превара';
+
+  @override
+  String get c6ReportReasonHarassment => 'Узнемиравање или малтретирање';
+
+  @override
+  String get c6ReportReasonHate => 'Говор мржње';
+
+  @override
+  String get c6ReportReasonViolence => 'Претње или насиље';
+
+  @override
+  String get c6ReportReasonSexual => 'Сексуални садржај';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Угрожава дете';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Самоповређивање или самоубиство';
+
+  @override
+  String get c6ReportReasonPrivateInfo => 'Дели нечије приватне податке';
+
+  @override
+  String get c6ReportReasonOther => 'Нешто друго';
 
   @override
   String get c6ReportSend => 'Пошаљи пријаву';
@@ -4318,6 +4352,24 @@ class AppLocalizationsSr extends AppLocalizations {
   String c6ReportsReporter(String account) {
     return 'Пријавио: $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Разлог који је навео пријавилац: $reason';
+  }
+
+  @override
+  String c6ReportsRowReason(String reason) {
+    return 'Разлог пријавиоца: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'Разлог није наведен. Пријаве из старијих верзија апликације га немају.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'Провера обухвата само поруку, не и разлог.';
 
   @override
   String c6ReportsSender(String account) {
@@ -9428,7 +9480,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportIntro =>
-      'Ovim se šalje samo ova jedna poruka, sa dokazom da je autentična, vlasnicima ovog servera. Zapečaćena je, pa je sam server ne može pročitati. Ništa drugo iz ćaskanja se ne šalje.';
+      'Ovim se šalje ova jedna poruka i razlog koji izaberete, sa onim što je potrebno da se proveri, ljudima koji ovde obrađuju prijave. Zapečaćena je, pa je sam server ne može pročitati. Ništa drugo iz ćaskanja se ne šalje.';
 
   @override
   String get c6ReportPreviewLabel => 'Ova poruka će biti poslata';
@@ -9436,6 +9488,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6ReportPreviewNoText =>
       'Poruka bez teksta, na primer prilog. Šalju se njeni podaci, uključujući ključ kojim se datoteka otvara, ali ne i sama datoteka.';
+
+  @override
+  String get c6ReportReasonLabel => 'Zašto prijavljuješ ovu poruku?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Razlog vide samo oni koji dobiju prijavu. Zapečaćen je zajedno sa porukom.';
+
+  @override
+  String get c6ReportReasonSpam => 'Neželjene poruke ili prevara';
+
+  @override
+  String get c6ReportReasonHarassment => 'Uznemiravanje ili maltretiranje';
+
+  @override
+  String get c6ReportReasonHate => 'Govor mržnje';
+
+  @override
+  String get c6ReportReasonViolence => 'Pretnje ili nasilje';
+
+  @override
+  String get c6ReportReasonSexual => 'Seksualni sadržaj';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Ugrožava dete';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Samopovređivanje ili samoubistvo';
+
+  @override
+  String get c6ReportReasonPrivateInfo => 'Deli nečije privatne podatke';
+
+  @override
+  String get c6ReportReasonOther => 'Nešto drugo';
 
   @override
   String get c6ReportSend => 'Pošalji prijavu';
@@ -9605,6 +9691,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String c6ReportsReporter(String account) {
     return 'Prijavio: $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Razlog koji je naveo prijavilac: $reason';
+  }
+
+  @override
+  String c6ReportsRowReason(String reason) {
+    return 'Razlog prijavioca: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'Razlog nije naveden. Prijave iz starijih verzija aplikacije ga nemaju.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'Provera obuhvata samo poruku, ne i razlog.';
 
   @override
   String c6ReportsSender(String account) {

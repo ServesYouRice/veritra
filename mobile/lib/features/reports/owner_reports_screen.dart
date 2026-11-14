@@ -15,6 +15,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_list_screen.dart' show conversationTitle;
+import 'report_reason_labels.dart';
 
 /// A person by the name they shared (W11) and the account label, as the
 /// owner's device knows them; the short account ID when nobody here does.
@@ -195,11 +196,20 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              subtitle: Text(l10n.c6ReportsFiledBy(
-                                  _personName(widget.state,
-                                      report.row.reporterAccountId),
-                                  formatDateTime(
-                                      context, report.row.createdAt))),
+                              // U33: the reporter's reason leads the second
+                              // line; a locked report shows none (it is
+                              // inside the seal).
+                              subtitle: Text(<String>[
+                                if (report.reason case final reason?)
+                                  l10n.c6ReportsRowReason(
+                                      reportReasonLabel(l10n, reason)),
+                                l10n.c6ReportsFiledBy(
+                                    _personName(widget.state,
+                                        report.row.reporterAccountId),
+                                    formatDateTime(
+                                        context, report.row.createdAt)),
+                              ].join('\n')),
+                              isThreeLine: report.reason != null,
                               onTap: () => _openDetail(report),
                             ),
                         ]),
@@ -388,6 +398,23 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
                 const SizedBox(height: BoneSpacing.xs),
                 Text(l10n.c6ReportsWhere(place)),
               ],
+            // U33: the reason sits with the reporter, away from the verdict:
+            // it is the reporter's claim, and no check covers it. A locked
+            // report shows none (it is inside the seal).
+            if (report.isOpen) ...<Widget>[
+              const SizedBox(height: BoneSpacing.xs),
+              Text(
+                key: const Key('report-reason'),
+                switch (report.reason) {
+                  final reason? =>
+                    l10n.c6ReportsReason(reportReasonLabel(l10n, reason)),
+                  null => l10n.c6ReportsReasonNone,
+                },
+              ),
+              if (report.reason != null)
+                Text(l10n.c6ReportsReasonNotChecked,
+                    style: theme.textTheme.bodySmall),
+            ],
             const SizedBox(height: BoneSpacing.lg),
             if (lockedText != null)
               Text(lockedText)

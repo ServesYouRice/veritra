@@ -13,7 +13,8 @@ moderator inbox" below), and moderator keys are trusted through MLS with no
 tap ("Moderator keys over MLS"). A private channel's reports go only to
 its own moderator members ("Private channels"). Not done: the owner's way to
 verify without the server learning the envelope id, and the app's report
-screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
+screens (step 4). The report form offers reasons, sealed in body v3 ("Report
+reasons").** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
 
 ## Goal
@@ -558,6 +559,84 @@ channels) are unchanged.
   `c6_native_report_key_test.dart` (the roster read over real OpenMLS) and
   `TestPrivateChannelReportsRouteOnlyToItsMembers`. No wire, ABI, local
   schema or server migration change.
+
+## Report reasons (U33, report body v3, 2026-11-14)
+
+The UI audit item U33 (owner-approved) asks that the report form offer
+reasons. A reason travels inside the sealed body, so it needs a new body
+version. Design and build on branch `u33-report-reasons`.
+
+- **A fixed list, no free text.** The reporter picks exactly one reason;
+  "Something else" covers the rest. Free text is left out: it is not needed
+  to triage, it would be the reporter's own words sitting next to the
+  revealed message and its verdict (easy to read as part of what was
+  checked), and it would hand every moderator a channel for whatever a
+  reporter wants to send them.
+
+  | Code | Reason (`ReportReason`) | English label |
+  |---|---|---|
+  | 1 | `spam` | Spam or scam |
+  | 2 | `harassment` | Harassment or bullying |
+  | 3 | `hate` | Hate speech |
+  | 4 | `violence` | Threats or violence |
+  | 5 | `sexual` | Sexual content |
+  | 6 | `childSafety` | Puts a child at risk |
+  | 7 | `selfHarm` | Self-harm or suicide |
+  | 8 | `privateInfo` | Shares someone's private information |
+  | 9 | `other` | Something else |
+
+- **Body v3.** The new app always writes version 3: version 1's seven
+  fields plus `reason`, or version 2's nine fields plus `reason` for a
+  sealed message (the pair `sender_account_id` and `designation`, both or
+  neither). `reason` is a JSON integer from 1 to 9: one digit, so the
+  sealed copy has the same size whatever the reason, and the server cannot
+  tell reasons apart by length. `encode` refuses a body without a reason
+  and never writes version 1 or 2 again.
+- **Old bodies still open.** `decode` accepts version 1 (exactly 7 fields),
+  version 2 (exactly 9) and version 3 (exactly 8, or 10 with the sealed
+  pair). A version 1 or 2 body has no reason and reads "No reason given. Reports from older app versions carry none.";
+  a `reason` member in one is refused.
+- **Fail closed.** The reason set is fixed per body version: a reason
+  added later is a new body version (v4), never a new value under v3. Writers then emit the lowest body version whose reason set holds the chosen reason, so a report with a v3 reason stays readable to v3-era recipients. So a
+  v3 body whose `reason` is missing, not an integer (`3.0`, `"3"`), or
+  outside 1 to 9 is refused whole, as malformed (`invalidBody`, "damaged"),
+  never shown with a guessed or blank reason. An unknown version is refused
+  the same way. Consequence for rollout: an owner or moderator on a build
+  from before v3 shows a v3 report as damaged. No such build is released
+  (the release gate), so this is accepted.
+- **Server sees ciphertext only.** The reason is inside the HPKE seal of
+  every copy; the AEAD covers it, so the aad stays v2 and no route, column
+  or log changes. The reason never changes anything the server can see:
+  the inbox kind (from the conversation), the recipient set (the verified
+  record, the pins and the announcements), the number of copies or when
+  the report is filed. Any routing by reason (say, child-safety reports
+  also to the instance owner) would show the server the reason's class
+  through the copy set; that is an owner question and is not built.
+- **Same reason for every recipient.** One body is sealed once per
+  recipient, so each instance owner's copy (a DM or group) and each
+  verified moderator's copy (a community, or only the moderators in a
+  private channel) carries the same reason. Both inboxes show it the same
+  way. Nothing acts on a reason automatically (open item 6).
+- **Not evidence.** The reason is the reporter's claim. It is not franked
+  and not part of the commitment, so a check against the server record
+  says nothing about it. The inbox row reads "Reporter's reason: …" and the
+  report reads "Reason given by the reporter: …", beside the reporter's
+  name and away from the verdict, with
+  the line "The check covers the message only, not the reason." It never
+  feeds the verdict or the next step. A report that cannot be opened shows
+  no reason (it is inside the seal).
+- **Nothing stored.** The reporter's device does not keep the reason
+  (schema 27 stays ids only); the recipient holds it in memory while a
+  screen shows the report.
+- **No wire, ABI, local schema or server migration change.** The body is
+  opaque to Rust (`pm_crypto_report_seal` bounds 256 KiB of plaintext; the
+  largest v3 body is about 90 KiB) and to Go (the `sealed` length check is
+  the same bound), so only the Dart codec and screens change.
+- Tests: `c6_report_body_pins_test.dart` (v3 round trip with and without
+  the sealed pair, literal v1 and v2 bodies, every malformed reason, equal
+  lengths for every reason), `c6_report_screens_test.dart` (the form needs
+  a reason and keeps it across the trust reload; the inbox and detail show
+  it; a literal v1 body opens with "No reason given. Reports from older app versions carry none.").
 
 ## Owner decisions (2026-11-01)
 

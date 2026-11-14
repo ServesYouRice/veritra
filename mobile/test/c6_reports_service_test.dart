@@ -12,6 +12,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/owner_key_watch.dart';
 import 'package:private_messenger/crypto/owner_proof_pins.dart';
+import 'package:private_messenger/crypto/report_body.dart';
 import 'package:private_messenger/crypto/report_key_announcement.dart';
 import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -302,7 +303,9 @@ void main() {
     final plan = await reporter.prepare(_conversation);
     await reporter.pinKeys(plan);
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:$_action');
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam);
   }
 
   final Object nativeSkip = nativeCryptoSkip();
@@ -358,7 +361,9 @@ void main() {
     expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
     expect(server.copies, isEmpty);
@@ -366,7 +371,9 @@ void main() {
     await reporter.pinKeys(plan);
     expect((await reporter.prepare(_conversation)).canSend, isTrue);
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:$_action');
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.harassment);
     expect(server.copies, hasLength(1));
     // The server sees no envelope id and no text in what it stored.
     final stored =
@@ -378,7 +385,9 @@ void main() {
     // A second tap on the same message files nothing more.
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.alreadyReported)));
     expect(server.filedReports, 1);
@@ -391,6 +400,8 @@ void main() {
     expect(opened.isOpen, isTrue);
     expect(opened.text, 'the reported words');
     expect(opened.body!.envelopeId, _envelope);
+    // U33: the reason crossed the real seal inside the v3 body.
+    expect(opened.reason, ReportReason.harassment);
     expect(server.envelopeRequests, isEmpty);
 
     // Verifying asks the server for exactly that envelope.
@@ -473,7 +484,9 @@ void main() {
     expect(plan.canSend, isFalse);
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
     expect(server.copies, isEmpty);
@@ -506,7 +519,9 @@ void main() {
     expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
     expect(server.copies, isEmpty);
@@ -515,7 +530,9 @@ void main() {
     // The person compares the code: then, and only then, it is sent.
     await reporter.pinKeys(plan);
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:$_action');
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam);
     expect(server.copies.single.recipientPublicKey, listed);
   }, skip: nativeSkip);
 
@@ -582,7 +599,9 @@ void main() {
     expect(plan.canSend, isFalse);
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
     expect(server.copies, isEmpty);
@@ -635,12 +654,17 @@ void main() {
             (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>().having(
             (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
     server.kind = 'instance_owner';
     await expectLater(
-        reporter.file(conversationId: _conversation, messageKey: 'dev:none'),
+        reporter.file(
+            conversationId: _conversation,
+            messageKey: 'dev:none',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.notReportable)));
     server.keys.clear();
@@ -671,7 +695,9 @@ void main() {
             (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
     await expectLater(
         reporter.file(
-            conversationId: _conversation, messageKey: '$_sender:$_action'),
+            conversationId: _conversation,
+            messageKey: '$_sender:$_action',
+            reason: ReportReason.spam),
         throwsA(isA<ReportFailureException>().having(
             (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
     expect(server.copies, isEmpty);
@@ -694,7 +720,9 @@ void main() {
     expect(await store.loadReportKeyPins(_origin), isEmpty,
         reason: 'moderator keys are never pinned');
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:$_action');
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam);
     expect(server.copies.map((c) => c.inboxId),
         [communityModeratorInboxId(_community, _moderator)]);
 
@@ -723,7 +751,9 @@ void main() {
         };
 
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:$_action');
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam);
     final first = server.copies.first.reportId;
     expect(inboxesOf(first), {mod1, mod2});
 
@@ -733,7 +763,9 @@ void main() {
     // stays readable by it (accepted: it was a moderator when sealed).
     moderators = verified({_moderator});
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:second');
+        conversationId: _conversation,
+        messageKey: '$_sender:second',
+        reason: ReportReason.spam);
     final second = server.copies.last.reportId;
     expect(second, isNot(first));
     expect(inboxesOf(second), {mod1});
@@ -750,7 +782,9 @@ void main() {
     // Promoted again, same key: copies resume without a tap.
     moderators = verified({_moderator, _moderator2});
     await reporter.file(
-        conversationId: _conversation, messageKey: '$_sender:third');
+        conversationId: _conversation,
+        messageKey: '$_sender:third',
+        reason: ReportReason.spam);
     expect(inboxesOf(server.copies.last.reportId), {mod1, mod2});
   }, skip: nativeSkip);
 
