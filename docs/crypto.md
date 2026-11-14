@@ -272,7 +272,7 @@ This closes the race where a pass that fetched the add-Welcome before the
 leave applied it after the group was dropped and the note cleared.
 
 A server that returns no `event_id` (an older one) is asked for its newest
-sync event id instead (`latest_event_id` on an empty page), which is at or
+sync event id instead (older servers only: `latest_event_id` on an empty page), which is at or
 above the leave's own event. That floor is not exact: a Welcome created after
 the leave but before the app reads the bound would also be skipped, a window
 of one request. If that read fails too, the newest event id the running pass

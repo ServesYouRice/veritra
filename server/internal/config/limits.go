@@ -74,6 +74,7 @@ const (
 	DefaultSocketsPerIPv4Address = 20
 	// MinSocketsPerIPv4Address is the sockets one device may hold, so a
 	// device behind a NAT of its own is never refused for its own sockets.
+	// Keep it equal to realtime.maxConnectionsPerDevice.
 	MinSocketsPerIPv4Address     = 3
 	PendingDeviceLinksPerAccount = 3
 	// MaxBackupCiphertext is the largest K1 backup the app can seal: the

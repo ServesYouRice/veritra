@@ -10448,8 +10448,7 @@ class AppState extends ChangeNotifier
           current, client, conversationId, requested,
           stillOwner: () => _syncOwnerActive(current, ownerGeneration));
     } else {
-      packages = await client.claimConversationKeyPackages(
-          current.token, conversationId);
+      throw StateError('group creation needs approved-device discovery');
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     await mls.initializeConversation(conversationId, packages);

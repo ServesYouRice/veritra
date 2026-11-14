@@ -168,6 +168,9 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 		return
 	}
 	events := page.Events
+	if events == nil {
+		events = []domain.SyncEvent{}
+	}
 	// The bounds walk each conversation's edges, which costs a hidden run's
 	// length per page. A client reads them from a 409 only, so a 200 carries
 	// the epoch alone.

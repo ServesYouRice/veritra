@@ -63,6 +63,17 @@ func TestSyncEventsBoundedContract(t *testing.T) {
 	if string(past["scanned_through"]) != "999999" {
 		t.Fatalf("scanned_through past the end = %s", past["scanned_through"])
 	}
+	// A cursor past every event id is a 200 with no events, never a 409, and
+	// a read from 0 still returns everything.
+	if string(past["events"]) != "[]" {
+		t.Fatalf("events past the end = %s", past["events"])
+	}
+	var all []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(fields("/api/v1/sync/events?after=0&limit=200")["events"], &all); err != nil || len(all) == 0 {
+		t.Fatalf("read from 0 = %v, %v", all, err)
+	}
 }
 
 func jsonInt(v int64) string {

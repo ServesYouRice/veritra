@@ -886,7 +886,14 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 					failed = true
 					break
 				}
-				at = page.next(at)
+				next := page.next(at)
+				if page.Truncated && next <= at {
+					// A truncated page that does not move the cursor would
+					// repeat forever.
+					failed = true
+					break
+				}
+				at = next
 				if !page.more() {
 					break
 				}

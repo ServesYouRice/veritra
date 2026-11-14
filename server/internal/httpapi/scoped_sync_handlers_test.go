@@ -97,10 +97,9 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 		if conversation.Scope != "conversation" || conversation.ScopeID != conversationID {
 			t.Fatalf("%s conversation envelope scope=%q scope_id=%q", name, conversation.Scope, conversation.ScopeID)
 		}
-		// The account route's 200 carries the epoch only (D134), so the
-		// scoped envelopes' bounds are checked against each other.
+		// A 200 carries the epoch only (D134); the bounds are on a 409.
 		for _, page := range []scopedSyncPage{account, conversation} {
-			if page.Epoch == "" || page.Epoch != legacy.Epoch || page.OldestEventID != account.OldestEventID || page.LatestEventID != account.LatestEventID {
+			if page.Epoch == "" || page.Epoch != legacy.Epoch || page.OldestEventID != 0 || page.LatestEventID != 0 {
 				t.Fatalf("%s bounds %+v differ from legacy %+v", name, page, legacy)
 			}
 		}

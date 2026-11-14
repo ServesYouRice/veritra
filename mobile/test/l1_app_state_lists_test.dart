@@ -1141,11 +1141,6 @@ class _DiscoveryApi extends _ListApi {
   }
 
   @override
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-          String token, String id) =>
-      throw StateError('claim-all must not be used for L1 creation');
-
-  @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
       String token, String id, List<String> deviceIds) async {
     claims.add(deviceIds);

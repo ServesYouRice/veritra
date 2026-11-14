@@ -7,6 +7,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -21,7 +22,11 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://localhost:8080');
 
   late Conversation created;
-  final List<String> claims = <String>[];
+
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String conversationId) async =>
+      const <ConversationMember>[];
 
   @override
   Future<List<Conversation>> conversations(String token) async =>
@@ -38,17 +43,13 @@ class _Api extends ApiClient {
     int? retentionSeconds,
   }) async =>
       created;
-
-  @override
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-      String token, String conversationId) async {
-    claims.add(conversationId);
-    return const <DeviceKeyPackage>[];
-  }
 }
 
 /// Records group creation; [groups] are the groups this device already has.
-class _Mls implements MlsConversationCryptoService {
+class _Mls
+    implements
+        MlsConversationCryptoService,
+        ApprovedDeviceDiscoveryCryptoService {
   final Set<String> groups = <String>{};
   final List<String> initialized = <String>[];
 
@@ -63,6 +64,12 @@ class _Mls implements MlsConversationCryptoService {
   Future<({int epoch, bool pending})?> groupEpoch(
           String conversationId) async =>
       groups.contains(conversationId) ? (epoch: 1, pending: false) : null;
+
+  @override
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+          String? conversationId, Iterable<String> accountIds,
+          {Set<String> excluding = const <String>{}}) async =>
+      const <MlsDeviceRef>[];
 
   @override
   Future<void> activateSession(Session session) async {}
@@ -135,7 +142,6 @@ void main() {
         .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
 
     expect(result?.id, 'dm_1');
-    expect(api.claims, isEmpty, reason: 'claimed key packages again');
     expect(mls.initialized, isEmpty, reason: 'made a second MLS group');
     expect(state.conversations.where((c) => c.id == 'dm_1'), hasLength(1));
     expect(state.selectedConversationId, 'dm_1');
@@ -171,7 +177,6 @@ void main() {
     await state
         .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
 
-    expect(api.claims, isEmpty);
     expect(mls.initialized, isEmpty);
   });
 
@@ -183,7 +188,6 @@ void main() {
     await state
         .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
 
-    expect(api.claims, <String>['dm_1']);
     expect(mls.initialized, <String>['dm_1']);
     expect(state.selectedConversationId, 'dm_1');
   });
