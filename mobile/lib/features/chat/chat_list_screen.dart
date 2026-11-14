@@ -583,16 +583,38 @@ class _PreviewLoader extends StatefulWidget {
 }
 
 class _PreviewLoaderState extends State<_PreviewLoader> {
+  /// Whether this list holds one chat-view guard. Message previews put chat
+  /// text on the list, so the screen guard covers it while they show (U12).
+  bool _guarding = false;
+
+  /// The list rebuilds this widget whenever `showChatPreviews` changes (it is
+  /// part of the list's selection), so [didUpdateWidget] keeps the guard in
+  /// step with the setting.
+  void _syncGuard() {
+    final want = widget.state.showChatPreviews;
+    if (want == _guarding) return;
+    _guarding = want;
+    want ? widget.state.enterChatView() : widget.state.leaveChatView();
+  }
+
   @override
   void initState() {
     super.initState();
+    _syncGuard();
     scheduleMicrotask(widget.state.loadChatPreviews);
   }
 
   @override
   void didUpdateWidget(_PreviewLoader oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncGuard();
     scheduleMicrotask(widget.state.loadChatPreviews);
+  }
+
+  @override
+  void dispose() {
+    if (_guarding) widget.state.leaveChatView();
+    super.dispose();
   }
 
   @override
