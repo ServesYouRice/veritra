@@ -9,6 +9,7 @@ import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
+import '../settings/stacked_trailing_tile.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
@@ -315,6 +316,16 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   }
 
   Future<void> _revoke(MembershipInvite invite) async {
+    final l10n = context.l10n;
+    // U16: turning a link off asks first.
+    final confirmed = await _confirm(
+      context,
+      title: l10n.membInviteTurnOffTitle,
+      message: l10n.membInviteTurnOffMessage,
+      confirmLabel: l10n.membInviteTurnOff,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
     if (await state.revokeMembershipInvite(invite.id)) {
       await _load();
     }
@@ -365,7 +376,9 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
                   )
                 else
                   for (final invite in _invites)
-                    ListTile(
+                    // U16: a labelled "Turn off", not a bare icon. It drops under
+                    // the text at large sizes (U2).
+                    StackedTrailingTile(
                       leading: const Icon(Icons.schedule_outlined),
                       title: Text(
                         l10n.membInviteUses(
@@ -374,10 +387,16 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
                           formatDate(context, invite.expiresAt),
                         ),
                       ),
-                      trailing: IconButton(
-                        tooltip: l10n.membInviteRevoke,
-                        icon: const Icon(Icons.link_off),
+                      trailingWidth:
+                          measureTextWidth(context, l10n.membInviteTurnOff) +
+                              32,
+                      trailing: TextButton(
+                        key: ValueKey<String>('invite-turn-off-${invite.id}'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                        ),
                         onPressed: busy ? null : () => _revoke(invite),
+                        child: Text(l10n.membInviteTurnOff),
                       ),
                     ),
               ],
@@ -470,33 +489,37 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
                       title: Text(
                         accountLabel(request.accountId ?? '', request.username),
                       ),
-                      subtitle: Text(
-                        l10n.joinReqAskedAt(
-                          formatDateTime(context, request.createdAt),
-                        ),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
+                      // U16: two labelled buttons under the name, not two bare
+                      // icons beside it.
+                      isThreeLine: true,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          IconButton(
-                            tooltip: l10n.joinReqReject(
-                              accountLabel(
-                                  request.accountId ?? '', request.username),
+                          Text(
+                            l10n.joinReqAskedAt(
+                              formatDateTime(context, request.createdAt),
                             ),
-                            icon: const Icon(Icons.close),
-                            onPressed: busy
-                                ? null
-                                : () => _decide(request, approve: false),
                           ),
-                          IconButton(
-                            tooltip: l10n.joinReqApprove(
-                              accountLabel(
-                                  request.accountId ?? '', request.username),
-                            ),
-                            icon: const Icon(Icons.check),
-                            onPressed: busy
-                                ? null
-                                : () => _decide(request, approve: true),
+                          Wrap(
+                            spacing: BoneSpacing.sm,
+                            children: <Widget>[
+                              TextButton(
+                                key: ValueKey<String>(
+                                    'join-decline-${request.id}'),
+                                onPressed: busy
+                                    ? null
+                                    : () => _decide(request, approve: false),
+                                child: Text(l10n.joinReqDeclineButton),
+                              ),
+                              FilledButton.tonal(
+                                key: ValueKey<String>(
+                                    'join-approve-${request.id}'),
+                                onPressed: busy
+                                    ? null
+                                    : () => _decide(request, approve: true),
+                                child: Text(l10n.joinReqApproveButton),
+                              ),
+                            ],
                           ),
                         ],
                       ),

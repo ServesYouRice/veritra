@@ -1,3 +1,4 @@
+import 'block_actions.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -130,24 +131,19 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
     );
   }
 
+  // U16: the snackbar offers Undo, which blocks them again.
   Future<void> _unblock(
     BuildContext context,
     String accountId,
     String label,
-  ) async {
-    final ok = await widget.state.unblockAccount(accountId);
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? context.l10n.blockedUnblocked(label)
-            : widget.state.errorFor(Ops.blocks) ??
-                context.l10n.blockedUnblockFailed(label)),
-      ),
-    );
-  }
+  ) =>
+      toggleBlock(
+        context,
+        widget.state,
+        accountId: accountId,
+        label: label,
+        blocked: true,
+      );
 }
 
 class _ErrorState extends StatelessWidget {

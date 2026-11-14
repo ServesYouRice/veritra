@@ -24,6 +24,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get commonRevoke => 'Revoke';
 
   @override
+  String get commonUndo => 'Undo';
+
+  @override
   String get listTimeYesterday => 'Yesterday';
 
   @override
@@ -814,6 +817,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String searchBlocked(String label) {
     return '$label blocked.';
   }
+
+  @override
+  String get searchBlockConfirm => 'Block';
 
   @override
   String get searchBlockFailed => 'Could not update the block.';
@@ -3286,6 +3292,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get membInviteRevoke => 'Revoke link';
 
   @override
+  String get membInviteTurnOff => 'Turn off';
+
+  @override
+  String get membInviteTurnOffTitle => 'Turn off this link?';
+
+  @override
+  String get membInviteTurnOffMessage =>
+      'No one can join with it any more. People who already asked keep their requests.';
+
+  @override
   String get joinReqSection => 'Join requests';
 
   @override
@@ -3305,6 +3321,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String joinReqReject(String username) {
     return 'Decline $username';
   }
+
+  @override
+  String get joinReqDeclineButton => 'Decline';
+
+  @override
+  String get joinReqApproveButton => 'Approve';
 
   @override
   String get joinReqRejectedSnack => 'Request declined.';

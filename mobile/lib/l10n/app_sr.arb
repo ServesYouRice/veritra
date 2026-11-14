@@ -6,6 +6,7 @@
   "commonCreate": "Направи",
   "commonRefresh": "Освежи",
   "commonRevoke": "Опозови",
+  "commonUndo": "Опозови радњу",
 
   "listTimeYesterday": "Јуче",
 
@@ -258,6 +259,7 @@
   "searchUnblockAccount": "Деблокирај {label}",
   "searchBlockAccount": "Блокирај {label}",
   "searchBlocked": "Налог {label} је блокиран.",
+  "searchBlockConfirm": "Блокирај",
   "searchBlockFailed": "Блокирање није могло да се ажурира.",
 
   "inviteCreateSection": "Направите позивницу",
@@ -929,11 +931,16 @@
   "membInviteNone": "Нема активних линкова.",
   "membInviteUses": "{used} од {max} искоришћено · истиче {date}",
   "membInviteRevoke": "Опозови линк",
+  "membInviteTurnOff": "Искључи",
+  "membInviteTurnOffTitle": "Искључити ову везу?",
+  "membInviteTurnOffMessage": "Нико више не може да се придружи помоћу ње. Особе које су већ затражиле задржавају своје захтеве.",
   "joinReqSection": "Захтеви за придруживање",
   "joinReqNone": "Нико не чека.",
   "joinReqAskedAt": "Затражено {date}",
   "joinReqApprove": "Одобри {username}",
   "joinReqReject": "Одбиј {username}",
+  "joinReqDeclineButton": "Одбиј",
+  "joinReqApproveButton": "Одобри",
   "joinReqRejectedSnack": "Захтев је одбијен.",
   "communityRemoveTitle": "Уклонити {username} из заједнице?",
   "communityRemoveMessage": "Одмах губе приступ свим каналима. Поруке које су већ на њиховим уређајима нису обрисане.",

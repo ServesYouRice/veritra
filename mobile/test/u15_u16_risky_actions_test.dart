@@ -1,10 +1,13 @@
 // U15 and U16: risky actions get words. Devices sign out through a labelled
-// button and a red confirmation that names the device.
+// button and a red confirmation that names the device; blocking asks first
+// and both directions offer Undo. (Members, join requests and invitation
+// links are covered in ui_remaining_test and membership_screens_test.)
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/features/settings/block_actions.dart';
 import 'package:private_messenger/features/settings/settings_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -110,4 +113,92 @@ void main() {
           greaterThan(tester.getBottomLeft(find.text('Old tablet')).dy));
     });
   });
+
+  group('U16 block and unblock', () {
+    Future<_BlockState> pumpButton(WidgetTester tester,
+        {required bool blocked}) async {
+      final state = _BlockState();
+      addTearDown(state.dispose);
+      await tester.pumpWidget(MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => toggleBlock(
+                context,
+                state,
+                accountId: 'acct_sam',
+                label: '@sam',
+                blocked: blocked,
+              ),
+              child: const Text('go'),
+            ),
+          ),
+        ),
+      ));
+      return state;
+    }
+
+    testWidgets('blocking asks first; cancelling sends nothing',
+        (tester) async {
+      final state = await pumpButton(tester, blocked: false);
+      await tester.tap(find.text('go'));
+      await tester.pumpAndSettle();
+      expect(find.text('Block @sam'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(state.calls, isEmpty);
+      expect(find.text('Undo'), findsNothing);
+    });
+
+    testWidgets('a confirmed block offers Undo, which unblocks',
+        (tester) async {
+      final state = await pumpButton(tester, blocked: false);
+      await tester.tap(find.text('go'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Block'));
+      await tester.pumpAndSettle();
+      expect(state.calls, <String>['block:acct_sam']);
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(state.calls, <String>['block:acct_sam', 'unblock:acct_sam']);
+    });
+
+    testWidgets('unblocking needs no question and offers Undo, which blocks',
+        (tester) async {
+      final state = await pumpButton(tester, blocked: true);
+      await tester.tap(find.text('go'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(state.calls, <String>['unblock:acct_sam']);
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(state.calls, <String>['unblock:acct_sam', 'block:acct_sam']);
+    });
+  });
+}
+
+class _BlockState extends AppState {
+  _BlockState()
+      : super(
+          apiClientFactory: (_) => ApiClient(baseUrl: 'https://localhost'),
+          cryptoService: TestOnlyCryptoService(),
+          localStore: MemoryLocalStore(),
+          syncServiceFactory: (_, __) => _NoSync(),
+        );
+
+  final List<String> calls = <String>[];
+
+  @override
+  Future<bool> blockAccount(String accountId) async {
+    calls.add('block:$accountId');
+    return true;
+  }
+
+  @override
+  Future<bool> unblockAccount(String accountId) async {
+    calls.add('unblock:$accountId');
+    return true;
+  }
 }

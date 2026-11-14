@@ -463,9 +463,20 @@ void main() {
       expect(find.text('Block @alice'), findsOneWidget);
       await tester.tap(find.text('Block @alice'));
       await tester.pumpAndSettle();
+      // U16: blocking asks first; nothing is sent until it is confirmed.
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(api.blocked, isEmpty);
+      await tester.tap(find.widgetWithText(FilledButton, 'Block'));
+      await tester.pumpAndSettle();
 
       expect(api.blocked, <String>['acct_alice']);
       expect(find.text('Unblock @alice'), findsOneWidget);
+
+      // ...and the snackbar offers Undo, which unblocks again.
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.unblocked, <String>['acct_alice']);
+      expect(find.text('Block @alice'), findsOneWidget);
     });
 
     testWidgets('the blocked-accounts screen lists blocks and unblocks them',
@@ -485,6 +496,12 @@ void main() {
 
       expect(api.unblocked, <String>['acct_alice']);
       expect(find.text('No blocked accounts'), findsOneWidget);
+
+      // U16: the snackbar offers Undo, which blocks them again.
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.blocked, <String>['acct_alice']);
+      expect(find.text('No blocked accounts'), findsNothing);
     });
   });
 

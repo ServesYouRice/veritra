@@ -172,6 +172,43 @@ void main() {
       expect(copied, shown);
     });
 
+    testWidgets('turning a link off is a labelled button and asks first',
+        (tester) async {
+      final api = _Api()
+        ..invites.add(MembershipInvite(
+          id: 'minv_1',
+          maxUses: 10,
+          uses: 3,
+          expiresAt: DateTime.utc(2026, 11, 20),
+        ));
+      final state = _state(api);
+      await tester.pumpWidget(_app(Scaffold(
+        body: SingleChildScrollView(
+          child: MembershipInvitesPanel(
+            state: state,
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+          ),
+        ),
+      )));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Turn off'), findsOneWidget);
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      // Cancelling changes nothing.
+      expect(find.text('Turn off this link?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(api.revokedInvites, isEmpty);
+
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
+      await tester.pumpAndSettle();
+      expect(api.revokedInvites, <String>['minv_1']);
+    });
+
     testWidgets('an admin approves or declines a request by username',
         (tester) async {
       final api = _Api()
@@ -212,9 +249,12 @@ void main() {
       expect(find.text('@alice'), findsOneWidget);
       expect(find.text('@bob'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Approve @alice'));
+      // U16: labelled buttons, not bare icons.
+      expect(find.text('Approve'), findsNWidgets(2));
+      expect(find.text('Decline'), findsNWidgets(2));
+      await tester.tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Decline @bob'));
+      await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_2')));
       await tester.pumpAndSettle();
 
       expect(api.decisions, <String>['jreq_1:approve', 'jreq_2:reject']);
@@ -438,6 +478,13 @@ class _Api extends ApiClient {
   bool alreadyMember = false;
   String me = 'acct_owner';
   final Set<String> gone = <String>{};
+  final List<String> revokedInvites = <String>[];
+
+  @override
+  Future<void> revokeMembershipInvite(String token, String inviteId) async {
+    revokedInvites.add(inviteId);
+    invites.removeWhere((invite) => invite.id == inviteId);
+  }
 
   @override
   Future<MembershipInvite> createMembershipInvite(

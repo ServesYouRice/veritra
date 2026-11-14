@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../settings/block_actions.dart';
 import '../../core/app_state.dart';
 import '../../core/community_name_search.dart';
 import '../../core/models.dart';
@@ -663,25 +664,16 @@ class _AccountResultActions extends StatelessWidget {
           ? l10n.searchUnblockAccount(label)
           : l10n.searchBlockAccount(label),
       icon: Icon(blocked ? Icons.person_off : Icons.block),
+      // U16: blocking asks first; both directions offer Undo.
       onPressed: state.isBusy(Ops.blocks)
           ? null
-          : () async {
-              final ok = blocked
-                  ? await state.unblockAccount(accountId)
-                  : await state.blockAccount(accountId);
-              if (!context.mounted) {
-                return;
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(ok
-                      ? (blocked
-                          ? l10n.blockedUnblocked(label)
-                          : l10n.searchBlocked(label))
-                      : state.errorFor(Ops.blocks) ?? l10n.searchBlockFailed),
-                ),
-              );
-            },
+          : () => toggleBlock(
+                context,
+                state,
+                accountId: accountId,
+                label: label,
+                blocked: blocked,
+              ),
     );
   }
 }

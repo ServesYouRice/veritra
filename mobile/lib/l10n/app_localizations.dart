@@ -129,6 +129,12 @@ abstract class AppLocalizations {
   /// **'Revoke'**
   String get commonRevoke;
 
+  /// Snackbar action that reverses what was just done.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get commonUndo;
+
   /// Chat list timestamp for activity on the previous calendar day.
   ///
   /// In en, this message translates to:
@@ -1520,6 +1526,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{label} blocked.'**
   String searchBlocked(String label);
+
+  /// No description provided for @searchBlockConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Block'**
+  String get searchBlockConfirm;
 
   /// No description provided for @searchBlockFailed.
   ///
@@ -5361,6 +5373,24 @@ abstract class AppLocalizations {
   /// **'Revoke link'**
   String get membInviteRevoke;
 
+  /// No description provided for @membInviteTurnOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get membInviteTurnOff;
+
+  /// No description provided for @membInviteTurnOffTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off this link?'**
+  String get membInviteTurnOffTitle;
+
+  /// No description provided for @membInviteTurnOffMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'No one can join with it any more. People who already asked keep their requests.'**
+  String get membInviteTurnOffMessage;
+
   /// No description provided for @joinReqSection.
   ///
   /// In en, this message translates to:
@@ -5390,6 +5420,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Decline {username}'**
   String joinReqReject(String username);
+
+  /// No description provided for @joinReqDeclineButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline'**
+  String get joinReqDeclineButton;
+
+  /// No description provided for @joinReqApproveButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get joinReqApproveButton;
 
   /// No description provided for @joinReqRejectedSnack.
   ///

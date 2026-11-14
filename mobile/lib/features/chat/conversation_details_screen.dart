@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../settings/block_actions.dart';
 import '../../core/app_state.dart';
 import '../settings/profile_edit_screen.dart';
 import '../../core/models.dart';
@@ -781,23 +782,15 @@ class _BlockTile extends StatelessWidget {
     );
   }
 
-  Future<void> _toggle(BuildContext context, {required bool blocked}) async {
-    final ok = blocked
-        ? await state.unblockAccount(accountId)
-        : await state.blockAccount(accountId);
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? (blocked
-                ? context.l10n.blockedUnblocked(label)
-                : context.l10n.searchBlocked(label))
-            : state.errorFor(Ops.blocks) ?? context.l10n.searchBlockFailed),
-      ),
-    );
-  }
+  // U16: blocking asks first; both directions offer Undo.
+  Future<void> _toggle(BuildContext context, {required bool blocked}) =>
+      toggleBlock(
+        context,
+        state,
+        accountId: accountId,
+        label: label,
+        blocked: blocked,
+      );
 }
 
 class _InlineError extends StatelessWidget {
