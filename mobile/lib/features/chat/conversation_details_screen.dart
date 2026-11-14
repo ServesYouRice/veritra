@@ -12,7 +12,6 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/account_picker.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
-import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../communities/membership_screens.dart';
 import 'chat_list_screen.dart';
@@ -451,6 +450,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
       title: context.l10n.detailsRemoveTitle(label),
       message: context.l10n.detailsRemoveMessage,
       confirmLabel: context.l10n.detailsRemoveConfirm,
+      destructive: true, // U15
     );
     if (!confirmed) {
       return;
@@ -686,9 +686,9 @@ class _MemberTile extends StatelessWidget {
     final account = accountLabel(member.accountId, member.username);
     final label = profileName == null ? account : '$profileName ($account)';
     final colors = avatarColorsFor(context, member.accountId);
-    // Role moved onto a pill; what is left in the subtitle is the one thing
-    // that is genuinely a detail.
+    // U15: the role shows under the name, in words.
     final details = <String>[
+      roleLabel(l10n, member.role),
       if (isSelf) l10n.detailsYou,
       if (member.joinedAt != null)
         l10n.detailsJoined(formatDate(context, member.joinedAt!)),
@@ -714,28 +714,26 @@ class _MemberTile extends StatelessWidget {
             ),
           ),
         ),
-        title: Row(
-          children: <Widget>[
-            Flexible(
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            const SizedBox(width: BoneSpacing.sm),
-            StatusPill(label: roleLabel(l10n, member.role)),
-          ],
+        title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          details.join(' · '),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
-        subtitle: details.isEmpty
-            ? null
-            : Text(
-                details.join(' · '),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
+        // U15: removing sits in a per-member menu, not behind a bare icon.
         trailing: canRemove
-            ? IconButton(
-                tooltip: l10n.detailsRemoveMember(label),
-                onPressed: busy ? null : onRemove,
-                icon: const Icon(Icons.person_remove_outlined),
+            ? PopupMenuButton<VoidCallback>(
+                key: Key('member-menu-${member.accountId}'),
+                tooltip: l10n.memberModerateTooltip(label),
+                enabled: !busy,
+                onSelected: (action) => action(),
+                itemBuilder: (_) => <PopupMenuEntry<VoidCallback>>[
+                  PopupMenuItem<VoidCallback>(
+                    value: onRemove,
+                    child: Text(l10n.detailsRemoveConfirm),
+                  ),
+                ],
               )
             : null,
       ),

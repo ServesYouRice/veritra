@@ -11,7 +11,6 @@ import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
-import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/conversation_details_screen.dart' show roleLabel;
 import 'moderation_screen.dart';
@@ -55,6 +54,7 @@ Future<bool> _confirm(
   required String title,
   required String message,
   required String confirmLabel,
+  bool destructive = false,
 }) async {
   final confirmed = await showDialog<bool>(
     context: context,
@@ -67,6 +67,12 @@ Future<bool> _confirm(
           child: Text(dialogContext.l10n.commonCancel),
         ),
         FilledButton(
+          style: destructive
+              ? FilledButton.styleFrom(
+                  backgroundColor: Theme.of(dialogContext).colorScheme.error,
+                  foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+                )
+              : null,
           onPressed: () => Navigator.of(dialogContext).pop(true),
           child: Text(confirmLabel),
         ),
@@ -605,6 +611,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       title: l10n.communityRemoveTitle(label),
       message: l10n.communityRemoveMessage,
       confirmLabel: l10n.communityRemoveConfirm,
+      destructive: true, // U15
     );
     if (!confirmed || !mounted) return;
     if (await state.removeCommunityMember(_communityId, member.accountId)) {
@@ -620,6 +627,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       title: l10n.banTitle(label),
       message: l10n.banMessage,
       confirmLabel: l10n.banConfirm,
+      destructive: true, // U15
     );
     if (!confirmed || !mounted) return;
     if (await state.banCommunityMember(_communityId, member.accountId)) {
@@ -810,7 +818,9 @@ class _MemberRow extends StatelessWidget {
     final l10n = context.l10n;
     final label = accountLabel(member.accountId, member.username);
     final colors = avatarColorsFor(context, member.accountId);
+    // U15: the role shows under the name, in words.
     final details = <String>[
+      roleLabel(l10n, member.role),
       if (isSelf) l10n.detailsYou,
       if (member.joinedAt != null)
         l10n.detailsJoined(formatDate(context, member.joinedAt!)),
@@ -836,16 +846,8 @@ class _MemberRow extends StatelessWidget {
             ),
           ),
         ),
-        title: Row(
-          children: <Widget>[
-            Flexible(
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            const SizedBox(width: BoneSpacing.sm),
-            StatusPill(label: roleLabel(l10n, member.role)),
-          ],
-        ),
-        subtitle: details.isEmpty ? null : Text(details.join(' · ')),
+        title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(details.join(' · ')),
         trailing: canRemove
             ? PopupMenuButton<VoidCallback>(
                 tooltip: l10n.memberModerateTooltip(label),

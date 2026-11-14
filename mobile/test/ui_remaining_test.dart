@@ -337,9 +337,9 @@ void main() {
       // A moderator outranks neither an owner nor an admin, and never
       // removes itself here.
       expect(find.text('@owner'), findsOneWidget);
-      expect(find.byTooltip('Remove @alice'), findsNothing);
-      expect(find.byTooltip('Remove @owner'), findsNothing);
-      expect(find.byTooltip('Remove @me'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsNothing);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @me'), findsNothing);
     });
 
     testWidgets('an owner can remove a ranked-below member', (tester) async {
@@ -366,9 +366,18 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.byTooltip('Remove @alice'), findsOneWidget);
-      await tester.tap(find.byTooltip('Remove @alice'));
+      // U15: the role is written under the name, and Remove sits in a
+      // per-member menu that ends in a red confirmation.
+      expect(find.textContaining('Member'), findsWidgets);
+      expect(find.byTooltip('Moderate @alice'), findsOneWidget);
+      await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'));
+      await tester.pumpAndSettle();
+      final confirm = tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, 'Remove'));
+      expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
+          Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.error);
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
 
