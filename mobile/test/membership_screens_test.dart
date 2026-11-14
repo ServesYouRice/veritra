@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/errors.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/communities/membership_screens.dart';
 import 'package:private_messenger/features/communities/moderation_screen.dart';
@@ -392,6 +394,124 @@ void main() {
     });
   });
 
+  // U4: a failed leave, revoke, remove or decline keeps its message on the
+  // page after the panels reload, shown once.
+  group('errors stay on the community page (U4)', () {
+    final failure = describeError(
+        ApiException(500, '{"error":"internal"}'), englishL10n, false);
+
+    Future<void> openOwnerPage(WidgetTester tester, _Api api) async {
+      final state = _state(api);
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> expectStays(WidgetTester tester) async {
+      // The panels reload after a failed action; the message must outlast it.
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsOneWidget);
+    }
+
+    testWidgets('a failed removal', (tester) async {
+      final api = _Api();
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await expectStays(tester);
+      expect(api.removed, isEmpty);
+    });
+
+    testWidgets('a failed revoke', (tester) async {
+      final api = _Api()
+        ..invites.add(MembershipInvite(
+            id: 'minv_1',
+            maxUses: 10,
+            uses: 0,
+            expiresAt: DateTime.utc(2026, 11, 14)));
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.scrollUntilVisible(find.byTooltip('Revoke link'), 200);
+      await tester.tap(find.byTooltip('Revoke link'));
+      await expectStays(tester);
+    });
+
+    testWidgets('a failed decline', (tester) async {
+      final api = _Api()
+        ..pending = <JoinRequest>[
+          JoinRequest(
+            id: 'jreq_1',
+            kind: InviteTargetKind.community,
+            status: JoinRequestStatus.pending,
+            createdAt: DateTime.utc(2026, 11, 7),
+            targetId: 'comm_1',
+            accountId: 'acct_bob',
+            username: 'bob',
+          ),
+        ];
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.scrollUntilVisible(find.byTooltip('Decline @bob'), 200);
+      await tester.tap(find.byTooltip('Decline @bob'));
+      await expectStays(tester);
+      expect(find.text('@bob'), findsOneWidget,
+          reason: 'the request is still waiting');
+    });
+
+    testWidgets('a failed leave', (tester) async {
+      final api = _Api()..me = 'acct_alice';
+      final state = _state(api)
+        ..session = const Session(
+          baseUrl: _origin,
+          token: 'tok',
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+          username: 'alice',
+        );
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+      api.failWrites = true;
+      await tester.scrollUntilVisible(find.text('Leave community'), 200);
+      await tester.tap(find.text('Leave community'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Leave'));
+      await expectStays(tester);
+    });
+
+    testWidgets('the message clears when the next action starts',
+        (tester) async {
+      final api = _Api();
+      await openOwnerPage(tester, api);
+      api.failWrites = true;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await expectStays(tester);
+
+      api.failWrites = false;
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsNothing);
+    });
+  });
+
   group('community details', () {
     testWidgets('an owner sees usernames, roles, removal, invitations',
         (tester) async {
@@ -487,6 +607,7 @@ class _Api extends ApiClient {
   String me = 'acct_owner';
   final Set<String> gone = <String>{};
   bool failModeration = false;
+  bool failWrites = false;
   bool failEvents = false;
 
   @override
@@ -570,11 +691,18 @@ class _Api extends ApiClient {
       List<JoinRequest>.of(pending);
 
   @override
+  Future<void> revokeMembershipInvite(String token, String inviteId) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
+    invites.removeWhere((invite) => invite.id == inviteId);
+  }
+
+  @override
   Future<JoinRequest> decideJoinRequest(
     String token,
     String requestId, {
     required bool approve,
   }) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
     decisions.add('$requestId:${approve ? 'approve' : 'reject'}');
     final request = pending.firstWhere((r) => r.id == requestId);
     pending = pending.where((r) => r.id != requestId).toList();
@@ -686,6 +814,7 @@ class _Api extends ApiClient {
     String communityId,
     String accountId,
   ) async {
+    if (failWrites) throw ApiException(500, '{"error":"internal"}');
     removed.add('$communityId:$accountId');
     gone.add(accountId);
     return const CommunityRemoval(<({String conversationId, int? eventId})>[]);

@@ -50,6 +50,15 @@ class _InlineError extends StatelessWidget {
   }
 }
 
+/// The message a failed membership call left under [Ops.membership].
+///
+/// Every membership call clears that shared slot when it starts, and the
+/// panels on a page reload after each other's actions. A page that read the
+/// slot while drawing therefore lost its message within a frame (UI audit
+/// U4). Each widget copies the message into its own state right after its own
+/// action fails, and clears the copy only when its next action starts.
+String? _failureOf(AppState state) => state.errorFor(Ops.membership);
+
 Future<bool> _confirm(
   BuildContext context, {
   required String title,
@@ -286,6 +295,9 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   List<MembershipInvite> _invites = const <MembershipInvite>[];
   String? _link;
 
+  /// This panel's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
 
   @override
@@ -297,21 +309,35 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   Future<void> _load() async {
     final invites =
         await state.loadMembershipInvites(widget.kind, widget.targetId);
-    if (!mounted || invites == null) return;
+    if (!mounted) return;
+    if (invites == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _invites = invites);
   }
 
   Future<void> _create() async {
+    setState(() => _error = null);
     final url = await state.createInviteLink(widget.kind, widget.targetId);
-    if (!mounted || url == null) return;
+    if (!mounted) return;
+    if (url == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _link = url);
     await _load();
   }
 
   Future<void> _revoke(MembershipInvite invite) async {
-    if (await state.revokeMembershipInvite(invite.id)) {
-      await _load();
+    setState(() => _error = null);
+    final done = await state.revokeMembershipInvite(invite.id);
+    if (!mounted) return;
+    if (!done) {
+      setState(() => _error = _failureOf(state));
+      return;
     }
+    await _load();
   }
 
   void _copy(String link) {
@@ -327,7 +353,7 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
       animation: state,
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
+        final error = _error;
         final link = _link;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,6 +435,9 @@ class JoinRequestsPanel extends StatefulWidget {
 class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
   List<JoinRequest> _requests = const <JoinRequest>[];
 
+  /// This panel's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
 
   @override
@@ -419,14 +448,22 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
 
   Future<void> _load() async {
     final requests = await state.loadJoinRequests(widget.kind, widget.targetId);
-    if (!mounted || requests == null) return;
+    if (!mounted) return;
+    if (requests == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _requests = requests);
   }
 
   Future<void> _decide(JoinRequest request, {required bool approve}) async {
+    setState(() => _error = null);
     final done = await state.decideJoinRequest(request, approve: approve);
     if (!mounted) return;
-    if (done) {
+    if (!done) {
+      // Keep the message: the reload below clears the shared slot.
+      setState(() => _error = _failureOf(state));
+    } else {
       final l10n = context.l10n;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
@@ -445,7 +482,7 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
       animation: state,
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
+        final error = _error;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -564,6 +601,9 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
   List<ConversationMember>? _members;
   bool _failed = false;
 
+  /// This page's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
   String get _communityId => widget.community.id;
 
@@ -607,8 +647,11 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       confirmLabel: l10n.communityRemoveConfirm,
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     if (await state.removeCommunityMember(_communityId, member.accountId)) {
       await _load();
+    } else if (mounted) {
+      setState(() => _error = _failureOf(state));
     }
   }
 
@@ -622,8 +665,11 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       confirmLabel: l10n.banConfirm,
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     if (await state.banCommunityMember(_communityId, member.accountId)) {
       await _load();
+    } else if (mounted) {
+      setState(() => _error = _failureOf(state));
     }
   }
 
@@ -639,7 +685,10 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
             label: shortDuration,
           );
     if (seconds == null || !mounted) return;
-    await state.timeoutCommunityMember(_communityId, member.accountId, seconds);
+    setState(() => _error = null);
+    final done = await state.timeoutCommunityMember(
+        _communityId, member.accountId, seconds);
+    if (!done && mounted) setState(() => _error = _failureOf(state));
   }
 
   Future<void> _leave() async {
@@ -651,10 +700,13 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       confirmLabel: l10n.communityLeaveConfirm,
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     final done = await state.leaveCommunity(_communityId);
     if (!mounted) return;
     if (done) {
       Navigator.of(context).popUntil((route) => route.isFirst);
+    } else {
+      setState(() => _error = _failureOf(state));
     }
   }
 
@@ -669,7 +721,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       animation: state,
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
+        final error = _error;
         final members = _members;
         final myRole = _myRole;
         final me = state.session?.accountId;
@@ -731,12 +783,17 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
               const SizedBox(height: BoneSpacing.sm),
               Text(l10n.detailsMembershipNote, style: muted),
               if (canInvite) ...<Widget>[
+                // Keyed: showing or hiding the error row above moves them in
+                // the list, and an unkeyed state would be rebuilt (and reload,
+                // clearing the shared error slot) when it did.
                 MembershipInvitesPanel(
+                  key: const ValueKey<String>('community-invites'),
                   state: state,
                   kind: InviteTargetKind.community,
                   targetId: _communityId,
                 ),
                 JoinRequestsPanel(
+                  key: const ValueKey<String>('community-requests'),
                   state: state,
                   kind: InviteTargetKind.community,
                   targetId: _communityId,
