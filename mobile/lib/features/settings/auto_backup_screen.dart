@@ -372,7 +372,7 @@ class RecoveryKeyTypeDialogState extends State<RecoveryKeyTypeDialog> {
         FilledButton(
           key: const ValueKey<String>('auto-backup-key-submit'),
           onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: Text(l10n.autoBackupTypeKey),
+          child: Text(l10n.autoBackupKeySubmit),
         ),
       ],
     );

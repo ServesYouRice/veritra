@@ -335,6 +335,21 @@ class ChatListScreen extends StatelessWidget {
               title: Text(context.l10n.chatListDetails),
               onTap: () => Navigator.of(sheetContext).pop('details'),
             ),
+            // U19: said once here, not on each action.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+                BoneSpacing.gutter,
+                BoneSpacing.md,
+              ),
+              child: Text(
+                context.l10n.w8ChatActionsLocalNote,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
           ],
         ),
       ),

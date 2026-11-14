@@ -1030,6 +1030,21 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: Text(context.l10n.chatDeleteForEveryone),
                 onTap: () => Navigator.of(sheetContext).pop('delete'),
               ),
+            // U19: said once here, not on each action.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+                BoneSpacing.gutter,
+                BoneSpacing.md,
+              ),
+              child: Text(
+                context.l10n.w8MessageActionsLocalNote,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
           ],
         )),
       ),

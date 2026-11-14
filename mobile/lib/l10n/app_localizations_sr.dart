@@ -273,11 +273,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsTurnOn => 'Укључи';
 
   @override
-  String get settingsPushProvider => 'Push добављач';
+  String get settingsPushProvider => 'Услуга доставе';
 
   @override
   String get settingsPushProviderDetail =>
-      'Изаберите UnifiedPush добављача за Android';
+      'Изаберите UnifiedPush услугу доставе за Android';
 
   @override
   String get settingsTestPush => 'Пошаљи пробно обавештење';
@@ -331,13 +331,13 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Онемогућава пријављивање и опозива ваше уређаје. Неки шифровани записи могу остати у складу са правилима чувања на серверу.';
+      'Трајно брише ваш налог, његове уређаје и кључеве на серверу. Поруке које сте већ послали остају у туђим ћаскањима, шифроване.';
 
   @override
   String get settingsSignedIn => 'Пријављени сте';
 
   @override
-  String get settingsRevokeDeviceTitle => 'Опозвати уређај?';
+  String get settingsRevokeDeviceTitle => 'Одјавити уређај?';
 
   @override
   String settingsRevokeDeviceMessage(String deviceName) {
@@ -374,10 +374,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'Ово онемогућава ваш налог, завршава његове сесије и опозива његове уређаје. Шифроване поруке и други записи могу остати у складу са правилима сервера о чувању података.';
+      'Ово трајно брише ваш налог. Губите:\n• пријаву, приступне кључеве, корисничко име и профил\n• сваки уређај пријављен на њега\n• чланства, отпремљене фајлове, резервне копије и кључ за опоравак на серверу\n\nПоруке које сте већ послали остају у туђим ћаскањима, шифроване, а неки шифровани записи могу остати у складу са правилима сервера о чувању података. Ово се не може поништити.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Онемогући налог';
+  String get settingsDeleteAccountConfirm => 'Избриши налог';
 
   @override
   String get settingsReauthTitle => 'Потврдите лозинку';
@@ -424,7 +424,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsPushServerDisabledTitle =>
-      'Овај сервер нема push добављача';
+      'Овај сервер нема услугу доставе обавештења';
 
   @override
   String get settingsPushServerDisabledDetail =>
@@ -491,7 +491,7 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get settingsDeviceRevoked => 'Опозван';
+  String get settingsDeviceRevoked => 'Одјављен';
 
   @override
   String get settingsDeviceCurrent => 'Овај уређај';
@@ -515,7 +515,7 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get connectFreshInstanceTitle => 'Откривена је нова инстанца';
+  String get connectFreshInstanceTitle => 'Овај сервер је нов';
 
   @override
   String get connectFreshInstanceMessage =>
@@ -525,7 +525,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectFreshInstanceAction => 'Подеси овај сервер';
 
   @override
-  String get connectInstanceUrl => 'URL инстанце';
+  String get connectInstanceUrl => 'Адреса сервера';
 
   @override
   String get connectCheckApproval => 'Провери сада';
@@ -567,7 +567,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Унесите код позивнице који сте добили.';
 
   @override
-  String get connectInviteCodeHint => 'Од администратора ове инстанце';
+  String get connectInviteCodeHint => 'Од администратора овог сервера';
 
   @override
   String get connectInviteLink => 'Линк позивнице';
@@ -615,7 +615,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectUsernameRequired => 'Унесите корисничко име.';
 
   @override
-  String get connectUsernameHint => 'Ваше име на овој инстанци';
+  String get connectUsernameHint => 'Ваше име на овом серверу';
 
   @override
   String get connectUsernameInvalid =>
@@ -640,14 +640,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectConfirmPasswordHint => 'Поновите лозинку';
 
   @override
-  String get connectSetupToken => 'Токен за подешавање';
+  String get connectSetupToken => 'Код за подешавање';
 
   @override
   String get connectSetupTokenHint =>
       'Обавезан, осим при повезивању преко loopback адресе';
 
   @override
-  String get connectUrlRequired => 'Унесите URL инстанце.';
+  String get connectUrlRequired => 'Унесите адресу сервера.';
 
   @override
   String get connectUrlInvalid =>
@@ -655,7 +655,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectUrlOriginOnly =>
-      'Унесите само основну адресу сервера (origin), нпр. https://chat.example.org';
+      'Унесите само адресу сервера, без путање, нпр. https://chat.example.org';
 
   @override
   String get connectUrlHttpsRequired =>
@@ -682,7 +682,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get connectModeOwnerDetail =>
-      'Само при првом покретању: направите налог власника на новој инстанци коју сами хостујете.';
+      'Само при првом покретању: направите налог власника на новом серверу који сами хостујете.';
 
   @override
   String get connectModeSignInDetail =>
@@ -713,7 +713,7 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
-  String get connectUseOrigin => 'Користи адресу';
+  String get connectUseOrigin => 'Повежи';
 
   @override
   String get connectSubmitOwner => 'Направи власника';
@@ -725,7 +725,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectSubmitJoin => 'Придружи се уз позивницу';
 
   @override
-  String get connectSubmitLink => 'Искористи код';
+  String get connectSubmitLink => 'Додај овај телефон';
 
   @override
   String get connectTagline =>
@@ -1078,7 +1078,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'На новом телефону отворите Veritra, додирните „Имам позивницу“ и скенирајте овај код.';
 
   @override
-  String get profileThisInstance => 'ова инстанца';
+  String get profileThisInstance => 'овај сервер';
 
   @override
   String get profileTitle => 'Профил';
@@ -1165,7 +1165,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get profileCurrentDevice => 'Тренутни уређај';
 
   @override
-  String get profileInstanceRole => 'Улога на инстанци';
+  String get profileInstanceRole => 'Улога на серверу';
 
   @override
   String get profileSectionEncryption => 'Шифровање';
@@ -2667,7 +2667,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get apiErrorSetupToken =>
-      'Токен за подешавање недостаје или је погрешан. Користите онај који је сервер исписао при покретању (демо га чува у data/demo/setup-token).';
+      'Код за подешавање недостаје или је погрешан. Користите онај који је сервер исписао при покретању (демо га чува у data/demo/setup-token).';
 
   @override
   String get apiErrorDraining =>
@@ -2782,7 +2782,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get errorUnreachable =>
-      'Сервер није доступан. Проверите URL инстанце и везу.';
+      'Сервер није доступан. Проверите адресу сервера и везу.';
 
   @override
   String get probeChecking => 'Провера сервера…';
@@ -2883,7 +2883,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get errorPasswordLoginNeedsLink =>
-      'За пријаву лозинком овај уређај прво мора бити повезан.';
+      'Нови телефон? Додајте га помоћу уређаја који већ користите.';
 
   @override
   String get attachmentSendFailedState => 'Прилог није могао да се пошаље.';
@@ -2897,11 +2897,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get pushTestGone =>
-      'Push добављач више не прихвата овај уређај. Регистрација се понавља.';
+      'Услуга доставе више не прихвата овај уређај. Регистрација се понавља.';
 
   @override
   String get pushTestRejected =>
-      'Push добављач није прихватио пробу. Покушајте поново касније.';
+      'Услуга доставе није прихватила пробу. Покушајте поново касније.';
 
   @override
   String get pushTestRateLimited => 'Сачекајте минут пре слања нове пробе.';
@@ -3236,7 +3236,14 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String w8PinDays(int days) {
-    return 'Закачи на $days дана';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Закачи на $days дана',
+      few: 'Закачи на $days дана',
+      one: 'Закачи на $days дан',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -3249,22 +3256,22 @@ class AppLocalizationsSr extends AppLocalizations {
   String get w8ForwardedMany => 'Прослеђено више пута';
 
   @override
-  String get w8Star => 'Означи звездицом на овом уређају';
+  String get w8Star => 'Означи звездицом';
 
   @override
   String get w8Unstar => 'Уклони звездицу';
 
   @override
-  String get w8DeleteForMe => 'Избриши за мене на овом уређају';
+  String get w8DeleteForMe => 'Избриши за мене';
 
   @override
-  String get w8Archive => 'Архивирај на овом уређају';
+  String get w8Archive => 'Архивирај';
 
   @override
   String get w8Unarchive => 'Врати из архиве';
 
   @override
-  String get w8PinChat => 'Закачи ћаскање на овом уређају';
+  String get w8PinChat => 'Закачи ћаскање';
 
   @override
   String get w8UnpinChat => 'Откачи ћаскање';
@@ -3308,7 +3315,15 @@ class AppLocalizationsSr extends AppLocalizations {
   String get w8HiddenSpoiler => 'Порука са скривеним спојлером';
 
   @override
-  String get w8StarredMessages => 'Поруке са звездицом на овом уређају';
+  String get w8StarredMessages => 'Поруке са звездицом';
+
+  @override
+  String get w8MessageActionsLocalNote =>
+      'Звездица и Избриши за мене важе само на овом уређају.';
+
+  @override
+  String get w8ChatActionsLocalNote =>
+      'Архивирање и закачињање ћаскања важе само на овом уређају.';
 
   @override
   String get k2CopiedHistory => 'Копирана историја · снимак са уређаја';
@@ -4533,6 +4548,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupTypeKey => 'Унесите кључ за опоравак';
 
   @override
+  String get autoBackupKeySubmit => 'Укључи резервне копије';
+
+  @override
   String get autoBackupKeyWrong => 'То није кључ за опоравак овог налога.';
 
   @override
@@ -5614,11 +5632,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get settingsTurnOn => 'Uključi';
 
   @override
-  String get settingsPushProvider => 'Push dobavljač';
+  String get settingsPushProvider => 'Usluga dostave';
 
   @override
   String get settingsPushProviderDetail =>
-      'Izaberite UnifiedPush dobavljača za Android';
+      'Izaberite UnifiedPush uslugu dostave za Android';
 
   @override
   String get settingsTestPush => 'Pošalji probno obaveštenje';
@@ -5672,13 +5690,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Onemogućava prijavljivanje i opoziva vaše uređaje. Neki šifrovani zapisi mogu ostati u skladu sa pravilima čuvanja na serveru.';
+      'Trajno briše vaš nalog, njegove uređaje i ključeve na serveru. Poruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane.';
 
   @override
   String get settingsSignedIn => 'Prijavljeni ste';
 
   @override
-  String get settingsRevokeDeviceTitle => 'Opozvati uređaj?';
+  String get settingsRevokeDeviceTitle => 'Odjaviti uređaj?';
 
   @override
   String settingsRevokeDeviceMessage(String deviceName) {
@@ -5715,10 +5733,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'Ovo onemogućava vaš nalog, završava njegove sesije i opoziva njegove uređaje. Šifrovane poruke i drugi zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka.';
+      'Ovo trajno briše vaš nalog. Gubite:\n• prijavu, pristupne ključeve, korisničko ime i profil\n• svaki uređaj prijavljen na njega\n• članstva, otpremljene fajlove, rezervne kopije i ključ za oporavak na serveru\n\nPoruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane, a neki šifrovani zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka. Ovo se ne može poništiti.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Onemogući nalog';
+  String get settingsDeleteAccountConfirm => 'Izbriši nalog';
 
   @override
   String get settingsReauthTitle => 'Potvrdite lozinku';
@@ -5765,7 +5783,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsPushServerDisabledTitle =>
-      'Ovaj server nema push dobavljača';
+      'Ovaj server nema uslugu dostave obaveštenja';
 
   @override
   String get settingsPushServerDisabledDetail =>
@@ -5832,7 +5850,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get settingsDeviceRevoked => 'Opozvan';
+  String get settingsDeviceRevoked => 'Odjavljen';
 
   @override
   String get settingsDeviceCurrent => 'Ovaj uređaj';
@@ -5856,7 +5874,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get connectFreshInstanceTitle => 'Otkrivena je nova instanca';
+  String get connectFreshInstanceTitle => 'Ovaj server je nov';
 
   @override
   String get connectFreshInstanceMessage =>
@@ -5866,7 +5884,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectFreshInstanceAction => 'Podesi ovaj server';
 
   @override
-  String get connectInstanceUrl => 'URL instance';
+  String get connectInstanceUrl => 'Adresa servera';
 
   @override
   String get connectCheckApproval => 'Proveri sada';
@@ -5908,7 +5926,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Unesite kod pozivnice koji ste dobili.';
 
   @override
-  String get connectInviteCodeHint => 'Od administratora ove instance';
+  String get connectInviteCodeHint => 'Od administratora ovog servera';
 
   @override
   String get connectInviteLink => 'Link pozivnice';
@@ -5956,7 +5974,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectUsernameRequired => 'Unesite korisničko ime.';
 
   @override
-  String get connectUsernameHint => 'Vaše ime na ovoj instanci';
+  String get connectUsernameHint => 'Vaše ime na ovom serveru';
 
   @override
   String get connectUsernameInvalid =>
@@ -5981,14 +5999,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectConfirmPasswordHint => 'Ponovite lozinku';
 
   @override
-  String get connectSetupToken => 'Token za podešavanje';
+  String get connectSetupToken => 'Kod za podešavanje';
 
   @override
   String get connectSetupTokenHint =>
       'Obavezan, osim pri povezivanju preko loopback adrese';
 
   @override
-  String get connectUrlRequired => 'Unesite URL instance.';
+  String get connectUrlRequired => 'Unesite adresu servera.';
 
   @override
   String get connectUrlInvalid =>
@@ -5996,7 +6014,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectUrlOriginOnly =>
-      'Unesite samo osnovnu adresu servera (origin), npr. https://chat.example.org';
+      'Unesite samo adresu servera, bez putanje, npr. https://chat.example.org';
 
   @override
   String get connectUrlHttpsRequired =>
@@ -6023,7 +6041,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get connectModeOwnerDetail =>
-      'Samo pri prvom pokretanju: napravite nalog vlasnika na novoj instanci koju sami hostujete.';
+      'Samo pri prvom pokretanju: napravite nalog vlasnika na novom serveru koji sami hostujete.';
 
   @override
   String get connectModeSignInDetail =>
@@ -6054,7 +6072,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
-  String get connectUseOrigin => 'Koristi adresu';
+  String get connectUseOrigin => 'Poveži';
 
   @override
   String get connectSubmitOwner => 'Napravi vlasnika';
@@ -6066,7 +6084,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectSubmitJoin => 'Pridruži se uz pozivnicu';
 
   @override
-  String get connectSubmitLink => 'Iskoristi kod';
+  String get connectSubmitLink => 'Dodaj ovaj telefon';
 
   @override
   String get connectTagline =>
@@ -6419,7 +6437,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Na novom telefonu otvorite Veritra, dodirnite „Imam pozivnicu“ i skenirajte ovaj kod.';
 
   @override
-  String get profileThisInstance => 'ova instanca';
+  String get profileThisInstance => 'ovaj server';
 
   @override
   String get profileTitle => 'Profil';
@@ -6506,7 +6524,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get profileCurrentDevice => 'Trenutni uređaj';
 
   @override
-  String get profileInstanceRole => 'Uloga na instanci';
+  String get profileInstanceRole => 'Uloga na serveru';
 
   @override
   String get profileSectionEncryption => 'Šifrovanje';
@@ -8011,7 +8029,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get apiErrorSetupToken =>
-      'Token za podešavanje nedostaje ili je pogrešan. Koristite onaj koji je server ispisao pri pokretanju (demo ga čuva u data/demo/setup-token).';
+      'Kod za podešavanje nedostaje ili je pogrešan. Koristite onaj koji je server ispisao pri pokretanju (demo ga čuva u data/demo/setup-token).';
 
   @override
   String get apiErrorDraining =>
@@ -8126,7 +8144,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get errorUnreachable =>
-      'Server nije dostupan. Proverite URL instance i vezu.';
+      'Server nije dostupan. Proverite adresu servera i vezu.';
 
   @override
   String get probeChecking => 'Provera servera…';
@@ -8227,7 +8245,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get errorPasswordLoginNeedsLink =>
-      'Za prijavu lozinkom ovaj uređaj prvo mora biti povezan.';
+      'Novi telefon? Dodajte ga pomoću uređaja koji već koristite.';
 
   @override
   String get attachmentSendFailedState => 'Prilog nije mogao da se pošalje.';
@@ -8241,11 +8259,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get pushTestGone =>
-      'Push dobavljač više ne prihvata ovaj uređaj. Registracija se ponavlja.';
+      'Usluga dostave više ne prihvata ovaj uređaj. Registracija se ponavlja.';
 
   @override
   String get pushTestRejected =>
-      'Push dobavljač nije prihvatio probu. Pokušajte ponovo kasnije.';
+      'Usluga dostave nije prihvatila probu. Pokušajte ponovo kasnije.';
 
   @override
   String get pushTestRateLimited => 'Sačekajte minut pre slanja nove probe.';
@@ -8580,7 +8598,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String w8PinDays(int days) {
-    return 'Zakači na $days dana';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Zakači na $days dana',
+      few: 'Zakači na $days dana',
+      one: 'Zakači na $days dan',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -8593,22 +8618,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get w8ForwardedMany => 'Prosleđeno više puta';
 
   @override
-  String get w8Star => 'Označi zvezdicom na ovom uređaju';
+  String get w8Star => 'Označi zvezdicom';
 
   @override
   String get w8Unstar => 'Ukloni zvezdicu';
 
   @override
-  String get w8DeleteForMe => 'Izbriši za mene na ovom uređaju';
+  String get w8DeleteForMe => 'Izbriši za mene';
 
   @override
-  String get w8Archive => 'Arhiviraj na ovom uređaju';
+  String get w8Archive => 'Arhiviraj';
 
   @override
   String get w8Unarchive => 'Vrati iz arhive';
 
   @override
-  String get w8PinChat => 'Zakači ćaskanje na ovom uređaju';
+  String get w8PinChat => 'Zakači ćaskanje';
 
   @override
   String get w8UnpinChat => 'Otkači ćaskanje';
@@ -8652,7 +8677,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get w8HiddenSpoiler => 'Poruka sa skrivenim spojlerom';
 
   @override
-  String get w8StarredMessages => 'Poruke sa zvezdicom na ovom uređaju';
+  String get w8StarredMessages => 'Poruke sa zvezdicom';
+
+  @override
+  String get w8MessageActionsLocalNote =>
+      'Zvezdica i Izbriši za mene važe samo na ovom uređaju.';
+
+  @override
+  String get w8ChatActionsLocalNote =>
+      'Arhiviranje i zakačinjanje ćaskanja važe samo na ovom uređaju.';
 
   @override
   String get k2CopiedHistory => 'Kopirana istorija · snimak sa uređaja';
@@ -9877,6 +9910,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupTypeKey => 'Unesite ključ za oporavak';
+
+  @override
+  String get autoBackupKeySubmit => 'Uključi rezervne kopije';
 
   @override
   String get autoBackupKeyWrong => 'To nije ključ za oporavak ovog naloga.';
