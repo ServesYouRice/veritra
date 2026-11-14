@@ -893,6 +893,27 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString of $maxUsesString used';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString used';
+  }
+
+  @override
   String get inviteNeverExpires => 'Never expires';
 
   @override
@@ -2710,6 +2731,69 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String adminEventBy(String actor) {
     return 'By $actor';
+  }
+
+  @override
+  String get adminActorUnknown => 'Someone';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor suspended $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor reactivated $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor joined the server';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor created the owner account';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor signed in';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor signed out';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor signed out their other devices';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor changed their password';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor signed out a device';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor made an invite';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor turned off an invite';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
   }
 
   @override

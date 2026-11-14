@@ -1599,6 +1599,18 @@ abstract class AppLocalizations {
   /// **'{uses} of {maxUses} uses'**
   String inviteUsesSemantics(int uses, int maxUses);
 
+  /// No description provided for @inviteUsedOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{uses} of {maxUses} used'**
+  String inviteUsedOf(int uses, int maxUses);
+
+  /// No description provided for @inviteUsedUnlimited.
+  ///
+  /// In en, this message translates to:
+  /// **'{uses} used'**
+  String inviteUsedUnlimited(int uses);
+
   /// No description provided for @inviteNeverExpires.
   ///
   /// In en, this message translates to:
@@ -4424,6 +4436,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'By {actor}'**
   String adminEventBy(String actor);
+
+  /// No description provided for @adminActorUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone'**
+  String get adminActorUnknown;
+
+  /// No description provided for @adminEventSuspended.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} suspended {target}'**
+  String adminEventSuspended(String actor, String target);
+
+  /// No description provided for @adminEventReactivated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} reactivated {target}'**
+  String adminEventReactivated(String actor, String target);
+
+  /// No description provided for @adminEventRegistered.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} joined the server'**
+  String adminEventRegistered(String actor);
+
+  /// No description provided for @adminEventOwnerCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} created the owner account'**
+  String adminEventOwnerCreated(String actor);
+
+  /// No description provided for @adminEventSignedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed in'**
+  String adminEventSignedIn(String actor);
+
+  /// No description provided for @adminEventSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out'**
+  String adminEventSignedOut(String actor);
+
+  /// No description provided for @adminEventSignedOutOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out their other devices'**
+  String adminEventSignedOutOthers(String actor);
+
+  /// No description provided for @adminEventPasswordChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} changed their password'**
+  String adminEventPasswordChanged(String actor);
+
+  /// No description provided for @adminEventDeviceSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} signed out a device'**
+  String adminEventDeviceSignedOut(String actor);
+
+  /// No description provided for @adminEventInviteCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} made an invite'**
+  String adminEventInviteCreated(String actor);
+
+  /// No description provided for @adminEventInviteRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} turned off an invite'**
+  String adminEventInviteRevoked(String actor);
+
+  /// Fallback sentence for an audit event with no wording of its own.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor}: {event}'**
+  String adminEventOther(String actor, String event);
 
   /// No description provided for @adminLoadMore.
   ///

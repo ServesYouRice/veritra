@@ -899,6 +899,27 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String inviteUsedOf(int uses, int maxUses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+    final intl.NumberFormat maxUsesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String maxUsesString = maxUsesNumberFormat.format(maxUses);
+
+    return '$usesString од $maxUsesString искоришћено';
+  }
+
+  @override
+  String inviteUsedUnlimited(int uses) {
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String usesString = usesNumberFormat.format(uses);
+
+    return '$usesString искоришћено';
+  }
+
+  @override
   String get inviteNeverExpires => 'Никада не истиче';
 
   @override
@@ -2728,6 +2749,69 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String adminEventBy(String actor) {
     return 'Извршио: $actor';
+  }
+
+  @override
+  String get adminActorUnknown => 'Неко';
+
+  @override
+  String adminEventSuspended(String actor, String target) {
+    return '$actor је суспендовао/ла $target';
+  }
+
+  @override
+  String adminEventReactivated(String actor, String target) {
+    return '$actor је поново активирао/ла $target';
+  }
+
+  @override
+  String adminEventRegistered(String actor) {
+    return '$actor се придружио/ла серверу';
+  }
+
+  @override
+  String adminEventOwnerCreated(String actor) {
+    return '$actor је направио/ла налог власника';
+  }
+
+  @override
+  String adminEventSignedIn(String actor) {
+    return '$actor се пријавио/ла';
+  }
+
+  @override
+  String adminEventSignedOut(String actor) {
+    return '$actor се одјавио/ла';
+  }
+
+  @override
+  String adminEventSignedOutOthers(String actor) {
+    return '$actor је одјавио/ла остале своје уређаје';
+  }
+
+  @override
+  String adminEventPasswordChanged(String actor) {
+    return '$actor је променио/ла лозинку';
+  }
+
+  @override
+  String adminEventDeviceSignedOut(String actor) {
+    return '$actor је одјавио/ла један уређај';
+  }
+
+  @override
+  String adminEventInviteCreated(String actor) {
+    return '$actor је направио/ла позивницу';
+  }
+
+  @override
+  String adminEventInviteRevoked(String actor) {
+    return '$actor је искључио/ла позивницу';
+  }
+
+  @override
+  String adminEventOther(String actor, String event) {
+    return '$actor: $event';
   }
 
   @override

@@ -354,6 +354,28 @@
   "@inviteUsesPill": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
   "inviteUsesSemantics": "{uses} of {maxUses} uses",
   "@inviteUsesSemantics": {"placeholders": {"uses": {"type": "int", "format": "decimalPattern"}, "maxUses": {"type": "int", "format": "decimalPattern"}}},
+  "inviteUsedOf": "{uses} of {maxUses} used",
+  "@inviteUsedOf": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      },
+      "maxUses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "inviteUsedUnlimited": "{uses} used",
+  "@inviteUsedUnlimited": {
+    "placeholders": {
+      "uses": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
   "inviteNeverExpires": "Never expires",
   "inviteExpiresAt": "Expires {time}",
   "@inviteExpiresAt": {"placeholders": {"time": {"type": "String"}}},
@@ -930,6 +952,113 @@
   "@adminAccountSummary": {"placeholders": {"role": {"type": "String"}, "devices": {"type": "int"}, "storage": {"type": "String"}}},
   "adminEventBy": "By {actor}",
   "@adminEventBy": {"placeholders": {"actor": {"type": "String"}}},
+  "adminActorUnknown": "Someone",
+  "adminEventSuspended": "{actor} suspended {target}",
+  "@adminEventSuspended": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventReactivated": "{actor} reactivated {target}",
+  "@adminEventReactivated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventRegistered": "{actor} joined the server",
+  "@adminEventRegistered": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOwnerCreated": "{actor} created the owner account",
+  "@adminEventOwnerCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedIn": "{actor} signed in",
+  "@adminEventSignedIn": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOut": "{actor} signed out",
+  "@adminEventSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventSignedOutOthers": "{actor} signed out their other devices",
+  "@adminEventSignedOutOthers": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventPasswordChanged": "{actor} changed their password",
+  "@adminEventPasswordChanged": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventDeviceSignedOut": "{actor} signed out a device",
+  "@adminEventDeviceSignedOut": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteCreated": "{actor} made an invite",
+  "@adminEventInviteCreated": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventInviteRevoked": "{actor} turned off an invite",
+  "@adminEventInviteRevoked": {
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "adminEventOther": "{actor}: {event}",
+  "@adminEventOther": {
+    "description": "Fallback sentence for an audit event with no wording of its own.",
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      },
+      "event": {
+        "type": "String"
+      }
+    }
+  },
   "adminLoadMore": "Load more",
   "adminNoAccounts": "No accounts",
   "adminNoEvents": "No audit events yet",
