@@ -31,6 +31,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 23 `TASK-023` Bound streamed uploads by progress and abort on timeout; add idle timeout to download body streams
 - [x] 24 `TASK-024` Validate 206/Content-Range for resumed backup downloads
   - Left open: Fixed the 206/Content-Range check. A Range-ignoring 200 now raises RangeNotHonoredException (416); the existing 416 path drops the partial file and the retry starts from byte 0. A direct restart-from-0 is left open.
+  - Closed 2026-11-14 (arbitra-loose-ends): moot. K1-6 (4fb1bdb) removed the resuming recovery download; no app path resumes, and the K1 header peek refuses a 200. The RangeNotHonoredException comment says what a future resume must do.
 - [x] 25 `TASK-025` Use the ciphertext response cap (with shrinking) for account export and MLS send
 - [x] 26 `TASK-026` Deliver logout revocation on an open client in logout() and relinkAfterSyncRecovery()
 - [x] 27 `TASK-027` Guard conversation/community/invite refresh results by session ownership

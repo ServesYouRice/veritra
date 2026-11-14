@@ -318,7 +318,7 @@
       "result": "fixed",
       "failedBefore": true,
       "test": "mobile/test/api_bounded_decoding.dart, mobile/test/api_range_test.dart, mobile/test/api_transfer_test.dart, mobile/test/backup_service_test.dart, mobile/test/fixtures/api/v1/error_codes.json, mobile/test/w8_background_wake_test.dart",
-      "proof": "Commits 0ac65e9, 4c0f13e. The failing-test evidence is in each commit message. Left open: Fixed the 206/Content-Range check. A Range-ignoring 200 now raises RangeNotHonoredException (416); the existing 416 path drops the partial file and the retry starts from byte 0. A direct restart-from-0 is left open.",
+      "proof": "Commits 0ac65e9, 4c0f13e. The failing-test evidence is in each commit message. Left open: Fixed the 206/Content-Range check. A Range-ignoring 200 now raises RangeNotHonoredException (416); the existing 416 path drops the partial file and the retry starts from byte 0. A direct restart-from-0 is left open. Closed 2026-11-14 (arbitra-loose-ends): moot. K1-6 (4fb1bdb) deleted the resuming recovery download (backup_service.dart, .veritra-recovery.partial, backup_resume_test.dart); recoverEncryptedBackup with a start offset has no app caller, and the only ranged request left (the K1 header peek, downloadBackup with a range) refuses a 200 as ApiResponseException and never resumes. Nothing to restart; the RangeNotHonoredException doc comment now says so and what a future resume must do.",
       "checkedEndToEnd": false
     },
     {
