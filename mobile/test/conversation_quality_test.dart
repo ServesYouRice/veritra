@@ -229,7 +229,7 @@ void main() {
     expect(find.text('Enter a name.'), findsOneWidget);
     expect(create().onPressed, isNull);
 
-    await tester.enterText(find.byType(TextField), 'x' * 65);
+    await tester.enterText(find.byType(TextField), 'x' * 101);
     await tester.pump();
     expect(find.text('That name is too long.'), findsOneWidget);
     expect(create().onPressed, isNull);

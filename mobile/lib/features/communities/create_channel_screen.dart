@@ -138,7 +138,7 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
     final canCreate = !(_saving ||
         _loading ||
         !admin ||
-        displayNameError(_name.text, l10n: l10n) != null);
+        infoNameError(_name.text, l10n: l10n) != null);
     return PopScope(
       canPop: !_saving,
       child: Scaffold(
@@ -166,7 +166,7 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                         labelText: l10n.communityChannelName,
                         errorText: _name.text.isEmpty
                             ? null
-                            : displayNameError(_name.text, l10n: l10n),
+                            : infoNameError(_name.text, l10n: l10n),
                       ),
                     ),
                     SwitchListTile(

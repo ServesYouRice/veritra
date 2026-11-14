@@ -229,7 +229,7 @@ class CommunityScreen extends StatelessWidget {
           builder: (context, value, _) {
             // Checked here so the reason sits under the field; an empty name
             // used to close the dialog and do nothing.
-            final error = displayNameError(value.text, l10n: context.l10n);
+            final error = infoNameError(value.text, l10n: context.l10n);
             // An untouched field reads as a prompt, not an error; Create
             // still stays disabled until the name is valid.
             final shown = value.text.isEmpty ? null : error;

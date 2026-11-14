@@ -113,6 +113,12 @@ void main() {
         find.textContaining('can be proven to be its author'), findsOneWidget);
     expect(find.textContaining('Authors cannot deny their posts.'),
         findsOneWidget);
+    // U32: three short points, each a fact C7 states.
+    expect(find.text('New posts can be read by people who join later.'),
+        findsOneWidget);
+    expect(
+        find.text('Posts made before you turn this on stay hidden from them.'),
+        findsOneWidget);
     await tester.tap(find.text('Cancel').last);
     await tester.pumpAndSettle();
     expect(state.changes, isEmpty);
@@ -126,6 +132,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Authors cannot deny'), findsNothing);
     expect(find.textContaining("won't see earlier posts"), findsOneWidget);
+    expect(find.text('Members who already have earlier posts keep them.'),
+        findsOneWidget);
+    expect(find.textContaining('turn it back on later'), findsOneWidget);
   });
 
   testWidgets(

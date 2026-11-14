@@ -51,9 +51,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('No requests yet.'), findsOneWidget);
 
+      // U32: a pasted link checks itself; no button press is needed.
       await tester.enterText(find.byType(TextField), link.url);
-      await tester.pump();
-      await tester.tap(find.text('Check link'));
       await tester.pumpAndSettle();
 
       expect(find.text('Hikers'), findsOneWidget);
@@ -74,6 +73,40 @@ void main() {
       // The secret is dropped from the field once the request is made.
       expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
           isEmpty);
+    });
+
+    testWidgets('a link checks itself when pasted, and only once',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      final link = newInviteLink(origin: _origin);
+      api.link = link;
+      await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
+      await tester.pumpAndSettle();
+
+      // Typing a few characters by hand does not check anything.
+      await tester.enterText(find.byType(TextField), 'htt');
+      await tester.pumpAndSettle();
+      expect(api.previewed, isEmpty);
+
+      await tester.enterText(find.byType(TextField), link.url);
+      await tester.pumpAndSettle();
+      expect(api.previewed, <String>[link.locator]);
+      expect(find.text('Ask to join'), findsOneWidget);
+    });
+
+    testWidgets('pasted text that is not a link says so under the field',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byType(TextField), 'see you at the trailhead on saturday');
+      await tester.pumpAndSettle();
+      expect(find.text('This is not an invitation link for this server.'),
+          findsOneWidget);
+      expect(api.previewed, isEmpty);
     });
 
     testWidgets('a dead link says so, and a member is told they are in',

@@ -123,6 +123,7 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
   }
 
   Future<void> _check() async {
+    _checked = _controller.text.trim();
     setState(() {
       _preview = null;
       _requested = false;
@@ -132,6 +133,30 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
     setState(() => _preview = result);
   }
 
+  /// The text the last check ran on, so one link is never checked twice.
+  String? _checked;
+  int _length = 0;
+
+  /// A pasted link checks itself: once the field holds a well-formed link of
+  /// this server, or a paste of text that is not one (which then says so under
+  /// the field). Typing by hand still waits for the button.
+  void _onChanged(String value) {
+    final pasted = value.length - _length > 8;
+    _length = value.length;
+    setState(() {
+      _preview = null;
+      _requested = false;
+    });
+    final text = value.trim();
+    if (text.isEmpty || text == _checked || state.isBusy(Ops.membership)) {
+      return;
+    }
+    final origin = state.api?.baseUrl;
+    final wellFormed = origin != null &&
+        MembershipInviteLink.tryParse(text, expectedOrigin: origin) != null;
+    if (wellFormed || pasted) unawaited(_check());
+  }
+
   Future<void> _request() async {
     final link = _preview?.link;
     if (link == null) return;
@@ -139,6 +164,8 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
     if (!mounted || request == null) return;
     // The secret is not needed any more: drop it from the field.
     _controller.clear();
+    _checked = null;
+    _length = 0;
     setState(() => _requested = true);
     await _loadRequests();
   }
@@ -196,10 +223,7 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
                   labelText: l10n.joinLinkLabel,
                   hintText: l10n.joinLinkHint,
                 ),
-                onChanged: (_) => setState(() {
-                  _preview = null;
-                  _requested = false;
-                }),
+                onChanged: _onChanged,
                 onSubmitted: (_) {
                   if (!busy && _controller.text.trim().isNotEmpty) _check();
                 },

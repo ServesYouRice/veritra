@@ -17,13 +17,23 @@ Future<bool> confirmChannelHistory(BuildContext context,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: full
-              ? [
-                  Text(l10n.channelHistoryOnConfirm),
-                  const SizedBox(height: 12),
-                  Text(l10n.channelHistoryProofConfirm),
-                ]
-              : [Text(l10n.channelHistoryOffConfirm)],
+          // Three short points, each one a fact C7 states: who can read
+          // what (decision 9), and that posts in a full channel are signed
+          // and so not deniable (owner answer 2026-11-12).
+          children: <Widget>[
+            for (final point in full
+                ? <String>[
+                    l10n.channelHistoryOnConfirm,
+                    l10n.channelHistoryOnEarlier,
+                    l10n.channelHistoryProofConfirm,
+                  ]
+                : <String>[
+                    l10n.channelHistoryOffConfirm,
+                    l10n.channelHistoryOffKept,
+                    l10n.channelHistoryOffAgain,
+                  ])
+              _Point(point),
+          ],
         ),
       ),
       actions: [
@@ -40,4 +50,25 @@ Future<bool> confirmChannelHistory(BuildContext context,
     ),
   );
   return confirmed == true;
+}
+
+/// One bullet of the confirmation.
+class _Point extends StatelessWidget {
+  const _Point(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const ExcludeSemantics(child: Text('\u2022 ')),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
 }

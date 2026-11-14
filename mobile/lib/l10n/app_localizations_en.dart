@@ -33,6 +33,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get validationNameTooLong => 'That name is too long.';
 
   @override
+  String get validationNameInvalid =>
+      'That name has characters that are not allowed.';
+
+  @override
+  String get validationTopicInvalid =>
+      'That topic is too long or has characters that are not allowed.';
+
+  @override
   String get validationGroupNameRequired => 'Enter a group name.';
 
   @override
@@ -1120,6 +1128,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelSave => 'Save';
+
+  @override
+  String get channelEditNotAllowed =>
+      'You cannot save changes here any more, because your role or account has changed.';
 
   @override
   String get communityNotMember => 'You are not a member yet';
@@ -4440,12 +4452,24 @@ class AppLocalizationsEn extends AppLocalizations {
       'New posts can be read by people who join later.';
 
   @override
+  String get channelHistoryOnEarlier =>
+      'Posts made before you turn this on stay hidden from them.';
+
+  @override
   String get channelHistoryOffConfirm =>
-      'People who join later won\'t see earlier posts. Members who already have them keep them.';
+      'People who join later won\'t see earlier posts.';
+
+  @override
+  String get channelHistoryOffKept =>
+      'Members who already have earlier posts keep them.';
+
+  @override
+  String get channelHistoryOffAgain =>
+      'If you turn it back on later, new members will only see posts made after that.';
 
   @override
   String get channelHistoryProofConfirm =>
-      'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.';
+      'Posts are signed, so a post can be proven to be its author\'s. Anyone who gets this channel\'s history, for example the server\'s stored copy with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.';
 
   @override
   String get channelHistoryProofLine =>

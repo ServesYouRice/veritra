@@ -147,6 +147,18 @@ abstract class AppLocalizations {
   /// **'That name is too long.'**
   String get validationNameTooLong;
 
+  /// Inline error when a community or channel name has control, line-break or direction characters.
+  ///
+  /// In en, this message translates to:
+  /// **'That name has characters that are not allowed.'**
+  String get validationNameInvalid;
+
+  /// Inline error under a channel topic field.
+  ///
+  /// In en, this message translates to:
+  /// **'That topic is too long or has characters that are not allowed.'**
+  String get validationTopicInvalid;
+
   /// Inline error under an empty group name field.
   ///
   /// In en, this message translates to:
@@ -1994,6 +2006,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Save'**
   String get channelSave;
+
+  /// Edit community or channel: shown beside Save when Save is disabled because this account may no longer edit.
+  ///
+  /// In en, this message translates to:
+  /// **'You cannot save changes here any more, because your role or account has changed.'**
+  String get channelEditNotAllowed;
 
   /// No description provided for @communityNotMember.
   ///
@@ -7323,16 +7341,34 @@ abstract class AppLocalizations {
   /// **'New posts can be read by people who join later.'**
   String get channelHistoryOnConfirm;
 
+  /// Second point of the turn-on confirmation for history for new members (C7): newcomers read from the switch on.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts made before you turn this on stay hidden from them.'**
+  String get channelHistoryOnEarlier;
+
   /// No description provided for @channelHistoryOffConfirm.
   ///
   /// In en, this message translates to:
-  /// **'People who join later won\'t see earlier posts. Members who already have them keep them.'**
+  /// **'People who join later won\'t see earlier posts.'**
   String get channelHistoryOffConfirm;
+
+  /// Second point of the turn-off confirmation for history for new members (C7): existing members keep what they have.
+  ///
+  /// In en, this message translates to:
+  /// **'Members who already have earlier posts keep them.'**
+  String get channelHistoryOffKept;
+
+  /// Third point of the turn-off confirmation (C7): after off and on again, newcomers read only the newest period.
+  ///
+  /// In en, this message translates to:
+  /// **'If you turn it back on later, new members will only see posts made after that.'**
+  String get channelHistoryOffAgain;
 
   /// No description provided for @channelHistoryProofConfirm.
   ///
   /// In en, this message translates to:
-  /// **'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.'**
+  /// **'Posts are signed, so a post can be proven to be its author\'s. Anyone who gets this channel\'s history, for example the server\'s stored copy with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.'**
   String get channelHistoryProofConfirm;
 
   /// No description provided for @channelHistoryProofLine.
