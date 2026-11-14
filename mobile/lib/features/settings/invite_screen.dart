@@ -105,9 +105,7 @@ class _InviteScreenState extends State<InviteScreen> {
                                       for (final days in const <int>[1, 7, 30])
                                         DropdownMenuItem(
                                           value: days,
-                                          child: Text(
-                                            l10n.durationDays(days),
-                                          ),
+                                          child: Text(l10n.durationDays(days)),
                                         ),
                                     ],
                                     onChanged: (value) =>
@@ -209,8 +207,9 @@ class _InviteScreenState extends State<InviteScreen> {
     // fails, so an error here belongs to this revoke, not an earlier one.
     final error = widget.state.error;
     if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -275,6 +274,15 @@ class _InviteRow extends StatelessWidget {
     final expires = invite.expiresAt;
     final exhausted = invite.maxUses > 0 && invite.uses >= invite.maxUses;
     return ListTile(
+      // U34: the row's main action shares the invitation as one link.
+      onTap: link == null
+          ? null
+          : () {
+              Clipboard.setData(ClipboardData(text: link!.url));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(context.l10n.inviteLinkCopied)),
+              );
+            },
       leading: const Icon(Icons.confirmation_number_outlined),
       title: Row(
         children: <Widget>[
@@ -386,10 +394,7 @@ class _InviteRow extends StatelessWidget {
               ),
             ),
             const SizedBox(height: BoneSpacing.md),
-            Text(
-              context.l10n.inviteQrHint,
-              textAlign: TextAlign.center,
-            ),
+            Text(context.l10n.inviteQrHint, textAlign: TextAlign.center),
           ],
         ),
         actions: <Widget>[
