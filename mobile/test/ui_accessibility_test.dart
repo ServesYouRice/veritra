@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/auth/connect_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/app_shell.dart';
@@ -16,19 +19,70 @@ import 'package:private_messenger/ui/widgets/status_pill.dart';
 import 'test_crypto_service.dart';
 
 void main() {
-  test('compact navigation keeps labels in semantics, not layout', () {
+  test('tabs keep their word from 320dp up to text scale 1.3 (U11)', () {
     expect(
-      shouldShowFloatingNavLabels(width: 320, textScale: 1),
+      shouldShowFloatingNavLabels(width: 319, textScale: 1),
       isFalse,
     );
     expect(
-      shouldShowFloatingNavLabels(width: 500, textScale: 1),
+      shouldShowFloatingNavLabels(width: 320, textScale: 1),
       isTrue,
     );
     expect(
-      shouldShowFloatingNavLabels(width: 500, textScale: 2.0),
+      shouldShowFloatingNavLabels(width: 320, textScale: 1.3),
+      isTrue,
+    );
+    expect(
+      shouldShowFloatingNavLabels(width: 500, textScale: 1.31),
       isFalse,
     );
+  });
+
+  testWidgets('tabs show their word at 320dp and text scale 1.3 (U11)',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = AppState(
+      apiClientFactory: (_) => ApiClient(baseUrl: 'https://localhost:8080'),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _TestSyncService(),
+    )
+      ..lifecycle = SessionLifecycle.ready
+      ..session = const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+        username: 'owner',
+      );
+    addTearDown(state.dispose);
+    await tester.pumpWidget(MaterialApp(
+      theme: veritraLightTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: const TextScaler.linear(1.3)),
+        child: child!,
+      ),
+      home: AppShell(state: state),
+    ));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    for (final word in <String>['Chats', 'Communities', 'Settings']) {
+      final label = find.descendant(
+        of: find.byType(FittedBox),
+        matching: find.text(word),
+      );
+      expect(label, findsOneWidget, reason: '$word should show as a tab word');
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: label, matching: find.byType(RichText)),
+      );
+      expect(paragraph.didExceedMaxLines, isFalse, reason: word);
+    }
   });
 
   test('the micro type remains readable at the accessibility floor', () {
