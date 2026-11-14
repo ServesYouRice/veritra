@@ -113,38 +113,6 @@ func TestClaimsAndBundlesRefuseDevicesOffTheHead(t *testing.T) {
 	}
 }
 
-func TestConversationKeyPackageClaimNamesOnlyListedDevices(t *testing.T) {
-	ctx := context.Background()
-	f := newPendingFixture(t, ctx)
-	conversation, err := f.store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: f.owner.Account.ID, MemberAccountIDs: []string{f.guest}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.guestDevices("extra", 1, 0)
-	registered := f.guestRegisteredDevice()
-	devices := func() []string {
-		packages, err := f.store.ClaimConversationKeyPackages(ctx, conversation.ID, f.owner.Account.ID, f.owner.Device.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ids := make([]string, 0, len(packages))
-		for _, item := range packages {
-			ids = append(ids, item.DeviceID)
-		}
-		return ids
-	}
-	if got := devices(); len(got) != 2 || !contains(got, "extra_0000") || !contains(got, registered) {
-		t.Fatalf("no list: claimed %v", got)
-	}
-	// The first claim used each device's key package; give the listed one another.
-	f.exec(`INSERT INTO device_key_packages(id, device_id, key_package, ciphersuite, created_at, expires_at) VALUES('kp_again', ?, X'02', ?, ?, '2999-01-01T00:00:00Z')`,
-		registered, openMLSCiphersuite, nowString())
-	f.seedHead(f.guest, registered)
-	if got := devices(); len(got) != 1 || got[0] != registered {
-		t.Fatalf("with a list: claimed %v, want only %s", got, registered)
-	}
-}
-
 func (f *pendingFixture) guestRegisteredDevice() string {
 	f.t.Helper()
 	var id string

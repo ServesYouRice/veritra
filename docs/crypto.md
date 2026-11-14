@@ -2126,6 +2126,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     (400 `key_package_not_listed`) and claims only packages that carry it,
     deleting stored ones that do not. No migration. An honest-server gate:
     clients still stage every add with their own pinned key.
+  - **No claim without device IDs (owner D134, 2026-11-14).**
+    `POST /conversations/{id}/key-packages/claim` takes `device_ids` and
+    nothing else: a body that names none (no body, `{}` or an empty list) is
+    400 `invalid_input` and takes nothing. The old form claimed one package
+    of every other member device, for clients that did not list devices; the
+    app's native crypto service lists devices and claims them by ID. The 409 `key_package_unavailable` and
+    429 `key_package_claim_limit` answers went with it: a device with no
+    package left, or over its claim limit, is skipped.
   - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
     linking, D100 A):** built in their own change (see its entry); this step
     only signs change 2 after the link checks.

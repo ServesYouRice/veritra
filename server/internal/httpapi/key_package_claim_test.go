@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
@@ -15,7 +16,8 @@ import (
 // claim.
 func TestKeyPackageClaimChargesWriteBudget(t *testing.T) {
 	handler, ownerToken := newLimitedHandler(t, config.Limits{ConversationMembers: 9, DeliveriesPerMinute: 30})
-	_, memberID := registerMemberWithID(t, handler, ownerToken, "member")
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "member")
+	memberDevice := firstDeviceID(t, handler, memberToken)
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken,
 		map[string]interface{}{"kind": "group", "member_account_ids": []string{memberID}})
 	if status != http.StatusCreated {
@@ -30,7 +32,7 @@ func TestKeyPackageClaimChargesWriteBudget(t *testing.T) {
 	var refused *int
 	claims := 0
 	for i := 0; i < 60; i++ {
-		recorder := doRawRecorder(t, handler, http.MethodPost, "/api/v1/conversations/"+conversation.ID+"/key-packages/claim", ownerToken, nil)
+		recorder := claimKeyPackages(t, handler, ownerToken, conversation.ID, memberDevice)
 		claims++
 		if recorder.Code == http.StatusTooManyRequests {
 			code := recorder.Code
@@ -47,4 +49,14 @@ func TestKeyPackageClaimChargesWriteBudget(t *testing.T) {
 	if claims < 2 {
 		t.Fatalf("the budget refused the first claim")
 	}
+}
+
+// claimKeyPackages claims one key package for each named device.
+func claimKeyPackages(t *testing.T, handler http.Handler, token, conversationID string, deviceIDs ...string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]interface{}{"device_ids": deviceIDs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doRawRecorder(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/key-packages/claim", token, body)
 }
