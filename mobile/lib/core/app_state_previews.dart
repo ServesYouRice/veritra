@@ -18,9 +18,10 @@ extension ChatPreviews on AppState {
 
   /// The row the chat list quotes for [conversationId], or null when previews
   /// are off, nothing is known yet, or the newest message is not one a row
-  /// may quote. A request never has one: nothing of a stranger is read before
-  /// it is accepted. Re-checks `expiresAt` on every call, because the purge
-  /// that removes an expired row can lag it.
+  /// may quote. Whether a row may be shown is for `chatPreviewLine`, which
+  /// refuses a request; the loader below never reads one. Re-checks
+  /// `expiresAt` on every call, because the purge that removes an expired row
+  /// can lag it.
   LocalMessage? chatPreviewFor(String conversationId) {
     if (!showChatPreviews) return null;
     final nowMs = DateTime.now().millisecondsSinceEpoch;

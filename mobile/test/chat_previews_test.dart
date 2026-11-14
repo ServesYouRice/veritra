@@ -266,6 +266,14 @@ void main() {
       expect(line(dm, _row('c', body: null)), isNull);
     });
 
+    test('a request is never quoted, even with its history in memory', () {
+      // A stranger's DM: created by them, so it is a request until accepted.
+      final request = _dm('r', 'acct_stranger', createdBy: 'acct_stranger');
+      state.conversations = <Conversation>[request];
+      expect(state.requestBucket(request), RequestBucket.request);
+      expect(line(request, _row('r', sender: 'acct_stranger')), isNull);
+    });
+
     test('a blocked sender is never quoted', () {
       state.blockedAccounts = <BlockedAccount>[
         BlockedAccount(accountId: 'acct_pal'),

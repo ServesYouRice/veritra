@@ -22,8 +22,9 @@ final RegExp _bidiControls =
 /// - Text is its first words; a spoiler is the usual hidden-spoiler line.
 /// - An attachment, a voice note and a poll are a placeholder, never the file
 ///   name, a question or an option.
-/// - Nothing quotes a message this device could not verify or understand
-///   (D25), a deleted one, or one from an account this device blocked.
+/// - Nothing quotes a message of a conversation that is still a request, one
+///   this device could not verify or understand (D25), a deleted one, or one
+///   from an account this device blocked.
 /// - Your own message starts with "You"; in a group or channel another
 ///   person's starts with their name. In a chat of two the title already says
 ///   who is speaking, so their messages start with no name.
@@ -33,6 +34,8 @@ String? chatPreviewLine(
   Conversation conversation,
   LocalMessage? row,
 ) {
+  // Nothing of a request is quoted before it is accepted (B8).
+  if (state.requestBucket(conversation) != RequestBucket.chat) return null;
   if (row == null || row.deletedAt != null) return null;
   if (state.isBlocked(row.senderAccountId)) return null;
   final String? body;
