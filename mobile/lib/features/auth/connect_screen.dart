@@ -10,6 +10,8 @@ import '../../core/account_host.dart';
 import '../../core/app_state.dart';
 import '../../storage/account_slots.dart';
 import '../settings/accounts_screen.dart' show AccountsShortcut;
+import '../settings/device_link_screen.dart'
+    show DeviceLinkStep, DeviceLinkSteps;
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
 import 'account_recovery_screen.dart';
@@ -360,6 +362,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
       return _joinDetails ? _joinAccountChildren(theme) : _joinLinkChildren();
     }
     return <Widget>[
+      // U22: scan, compare, done. One slot, shown or not, like the notices
+      // below.
+      mode == AuthMode.linkDevice
+          ? Padding(
+              padding: const EdgeInsets.only(top: BoneSpacing.md),
+              child: DeviceLinkSteps(current: _linkStep(pendingLink)),
+            )
+          : const SizedBox.shrink(),
       ..._formHeader(theme, _modeTitle, _modeDescription),
       _freshInstanceNotice(),
       ..._serverFieldChildren(theme),
@@ -476,8 +486,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Widget _submitButton(DeviceLinkClaimView? pendingLink) {
     return SizedBox(
       width: double.infinity,
+      // The claim is checked by itself; this only checks sooner.
       child: mode == AuthMode.linkDevice && pendingLink != null
-          ? FilledButton.icon(
+          ? OutlinedButton.icon(
               onPressed: widget.state.busy ? null : _completeDeviceLink,
               icon: const Icon(Icons.sync),
               label: Text(context.l10n.connectCheckApproval),
@@ -738,37 +749,54 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Where the new device is in scan, compare, done (U22).
+  static DeviceLinkStep _linkStep(DeviceLinkClaimView? pending) {
+    if (pending == null || pending.verificationCode.isEmpty) {
+      return DeviceLinkStep.scan;
+    }
+    return pending.state == 'approved'
+        ? DeviceLinkStep.done
+        : DeviceLinkStep.compare;
+  }
+
+  /// The 8-digit code in two halves of four, which is how people read it.
+  static List<String> _codeHalves(String code) => code.length == 8
+      ? <String>[code.substring(0, 4), code.substring(4)]
+      : <String>[code];
+
   List<Widget> _linkDeviceFields(
       ThemeData theme, DeviceLinkClaimView? pendingLink) {
     return <Widget>[
-      _Field(
-        label: context.l10n.connectLinkCode,
-        child: TextFormField(
-          controller: linkCode,
-          autocorrect: false,
-          autovalidateMode: AutovalidateMode.onUserInteraction,
-          validator: (value) => value == null || value.trim().isEmpty
-              ? context.l10n.connectLinkCodeRequired
-              : null,
-          style: BoneType.mono,
-          decoration: InputDecoration(
-            hintText: context.l10n.connectLinkCodeHint,
-            prefixIcon: const Icon(Icons.qr_code_2),
+      // Once the claim is sent the link code has done its work.
+      if (pendingLink == null) ...<Widget>[
+        // The QR scanner plugin has no Windows or Linux camera support; the
+        // pasted code works everywhere.
+        if (_canScanQr) ...<Widget>[
+          OutlinedButton.icon(
+            onPressed: widget.state.busy ? null : _scanLinkCode,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: Text(context.l10n.connectScanQr),
           ),
-        ),
-      ),
-      // The QR scanner plugin has no Windows or Linux camera support; the
-      // pasted code works everywhere.
-      if (_canScanQr) ...<Widget>[
-        const SizedBox(height: BoneSpacing.md),
-        OutlinedButton.icon(
-          onPressed: widget.state.busy ? null : _scanLinkCode,
-          icon: const Icon(Icons.qr_code_scanner),
-          label: Text(context.l10n.connectScanQr),
+          const SizedBox(height: BoneSpacing.md),
+        ],
+        _Field(
+          label: context.l10n.connectLinkCode,
+          child: TextFormField(
+            controller: linkCode,
+            autocorrect: false,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            validator: (value) => value == null || value.trim().isEmpty
+                ? context.l10n.connectLinkCodeRequired
+                : null,
+            style: BoneType.mono,
+            decoration: InputDecoration(
+              hintText: context.l10n.connectLinkCodeHint,
+              prefixIcon: const Icon(Icons.qr_code_2),
+            ),
+          ),
         ),
       ],
       if (pendingLink != null) ...<Widget>[
-        const SizedBox(height: BoneSpacing.lg),
         // The code exists only once the other device revealed its random
         // and it opened the commitment (L1-3); until then, a waiting line.
         if (pendingLink.verificationCode.isNotEmpty)
@@ -776,12 +804,41 @@ class _ConnectScreenState extends State<ConnectScreen> {
             icon: Icons.verified_outlined,
             title: context.l10n.connectVerificationTitle,
             message: context.l10n.connectVerificationMessage,
-            child: SelectableText(
-              pendingLink.verificationCode,
-              style: BoneType.mono.copyWith(
-                fontSize: 22,
-                letterSpacing: 3,
-                color: theme.colorScheme.onSurface,
+            child: Semantics(
+              label: pendingLink.verificationCode.split('').join(' '),
+              excludeSemantics: true,
+              // The halves sit side by side, or one under the other when
+              // large text would otherwise shrink them; each shrinks only if
+              // it alone does not fit.
+              child: LayoutBuilder(
+                builder: (context, constraints) => Wrap(
+                  key: const ValueKey<String>('connect-link-code-display'),
+                  spacing: BoneSpacing.lg,
+                  children: <Widget>[
+                    for (final (index, half)
+                        in _codeHalves(pendingLink.verificationCode).indexed)
+                      ConstrainedBox(
+                        constraints:
+                            BoxConstraints(maxWidth: constraints.maxWidth),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Text(
+                            half,
+                            key: ValueKey<String>('connect-link-code-$index'),
+                            maxLines: 1,
+                            softWrap: false,
+                            style: BoneType.mono.copyWith(
+                              fontSize: 48,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 4,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

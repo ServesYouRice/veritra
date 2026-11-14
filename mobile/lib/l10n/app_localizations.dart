@@ -1008,7 +1008,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectCheckApproval.
   ///
   /// In en, this message translates to:
-  /// **'Check approval'**
+  /// **'Check now'**
   String get connectCheckApproval;
 
   /// No description provided for @connectLinkInstead.
@@ -1056,13 +1056,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectVerificationTitle.
   ///
   /// In en, this message translates to:
-  /// **'Verification code'**
+  /// **'Type this code on your other device'**
   String get connectVerificationTitle;
 
   /// No description provided for @connectVerificationMessage.
   ///
   /// In en, this message translates to:
-  /// **'Confirm this code on your already-linked device, then check approval below.'**
+  /// **'On the device you already use, type this code. Never send it to anyone or read it out to them.'**
   String get connectVerificationMessage;
 
   /// No description provided for @connectInviteCode.
@@ -1464,7 +1464,7 @@ abstract class AppLocalizations {
   /// No description provided for @qrPermissionDenied.
   ///
   /// In en, this message translates to:
-  /// **'Camera permission is required to scan. Enable it in system settings, or type the link code manually.'**
+  /// **'Veritra needs the camera to scan. Allow it in Settings, or type the code instead.'**
   String get qrPermissionDenied;
 
   /// No description provided for @qrUnsupported.
@@ -1484,6 +1484,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Enter code manually'**
   String get qrEnterManually;
+
+  /// No description provided for @qrOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get qrOpenSettings;
+
+  /// No description provided for @qrOpenSettingsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings could not be opened. Allow the camera for Veritra in your device\'s settings.'**
+  String get qrOpenSettingsFailed;
 
   /// No description provided for @newConversationTitle.
   ///
@@ -2394,7 +2406,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkIntro.
   ///
   /// In en, this message translates to:
-  /// **'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.'**
+  /// **'Add a new phone or computer to your account in three steps. On the new device, open Veritra and choose Link this device.'**
   String get deviceLinkIntro;
 
   /// No description provided for @deviceLinkCreate.
@@ -2460,8 +2472,110 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkApproveHint.
   ///
   /// In en, this message translates to:
-  /// **'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.'**
+  /// **'The new device now shows an 8-digit code. Type it here.'**
   String get deviceLinkApproveHint;
+
+  /// No description provided for @deviceLinkApproveWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Never use a code someone sent you or read out to you. Type only the code you see yourself on the new device\'s screen.'**
+  String get deviceLinkApproveWarning;
+
+  /// No description provided for @deviceLinkCodeField.
+  ///
+  /// In en, this message translates to:
+  /// **'Code from the new device'**
+  String get deviceLinkCodeField;
+
+  /// No description provided for @deviceLinkCompareTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the code from the new device'**
+  String get deviceLinkCompareTitle;
+
+  /// No description provided for @deviceLinkStepScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan'**
+  String get deviceLinkStepScan;
+
+  /// No description provided for @deviceLinkStepCompare.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare'**
+  String get deviceLinkStepCompare;
+
+  /// No description provided for @deviceLinkStepDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get deviceLinkStepDone;
+
+  /// No description provided for @deviceLinkStepOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {step} of 3: {name}'**
+  String deviceLinkStepOf(int step, String name);
+
+  /// No description provided for @deviceLinkScanTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan this code with the new device'**
+  String get deviceLinkScanTitle;
+
+  /// No description provided for @deviceLinkExpiresAt.
+  ///
+  /// In en, this message translates to:
+  /// **'This code works until {time}.'**
+  String deviceLinkExpiresAt(String time);
+
+  /// No description provided for @deviceLinkWaitingClaim.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the new device. This screen updates by itself.'**
+  String get deviceLinkWaitingClaim;
+
+  /// No description provided for @deviceLinkCannotScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot scan?'**
+  String get deviceLinkCannotScan;
+
+  /// No description provided for @deviceLinkTypeCodeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'On the new device, choose to type the link code, then enter this one:'**
+  String get deviceLinkTypeCodeHint;
+
+  /// No description provided for @deviceLinkNewDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'New device: {name}'**
+  String deviceLinkNewDevice(String name);
+
+  /// No description provided for @deviceLinkChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the new device. If this does not change, try again.'**
+  String get deviceLinkChecking;
+
+  /// No description provided for @deviceLinkDoneTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your new device is linked'**
+  String get deviceLinkDoneTitle;
+
+  /// No description provided for @deviceLinkDoneDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your chat history is copied to it, encrypted. Keep both devices online until it finishes.'**
+  String get deviceLinkDoneDetail;
+
+  /// No description provided for @deviceLinkEndedHere.
+  ///
+  /// In en, this message translates to:
+  /// **'This link has ended. Create a new one to link a device.'**
+  String get deviceLinkEndedHere;
 
   /// No description provided for @deviceLinkUnavailableHere.
   ///
@@ -2514,7 +2628,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkWaitingApproval.
   ///
   /// In en, this message translates to:
-  /// **'Waiting for your other device to approve. Keep this screen open.'**
+  /// **'Waiting for your other device to approve. This screen updates by itself.'**
   String get deviceLinkWaitingApproval;
 
   /// No description provided for @deviceLinkWaitingCode.
@@ -3006,13 +3120,13 @@ abstract class AppLocalizations {
   /// No description provided for @safetyGroupIntro.
   ///
   /// In en, this message translates to:
-  /// **'Every member of this group sees the same number. Compare it in person or scan each other\'s code.'**
+  /// **'Compare this number with the other members to be sure nobody else can read this chat.'**
   String get safetyGroupIntro;
 
   /// No description provided for @safetyPeerIntro.
   ///
   /// In en, this message translates to:
-  /// **'Compare this number with {peer} in person, or scan each other\'s code.'**
+  /// **'Compare this number with {peer} to be sure nobody else can read your chat.'**
   String safetyPeerIntro(String peer);
 
   /// No description provided for @safetyUnavailable.
@@ -3092,6 +3206,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Mark as verified'**
   String get safetyMarkVerified;
+
+  /// No description provided for @safetyHowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How are you comparing?'**
+  String get safetyHowTitle;
+
+  /// No description provided for @safetyTogether.
+  ///
+  /// In en, this message translates to:
+  /// **'We are together'**
+  String get safetyTogether;
+
+  /// No description provided for @safetyTogetherDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan each other\'s code.'**
+  String get safetyTogetherDetail;
+
+  /// No description provided for @safetyOnCall.
+  ///
+  /// In en, this message translates to:
+  /// **'We are on a call'**
+  String get safetyOnCall;
+
+  /// No description provided for @safetyOnCallDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Read the number aloud to each other.'**
+  String get safetyOnCallDetail;
+
+  /// No description provided for @safetyTogetherSteps.
+  ///
+  /// In en, this message translates to:
+  /// **'Let them scan this code with their phone, then scan theirs.'**
+  String get safetyTogetherSteps;
+
+  /// No description provided for @safetyTogetherNoCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Let them scan this code with their phone, or compare the numbers below.'**
+  String get safetyTogetherNoCamera;
+
+  /// No description provided for @safetyCompareByEye.
+  ///
+  /// In en, this message translates to:
+  /// **'Or compare the numbers group by group. Every group must be the same:'**
+  String get safetyCompareByEye;
+
+  /// No description provided for @safetyCallSteps.
+  ///
+  /// In en, this message translates to:
+  /// **'Take turns reading the groups aloud, row by row. Every group must be the same. Only then mark the number as verified.'**
+  String get safetyCallSteps;
+
+  /// No description provided for @safetyOtherWay.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare another way'**
+  String get safetyOtherWay;
 
   /// No description provided for @detailsNotFound.
   ///
@@ -5304,14 +5478,26 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyShowDetail.
   ///
   /// In en, this message translates to:
-  /// **'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.'**
+  /// **'Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.'**
   String get recoveryKeyShowDetail;
 
   /// No description provided for @recoveryKeyWritten.
   ///
   /// In en, this message translates to:
-  /// **'I wrote it down'**
+  /// **'I have saved it'**
   String get recoveryKeyWritten;
+
+  /// No description provided for @recoveryKeyCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy for a password manager'**
+  String get recoveryKeyCopy;
+
+  /// No description provided for @recoveryKeyCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.'**
+  String get recoveryKeyCopied;
 
   /// No description provided for @recoveryKeyConfirmTitle.
   ///
@@ -5322,7 +5508,7 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyConfirmDetail.
   ///
   /// In en, this message translates to:
-  /// **'Type the whole key from your paper to check it. Dashes and spaces do not matter.'**
+  /// **'Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.'**
   String get recoveryKeyConfirmDetail;
 
   /// No description provided for @recoveryKeyField.
@@ -5342,6 +5528,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'That is not the key shown. Check your paper and try again.'**
   String get recoveryKeyMismatch;
+
+  /// No description provided for @recoveryKeyGroupWrong.
+  ///
+  /// In en, this message translates to:
+  /// **'Group {group} does not match. Check it on your copy.'**
+  String recoveryKeyGroupWrong(int group);
+
+  /// No description provided for @recoveryKeyGroupsMatched.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} of 13 groups match.'**
+  String recoveryKeyGroupsMatched(int count);
+
+  /// No description provided for @recoveryKeyTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'This is longer than the key. Check for extra characters.'**
+  String get recoveryKeyTooLong;
 
   /// No description provided for @recoveryKeyShowAgain.
   ///
@@ -5366,6 +5570,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Finish recovering your account'**
   String get recoveryFollowUpTitle;
+
+  /// No description provided for @recoveryFollowUpStepOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {step} of {total}'**
+  String recoveryFollowUpStepOf(int step, int total);
 
   /// No description provided for @recoveryFollowUpKeyDetail.
   ///
@@ -5396,6 +5606,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.'**
   String get recoveryStartDetail;
+
+  /// No description provided for @recoveryStartPointLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this only if you lost every device signed in to your account.'**
+  String get recoveryStartPointLost;
+
+  /// No description provided for @recoveryStartPointNeed.
+  ///
+  /// In en, this message translates to:
+  /// **'You need your password and your recovery key.'**
+  String get recoveryStartPointNeed;
+
+  /// No description provided for @recoveryStartPointWait.
+  ///
+  /// In en, this message translates to:
+  /// **'If one of your devices was used in the last 7 days, you wait 7 days, and your devices can cancel the recovery.'**
+  String get recoveryStartPointWait;
+
+  /// No description provided for @recoveryStartHowItWorks.
+  ///
+  /// In en, this message translates to:
+  /// **'How recovery works'**
+  String get recoveryStartHowItWorks;
 
   /// No description provided for @recoveryStartSubmit.
   ///
@@ -5468,6 +5702,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device joins your account after {date}. The app checks by itself while it is open. Your other devices can cancel this recovery.'**
   String recoveryWaitingDetail(String date);
+
+  /// No description provided for @recoveryTimeLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{time} left'**
+  String recoveryTimeLeft(String time);
 
   /// No description provided for @recoveryReadyDetail.
   ///
@@ -8220,7 +8460,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'Sealed sender key'**
+  /// **'Send without your name'**
   String get l2SealedKeyTitle;
 
   /// L2-3 sealed sender.
@@ -8228,6 +8468,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Messages without your name'**
   String get l2SealedKeyTile;
+
+  /// No description provided for @l2SealedOn.
+  ///
+  /// In en, this message translates to:
+  /// **'On'**
+  String get l2SealedOn;
+
+  /// No description provided for @l2SealedOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get l2SealedOff;
+
+  /// No description provided for @l2SealedSummaryOn.
+  ///
+  /// In en, this message translates to:
+  /// **'The server delivers your messages without learning who sent them.'**
+  String get l2SealedSummaryOn;
+
+  /// No description provided for @l2SealedSummaryChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused: the server\'s key changed. Your messages carry your name.'**
+  String get l2SealedSummaryChanged;
+
+  /// No description provided for @l2SealedSummaryNotOffered.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer it right now, so your messages carry your name.'**
+  String get l2SealedSummaryNotOffered;
+
+  /// No description provided for @l2SealedTechnicalDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Technical details'**
+  String get l2SealedTechnicalDetails;
 
   /// L2-3 sealed sender.
   ///
@@ -8238,13 +8514,13 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'This server does not offer sealed sending.'**
+  /// **'This server does not offer it, so your messages carry your name.'**
   String get l2SealedKeyOff;
 
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'No key pinned yet. It is pinned on the next sync.'**
+  /// **'It turns on after the next sync with this server.'**
   String get l2SealedKeyNone;
 
   /// L2-3 sealed sender.
@@ -8256,7 +8532,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.'**
+  /// **'Until you answer, your messages carry your name, as before. Say yes only if the server\'s operator told you: a key made just for you would let the server pick out your messages.'**
   String get l2SealedKeyChanged;
 
   /// L2-3 sealed sender.
@@ -8270,6 +8546,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Accept new key'**
   String get l2SealedKeyAccept;
+
+  /// No description provided for @l2SealedKeyQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Did the server\'s operator tell you its key changed?'**
+  String get l2SealedKeyQuestion;
+
+  /// No description provided for @l2SealedKeyKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'No, or I am not sure'**
+  String get l2SealedKeyKeep;
+
+  /// No description provided for @l2SealedKeyAcceptAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes, use the new key'**
+  String get l2SealedKeyAcceptAnswer;
+
+  /// No description provided for @l2SealedKeyKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing changed. Your messages keep your name until you accept the new key.'**
+  String get l2SealedKeyKept;
+
+  /// No description provided for @l2SealedKeyChangeAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Change my answer'**
+  String get l2SealedKeyChangeAnswer;
 
   /// L2-3 sealed sender.
   ///
@@ -8316,8 +8622,20 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender owner keys.
   ///
   /// In en, this message translates to:
-  /// **'Reject'**
+  /// **'No, keep it as it was'**
   String get l2OwnerKeyReject;
+
+  /// No description provided for @l2OwnerKeyQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Did you expect this change?'**
+  String get l2OwnerKeyQuestion;
+
+  /// No description provided for @l2OwnerKeyAcceptAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes, accept it'**
+  String get l2OwnerKeyAcceptAnswer;
 
   /// L2-3 sealed sender owner keys.
   ///

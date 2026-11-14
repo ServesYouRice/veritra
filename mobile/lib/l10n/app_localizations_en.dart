@@ -527,7 +527,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInstanceUrl => 'Instance URL';
 
   @override
-  String get connectCheckApproval => 'Check approval';
+  String get connectCheckApproval => 'Check now';
 
   @override
   String get connectLinkInstead => 'Link this device instead';
@@ -552,11 +552,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectScanQr => 'Scan QR code';
 
   @override
-  String get connectVerificationTitle => 'Verification code';
+  String get connectVerificationTitle => 'Type this code on your other device';
 
   @override
   String get connectVerificationMessage =>
-      'Confirm this code on your already-linked device, then check approval below.';
+      'On the device you already use, type this code. Never send it to anyone or read it out to them.';
 
   @override
   String get connectInviteCode => 'Invite code';
@@ -777,7 +777,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get qrPermissionDenied =>
-      'Camera permission is required to scan. Enable it in system settings, or type the link code manually.';
+      'Veritra needs the camera to scan. Allow it in Settings, or type the code instead.';
 
   @override
   String get qrUnsupported =>
@@ -789,6 +789,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get qrEnterManually => 'Enter code manually';
+
+  @override
+  String get qrOpenSettings => 'Open settings';
+
+  @override
+  String get qrOpenSettingsFailed =>
+      'Settings could not be opened. Allow the camera for Veritra in your device\'s settings.';
 
   @override
   String get newConversationTitle => 'New conversation';
@@ -1356,7 +1363,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.';
+      'Add a new phone or computer to your account in three steps. On the new device, open Veritra and choose Link this device.';
 
   @override
   String get deviceLinkCreate => 'Create link';
@@ -1404,7 +1411,70 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkApproveHint =>
-      'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.';
+      'The new device now shows an 8-digit code. Type it here.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Never use a code someone sent you or read out to you. Type only the code you see yourself on the new device\'s screen.';
+
+  @override
+  String get deviceLinkCodeField => 'Code from the new device';
+
+  @override
+  String get deviceLinkCompareTitle => 'Type the code from the new device';
+
+  @override
+  String get deviceLinkStepScan => 'Scan';
+
+  @override
+  String get deviceLinkStepCompare => 'Compare';
+
+  @override
+  String get deviceLinkStepDone => 'Done';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Step $step of 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Scan this code with the new device';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'This code works until $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Waiting for the new device. This screen updates by itself.';
+
+  @override
+  String get deviceLinkCannotScan => 'Cannot scan?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'On the new device, choose to type the link code, then enter this one:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'New device: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Checking the new device. If this does not change, try again.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Your new device is linked';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Your chat history is copied to it, encrypted. Keep both devices online until it finishes.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'This link has ended. Create a new one to link a device.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -1439,7 +1509,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Waiting for your other device to approve. Keep this screen open.';
+      'Waiting for your other device to approve. This screen updates by itself.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -1818,11 +1888,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get safetyGroupIntro =>
-      'Every member of this group sees the same number. Compare it in person or scan each other\'s code.';
+      'Compare this number with the other members to be sure nobody else can read this chat.';
 
   @override
   String safetyPeerIntro(String peer) {
-    return 'Compare this number with $peer in person, or scan each other\'s code.';
+    return 'Compare this number with $peer to be sure nobody else can read your chat.';
   }
 
   @override
@@ -1869,6 +1939,40 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get safetyMarkVerified => 'Mark as verified';
+
+  @override
+  String get safetyHowTitle => 'How are you comparing?';
+
+  @override
+  String get safetyTogether => 'We are together';
+
+  @override
+  String get safetyTogetherDetail => 'Scan each other\'s code.';
+
+  @override
+  String get safetyOnCall => 'We are on a call';
+
+  @override
+  String get safetyOnCallDetail => 'Read the number aloud to each other.';
+
+  @override
+  String get safetyTogetherSteps =>
+      'Let them scan this code with their phone, then scan theirs.';
+
+  @override
+  String get safetyTogetherNoCamera =>
+      'Let them scan this code with their phone, or compare the numbers below.';
+
+  @override
+  String get safetyCompareByEye =>
+      'Or compare the numbers group by group. Every group must be the same:';
+
+  @override
+  String get safetyCallSteps =>
+      'Take turns reading the groups aloud, row by row. Every group must be the same. Only then mark the number as verified.';
+
+  @override
+  String get safetyOtherWay => 'Compare another way';
 
   @override
   String get detailsNotFound => 'Conversation not found.';
@@ -3252,17 +3356,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.';
+      'Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.';
 
   @override
-  String get recoveryKeyWritten => 'I wrote it down';
+  String get recoveryKeyWritten => 'I have saved it';
+
+  @override
+  String get recoveryKeyCopy => 'Copy for a password manager';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Type your recovery key';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Type the whole key from your paper to check it. Dashes and spaces do not matter.';
+      'Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.';
 
   @override
   String get recoveryKeyField => 'Recovery key';
@@ -3275,6 +3386,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'That is not the key shown. Check your paper and try again.';
 
   @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Group $group does not match. Check it on your copy.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return '$count of 13 groups match.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'This is longer than the key. Check for extra characters.';
+
+  @override
   String get recoveryKeyShowAgain => 'Show the key again';
 
   @override
@@ -3285,6 +3410,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryFollowUpTitle => 'Finish recovering your account';
+
+  @override
+  String recoveryFollowUpStepOf(int step, int total) {
+    return 'Step $step of $total';
+  }
 
   @override
   String get recoveryFollowUpKeyDetail =>
@@ -3303,6 +3433,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryStartDetail =>
       'Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.';
+
+  @override
+  String get recoveryStartPointLost =>
+      'Use this only if you lost every device signed in to your account.';
+
+  @override
+  String get recoveryStartPointNeed =>
+      'You need your password and your recovery key.';
+
+  @override
+  String get recoveryStartPointWait =>
+      'If one of your devices was used in the last 7 days, you wait 7 days, and your devices can cancel the recovery.';
+
+  @override
+  String get recoveryStartHowItWorks => 'How recovery works';
 
   @override
   String get recoveryStartSubmit => 'Start recovery';
@@ -3346,6 +3491,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String recoveryWaitingDetail(String date) {
     return 'This device joins your account after $date. The app checks by itself while it is open. Your other devices can cancel this recovery.';
+  }
+
+  @override
+  String recoveryTimeLeft(String time) {
+    return '$time left';
   }
 
   @override
@@ -5002,34 +5152,73 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get l2SealedKeyTitle => 'Sealed sender key';
+  String get l2SealedKeyTitle => 'Send without your name';
 
   @override
   String get l2SealedKeyTile => 'Messages without your name';
+
+  @override
+  String get l2SealedOn => 'On';
+
+  @override
+  String get l2SealedOff => 'Off';
+
+  @override
+  String get l2SealedSummaryOn =>
+      'The server delivers your messages without learning who sent them.';
+
+  @override
+  String get l2SealedSummaryChanged =>
+      'Paused: the server\'s key changed. Your messages carry your name.';
+
+  @override
+  String get l2SealedSummaryNotOffered =>
+      'This server does not offer it right now, so your messages carry your name.';
+
+  @override
+  String get l2SealedTechnicalDetails => 'Technical details';
 
   @override
   String get l2SealedKeyIntro =>
       'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.';
 
   @override
-  String get l2SealedKeyOff => 'This server does not offer sealed sending.';
+  String get l2SealedKeyOff =>
+      'This server does not offer it, so your messages carry your name.';
 
   @override
   String get l2SealedKeyNone =>
-      'No key pinned yet. It is pinned on the next sync.';
+      'It turns on after the next sync with this server.';
 
   @override
   String get l2SealedKeyPinned => 'Pinned key';
 
   @override
   String get l2SealedKeyChanged =>
-      'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.';
+      'Until you answer, your messages carry your name, as before. Say yes only if the server\'s operator told you: a key made just for you would let the server pick out your messages.';
 
   @override
   String get l2SealedKeyNew => 'New key';
 
   @override
   String get l2SealedKeyAccept => 'Accept new key';
+
+  @override
+  String get l2SealedKeyQuestion =>
+      'Did the server\'s operator tell you its key changed?';
+
+  @override
+  String get l2SealedKeyKeep => 'No, or I am not sure';
+
+  @override
+  String get l2SealedKeyAcceptAnswer => 'Yes, use the new key';
+
+  @override
+  String get l2SealedKeyKept =>
+      'Nothing changed. Your messages keep your name until you accept the new key.';
+
+  @override
+  String get l2SealedKeyChangeAnswer => 'Change my answer';
 
   @override
   String get l2SealedKeyAcceptWarning =>
@@ -5062,7 +5251,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get l2OwnerKeyAccept => 'Accept';
 
   @override
-  String get l2OwnerKeyReject => 'Reject';
+  String get l2OwnerKeyReject => 'No, keep it as it was';
+
+  @override
+  String get l2OwnerKeyQuestion => 'Did you expect this change?';
+
+  @override
+  String get l2OwnerKeyAcceptAnswer => 'Yes, accept it';
 
   @override
   String get l2OwnerKeyAcceptWarning =>

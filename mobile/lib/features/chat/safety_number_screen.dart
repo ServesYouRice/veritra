@@ -46,11 +46,19 @@ class SafetyNumberScreen extends StatefulWidget {
 /// How a try to store a verification ended.
 enum _Saved { saved, numberChanged, failed }
 
+/// How the two people compare (U25): side by side, scanning each other's
+/// code, or apart, reading the number aloud.
+enum _Method { together, call }
+
 class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   ConversationSafetyNumber? _safety;
   PeerVerificationStatus? _status;
   bool _failed = false;
   bool _working = false;
+
+  /// Null until the person picks how they compare; "Mark as verified" is
+  /// offered only after that (U25).
+  _Method? _method;
 
   /// Bumped by every load; an answer from an older one is dropped.
   int _loadGeneration = 0;
@@ -281,53 +289,7 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
           else if (safety == null)
             const Center(child: CircularProgressIndicator())
           else ...<Widget>[
-            TileGroup(
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.all(BoneSpacing.lg),
-                  child: Column(
-                    children: <Widget>[
-                      Semantics(
-                        label: l10n.safetyDigitsSemantics(
-                          _digitGroups(safety.digits).join(', '),
-                        ),
-                        excludeSemantics: true,
-                        child: SelectableText(
-                          _digitLines(safety.digits),
-                          textAlign: TextAlign.center,
-                          style: BoneType.mono.copyWith(
-                            fontSize: 22,
-                            height: 1.5,
-                            letterSpacing: 1,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: BoneSpacing.lg),
-                      Semantics(
-                        label: l10n.safetyQrSemantics,
-                        child: Container(
-                          // QR codes need a light, uniform quiet zone to scan
-                          // reliably, independent of app theme.
-                          padding: const EdgeInsets.all(BoneSpacing.md),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(BoneRadii.md),
-                          ),
-                          child: QrImageView(
-                            data: safety.qrPayload,
-                            version: QrVersions.auto,
-                            size: 200,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
             if (_status != null) ...<Widget>[
-              const SizedBox(height: BoneSpacing.lg),
               TileGroup(
                 children: <Widget>[
                   ListTile(
@@ -357,43 +319,225 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: BoneSpacing.lg),
             ],
-            const SizedBox(height: BoneSpacing.lg),
-            if (canScan)
-              FilledButton.icon(
-                onPressed: _working ? null : _scan,
-                icon: const Icon(Icons.qr_code_scanner),
-                label: Text(l10n.safetyScanTheirCode),
-              ),
-            if (_peerAccountId != null &&
-                _status != PeerVerificationStatus.verified) ...<Widget>[
-              const SizedBox(height: BoneSpacing.sm),
-              OutlinedButton(
-                onPressed: _working ? null : _markVerified,
-                child: Text(l10n.safetyMarkVerified),
-              ),
-            ],
+            ...switch (_method) {
+              null => _choices(context),
+              _Method.together => _together(context, safety, canScan),
+              _Method.call => _onCall(context, safety),
+            },
           ],
         ],
       ),
     );
   }
+
+  /// The first step: how are you comparing?
+  List<Widget> _choices(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(l10n.safetyHowTitle, style: theme.textTheme.titleMedium),
+      const SizedBox(height: BoneSpacing.sm),
+      TileGroup(
+        children: <Widget>[
+          ListTile(
+            key: const ValueKey<String>('safety-together'),
+            leading: const Icon(Icons.qr_code_scanner),
+            title: Text(l10n.safetyTogether),
+            subtitle: Text(l10n.safetyTogetherDetail),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() => _method = _Method.together),
+          ),
+          ListTile(
+            key: const ValueKey<String>('safety-on-call'),
+            leading: const Icon(Icons.call_outlined),
+            title: Text(l10n.safetyOnCall),
+            subtitle: Text(l10n.safetyOnCallDetail),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() => _method = _Method.call),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  /// Side by side: this code for them to scan, then theirs to scan here.
+  /// Without a camera (desktop), the numbers are compared by eye.
+  List<Widget> _together(
+      BuildContext context, ConversationSafetyNumber safety, bool canScan) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(
+        canScan ? l10n.safetyTogetherSteps : l10n.safetyTogetherNoCamera,
+        style: theme.textTheme.bodyMedium,
+      ),
+      const SizedBox(height: BoneSpacing.md),
+      TileGroup(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.all(BoneSpacing.lg),
+            child: Center(
+              child: Semantics(
+                label: l10n.safetyQrSemantics,
+                child: Container(
+                  // QR codes need a light, uniform quiet zone to scan
+                  // reliably, independent of app theme.
+                  padding: const EdgeInsets.all(BoneSpacing.md),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(BoneRadii.md),
+                  ),
+                  child: QrImageView(
+                    data: safety.qrPayload,
+                    version: QrVersions.auto,
+                    size: 200,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (canScan) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        FilledButton.icon(
+          onPressed: _working ? null : _scan,
+          icon: const Icon(Icons.qr_code_scanner),
+          label: Text(l10n.safetyScanTheirCode),
+        ),
+      ],
+      const SizedBox(height: BoneSpacing.lg),
+      Text(l10n.safetyCompareByEye, style: theme.textTheme.bodyMedium),
+      const SizedBox(height: BoneSpacing.sm),
+      _number(context, safety),
+      ..._markAndBack(context, primary: !canScan),
+    ];
+  }
+
+  /// Apart: read the groups aloud, then mark the number as verified.
+  List<Widget> _onCall(BuildContext context, ConversationSafetyNumber safety) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return <Widget>[
+      Text(l10n.safetyCallSteps, style: theme.textTheme.bodyMedium),
+      const SizedBox(height: BoneSpacing.md),
+      _number(context, safety),
+      ..._markAndBack(context, primary: true),
+    ];
+  }
+
+  Widget _number(BuildContext context, ConversationSafetyNumber safety) {
+    final l10n = context.l10n;
+    return TileGroup(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(BoneSpacing.lg),
+          child: Semantics(
+            label: l10n.safetyDigitsSemantics(
+              safetyDigitGroups(safety.digits).join(', '),
+            ),
+            excludeSemantics: true,
+            child: SafetyDigitsGrid(digits: safety.digits),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// "Mark as verified" (a DM not yet verified), and the way back to the
+  /// choice of method.
+  List<Widget> _markAndBack(BuildContext context, {required bool primary}) {
+    final l10n = context.l10n;
+    final canMark =
+        _peerAccountId != null && _status != PeerVerificationStatus.verified;
+    return <Widget>[
+      if (canMark) ...<Widget>[
+        const SizedBox(height: BoneSpacing.lg),
+        if (primary)
+          FilledButton.icon(
+            onPressed: _working ? null : _markVerified,
+            icon: const Icon(Icons.verified_user_outlined),
+            label: Text(l10n.safetyMarkVerified),
+          )
+        else
+          OutlinedButton(
+            onPressed: _working ? null : _markVerified,
+            child: Text(l10n.safetyMarkVerified),
+          ),
+      ],
+      const SizedBox(height: BoneSpacing.sm),
+      Center(
+        child: TextButton(
+          onPressed: _working ? null : () => setState(() => _method = null),
+          child: Text(l10n.safetyOtherWay),
+        ),
+      ),
+    ];
+  }
 }
 
 /// The digits in groups of five, the size people read aloud and compare.
-List<String> _digitGroups(String digits) => <String>[
+List<String> safetyDigitGroups(String digits) => <String>[
       for (var start = 0; start < digits.length; start += 5)
         digits.substring(
             start, start + 5 < digits.length ? start + 5 : digits.length),
     ];
 
-/// Four groups per line, so sixty digits fit a phone in three lines.
-String _digitLines(String digits) {
-  final groups = _digitGroups(digits);
-  return <String>[
-    for (var start = 0; start < groups.length; start += 4)
-      groups
-          .sublist(start, start + 4 < groups.length ? start + 4 : groups.length)
-          .join(' '),
-  ].join('\n');
+/// The groups as a fixed grid, four a row: sixty digits are always three rows
+/// of four, whatever the width or text size, so both people read the same
+/// group in the same place. A group that does not fit its cell shrinks
+/// rather than wrapping.
+class SafetyDigitsGrid extends StatelessWidget {
+  const SafetyDigitsGrid({required this.digits, super.key});
+
+  final String digits;
+
+  static const int columns = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final groups = safetyDigitGroups(digits);
+    final style = BoneType.mono.copyWith(
+      fontSize: 22,
+      height: 1.5,
+      letterSpacing: 1,
+      color: theme.colorScheme.onSurface,
+    );
+    return Column(
+      key: const ValueKey<String>('safety-number-grid'),
+      children: <Widget>[
+        for (var row = 0; row * columns < groups.length; row++)
+          Row(
+            children: <Widget>[
+              for (var column = 0; column < columns; column++)
+                Expanded(
+                  child: row * columns + column < groups.length
+                      ? Padding(
+                          // Groups never touch, even when they shrink.
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: BoneSpacing.xs),
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                groups[row * columns + column],
+                                key: ValueKey<String>(
+                                    'safety-group-${row * columns + column}'),
+                                maxLines: 1,
+                                softWrap: false,
+                                style: style,
+                              ),
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
 }
