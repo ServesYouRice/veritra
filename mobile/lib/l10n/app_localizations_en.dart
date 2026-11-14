@@ -695,7 +695,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newConversationAddMembers => 'Add members';
 
   @override
-  String get newConversationStartDm => 'Start DM';
+  String get newConversationStartDm => 'Message';
 
   @override
   String get newConversationCreateGroup => 'Create group';
@@ -743,6 +743,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get accountPickerHelper =>
       'Exact username, or paste an account ID (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'People you know';
 
   @override
   String get accountPickerNoMatch =>

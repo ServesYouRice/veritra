@@ -221,7 +221,7 @@
   "newConversationGroupName": "Назив групе",
   "newConversationWho": "Коме желите да пишете?",
   "newConversationAddMembers": "Додај чланове",
-  "newConversationStartDm": "Започни разговор",
+  "newConversationStartDm": "Порука",
   "newConversationCreateGroup": "Направи групу",
   "newConversationPickPerson": "Прво изаберите особу којој пишете.",
   "newConversationAddOneMember": "Додајте бар још једног члана.",
@@ -237,6 +237,7 @@
   "commonRetry": "Покушај поново",
 
   "accountPickerHelper": "Унесите тачно корисничко име или налепите ИД налога (acct_…).",
+  "accountPickerKnown": "Људи које знате",
   "accountPickerNoMatch": "Није пронађен налог са тачно тим корисничким именом.",
 
   "searchHint": "Претражите особе, заједнице, канале…",

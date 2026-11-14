@@ -107,7 +107,7 @@ class ChatListScreen extends StatelessWidget {
           if (!archived)
             IconButton.filled(
                 tooltip: context.l10n.chatListNewChat,
-                onPressed: () => showNewConversationSheet(context, state),
+                onPressed: () => _startChat(context),
                 icon: const Icon(Icons.add_comment_outlined)),
           if (!archived)
             IconButton(
@@ -234,6 +234,20 @@ class ChatListScreen extends StatelessWidget {
     );
   }
 
+  /// The new-chat sheet, then the chat it started (U27): selected in the
+  /// workspace, pushed on a phone.
+  Future<void> _startChat(BuildContext context) async {
+    final started = await showNewConversationSheet(context, state);
+    if (started == null || !context.mounted) return;
+    state.selectAndPrepare(started.id);
+    if (embedded) return;
+    await Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(state: state, conversationId: started.id),
+      ),
+    );
+  }
+
   /// "Start a chat" and, for an admin, "Invite someone" (U28). Server invites
   /// are minted by an owner or admin only, so no one else sees the button.
   Widget _emptyActions(BuildContext context) {
@@ -245,7 +259,7 @@ class ChatListScreen extends StatelessWidget {
       runSpacing: BoneSpacing.sm,
       children: <Widget>[
         FilledButton.icon(
-          onPressed: () => showNewConversationSheet(context, state),
+          onPressed: () => _startChat(context),
           icon: const Icon(Icons.add_comment_outlined),
           label: Text(l10n.chatListStartChat),
         ),

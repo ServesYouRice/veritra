@@ -700,7 +700,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get newConversationAddMembers => 'Додај чланове';
 
   @override
-  String get newConversationStartDm => 'Започни разговор';
+  String get newConversationStartDm => 'Порука';
 
   @override
   String get newConversationCreateGroup => 'Направи групу';
@@ -748,6 +748,9 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get accountPickerHelper =>
       'Унесите тачно корисничко име или налепите ИД налога (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'Људи које знате';
 
   @override
   String get accountPickerNoMatch =>
@@ -5385,7 +5388,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get newConversationAddMembers => 'Dodaj članove';
 
   @override
-  String get newConversationStartDm => 'Započni razgovor';
+  String get newConversationStartDm => 'Poruka';
 
   @override
   String get newConversationCreateGroup => 'Napravi grupu';
@@ -5433,6 +5436,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get accountPickerHelper =>
       'Unesite tačno korisničko ime ili nalepite ID naloga (acct_…).';
+
+  @override
+  String get accountPickerKnown => 'Ljudi koje znate';
 
   @override
   String get accountPickerNoMatch =>

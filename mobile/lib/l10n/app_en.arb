@@ -284,7 +284,7 @@
   "newConversationGroupName": "Group name",
   "newConversationWho": "Who do you want to message?",
   "newConversationAddMembers": "Add members",
-  "newConversationStartDm": "Start DM",
+  "newConversationStartDm": "Message",
   "newConversationCreateGroup": "Create group",
   "newConversationPickPerson": "Pick the person to message first.",
   "newConversationAddOneMember": "Add at least one other member.",
@@ -303,6 +303,7 @@
   "commonRetry": "Retry",
 
   "accountPickerHelper": "Exact username, or paste an account ID (acct_…).",
+  "accountPickerKnown": "People you know",
   "accountPickerNoMatch": "No account found with that exact username.",
 
   "searchHint": "Search people, communities, channels…",

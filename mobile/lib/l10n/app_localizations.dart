@@ -1320,7 +1320,7 @@ abstract class AppLocalizations {
   /// No description provided for @newConversationStartDm.
   ///
   /// In en, this message translates to:
-  /// **'Start DM'**
+  /// **'Message'**
   String get newConversationStartDm;
 
   /// No description provided for @newConversationCreateGroup.
@@ -1400,6 +1400,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Exact username, or paste an account ID (acct_…).'**
   String get accountPickerHelper;
+
+  /// No description provided for @accountPickerKnown.
+  ///
+  /// In en, this message translates to:
+  /// **'People you know'**
+  String get accountPickerKnown;
 
   /// No description provided for @accountPickerNoMatch.
   ///
