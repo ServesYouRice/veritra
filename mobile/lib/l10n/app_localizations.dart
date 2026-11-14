@@ -96,7 +96,7 @@ abstract class AppLocalizations {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -672,7 +672,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeleteAccountDetail.
   ///
   /// In en, this message translates to:
-  /// **'Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.'**
+  /// **'Permanently deletes your account, its devices and its keys on the server. Messages you already sent stay in other people\'s chats, encrypted.'**
   String get settingsDeleteAccountDetail;
 
   /// Identity header when the server gave no username.
@@ -744,13 +744,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeleteAccountMessage.
   ///
   /// In en, this message translates to:
-  /// **'This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.'**
+  /// **'This permanently deletes your account. You lose:\n• your sign-in, passkeys, username and profile\n• every device signed in to it\n• your memberships, uploaded files, backups and recovery key on the server\n\nMessages you already sent stay in other people\'s chats, encrypted, and some encrypted records may stay under the server\'s retention rules. This cannot be undone.'**
   String get settingsDeleteAccountMessage;
 
   /// No description provided for @settingsDeleteAccountConfirm.
   ///
   /// In en, this message translates to:
-  /// **'Disable account'**
+  /// **'Delete account'**
   String get settingsDeleteAccountConfirm;
 
   /// No description provided for @settingsReauthTitle.
@@ -5220,7 +5220,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8PinDays.
   ///
   /// In en, this message translates to:
-  /// **'Pin for {days} days'**
+  /// **'{days, plural, =1{Pin for 1 day} other{Pin for {days} days}}'**
   String w8PinDays(int days);
 
   /// No description provided for @w8Forward.
@@ -7377,6 +7377,12 @@ abstract class AppLocalizations {
   /// **'Type recovery key'**
   String get autoBackupTypeKey;
 
+  /// No description provided for @autoBackupKeySubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on backups'**
+  String get autoBackupKeySubmit;
+
   /// No description provided for @autoBackupKeyWrong.
   ///
   /// In en, this message translates to:
@@ -8779,8 +8785,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

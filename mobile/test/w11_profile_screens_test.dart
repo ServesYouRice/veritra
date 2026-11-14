@@ -245,10 +245,18 @@ void main() {
         (tester) async {
       await tester.pumpWidget(_app(ProfileScreen(state: _state())));
       expect(find.byKey(const Key('profile-edit-tile')), findsNothing);
+      // U9: the "unavailable" notice shows only while editing is unavailable.
+      await tester.scrollUntilVisible(
+          find.text('Encryption identity pending'), 200);
+      expect(find.text('Encryption identity pending'), findsOneWidget);
       final service = await _service(store);
       await tester
           .pumpWidget(_app(ProfileScreen(state: _state(profiles: service))));
       expect(find.byKey(const Key('profile-edit-tile')), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -2000));
+      await tester.pump();
+      expect(find.text('Encryption identity pending', skipOffstage: false),
+          findsNothing);
     });
 
     testWidgets('the profile screen shows the shared name above the username',

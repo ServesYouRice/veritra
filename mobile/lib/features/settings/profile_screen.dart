@@ -166,21 +166,25 @@ class ProfileScreen extends StatelessWidget {
               ),
             ],
           ),
-          SectionHeader(l10n.profileSectionEncryption),
-          TileGroup(
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.lock_clock_outlined),
-                title: Text(l10n.profileEncryptionPending),
-                subtitle: Text(
-                  l10n.profileEncryptionPendingDetail,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+          // U9: the notice says profile editing is unavailable, so it shows
+          // only while that is true.
+          if (!state.profilesAvailable) ...<Widget>[
+            SectionHeader(l10n.profileSectionEncryption),
+            TileGroup(
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.lock_clock_outlined),
+                  title: Text(l10n.profileEncryptionPending),
+                  subtitle: Text(
+                    l10n.profileEncryptionPendingDetail,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );

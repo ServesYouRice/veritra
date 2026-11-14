@@ -1083,10 +1083,12 @@ class _MemberRow extends StatelessWidget {
                     value: onTimeout,
                     child: Text(l10n.memberTimeoutAction),
                   ),
-                  PopupMenuItem<VoidCallback>(
-                    value: onLiftTimeout,
-                    child: Text(l10n.memberTimeoutLift),
-                  ),
+                  // U9: only a member who is timed out has a timeout to lift.
+                  if (timedOutUntil != null)
+                    PopupMenuItem<VoidCallback>(
+                      value: onLiftTimeout,
+                      child: Text(l10n.memberTimeoutLift),
+                    ),
                 ],
               )
             : null,

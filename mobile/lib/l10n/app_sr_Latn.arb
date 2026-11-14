@@ -96,7 +96,7 @@
   "settingsCallsRelayTitle": "Pozivi",
   "settingsCallsRelayNote": "Pozivi idu preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.",
   "settingsDeleteAccount": "Izbriši nalog",
-  "settingsDeleteAccountDetail": "Onemogućava prijavljivanje i opoziva vaše uređaje. Neki šifrovani zapisi mogu ostati u skladu sa pravilima čuvanja na serveru.",
+  "settingsDeleteAccountDetail": "Trajno briše vaš nalog, njegove uređaje i ključeve na serveru. Poruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane.",
   "settingsSignedIn": "Prijavljeni ste",
   "settingsRevokeDeviceTitle": "Opozvati uređaj?",
   "settingsRevokeDeviceMessage": "„{deviceName}“ će odmah izgubiti pristup.",
@@ -108,8 +108,8 @@
   "settingsSignOutOthersMessage": "Sve sesije osim ove biće završene.",
   "settingsSignOutOthersConfirm": "Odjavi ostale",
   "settingsDeleteAccountTitle": "Izbrisati nalog?",
-  "settingsDeleteAccountMessage": "Ovo onemogućava vaš nalog, završava njegove sesije i opoziva njegove uređaje. Šifrovane poruke i drugi zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka.",
-  "settingsDeleteAccountConfirm": "Onemogući nalog",
+  "settingsDeleteAccountMessage": "Ovo trajno briše vaš nalog. Gubite:\n• prijavu, pristupne ključeve, korisničko ime i profil\n• svaki uređaj prijavljen na njega\n• članstva, otpremljene fajlove, rezervne kopije i ključ za oporavak na serveru\n\nPoruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane, a neki šifrovani zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka. Ovo se ne može poništiti.",
+  "settingsDeleteAccountConfirm": "Izbriši nalog",
   "settingsReauthTitle": "Potvrdite lozinku",
   "settingsReauthField": "Trenutna lozinka",
   "settingsNewPassword": "Nova lozinka",
@@ -854,7 +854,7 @@
   "w8PinnedMessage": "Zakačena poruka",
   "w8Pin": "Zakači poruku",
   "w8Unpin": "Otkači poruku",
-  "w8PinDays": "Zakači na {days} dana",
+  "w8PinDays": "{days, plural, one{Zakači na {days} dan} few{Zakači na {days} dana} other{Zakači na {days} dana}}",
   "@w8PinDays": {
     "placeholders": {
       "days": {
@@ -1273,6 +1273,7 @@
   "autoBackupNow": "Napravi kopiju sada",
   "autoBackupRunning": "Pravi se kopija…",
   "autoBackupTypeKey": "Unesite ključ za oporavak",
+  "autoBackupKeySubmit": "Uključi rezervne kopije",
   "autoBackupKeyWrong": "To nije ključ za oporavak ovog naloga.",
   "autoBackupKeyOn": "Rezervne kopije su uključene na ovom uređaju.",
   "autoBackupPromptMessage": "Sačuvajte ključ za oporavak. Uključuje automatske rezervne kopije i vraća vaš nalog ako izgubite sve uređaje.",

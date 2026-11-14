@@ -8,6 +8,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/features/communities/membership_screens.dart';
 import 'package:private_messenger/features/communities/moderation_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -353,16 +354,38 @@ void main() {
         (tester) async {
       final api = _Api();
       final state = _state(api);
+      // U9: "Lift timeout" is offered only while the shared record shows a
+      // running timeout for the member.
+      var timedOut = false;
+      state.governanceOverrideForTesting = (_) => timedOut
+          ? GovernanceState(
+              rev: 3,
+              owner: 'acct_owner',
+              ownerRev: 1,
+              joined: const {'acct_owner': 1, 'acct_alice': 2},
+              timeouts: {
+                'acct_alice': MemberTimeout(
+                    epoch: 4,
+                    fromMs: DateTime.now().millisecondsSinceEpoch,
+                    untilMs: DateTime.now()
+                        .add(const Duration(hours: 1))
+                        .millisecondsSinceEpoch),
+              },
+            )
+          : null;
       await tester.pumpWidget(_app(CommunityDetailsScreen(
         state: state,
-        community: Community(id: 'comm_1', name: 'Club'),
+        community: Community(
+            id: 'comm_1', name: 'Club', sharedConversationId: 'shared'),
       )));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
+      expect(find.text('Lift timeout'), findsNothing);
       await tester.tap(find.text('Time out…'));
       await tester.pumpAndSettle();
+      timedOut = true; // the record shows it once the screen reloads
       await tester.tap(find.text('1 hour'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['timeout:comm_1:acct_alice:3600']);

@@ -336,6 +336,9 @@ void main() {
     expect(find.text(englishL10n.w8PinDays(1)), findsOneWidget);
     expect(find.text(englishL10n.w8PinDays(7)), findsOneWidget);
     expect(find.text(englishL10n.w8PinDays(30)), findsOneWidget);
+    // U9: one day is singular.
+    expect(find.text('Pin for 1 day'), findsOneWidget);
+    expect(find.text('Pin for 7 days'), findsOneWidget);
     await tester.tap(find.text(englishL10n.w8PinDays(7)));
     await tester.pumpAndSettle();
 

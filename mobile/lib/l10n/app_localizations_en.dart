@@ -330,7 +330,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.';
+      'Permanently deletes your account, its devices and its keys on the server. Messages you already sent stay in other people\'s chats, encrypted.';
 
   @override
   String get settingsSignedIn => 'Signed in';
@@ -373,10 +373,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.';
+      'This permanently deletes your account. You lose:\n• your sign-in, passkeys, username and profile\n• every device signed in to it\n• your memberships, uploaded files, backups and recovery key on the server\n\nMessages you already sent stay in other people\'s chats, encrypted, and some encrypted records may stay under the server\'s retention rules. This cannot be undone.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Disable account';
+  String get settingsDeleteAccountConfirm => 'Delete account';
 
   @override
   String get settingsReauthTitle => 'Confirm your password';
@@ -992,8 +992,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1004,8 +1005,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1016,8 +1018,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1028,8 +1031,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString used';
@@ -1384,16 +1388,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'pending',
-        'claimed': 'claimed',
-        'approved': 'approved',
-        'expired': 'expired',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'pending',
+      'claimed': 'claimed',
+      'approved': 'approved',
+      'expired': 'expired',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1645,8 +1646,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1654,8 +1656,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1665,7 +1668,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2399,8 +2404,9 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -3214,7 +3220,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String w8PinDays(int days) {
-    return 'Pin for $days days';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Pin for $days days',
+      one: 'Pin for 1 day',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -4505,6 +4517,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get autoBackupTypeKey => 'Type recovery key';
+
+  @override
+  String get autoBackupKeySubmit => 'Turn on backups';
 
   @override
   String get autoBackupKeyWrong => 'That is not this account\'s recovery key.';

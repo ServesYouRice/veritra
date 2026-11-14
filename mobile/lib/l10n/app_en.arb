@@ -158,7 +158,7 @@
   "settingsCallsRelayTitle": "Calls",
   "settingsCallsRelayNote": "Calls go through the server's relay, so the other side never sees your network address.",
   "settingsDeleteAccount": "Delete account",
-  "settingsDeleteAccountDetail": "Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.",
+  "settingsDeleteAccountDetail": "Permanently deletes your account, its devices and its keys on the server. Messages you already sent stay in other people's chats, encrypted.",
   "settingsSignedIn": "Signed in",
   "@settingsSignedIn": {"description": "Identity header when the server gave no username."},
 
@@ -184,8 +184,8 @@
   "settingsSignOutOthersMessage": "Every session except this one will be ended.",
   "settingsSignOutOthersConfirm": "Sign out others",
   "settingsDeleteAccountTitle": "Delete account?",
-  "settingsDeleteAccountMessage": "This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.",
-  "settingsDeleteAccountConfirm": "Disable account",
+  "settingsDeleteAccountMessage": "This permanently deletes your account. You lose:\n• your sign-in, passkeys, username and profile\n• every device signed in to it\n• your memberships, uploaded files, backups and recovery key on the server\n\nMessages you already sent stay in other people's chats, encrypted, and some encrypted records may stay under the server's retention rules. This cannot be undone.",
+  "settingsDeleteAccountConfirm": "Delete account",
 
   "settingsReauthTitle": "Confirm your password",
   "settingsReauthField": "Current password",
@@ -1210,7 +1210,7 @@
   "w8PinnedMessage":  "Pinned message",
     "w8Pin":  "Pin message",
     "w8Unpin":  "Unpin message",
-    "w8PinDays":  "Pin for {days} days",
+    "w8PinDays":  "{days, plural, =1{Pin for 1 day} other{Pin for {days} days}}",
     "@w8PinDays":  {
                        "placeholders":  {
                                             "days":  {
@@ -1722,6 +1722,7 @@
   "autoBackupNow": "Back up now",
   "autoBackupRunning": "Backing up…",
   "autoBackupTypeKey": "Type recovery key",
+  "autoBackupKeySubmit": "Turn on backups",
   "autoBackupKeyWrong": "That is not this account's recovery key.",
   "autoBackupKeyOn": "Backups are on for this device.",
   "autoBackupPromptMessage": "Save a recovery key. It turns on automatic backups and gets your account back if you lose every device.",

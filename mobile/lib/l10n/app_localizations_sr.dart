@@ -331,7 +331,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Онемогућава пријављивање и опозива ваше уређаје. Неки шифровани записи могу остати у складу са правилима чувања на серверу.';
+      'Трајно брише ваш налог, његове уређаје и кључеве на серверу. Поруке које сте већ послали остају у туђим ћаскањима, шифроване.';
 
   @override
   String get settingsSignedIn => 'Пријављени сте';
@@ -374,10 +374,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'Ово онемогућава ваш налог, завршава његове сесије и опозива његове уређаје. Шифроване поруке и други записи могу остати у складу са правилима сервера о чувању података.';
+      'Ово трајно брише ваш налог. Губите:\n• пријаву, приступне кључеве, корисничко име и профил\n• сваки уређај пријављен на њега\n• чланства, отпремљене фајлове, резервне копије и кључ за опоравак на серверу\n\nПоруке које сте већ послали остају у туђим ћаскањима, шифроване, а неки шифровани записи могу остати у складу са правилима сервера о чувању података. Ово се не може поништити.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Онемогући налог';
+  String get settingsDeleteAccountConfirm => 'Избриши налог';
 
   @override
   String get settingsReauthTitle => 'Потврдите лозинку';
@@ -1001,8 +1001,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1013,8 +1014,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1025,8 +1027,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1037,8 +1040,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString искоришћено';
@@ -1397,16 +1401,13 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'на чекању',
-        'claimed': 'преузето',
-        'approved': 'одобрено',
-        'expired': 'истекло',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'на чекању',
+      'claimed': 'преузето',
+      'approved': 'одобрено',
+      'expired': 'истекло',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1658,8 +1659,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1667,8 +1669,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1678,7 +1681,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2418,8 +2423,9 @@ class AppLocalizationsSr extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -3236,7 +3242,14 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String w8PinDays(int days) {
-    return 'Закачи на $days дана';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Закачи на $days дана',
+      few: 'Закачи на $days дана',
+      one: 'Закачи на $days дан',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -4527,6 +4540,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupTypeKey => 'Унесите кључ за опоравак';
 
   @override
+  String get autoBackupKeySubmit => 'Укључи резервне копије';
+
+  @override
   String get autoBackupKeyWrong => 'То није кључ за опоравак овог налога.';
 
   @override
@@ -5666,7 +5682,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Onemogućava prijavljivanje i opoziva vaše uređaje. Neki šifrovani zapisi mogu ostati u skladu sa pravilima čuvanja na serveru.';
+      'Trajno briše vaš nalog, njegove uređaje i ključeve na serveru. Poruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane.';
 
   @override
   String get settingsSignedIn => 'Prijavljeni ste';
@@ -5709,10 +5725,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'Ovo onemogućava vaš nalog, završava njegove sesije i opoziva njegove uređaje. Šifrovane poruke i drugi zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka.';
+      'Ovo trajno briše vaš nalog. Gubite:\n• prijavu, pristupne ključeve, korisničko ime i profil\n• svaki uređaj prijavljen na njega\n• članstva, otpremljene fajlove, rezervne kopije i ključ za oporavak na serveru\n\nPoruke koje ste već poslali ostaju u tuđim ćaskanjima, šifrovane, a neki šifrovani zapisi mogu ostati u skladu sa pravilima servera o čuvanju podataka. Ovo se ne može poništiti.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Onemogući nalog';
+  String get settingsDeleteAccountConfirm => 'Izbriši nalog';
 
   @override
   String get settingsReauthTitle => 'Potvrdite lozinku';
@@ -6336,8 +6352,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6348,8 +6365,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6360,8 +6378,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6372,8 +6391,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString iskorišćeno';
@@ -6732,16 +6752,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'na čekanju',
-        'claimed': 'preuzeto',
-        'approved': 'odobreno',
-        'expired': 'isteklo',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'na čekanju',
+      'claimed': 'preuzeto',
+      'approved': 'odobreno',
+      'expired': 'isteklo',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -6993,8 +7010,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -7002,8 +7020,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -7013,7 +7032,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -7753,8 +7774,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -8574,7 +8596,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String w8PinDays(int days) {
-    return 'Zakači na $days dana';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Zakači na $days dana',
+      few: 'Zakači na $days dana',
+      one: 'Zakači na $days dan',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -9865,6 +9894,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupTypeKey => 'Unesite ključ za oporavak';
+
+  @override
+  String get autoBackupKeySubmit => 'Uključi rezervne kopije';
 
   @override
   String get autoBackupKeyWrong => 'To nije ključ za oporavak ovog naloga.';
