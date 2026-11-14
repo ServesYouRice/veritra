@@ -14,14 +14,20 @@ void main() {
     String release(String message) =>
         describeError(StateError(message), en, false);
 
-    expect(release('Production device-link SAS is not integrated'),
-        en.errorActionUnavailable);
+    expect(
+      release('Production device-link SAS is not integrated'),
+      en.errorActionUnavailable,
+    );
     expect(release('Device-link transcript was substituted'), en.errorGeneric);
-    expect(release('Device-link verification did not match locally'),
-        en.errorGeneric);
+    expect(
+      release('Device-link verification did not match locally'),
+      en.errorGeneric,
+    );
     expect(release('Call c_123 ended during setup'), en.errorGeneric);
-    expect(release('Production MLS/OpenMLS encryption is not integrated'),
-        en.errorEncryptionUnavailable);
+    expect(
+      release('Production MLS/OpenMLS encryption is not integrated'),
+      en.errorEncryptionUnavailable,
+    );
   });
 
   test('debug text keeps the developer detail', () {

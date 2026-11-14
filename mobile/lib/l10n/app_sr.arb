@@ -958,6 +958,8 @@
   "recoveryKeyMismatch": "То није приказани кључ. Проверите папир и покушајте поново.",
   "recoveryKeyGroupWrong": "Група {group} се не поклапа. Проверите је на свом запису.",
   "recoveryKeyGroupsMatched": "Поклапа се {count} од 13 група.",
+  "recoveryKeyCheck": "Провери мој кључ",
+  "recoveryKeyCheckOk": "Ово је ваш кључ. Ништа још није сачувано.",
   "recoveryKeyTooLong": "Ово је дуже од кључа. Проверите да ли има вишка знакова.",
   "recoveryKeyShowAgain": "Прикажи кључ поново",
   "recoveryKeySave": "Сачувај кључ за опоравак",

@@ -34,10 +34,11 @@ import 'webrtc_frame_keys.dart';
 ///    `EngineTrackAddedEvent` is not part of its public API). A track that
 ///    never starts is unsubscribed.
 class LiveKitSfuConnection implements SfuConnection {
-  LiveKitSfuConnection(WebRtcFrameKeys keys,
-      {LiveKitRoomDriver? driver,
-      this.remoteStartWait = const Duration(seconds: 10)})
-      : _driver = driver ?? _LkRoomDriver(keys);
+  LiveKitSfuConnection(
+    WebRtcFrameKeys keys, {
+    LiveKitRoomDriver? driver,
+    this.remoteStartWait = const Duration(seconds: 10),
+  }) : _driver = driver ?? _LkRoomDriver(keys);
 
   final LiveKitRoomDriver _driver;
 
@@ -162,8 +163,10 @@ class LiveKitSfuConnection implements SfuConnection {
   @override
   Future<SfuLocalTrack> publishDisabled(int slot) async {
     if (slot != roomSlotVoice) {
-      throw UnsupportedError('only voice is published (camera and screen '
-          'share are not built)');
+      throw UnsupportedError(
+        'only voice is published (camera and screen '
+        'share are not built)',
+      );
     }
     if (_poisoned) throw StateError('the SFU connection is not fail closed');
     final LiveKitLocalMedia media;
@@ -194,7 +197,9 @@ class LiveKitSfuConnection implements SfuConnection {
 
   @override
   Future<RoomFrameCryptor> senderCryptor(
-      SfuLocalTrack track, String participantId) async {
+    SfuLocalTrack track,
+    String participantId,
+  ) async {
     final local = track as _LiveKitLocalTrack;
     final sender = local.media.sender;
     if (sender == null) throw StateError('track has no sender');
@@ -211,7 +216,9 @@ class LiveKitSfuConnection implements SfuConnection {
 
   @override
   Future<RoomFrameCryptor> receiverCryptor(
-      SfuRemoteTrack track, String participantId) async {
+    SfuRemoteTrack track,
+    String participantId,
+  ) async {
     final receiver = (track as _LiveKitRemoteTrack).media.receiver;
     if (receiver == null) throw StateError('track has no receiver');
     return _driver.receiverCryptor(receiver, participantId);
@@ -302,7 +309,10 @@ class LiveKitDataReceived extends LiveKitRoomEvent {
 abstract interface class LiveKitRoomDriver {
   String? get localIdentity;
   Future<void> connect(
-      String url, String token, void Function(LiveKitRoomEvent) onEvent);
+    String url,
+    String token,
+    void Function(LiveKitRoomEvent) onEvent,
+  );
 
   /// Creates the voice capture, starts and disables it, then publishes it.
   Future<LiveKitLocalMedia> publishVoiceDisabled();
@@ -311,7 +321,9 @@ abstract interface class LiveKitRoomDriver {
   Future<void> disconnect();
   Future<RoomFrameCryptor> senderCryptor(Object sender, String participantId);
   Future<RoomFrameCryptor> receiverCryptor(
-      Object receiver, String participantId);
+    Object receiver,
+    String participantId,
+  );
 }
 
 class _LkRoomDriver implements LiveKitRoomDriver {
@@ -341,44 +353,68 @@ class _LkRoomDriver implements LiveKitRoomDriver {
 
   @override
   Future<void> connect(
-      String url, String token, void Function(LiveKitRoomEvent) onEvent) async {
+    String url,
+    String token,
+    void Function(LiveKitRoomEvent) onEvent,
+  ) async {
     final listener = _listener = _room.createListener();
     listener
       ..on<lk.RoomReconnectingEvent>(
-          (_) => onEvent(const LiveKitReconnecting()))
+        (_) => onEvent(const LiveKitReconnecting()),
+      )
       ..on<lk.RoomDisconnectedEvent>(
-          (_) => onEvent(const LiveKitDisconnected()))
+        (_) => onEvent(const LiveKitDisconnected()),
+      )
       ..on<lk.LocalTrackPublishedEvent>((event) {
         final track = event.publication.track;
-        onEvent(LiveKitLocalTrackPublished(
+        onEvent(
+          LiveKitLocalTrackPublished(
             event.publication.sid,
-            track == null
-                ? null
-                : _LkLocalMedia(track, event.publication.sid)));
+            track == null ? null : _LkLocalMedia(track, event.publication.sid),
+          ),
+        );
       })
-      ..on<lk.TrackSubscribedEvent>((event) => onEvent(LiveKitTrackSubscribed(
-          _LkRemoteMedia(event.participant, event.publication, event.track))))
+      ..on<lk.TrackSubscribedEvent>(
+        (event) => onEvent(
+          LiveKitTrackSubscribed(
+            _LkRemoteMedia(event.participant, event.publication, event.track),
+          ),
+        ),
+      )
       ..on<lk.TrackUnsubscribedEvent>(
-          (event) => onEvent(LiveKitTrackUnsubscribed(event.publication.sid)))
-      ..on<lk.DataReceivedEvent>((event) => onEvent(LiveKitDataReceived(
-          event.participant?.identity, Uint8List.fromList(event.data))));
-    await _room.connect(url, token,
-        connectOptions: const lk.ConnectOptions(autoSubscribe: true));
+        (event) => onEvent(LiveKitTrackUnsubscribed(event.publication.sid)),
+      )
+      ..on<lk.DataReceivedEvent>(
+        (event) => onEvent(
+          LiveKitDataReceived(
+            event.participant?.identity,
+            Uint8List.fromList(event.data),
+          ),
+        ),
+      );
+    await _room.connect(
+      url,
+      token,
+      connectOptions: const lk.ConnectOptions(autoSubscribe: true),
+    );
   }
 
   @override
   Future<LiveKitLocalMedia> publishVoiceDisabled() async {
     final participant = _room.localParticipant;
     if (participant == null) throw StateError('not connected');
-    final track =
-        await lk.LocalAudioTrack.create(const lk.AudioCaptureOptions());
+    final track = await lk.LocalAudioTrack.create(
+      const lk.AudioCaptureOptions(),
+    );
     // Started and disabled before it is published: until its cryptor holds
     // a key the encoder sees silence only (publishing does not re-enable a
     // started track).
     await track.start();
     _setEnabled(_LkLocalMedia(track, ''), false);
-    final publication = await participant.publishAudioTrack(track,
-        publishOptions: _voiceOptions);
+    final publication = await participant.publishAudioTrack(
+      track,
+      publishOptions: _voiceOptions,
+    );
     return _LkLocalMedia(track, publication.sid);
   }
 
@@ -394,23 +430,31 @@ class _LkRoomDriver implements LiveKitRoomDriver {
 
   @override
   Future<RoomFrameCryptor> senderCryptor(
-          Object sender, String participantId) async =>
-      _Cryptor(await rtc.frameCryptorFactory.createFrameCryptorForRtpSender(
-        participantId: participantId,
-        sender: sender as rtc.RTCRtpSender,
-        algorithm: rtc.Algorithm.kAesGcm,
-        keyProvider: keys.provider,
-      ));
+    Object sender,
+    String participantId,
+  ) async =>
+      _Cryptor(
+        await rtc.frameCryptorFactory.createFrameCryptorForRtpSender(
+          participantId: participantId,
+          sender: sender as rtc.RTCRtpSender,
+          algorithm: rtc.Algorithm.kAesGcm,
+          keyProvider: keys.provider,
+        ),
+      );
 
   @override
   Future<RoomFrameCryptor> receiverCryptor(
-          Object receiver, String participantId) async =>
-      _Cryptor(await rtc.frameCryptorFactory.createFrameCryptorForRtpReceiver(
-        participantId: participantId,
-        receiver: receiver as rtc.RTCRtpReceiver,
-        algorithm: rtc.Algorithm.kAesGcm,
-        keyProvider: keys.provider,
-      ));
+    Object receiver,
+    String participantId,
+  ) async =>
+      _Cryptor(
+        await rtc.frameCryptorFactory.createFrameCryptorForRtpReceiver(
+          participantId: participantId,
+          receiver: receiver as rtc.RTCRtpReceiver,
+          algorithm: rtc.Algorithm.kAesGcm,
+          keyProvider: keys.provider,
+        ),
+      );
 
   @override
   Future<void> disconnect() async {

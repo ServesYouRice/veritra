@@ -35,8 +35,9 @@ class ConversationHistory {
     }
     for (final reaction in reactions) {
       if (!_byKey.containsKey(reaction.targetKey)) continue;
-      (_reactions[reaction.targetKey] ??= <LocalMessageReaction>[])
-          .add(reaction);
+      (_reactions[reaction.targetKey] ??= <LocalMessageReaction>[]).add(
+        reaction,
+      );
     }
     for (final list in _reactions.values) {
       list.sort((a, b) => a.updatedAt.compareTo(b.updatedAt));

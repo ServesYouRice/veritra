@@ -68,8 +68,10 @@ class HistoryTransferService {
       row = await _upload(id, row, sessionToken);
     }
     if (row.stage == HistoryTransferStage.uploaded) {
-      final receipt =
-          await transport.status(id.linkId, HistorySessionAuth(sessionToken));
+      final receipt = await transport.status(
+        id.linkId,
+        HistorySessionAuth(sessionToken),
+      );
       if (receipt.state == 'acknowledged') {
         row = row.copyWith(stage: HistoryTransferStage.acknowledged);
         await localStore.saveHistoryTransfer(row);
@@ -86,7 +88,10 @@ class HistoryTransferService {
   }
 
   Future<HistoryTransferProgress> _upload(
-      K2TransferId id, HistoryTransferProgress row, String token) async {
+    K2TransferId id,
+    HistoryTransferProgress row,
+    String token,
+  ) async {
     final file = File(row.filePath!);
     if (!file.existsSync() || file.lengthSync() != row.ciphertextSize) {
       throw const K2TransferException('the cached copy is gone');
@@ -162,10 +167,11 @@ class HistoryTransferService {
   }
 
   Future<HistoryTransferProgress> _handoff(
-      K2TransferId id,
-      HistoryTransferProgress row,
-      HistoryTransferAuth auth,
-      String directory) async {
+    K2TransferId id,
+    HistoryTransferProgress row,
+    HistoryTransferAuth auth,
+    String directory,
+  ) async {
     final payload = _payload(row);
     final tag = payload['approval_tag'];
     final at = payload['approved_at'];
@@ -208,8 +214,11 @@ class HistoryTransferService {
     );
   }
 
-  Future<HistoryTransferProgress> _download(K2TransferId id,
-      HistoryTransferProgress row, HistoryTransferAuth auth) async {
+  Future<HistoryTransferProgress> _download(
+    K2TransferId id,
+    HistoryTransferProgress row,
+    HistoryTransferAuth auth,
+  ) async {
     final size = row.ciphertextSize!;
     // The native digest check runs on every complete file; a failure deletes
     // the file and the next call starts the download again.
@@ -221,8 +230,10 @@ class HistoryTransferService {
       target: File(row.filePath!),
       verifyDigest: (_) => crypto.k2VerifyDownload(id),
     );
-    final next =
-        row.copyWith(stage: HistoryTransferStage.downloaded, fileOffset: size);
+    final next = row.copyWith(
+      stage: HistoryTransferStage.downloaded,
+      fileOffset: size,
+    );
     await localStore.saveHistoryTransfer(next);
     return next;
   }
@@ -240,9 +251,13 @@ class HistoryTransferService {
   }
 
   Future<HistoryTransferProgress> _row(
-      K2TransferId id, String direction) async {
-    final row =
-        await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId);
+    K2TransferId id,
+    String direction,
+  ) async {
+    final row = await localStore.loadHistoryTransfer(
+      id.serverOrigin,
+      id.linkId,
+    );
     if (row == null || row.direction != direction) {
       throw const K2TransferException('no such transfer');
     }

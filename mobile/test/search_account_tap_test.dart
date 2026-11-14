@@ -71,11 +71,13 @@ Future<_PeopleState> _openSearch(WidgetTester tester) async {
       deviceId: 'dev_me',
     );
   addTearDown(state.dispose);
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: SearchScreen(state: state),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: SearchScreen(state: state),
+    ),
+  );
   await tester.tap(find.text('People'));
   await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextField), 'peer');
@@ -87,8 +89,9 @@ Future<_PeopleState> _openSearch(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('two quick taps start one conversation and open one chat',
-      (tester) async {
+  testWidgets('two quick taps start one conversation and open one chat', (
+    tester,
+  ) async {
     final state = await _openSearch(tester);
     final row = find.text('Samuel');
     await tester.tap(row);
@@ -127,8 +130,9 @@ void main() {
     expect(find.byType(ChatScreen), findsOneWidget);
   });
 
-  testWidgets('leaving the search while a start is pending is harmless',
-      (tester) async {
+  testWidgets('leaving the search while a start is pending is harmless', (
+    tester,
+  ) async {
     final state = await _openSearch(tester);
     await tester.tap(find.text('Samuel'));
     await tester.pump();
@@ -141,12 +145,16 @@ void main() {
   });
 
   // U35: a heading replaces the per-row badge and there is no inline Block.
-  testWidgets('people results sit under a heading, with no badge or Block',
-      (tester) async {
+  testWidgets('people results sit under a heading, with no badge or Block', (
+    tester,
+  ) async {
     await _openSearch(tester);
     expect(find.text('People'), findsOneWidget, reason: 'the tab');
-    expect(find.text('PEOPLE'), findsOneWidget,
-        reason: 'the heading over the person');
+    expect(
+      find.text('PEOPLE'),
+      findsOneWidget,
+      reason: 'the heading over the person',
+    );
     expect(find.byKey(const Key('search-heading-account')), findsOneWidget);
     expect(find.text('ACCOUNT'), findsNothing, reason: 'no per-row badge');
     expect(find.byIcon(Icons.block), findsNothing);

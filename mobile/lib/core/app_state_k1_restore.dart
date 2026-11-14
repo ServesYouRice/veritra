@@ -44,7 +44,9 @@ extension K1RestoreActions on AppState {
   /// digest is checked before it is opened; Rust opens it pinned to the
   /// row's device; the importer refuses a snapshot that is not the header's.
   Future<K1RestoreResult> restoreFromK1Backup(
-      K1BackupEntry entry, String typedKey) async {
+    K1BackupEntry entry,
+    String typedKey,
+  ) async {
     final current = session;
     final client = api;
     final crypto = cryptoService;
@@ -61,8 +63,9 @@ extension K1RestoreActions on AppState {
     final open = crypto as BackupOpenCryptoService;
     final Uint8List entropy;
     try {
-      entropy = await _recoveryCrypto
-          .decodeRecoveryKey(normalizeRecoveryKeyInput(typedKey));
+      entropy = await _recoveryCrypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typedKey),
+      );
     } catch (_) {
       return K1RestoreResult.wrongKey;
     }
@@ -76,9 +79,14 @@ extension K1RestoreActions on AppState {
       // The account's current key may differ (a copy older than a swap):
       // the restore works with the key that sealed the copy.
       final prefix = await _k1ReadBytes(
-          await client.downloadBackup(current.token, entry.id,
-              start: 0, end: k1BackupPeekBytes - 1),
-          k1BackupPeekBytes);
+        await client.downloadBackup(
+          current.token,
+          entry.id,
+          start: 0,
+          end: k1BackupPeekBytes - 1,
+        ),
+        k1BackupPeekBytes,
+      );
       final peek = open.peekK1Backup(prefix);
       if (peek.accountId != current.accountId ||
           peek.sourceDeviceId != entry.deviceId ||
@@ -87,17 +95,19 @@ extension K1RestoreActions on AppState {
         return K1RestoreResult.corrupt;
       }
       final body = await _k1ReadBytes(
-          await client.downloadBackup(current.token, entry.id),
-          k1MaxBackupCiphertextBytes);
+        await client.downloadBackup(current.token, entry.id),
+        k1MaxBackupCiphertextBytes,
+      );
       if (body.length != entry.sizeBytes ||
           _hexOf(sha256(body)) != entry.sha256Hex) {
         return K1RestoreResult.corrupt;
       }
       final opened = await open.openK1Backup(
-          ciphertext: body,
-          entropy: entropy,
-          accountId: current.accountId!,
-          sourceDeviceId: entry.deviceId);
+        ciphertext: body,
+        entropy: entropy,
+        accountId: current.accountId!,
+        sourceDeviceId: entry.deviceId,
+      );
       plaintext = opened.plaintext;
       if (opened.header.accountId != current.accountId ||
           opened.header.sourceDeviceId != entry.deviceId ||
@@ -115,16 +125,18 @@ extension K1RestoreActions on AppState {
         return K1RestoreResult.corrupt;
       }
       await localStore.importHistorySnapshot(
-          plaintext,
-          HistoryImportContext(
-              origin: current.baseUrl,
-              accountId: current.accountId!,
-              sourceDeviceId: entry.deviceId,
-              recipientDeviceId: current.deviceId!,
-              transferId: entry.id,
-              digest: entry.sha256Hex,
-              snapshotCounter: snapshot.counter,
-              snapshotCreatedAt: snapshot.createdAt));
+        plaintext,
+        HistoryImportContext(
+          origin: current.baseUrl,
+          accountId: current.accountId!,
+          sourceDeviceId: entry.deviceId,
+          recipientDeviceId: current.deviceId!,
+          transferId: entry.id,
+          digest: entry.sha256Hex,
+          snapshotCounter: snapshot.counter,
+          snapshotCreatedAt: snapshot.createdAt,
+        ),
+      );
       // The typed key turns backups on here (design, Restore step 4), when it
       // is also the account's current key.
       final status = recoveryKeyStatus;

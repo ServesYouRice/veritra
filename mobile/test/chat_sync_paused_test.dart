@@ -30,12 +30,16 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: false);
 
   @override
@@ -44,7 +48,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {}
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {}
 }
 
 class _Sync implements SyncService {
@@ -90,9 +97,11 @@ ConversationPause _pause(SyncFailureKind kind) => ConversationPause(
     );
 
 Future<void> _open(WidgetTester tester, AppState state, String id) async {
-  await tester.pumpWidget(MaterialApp(
-    home: ChatScreen(state: state, conversationId: id),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      home: ChatScreen(state: state, conversationId: id),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -121,8 +130,9 @@ void main() {
     await _close(tester);
   });
 
-  testWidgets('a conversation the server cannot replay offers only leave',
-      (tester) async {
+  testWidgets('a conversation the server cannot replay offers only leave', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final state = _state(<String, ConversationPause>{

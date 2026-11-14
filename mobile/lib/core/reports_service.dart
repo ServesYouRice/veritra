@@ -87,8 +87,11 @@ class ReportPlan {
 /// its shared group: the owner, the admins and the moderators. The server's
 /// roles never decide who receives a community report.
 class ReportModerators {
-  const ReportModerators(this.communityId, this.accounts,
-      {required this.recordGroupId});
+  const ReportModerators(
+    this.communityId,
+    this.accounts, {
+    required this.recordGroupId,
+  });
 
   final String communityId;
   final Set<String> accounts;
@@ -101,8 +104,12 @@ class ReportModerators {
 /// Who a report is sealed to: the keys, how they were judged, and the
 /// verified moderators left out for lack of an MLS announcement.
 class _SealTargets {
-  const _SealTargets(this.recipients, this.check,
-      {this.unconfirmed = const <String>[], this.recordGroupId});
+  const _SealTargets(
+    this.recipients,
+    this.check, {
+    this.unconfirmed = const <String>[],
+    this.recordGroupId,
+  });
 
   final List<ReportRecipientKey> recipients;
   final ReportKeyCheck check;
@@ -334,7 +341,8 @@ class ReportsService {
       final account = accountOf[recipient.inboxId];
       if (account == null) continue;
       final announced = await store.loadSetting(
-          reportKeyAnnouncementSetting(moderators.recordGroupId, account));
+        reportKeyAnnouncementSetting(moderators.recordGroupId, account),
+      );
       if (announced != null && announced == base64Encode(recipient.publicKey)) {
         trusted.add(recipient);
       } else {
@@ -345,7 +353,7 @@ class ReportsService {
       trusted,
       ReportKeyCheck([
         for (final recipient in trusted)
-          ReportKeyAssessment(recipient, ReportKeyStatus.authenticated, null)
+          ReportKeyAssessment(recipient, ReportKeyStatus.authenticated, null),
       ], const <ReportKeyPin>[]),
       unconfirmed: unconfirmed,
       recordGroupId: moderators.recordGroupId,
@@ -355,9 +363,11 @@ class ReportsService {
   /// Refuses an empty seal.
   void _requireTargets(_SealTargets targets) {
     if (targets.recipients.isNotEmpty) return;
-    throw ReportFailureException(targets.unconfirmed.isEmpty
-        ? ReportFailure.noRecipients
-        : ReportFailure.moderatorKeysPending);
+    throw ReportFailureException(
+      targets.unconfirmed.isEmpty
+          ? ReportFailure.noRecipients
+          : ReportFailure.moderatorKeysPending,
+    );
   }
 
   // ---- Reporter ----------------------------------------------------------
@@ -464,7 +474,10 @@ class ReportsService {
   List<ReportRecipientKey> _recipients(ReportInbox inbox) => [
         for (final r in inbox.recipients)
           ReportRecipientKey(
-              inboxId: r.inboxId, publicKey: r.publicKey, keyRev: r.keyRev)
+            inboxId: r.inboxId,
+            publicKey: r.publicKey,
+            keyRev: r.keyRev,
+          ),
       ];
 
   // ---- Instance owner ----------------------------------------------------
@@ -492,8 +505,11 @@ class ReportsService {
           : _sameBytes(own, listed.publicKey)
               ? OwnerReportKeyState.active
               : OwnerReportKeyState.replacedElsewhere;
-      return OwnerReportKeyStatus(state,
-          localKey: own, listedKey: listed?.publicKey);
+      return OwnerReportKeyStatus(
+        state,
+        localKey: own,
+        listedKey: listed?.publicKey,
+      );
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
@@ -669,8 +685,11 @@ class ReportsService {
     if (body == null) throw StateError('report is not open');
     final ReportEnvelopeRecord record;
     try {
-      record =
-          await api.getReportEnvelope(token, report.row.id, body.envelopeId);
+      record = await api.getReportEnvelope(
+        token,
+        report.row.id,
+        body.envelopeId,
+      );
     } on ApiException catch (err) {
       if (err.statusCode == 404) {
         return const ReportVerification(ReportVerdict.recordGone);
@@ -728,7 +747,9 @@ class ReportsService {
   /// setting so a later check cannot move it), and
   /// [ReportVerdict.verifiedServerTrusted] otherwise.
   Future<ReportVerification> _verifySealed(
-      OpenedReport report, ReportEnvelopeRecord record) async {
+    OpenedReport report,
+    ReportEnvelopeRecord record,
+  ) async {
     final body = report.body!;
     final account = body.senderAccountId;
     final designation = body.designation;
@@ -819,17 +840,19 @@ class ReportsService {
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
-    return ReportVerification(passed,
-        record: ReportEnvelopeRecord(
-          envelopeId: record.envelopeId,
-          conversationId: record.conversationId,
-          senderAccountId: account,
-          senderDeviceId: body.senderDeviceId,
-          frankCommit: commit,
-          createdAt: record.createdAt,
-          sealed: true,
-          idempotencyKey: record.idempotencyKey,
-        ));
+    return ReportVerification(
+      passed,
+      record: ReportEnvelopeRecord(
+        envelopeId: record.envelopeId,
+        conversationId: record.conversationId,
+        senderAccountId: account,
+        senderDeviceId: body.senderDeviceId,
+        frankCommit: commit,
+        createdAt: record.createdAt,
+        sealed: true,
+        idempotencyKey: record.idempotencyKey,
+      ),
+    );
   }
 
   /// Dismisses this owner's copy of a report.
@@ -884,9 +907,10 @@ String? _textOf(List<int> payload) {
 /// `SHA-256("veritra-frank-dv-kid-v1" | key)[0..16]` (vector
 /// testing/vectors/l2-frank-dv-v1.json).
 Uint8List frankDesignationKid(List<int> ownerKey) => Uint8List.sublistView(
-    sha256(<int>[...utf8.encode('veritra-frank-dv-kid-v1'), ...ownerKey]),
-    0,
-    frankDesignationKidBytes);
+      sha256(<int>[...utf8.encode('veritra-frank-dv-kid-v1'), ...ownerKey]),
+      0,
+      frankDesignationKidBytes,
+    );
 
 /// Whether [designation] has an entry under [kid].
 bool designationNames(List<int> designation, List<int> kid) {

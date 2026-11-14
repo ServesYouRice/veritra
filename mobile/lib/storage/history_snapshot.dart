@@ -59,8 +59,9 @@ Object? strictHistoryJson(List<int> bytes) {
         if (next < text.length && text[next] == ':') {
           if (stack.isEmpty ||
               stack.last == null ||
-              !stack.last!
-                  .add(jsonDecode(text.substring(start, i + 1)) as String)) {
+              !stack.last!.add(
+                jsonDecode(text.substring(start, i + 1)) as String,
+              )) {
             _invalid();
           }
         }
@@ -91,11 +92,14 @@ Object? strictHistoryJson(List<int> bytes) {
 
 /// Historical metadata only. Never a live Conversation or permission source.
 class HistoryConversation {
-  const HistoryConversation(this.id, this.kind,
-      {this.communityId,
-      this.channelId,
-      this.title,
-      this.historicalChannelIds = const []});
+  const HistoryConversation(
+    this.id,
+    this.kind, {
+    this.communityId,
+    this.channelId,
+    this.title,
+    this.historicalChannelIds = const [],
+  });
   final String id, kind;
   final String? communityId, channelId, title;
   final List<String> historicalChannelIds;
@@ -114,11 +118,15 @@ class HistoryConversation {
       'community_id',
       'channel_id',
       'historical_title',
-      'historical_channel_ids'
+      'historical_channel_ids',
     });
     final id = _id(j['id']), kind = _id(j['kind']);
-    if (!const {'dm', 'group', 'community_channel', 'community_shared'}
-        .contains(kind)) _invalid();
+    if (!const {
+      'dm',
+      'group',
+      'community_channel',
+      'community_shared',
+    }.contains(kind)) _invalid();
     final community = j['community_id'] == null ? null : _id(j['community_id']);
     final channel = j['channel_id'] == null ? null : _id(j['channel_id']);
     if (kind == 'community_channel' && (community == null || channel == null))
@@ -133,11 +141,14 @@ class HistoryConversation {
         channels.toSet().length != channels.length ||
         (kind != 'community_shared' && channels.isNotEmpty)) _invalid();
     if (title != null && (title is! String || title.length > 1024)) _invalid();
-    return HistoryConversation(id, kind,
-        communityId: community,
-        channelId: channel,
-        title: title as String?,
-        historicalChannelIds: channels);
+    return HistoryConversation(
+      id,
+      kind,
+      communityId: community,
+      channelId: channel,
+      title: title as String?,
+      historicalChannelIds: channels,
+    );
   }
   bool sameMapping(HistoryConversation other) =>
       id == other.id &&
@@ -149,15 +160,16 @@ class HistoryConversation {
 /// All fields are data, not proof. The internal transfer caller must invoke
 /// import only after native verification of the matching container/handoff.
 class HistoryImportContext {
-  const HistoryImportContext(
-      {required this.origin,
-      required this.accountId,
-      required this.sourceDeviceId,
-      required this.recipientDeviceId,
-      required this.transferId,
-      required this.digest,
-      required this.snapshotCounter,
-      required this.snapshotCreatedAt});
+  const HistoryImportContext({
+    required this.origin,
+    required this.accountId,
+    required this.sourceDeviceId,
+    required this.recipientDeviceId,
+    required this.transferId,
+    required this.digest,
+    required this.snapshotCounter,
+    required this.snapshotCreatedAt,
+  });
   final int snapshotCounter, snapshotCreatedAt;
   final String origin,
       accountId,
@@ -180,18 +192,19 @@ class HistoryImportContext {
 }
 
 class DeferredHistoryEffect {
-  const DeferredHistoryEffect(
-      {required this.accountId,
-      required this.conversationId,
-      required this.channelId,
-      required this.targetKey,
-      required this.actorAccountId,
-      required this.deleted,
-      required this.at,
-      required this.order,
-      this.body,
-      this.formatJson,
-      this.protects});
+  const DeferredHistoryEffect({
+    required this.accountId,
+    required this.conversationId,
+    required this.channelId,
+    required this.targetKey,
+    required this.actorAccountId,
+    required this.deleted,
+    required this.at,
+    required this.order,
+    this.body,
+    this.formatJson,
+    this.protects,
+  });
   final String accountId, conversationId, targetKey, actorAccountId;
   final String? channelId, body, formatJson;
   final bool deleted;
@@ -201,8 +214,13 @@ class DeferredHistoryEffect {
   /// own delete only. Never set on an edit.
   final Set<String>? protects;
   final int at, order;
-  String get key => jsonEncode(
-      [accountId, conversationId, channelId, targetKey, actorAccountId]);
+  String get key => jsonEncode([
+        accountId,
+        conversationId,
+        channelId,
+        targetKey,
+        actorAccountId,
+      ]);
   Map<String, Object?> toJson() => {
         'account': accountId,
         'conversation': conversationId,
@@ -228,7 +246,7 @@ class DeferredHistoryEffect {
       'order',
       'body',
       'format',
-      'protects'
+      'protects',
     });
     final rawProtects = j['protects'];
     if (rawProtects != null &&
@@ -239,19 +257,20 @@ class DeferredHistoryEffect {
         (j['body'] != null && j['body'] is! String) ||
         (j['format'] != null && j['format'] is! String)) _invalid();
     final effect = DeferredHistoryEffect(
-        accountId: _id(j['account']),
-        conversationId: _id(j['conversation']),
-        channelId: j['channel'] == null ? null : _id(j['channel']),
-        targetKey: _id(j['target']),
-        actorAccountId: _id(j['actor']),
-        deleted: j['deleted'] as bool,
-        at: _time(j['at']),
-        order: _time(j['order']),
-        body: j['body'] as String?,
-        formatJson: j['format'] as String?,
-        protects: rawProtects == null
-            ? null
-            : {for (final id in rawProtects as List) _id(id)});
+      accountId: _id(j['account']),
+      conversationId: _id(j['conversation']),
+      channelId: j['channel'] == null ? null : _id(j['channel']),
+      targetKey: _id(j['target']),
+      actorAccountId: _id(j['actor']),
+      deleted: j['deleted'] as bool,
+      at: _time(j['at']),
+      order: _time(j['order']),
+      body: j['body'] as String?,
+      formatJson: j['format'] as String?,
+      protects: rawProtects == null
+          ? null
+          : {for (final id in rawProtects as List) _id(id)},
+    );
     if (effect.deleted
         ? (effect.body != null || effect.formatJson != null)
         : (effect.body == null || effect.protects != null)) _invalid();
@@ -262,7 +281,10 @@ class DeferredHistoryEffect {
 /// Only callers holding authenticated native effects may populate this journal.
 /// It is local materialized state, never an outgoing command or K2 payload.
 void deferHistoryEffect(
-    HistoryNamespace namespace, MessageEffect effect, String? accountId) {
+  HistoryNamespace namespace,
+  MessageEffect effect,
+  String? accountId,
+) {
   if (accountId == null) return;
   String? conversation, channel, body, format;
   Set<String>? protects;
@@ -291,22 +313,25 @@ void deferHistoryEffect(
   }
   if (conversation == null) return;
   final candidate = DeferredHistoryEffect(
-      accountId: accountId,
-      conversationId: conversation,
-      channelId: channel,
-      targetKey: target,
-      actorAccountId: actor,
-      deleted: deleted,
-      at: at,
-      order: namespace.effectOrder + 1,
-      body: body,
-      formatJson: format,
-      protects: protects == null ? null : Set<String>.of(protects));
+    accountId: accountId,
+    conversationId: conversation,
+    channelId: channel,
+    targetKey: target,
+    actorAccountId: actor,
+    deleted: deleted,
+    at: at,
+    order: namespace.effectOrder + 1,
+    body: body,
+    formatJson: format,
+    protects: protects == null ? null : Set<String>.of(protects),
+  );
   if (namespace.deferred[candidate.key]?.deleted == true) return;
   final previous = namespace.deferred[candidate.key];
   namespace.deferred[candidate.key] = candidate;
   final size = namespace.deferred.values.fold<int>(
-      0, (sum, e) => sum + utf8.encode(jsonEncode(e.toJson())).length);
+    0,
+    (sum, e) => sum + utf8.encode(jsonEncode(e.toJson())).length,
+  );
   if (namespace.deferred.length > 4096 || size > 4 * 1024 * 1024) {
     if (previous == null) {
       namespace.deferred.remove(candidate.key);
@@ -319,8 +344,11 @@ void deferHistoryEffect(
 }
 
 LocalMessage applyDeferredHistory(
-    HistoryNamespace namespace, LocalMessage message, String accountId,
-    {bool targetAuthenticated = false}) {
+  HistoryNamespace namespace,
+  LocalMessage message,
+  String accountId, {
+  bool targetAuthenticated = false,
+}) {
   var result = message;
   final candidates = namespace.deferred.values
       .where((e) => e.accountId == accountId && e.targetKey == message.key)
@@ -342,19 +370,21 @@ LocalMessage applyDeferredHistory(
     }
     if (e.deleted) {
       result = result.copyWith(
-          body: const Value(null),
-          formatJson: const Value(null),
-          replyTo: const Value(null),
-          deletedAt: Value(e.at));
+        body: const Value(null),
+        formatJson: const Value(null),
+        replyTo: const Value(null),
+        deletedAt: Value(e.at),
+      );
       namespace.provenance[message.key]?['live_delete'] = true;
     } else if (result.kind == 'text' &&
         result.deletedAt == null &&
         result.hiddenAt == null &&
         result.senderHidden != true) {
       result = result.copyWith(
-          body: Value(e.body),
-          formatJson: Value(e.formatJson),
-          editedAt: Value(e.at));
+        body: Value(e.body),
+        formatJson: Value(e.formatJson),
+        editedAt: Value(e.at),
+      );
       namespace.provenance[message.key]?['live_edit'] = true;
       namespace.deferred.remove(e.key);
     }
@@ -363,7 +393,10 @@ LocalMessage applyDeferredHistory(
 }
 
 void markLiveHistoryEffect(
-    HistoryNamespace namespace, MessageEffect effect, String key) {
+  HistoryNamespace namespace,
+  MessageEffect effect,
+  String key,
+) {
   final provenance = namespace.provenance[key];
   if (provenance == null) return;
   if (effect is EditMessageEffect) provenance['live_edit'] = true;
@@ -376,21 +409,32 @@ class DirectHistoryMerge {
   final Set<String> removed;
 }
 
-DirectHistoryMerge reconcileDirectHistory(HistoryNamespace namespace,
-    List<LocalMessage> existing, LocalMessage incoming, String? accountId) {
+DirectHistoryMerge reconcileDirectHistory(
+  HistoryNamespace namespace,
+  List<LocalMessage> existing,
+  LocalMessage incoming,
+  String? accountId,
+) {
   final collisions = existing
-      .where((m) =>
-          m.key == incoming.key ||
-          (incoming.serverMessageId != null &&
-              m.serverMessageId == incoming.serverMessageId))
+      .where(
+        (m) =>
+            m.key == incoming.key ||
+            (incoming.serverMessageId != null &&
+                m.serverMessageId == incoming.serverMessageId),
+      )
       .toList();
   if (collisions.isEmpty)
     return DirectHistoryMerge(
-        accountId == null
-            ? incoming
-            : applyDeferredHistory(namespace, incoming, accountId,
-                targetAuthenticated: true),
-        {});
+      accountId == null
+          ? incoming
+          : applyDeferredHistory(
+              namespace,
+              incoming,
+              accountId,
+              targetAuthenticated: true,
+            ),
+      {},
+    );
   bool copied(LocalMessage m) =>
       m.state == LocalMessageState.restored ||
       (namespace.provenance.containsKey(m.key) &&
@@ -407,24 +451,26 @@ DirectHistoryMerge reconcileDirectHistory(HistoryNamespace namespace,
         old.senderDeviceId == incoming.senderDeviceId;
     if (same && !hasDirectCollision) {
       final provenance = namespace.provenance.putIfAbsent(
-          old.key,
-          () => {
-                'source_device_id': incoming.senderDeviceId,
-                'snapshot_counter': 0,
-                'snapshot_created_at': old.createdAt
-              });
+        old.key,
+        () => {
+          'source_device_id': incoming.senderDeviceId,
+          'snapshot_counter': 0,
+          'snapshot_created_at': old.createdAt,
+        },
+      );
       final preserve = old.hiddenAt != null ||
           old.deletedAt != null ||
           provenance['live_edit'] == true ||
           provenance['live_delete'] == true;
       if (preserve)
         result = incoming.copyWith(
-            body: Value(old.body),
-            formatJson: Value(old.formatJson),
-            replyTo: Value(old.replyTo),
-            hiddenAt: Value(old.hiddenAt),
-            deletedAt: Value(old.deletedAt),
-            editedAt: Value(old.editedAt));
+          body: Value(old.body),
+          formatJson: Value(old.formatJson),
+          replyTo: Value(old.replyTo),
+          hiddenAt: Value(old.hiddenAt),
+          deletedAt: Value(old.deletedAt),
+          editedAt: Value(old.editedAt),
+        );
       provenance['direct_received'] = true;
       provenance['body_provenance'] =
           preserve ? 'retained_snapshot_or_live_effect' : 'direct';
@@ -436,12 +482,12 @@ DirectHistoryMerge reconcileDirectHistory(HistoryNamespace namespace,
         old.channelId,
         old.key,
         provenance?['source_device_id'],
-        provenance?['transfer_id']
+        provenance?['transfer_id'],
       ]);
       namespace.quarantine[identity] = {
         'message': _messageJson(old),
         'provenance': provenance,
-        'reason': 'authenticated_direct_identity_conflict'
+        'reason': 'authenticated_direct_identity_conflict',
       };
       // Quarantine must never stall future authenticated MLS processing.
       while (namespace.quarantine.length > 128 ||
@@ -453,21 +499,25 @@ DirectHistoryMerge reconcileDirectHistory(HistoryNamespace namespace,
     }
   }
   if (!hasDirectCollision && accountId != null)
-    result = applyDeferredHistory(namespace, result, accountId,
-        targetAuthenticated: true);
+    result = applyDeferredHistory(
+      namespace,
+      result,
+      accountId,
+      targetAuthenticated: true,
+    );
   return DirectHistoryMerge(hasDirectCollision ? null : result, removed);
 }
 
 class HistoryNamespace {
-  HistoryNamespace(
-      {this.counter = 0,
-      this.effectOrder = 0,
-      Map<String, DeferredHistoryEffect>? deferred,
-      Map<String, Map<String, Object?>>? quarantine,
-      Map<String, HistoryConversation>? conversations,
-      Map<String, Map<String, Object?>>? provenance,
-      Map<String, Map<String, Object?>>? imports})
-      : quarantine = quarantine ?? {},
+  HistoryNamespace({
+    this.counter = 0,
+    this.effectOrder = 0,
+    Map<String, DeferredHistoryEffect>? deferred,
+    Map<String, Map<String, Object?>>? quarantine,
+    Map<String, HistoryConversation>? conversations,
+    Map<String, Map<String, Object?>>? provenance,
+    Map<String, Map<String, Object?>>? imports,
+  })  : quarantine = quarantine ?? {},
         deferred = deferred ?? {},
         conversations = conversations ?? {},
         provenance = provenance ?? {},
@@ -485,7 +535,7 @@ class HistoryNamespace {
         'quarantine': quarantine,
         'conversations': conversations.values.map((c) => c.toJson()).toList(),
         'provenance': provenance,
-        'imports': imports
+        'imports': imports,
       };
   factory HistoryNamespace.fromJson(Object? value) {
     final j = _object(value, {
@@ -495,48 +545,50 @@ class HistoryNamespace {
       'quarantine',
       'conversations',
       'provenance',
-      'imports'
+      'imports',
     });
     return HistoryNamespace(
-        counter: _time(j['counter']),
-        effectOrder: _time(j['effect_order']),
-        deferred: {
-          for (final e in (j['deferred'] as Map).entries)
-            e.key as String: DeferredHistoryEffect.fromJson(e.value)
-        },
-        quarantine: {
-          for (final e in (j['quarantine'] as Map).entries)
-            e.key as String: Map<String, Object?>.from(e.value as Map)
-        },
-        conversations: {
-          for (final c in j['conversations'] as List)
-            HistoryConversation.fromJson(c).id: HistoryConversation.fromJson(c)
-        },
-        provenance: {
-          for (final e in (j['provenance'] as Map).entries)
-            _id(e.key): Map<String, Object?>.from(e.value as Map)
-        },
-        imports: {
-          for (final e in (j['imports'] as Map).entries)
-            e.key as String: Map<String, Object?>.from(e.value as Map)
-        });
+      counter: _time(j['counter']),
+      effectOrder: _time(j['effect_order']),
+      deferred: {
+        for (final e in (j['deferred'] as Map).entries)
+          e.key as String: DeferredHistoryEffect.fromJson(e.value),
+      },
+      quarantine: {
+        for (final e in (j['quarantine'] as Map).entries)
+          e.key as String: Map<String, Object?>.from(e.value as Map),
+      },
+      conversations: {
+        for (final c in j['conversations'] as List)
+          HistoryConversation.fromJson(c).id: HistoryConversation.fromJson(c),
+      },
+      provenance: {
+        for (final e in (j['provenance'] as Map).entries)
+          _id(e.key): Map<String, Object?>.from(e.value as Map),
+      },
+      imports: {
+        for (final e in (j['imports'] as Map).entries)
+          e.key as String: Map<String, Object?>.from(e.value as Map),
+      },
+    );
   }
   HistoryNamespace copy() => HistoryNamespace.fromJson(toJson());
 }
 
 class HistorySnapshot {
-  HistorySnapshot(
-      {required this.accountId,
-      required this.sourceDeviceId,
-      required this.counter,
-      required this.createdAt,
-      required this.conversations,
-      required this.messages,
-      required this.reactions,
-      required this.pins,
-      required this.starred,
-      required this.preferences,
-      this.origins = const {}});
+  HistorySnapshot({
+    required this.accountId,
+    required this.sourceDeviceId,
+    required this.counter,
+    required this.createdAt,
+    required this.conversations,
+    required this.messages,
+    required this.reactions,
+    required this.pins,
+    required this.starred,
+    required this.preferences,
+    this.origins = const {},
+  });
   final String accountId, sourceDeviceId;
   final int counter, createdAt;
   final List<HistoryConversation> conversations;
@@ -550,20 +602,22 @@ class HistorySnapshot {
   final Map<String, Map<String, Object?>> origins;
 
   List<int> encode() {
-    final bytes = utf8.encode(jsonEncode({
-      'version': 1,
-      'account_id': accountId,
-      'source_device_id': sourceDeviceId,
-      'snapshot_counter': counter,
-      'snapshot_created_at': createdAt,
-      'conversations': conversations.map((c) => c.toJson()).toList(),
-      'messages': messages.map(_messageJson).toList(),
-      'reactions': reactions.map((r) => r.toJson()).toList(),
-      'pins': pins.map((p) => p.toJson()).toList(),
-      'starred': starred,
-      'conversation_prefs': preferences.map((p) => p.toJson()).toList(),
-      'origins': origins
-    }));
+    final bytes = utf8.encode(
+      jsonEncode({
+        'version': 1,
+        'account_id': accountId,
+        'source_device_id': sourceDeviceId,
+        'snapshot_counter': counter,
+        'snapshot_created_at': createdAt,
+        'conversations': conversations.map((c) => c.toJson()).toList(),
+        'messages': messages.map(_messageJson).toList(),
+        'reactions': reactions.map((r) => r.toJson()).toList(),
+        'pins': pins.map((p) => p.toJson()).toList(),
+        'starred': starred,
+        'conversation_prefs': preferences.map((p) => p.toJson()).toList(),
+        'origins': origins,
+      }),
+    );
     // Identical structural validation on both directions; explicit overflow.
     HistorySnapshot.decode(bytes);
     return bytes;
@@ -583,7 +637,7 @@ class HistorySnapshot {
         'pins',
         'starred',
         'conversation_prefs',
-        'origins'
+        'origins',
       });
       if (j['version'] != 1) _invalid();
       final conversations = (j['conversations'] as List)
@@ -611,12 +665,18 @@ class HistorySnapshot {
       }).toList();
       final live = {
         for (final m in messages)
-          if (_eligible(m)) m.key: m
+          if (_eligible(m)) m.key: m,
       };
       final reactionKeys = <String>{};
       final reactions = (j['reactions'] as List).map((raw) {
-        final r = LocalMessageReaction.fromJson(_object(
-            raw, {'targetKey', 'reactorAccountId', 'reaction', 'updatedAt'}));
+        final r = LocalMessageReaction.fromJson(
+          _object(raw, {
+            'targetKey',
+            'reactorAccountId',
+            'reaction',
+            'updatedAt',
+          }),
+        );
         if (!live.containsKey(r.targetKey) ||
             !reactionKeys.add(jsonEncode([r.targetKey, r.reactorAccountId])) ||
             r.reaction.isEmpty ||
@@ -627,15 +687,17 @@ class HistorySnapshot {
       }).toList();
       final pinKeys = <String>{};
       final pins = (j['pins'] as List).map((raw) {
-        final p = LocalPin.fromJson(_object(raw, {
-          'conversationId',
-          'channelId',
-          'targetKey',
-          'pinnedByAccountId',
-          'pinnedAt',
-          'appliedOrder',
-          'expiresAt'
-        }));
+        final p = LocalPin.fromJson(
+          _object(raw, {
+            'conversationId',
+            'channelId',
+            'targetKey',
+            'pinnedByAccountId',
+            'pinnedAt',
+            'appliedOrder',
+            'expiresAt',
+          }),
+        );
         final m = live[p.targetKey];
         if (m == null ||
             m.conversationId != p.conversationId ||
@@ -656,7 +718,8 @@ class HistorySnapshot {
       final prefKeys = <String>{};
       final prefs = (j['conversation_prefs'] as List).map((raw) {
         final p = LocalConversationPref.fromJson(
-            _object(raw, {'conversationId', 'archivedAt', 'pinnedAt'}));
+          _object(raw, {'conversationId', 'archivedAt', 'pinnedAt'}),
+        );
         if (!byId.containsKey(p.conversationId) ||
             !prefKeys.add(p.conversationId)) _invalid();
         if (p.archivedAt != null) _time(p.archivedAt);
@@ -666,8 +729,11 @@ class HistorySnapshot {
       final origins = <String, Map<String, Object?>>{};
       for (final e in (j['origins'] as Map).entries) {
         if (!keys.contains(e.key)) _invalid();
-        final o = _object(e.value,
-            {'source_device_id', 'snapshot_counter', 'snapshot_created_at'});
+        final o = _object(e.value, {
+          'source_device_id',
+          'snapshot_counter',
+          'snapshot_created_at',
+        });
         _id(o['source_device_id']);
         _time(o['snapshot_counter']);
         _time(o['snapshot_created_at']);
@@ -676,17 +742,18 @@ class HistorySnapshot {
       final counter = _time(j['snapshot_counter']);
       if (counter == 0) _invalid();
       return HistorySnapshot(
-          accountId: _id(j['account_id']),
-          sourceDeviceId: _id(j['source_device_id']),
-          counter: counter,
-          createdAt: _time(j['snapshot_created_at']),
-          conversations: conversations,
-          messages: messages,
-          reactions: reactions,
-          pins: pins,
-          starred: starred,
-          preferences: prefs,
-          origins: origins);
+        accountId: _id(j['account_id']),
+        sourceDeviceId: _id(j['source_device_id']),
+        counter: counter,
+        createdAt: _time(j['snapshot_created_at']),
+        conversations: conversations,
+        messages: messages,
+        reactions: reactions,
+        pins: pins,
+        starred: starred,
+        preferences: prefs,
+        origins: origins,
+      );
     } catch (_) {
       _invalid();
     }
@@ -710,7 +777,7 @@ const _messageFields = {
   'formatJson',
   'forwardHops',
   'channelId',
-  'senderHidden'
+  'senderHidden',
 };
 
 /// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) is
@@ -726,7 +793,7 @@ const _readMessageFields = {..._messageFields, 'senderRemoved', 'c7Former'};
 Map<String, Object?> _messageJson(LocalMessage m) {
   final json = <String, Object?>{
     for (final e in m.toJson().entries)
-      if (_messageFields.contains(e.key)) e.key: e.value
+      if (_messageFields.contains(e.key)) e.key: e.value,
   };
   json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
   if (m.senderRemoved == true) json['senderRemoved'] = true;
@@ -754,7 +821,7 @@ LocalMessage _readMessage(Object? raw) {
         'unsupported',
         'action',
         'invalid',
-        'unverifiable'
+        'unverifiable',
       }.contains(j['kind']) ||
       (j['senderHidden'] != null && j['senderHidden'] is! bool) ||
       (j['senderRemoved'] != null && j['senderRemoved'] != true) ||
@@ -777,8 +844,11 @@ LocalMessage _readMessage(Object? raw) {
   }
   if (m.formatJson != null) {
     if (m.kind != 'text' || m.body == null) _invalid();
-    final d = _object(strictHistoryJson(utf8.encode(m.formatJson!)),
-        {'entities', 'mentions', 'link_preview'});
+    final d = _object(strictHistoryJson(utf8.encode(m.formatJson!)), {
+      'entities',
+      'mentions',
+      'link_preview',
+    });
     if ((d['entities'] is List && (d['entities'] as List).length > 256) ||
         (d['mentions'] is List && (d['mentions'] as List).length > 50))
       _invalid();
@@ -816,7 +886,7 @@ void _validateAttachments(LocalMessage m) {
       'file_name',
       'media_type',
       'id',
-      'ciphertext_size'
+      'ciphertext_size',
     });
     // Version 2 encrypts zero padding up to padded_size; version 1 has none
     // (attachment_crypto.dart, docs/crypto.md).
@@ -860,41 +930,49 @@ bool _eligible(LocalMessage m) =>
 
 LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
     LocalMessage(
-        key: effect.key,
-        serverMessageId: effect.serverMessageId,
-        conversationId: effect.conversationId,
-        senderAccountId: effect.senderAccountId,
-        senderDeviceId: effect.senderDeviceId,
-        kind: effect.kind,
-        body: effect.body,
-        replyTo: effect.replyTo,
-        createdAt: effect.createdAt,
-        state: effect.state,
-        expiresAt: effect.expiresAt,
-        formatJson: effect.formatJson,
-        forwardHops: effect.forwardHops,
-        channelId: effect.channelId,
-        senderHidden: effect.senderHidden,
-        senderRemoved: effect.senderRemoved ? true : null,
-        c7Gen: effect.c7Gen,
-        c7Former: effect.c7Former);
+      key: effect.key,
+      serverMessageId: effect.serverMessageId,
+      conversationId: effect.conversationId,
+      senderAccountId: effect.senderAccountId,
+      senderDeviceId: effect.senderDeviceId,
+      kind: effect.kind,
+      body: effect.body,
+      replyTo: effect.replyTo,
+      createdAt: effect.createdAt,
+      state: effect.state,
+      expiresAt: effect.expiresAt,
+      formatJson: effect.formatJson,
+      forwardHops: effect.forwardHops,
+      channelId: effect.channelId,
+      senderHidden: effect.senderHidden,
+      senderRemoved: effect.senderRemoved ? true : null,
+      c7Gen: effect.c7Gen,
+      c7Former: effect.c7Former,
+    );
 
-HistorySnapshot captureHistory(
-    {required Session session,
-    required HistoryNamespace namespace,
-    required List<Conversation> conversations,
-    required List<LocalMessage> messages,
-    required List<LocalMessageReaction> reactions,
-    required List<LocalPin> pins,
-    required Map<String, int> starred,
-    required List<LocalConversationPref> preferences,
-    required int now,
-    bool omitDisappearing = false}) {
-  final descriptors =
-      Map<String, HistoryConversation>.of(namespace.conversations);
+HistorySnapshot captureHistory({
+  required Session session,
+  required HistoryNamespace namespace,
+  required List<Conversation> conversations,
+  required List<LocalMessage> messages,
+  required List<LocalMessageReaction> reactions,
+  required List<LocalPin> pins,
+  required Map<String, int> starred,
+  required List<LocalConversationPref> preferences,
+  required int now,
+  bool omitDisappearing = false,
+}) {
+  final descriptors = Map<String, HistoryConversation>.of(
+    namespace.conversations,
+  );
   for (final c in conversations) {
-    final d = HistoryConversation(c.id, c.kind,
-        communityId: c.communityId, channelId: c.channelId, title: c.title);
+    final d = HistoryConversation(
+      c.id,
+      c.kind,
+      communityId: c.communityId,
+      channelId: c.channelId,
+      title: c.title,
+    );
     if (descriptors[c.id] != null && !descriptors[c.id]!.sameMapping(d))
       _invalid();
     descriptors[c.id] = d;
@@ -904,12 +982,15 @@ HistorySnapshot captureHistory(
     final channels = <String>{
       ...d.historicalChannelIds,
       for (final m in messages)
-        if (m.conversationId == d.id && m.channelId != null) m.channelId!
+        if (m.conversationId == d.id && m.channelId != null) m.channelId!,
     };
-    descriptors[d.id] = HistoryConversation(d.id, d.kind,
-        communityId: d.communityId,
-        title: d.title,
-        historicalChannelIds: channels.toList()..sort());
+    descriptors[d.id] = HistoryConversation(
+      d.id,
+      d.kind,
+      communityId: d.communityId,
+      title: d.title,
+      historicalChannelIds: channels.toList()..sort(),
+    );
   }
   final rows = <LocalMessage>[];
   for (final m in messages) {
@@ -930,56 +1011,66 @@ HistorySnapshot captureHistory(
       hidden |= raw is Map && raw['hidden'] == true;
     }
     final clean = m.copyWith(senderHidden: Value(hidden));
-    rows.add(_eligible(clean)
-        ? clean
-        : clean.copyWith(
-            body: const Value(null),
-            formatJson: const Value(null),
-            replyTo: const Value(null)));
+    rows.add(
+      _eligible(clean)
+          ? clean
+          : clean.copyWith(
+              body: const Value(null),
+              formatJson: const Value(null),
+              replyTo: const Value(null),
+            ),
+    );
   }
   final live = {
     for (final m in rows)
-      if (_eligible(m)) m.key
+      if (_eligible(m)) m.key,
   };
   final result = HistorySnapshot(
-      accountId: _id(session.accountId),
-      sourceDeviceId: _id(session.deviceId),
-      counter: namespace.counter + 1,
-      createdAt: now,
-      conversations: descriptors.values.toList(),
-      messages: rows,
-      reactions: reactions.where((r) => live.contains(r.targetKey)).toList(),
-      pins: pins
-          .where((p) => live.contains(p.targetKey) && p.expiresAt > now)
-          .toList(),
-      starred: {
-        for (final e in starred.entries)
-          if (live.contains(e.key)) e.key: e.value
-      },
-      preferences: preferences,
-      origins: {
-        for (final m in rows)
-          if (namespace.provenance.containsKey(m.key) || m.state == 'restored')
-            m.key: {
-              for (final f in [
-                'source_device_id',
-                'snapshot_counter',
-                'snapshot_created_at'
-              ])
-                f: namespace.provenance[m.key]?[f] ??
-                    (f == 'source_device_id'
-                        ? session.deviceId
-                        : f == 'snapshot_counter'
-                            ? 0
-                            : now)
-            }
-      });
+    accountId: _id(session.accountId),
+    sourceDeviceId: _id(session.deviceId),
+    counter: namespace.counter + 1,
+    createdAt: now,
+    conversations: descriptors.values.toList(),
+    messages: rows,
+    reactions: reactions.where((r) => live.contains(r.targetKey)).toList(),
+    pins: pins
+        .where((p) => live.contains(p.targetKey) && p.expiresAt > now)
+        .toList(),
+    starred: {
+      for (final e in starred.entries)
+        if (live.contains(e.key)) e.key: e.value,
+    },
+    preferences: preferences,
+    origins: {
+      for (final m in rows)
+        if (namespace.provenance.containsKey(m.key) || m.state == 'restored')
+          m.key: {
+            for (final f in [
+              'source_device_id',
+              'snapshot_counter',
+              'snapshot_created_at',
+            ])
+              f: namespace.provenance[m.key]?[f] ??
+                  (f == 'source_device_id'
+                      ? session.deviceId
+                      : f == 'snapshot_counter'
+                          ? 0
+                          : now),
+          },
+    },
+  );
   return HistorySnapshot.decode(result.encode());
 }
 
 class HistoryMerge {
-  HistoryMerge(this.namespace, this.messages, this.reactions, this.pins,
-      this.starred, this.preferences);
+  HistoryMerge(
+    this.namespace,
+    this.messages,
+    this.reactions,
+    this.pins,
+    this.starred,
+    this.preferences,
+  );
   final HistoryNamespace namespace;
   final List<LocalMessage> messages;
   final List<LocalMessageReaction> reactions;
@@ -988,15 +1079,16 @@ class HistoryMerge {
   final List<LocalConversationPref> preferences;
 }
 
-HistoryMerge mergeHistory(
-    {required HistorySnapshot snapshot,
-    required HistoryImportContext context,
-    required HistoryNamespace namespace,
-    required List<Conversation> liveConversations,
-    required List<LocalMessage> existing,
-    required List<LocalPin> existingPins,
-    required List<LocalConversationPref> existingPreferences,
-    required int now}) {
+HistoryMerge mergeHistory({
+  required HistorySnapshot snapshot,
+  required HistoryImportContext context,
+  required HistoryNamespace namespace,
+  required List<Conversation> liveConversations,
+  required List<LocalMessage> existing,
+  required List<LocalPin> existingPins,
+  required List<LocalConversationPref> existingPreferences,
+  required int now,
+}) {
   if (snapshot.accountId != context.accountId ||
       snapshot.sourceDeviceId != context.sourceDeviceId ||
       snapshot.counter != context.snapshotCounter ||
@@ -1010,8 +1102,12 @@ HistoryMerge mergeHistory(
   final known = {
     ...namespace.conversations,
     for (final c in liveConversations)
-      c.id: HistoryConversation(c.id, c.kind,
-          communityId: c.communityId, channelId: c.channelId)
+      c.id: HistoryConversation(
+        c.id,
+        c.kind,
+        communityId: c.communityId,
+        channelId: c.channelId,
+      ),
   };
   for (final d in snapshot.conversations) {
     if ((known[d.id] != null && !known[d.id]!.sameMapping(d)) ||
@@ -1020,20 +1116,23 @@ HistoryMerge mergeHistory(
     next.conversations.putIfAbsent(d.id, () => d);
     if (d.kind == 'community_shared') {
       final previous = next.conversations[d.id]!;
-      next.conversations[d.id] = HistoryConversation(d.id, d.kind,
-          communityId: d.communityId,
-          title: previous.title,
-          historicalChannelIds: {
-            ...previous.historicalChannelIds,
-            ...d.historicalChannelIds
-          }.toList()
-            ..sort());
+      next.conversations[d.id] = HistoryConversation(
+        d.id,
+        d.kind,
+        communityId: d.communityId,
+        title: previous.title,
+        historicalChannelIds: {
+          ...previous.historicalChannelIds,
+          ...d.historicalChannelIds,
+        }.toList()
+          ..sort(),
+      );
     }
   }
   final byKey = {for (final m in existing) m.key: m};
   final byServer = {
     for (final m in existing)
-      if (m.serverMessageId != null) m.serverMessageId!: m.key
+      if (m.serverMessageId != null) m.serverMessageId!: m.key,
   };
   final added = <LocalMessage>[];
   for (final m in snapshot.messages) {
@@ -1059,14 +1158,16 @@ HistoryMerge mergeHistory(
           snapshot.origins[m.key]?['snapshot_created_at'] ?? snapshot.createdAt,
       'received_from_device_id': context.sourceDeviceId,
       'transfer_id': context.transferId,
-      'origin': context.origin
+      'origin': context.origin,
     };
     added.add(applyDeferredHistory(next, m, context.accountId));
   }
   final keys = added.where(_eligible).map((m) => m.key).toSet();
   final pins = <LocalPin>[];
   var order = existingPins.fold<int>(
-      0, (max, p) => p.appliedOrder > max ? p.appliedOrder : max);
+    0,
+    (max, p) => p.appliedOrder > max ? p.appliedOrder : max,
+  );
   final sorted = List<LocalPin>.of(snapshot.pins)
     ..sort((a, b) {
       final t = a.pinnedAt.compareTo(b.pinnedAt);
@@ -1082,8 +1183,11 @@ HistoryMerge mergeHistory(
         : p.expiresAt;
     pins.add(p.copyWith(appliedOrder: ++order, expiresAt: expiry));
     final same = pins
-        .where((x) =>
-            x.conversationId == p.conversationId && x.channelId == p.channelId)
+        .where(
+          (x) =>
+              x.conversationId == p.conversationId &&
+              x.channelId == p.channelId,
+        )
         .toList();
     if (same.length > pinLimitPerChat) pins.remove(same.first);
   }
@@ -1101,16 +1205,17 @@ HistoryMerge mergeHistory(
     'digest': context.digest,
     'snapshot_counter': snapshot.counter,
     'snapshot_created_at': snapshot.createdAt,
-    'imported_at': now
+    'imported_at': now,
   };
   return HistoryMerge(
-      next,
-      added,
-      snapshot.reactions.where((r) => keys.contains(r.targetKey)).toList(),
-      pins,
-      {
-        for (final e in snapshot.starred.entries)
-          if (keys.contains(e.key)) e.key: e.value
-      },
-      prefs);
+    next,
+    added,
+    snapshot.reactions.where((r) => keys.contains(r.targetKey)).toList(),
+    pins,
+    {
+      for (final e in snapshot.starred.entries)
+        if (keys.contains(e.key)) e.key: e.value,
+    },
+    prefs,
+  );
 }

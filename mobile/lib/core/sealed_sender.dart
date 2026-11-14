@@ -77,8 +77,9 @@ Future<SealedResend> reencryptSealedForResend({
   if (crypto is! SealedSendingCryptoService || !sealed.sealed) {
     return SealedResend.unavailable;
   }
-  if ((await localStore.pendingMlsMessages())
-      .any((message) => message.conversationId == sealed.conversationId)) {
+  if ((await localStore.pendingMlsMessages()).any(
+    (message) => message.conversationId == sealed.conversationId,
+  )) {
     return SealedResend.held;
   }
   final identified = await crypto.reencryptSealedAsIdentified(sealed);
@@ -242,7 +243,8 @@ class SealedPostClient {
         response.statusCode,
         utf8.decode(bytes, allowMalformed: true),
         ApiException.parseRetryAfter(
-            response.headers.value(HttpHeaders.retryAfterHeader)),
+          response.headers.value(HttpHeaders.retryAfterHeader),
+        ),
       );
     }
   }
@@ -314,8 +316,11 @@ class SealedSender implements SealedTokenSource {
         !known.state.key.sameAs(pin.keyId, pin.publicKey)) {
       return null;
     }
-    return localStore.takeSealedToken(conversationId,
-        keyId: pin.keyId, epoch: _today);
+    return localStore.takeSealedToken(
+      conversationId,
+      keyId: pin.keyId,
+      epoch: _today,
+    );
   }
 
   @override
@@ -349,12 +354,14 @@ class SealedSender implements SealedTokenSource {
     final seenKeyId = pin?.seenKeyId;
     final seenPublicKey = pin?.seenPublicKey;
     if (pin == null || seenKeyId == null || seenPublicKey == null) return;
-    await localStore.saveSealedKeyPin(SealedKeyPin(
-      origin: origin,
-      keyId: seenKeyId,
-      publicKey: seenPublicKey,
-      pinnedAt: _clock().toUtc().millisecondsSinceEpoch,
-    ));
+    await localStore.saveSealedKeyPin(
+      SealedKeyPin(
+        origin: origin,
+        keyId: seenKeyId,
+        publicKey: seenPublicKey,
+        pinnedAt: _clock().toUtc().millisecondsSinceEpoch,
+      ),
+    );
     await localStore.dropSealedTokens(keyId: seenKeyId);
     _conversations.clear();
     _lastRefresh = null;
@@ -364,7 +371,10 @@ class SealedSender implements SealedTokenSource {
   /// [refreshInterval], one at a time). Errors end the pass quietly: the
   /// next pass tries again, and sends go identified meanwhile.
   Future<void> refresh(
-      ApiClient client, String sessionToken, List<Conversation> conversations) {
+    ApiClient client,
+    String sessionToken,
+    List<Conversation> conversations,
+  ) {
     if (!enabled) return Future<void>.value();
     final last = _lastRefresh;
     final now = _clock();
@@ -383,8 +393,11 @@ class SealedSender implements SealedTokenSource {
     }();
   }
 
-  Future<void> _refresh(ApiClient client, String sessionToken,
-      List<Conversation> conversations) async {
+  Future<void> _refresh(
+    ApiClient client,
+    String sessionToken,
+    List<Conversation> conversations,
+  ) async {
     // L2-3: the designation context, read here and nowhere on a send.
     try {
       _frank = await loadFrankContext?.call();
@@ -427,13 +440,23 @@ class SealedSender implements SealedTokenSource {
       // every member whose clock is right: the server chooses none of it.
       for (final epoch in <int>[today, today + 1]) {
         if (remaining <= 0) break;
-        final held = await localStore.countSealedTokens(id,
-            keyId: pin.keyId, epoch: epoch);
+        final held = await localStore.countSealedTokens(
+          id,
+          keyId: pin.keyId,
+          epoch: epoch,
+        );
         if (held > 0) continue;
         final count =
             remaining < sealedTokenBatch ? remaining : sealedTokenBatch;
-        final fetched = await _fetch(client, sessionToken, pin, state,
-            conversationId: id, epoch: epoch, count: count);
+        final fetched = await _fetch(
+          client,
+          sessionToken,
+          pin,
+          state,
+          conversationId: id,
+          epoch: epoch,
+          count: count,
+        );
         if (fetched == 0) break;
         remaining -= fetched;
       }
@@ -447,10 +470,11 @@ class SealedSender implements SealedTokenSource {
     final now = _clock().toUtc().millisecondsSinceEpoch;
     if (pin == null) {
       final fresh = SealedKeyPin(
-          origin: origin,
-          keyId: served.keyId,
-          publicKey: served.publicKey,
-          pinnedAt: now);
+        origin: origin,
+        keyId: served.keyId,
+        publicKey: served.publicKey,
+        pinnedAt: now,
+      );
       await localStore.saveSealedKeyPin(fresh);
       return fresh;
     }
@@ -465,33 +489,44 @@ class SealedSender implements SealedTokenSource {
         pin.seenPublicKey != null &&
         served.sameAs(pin.seenKeyId!, pin.seenPublicKey!);
     if (!seen) {
-      await localStore
-          .saveSealedKeyPin(pin.withSeen(served.keyId, served.publicKey));
+      await localStore.saveSealedKeyPin(
+        pin.withSeen(served.keyId, served.publicKey),
+      );
     }
     _conversations.clear();
     return null;
   }
 
-  Future<int> _fetch(ApiClient client, String sessionToken, SealedKeyPin pin,
-      SealedConversationState state,
-      {required String conversationId,
-      required int epoch,
-      required int count}) async {
+  Future<int> _fetch(
+    ApiClient client,
+    String sessionToken,
+    SealedKeyPin pin,
+    SealedConversationState state, {
+    required String conversationId,
+    required int epoch,
+    required int count,
+  }) async {
     final blinded = crypto.sealedTokenRequest(
-        publicKey: pin.publicKey,
-        conversationId: conversationId,
-        epoch: epoch,
-        count: count);
+      publicKey: pin.publicKey,
+      conversationId: conversationId,
+      epoch: epoch,
+      count: count,
+    );
     try {
-      final answer = await client.sealedTokens(sessionToken, conversationId,
-          epoch: epoch, blinded: blinded.request);
+      final answer = await client.sealedTokens(
+        sessionToken,
+        conversationId,
+        epoch: epoch,
+        blinded: blinded.request,
+      );
       if (answer.keyId != pin.keyId) return 0;
       final tokens = crypto.sealedTokenFinalize(
-          state: blinded.state,
-          response: answer.response,
-          conversationId: conversationId,
-          keyId: pin.keyId,
-          epoch: epoch);
+        state: blinded.state,
+        response: answer.response,
+        conversationId: conversationId,
+        keyId: pin.keyId,
+        epoch: epoch,
+      );
       await localStore.saveSealedTokens(tokens);
       return tokens.length;
     } on ApiException catch (error) {

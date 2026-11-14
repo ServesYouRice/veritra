@@ -14,43 +14,54 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a transient failure retries later and holds back its group only',
-      () async {
-    final store = await _storeWith(<PendingMlsMessage>[
-      _commit('a1', 'conv_a'),
-      _commit('a2', 'conv_a'),
-      _commit('b1', 'conv_b'),
-    ]);
-    final api = _OutboxApi()..failures['a1'] = <Object>[ApiException(503, '')];
-    final state = await _start(api, store);
+  test(
+    'a transient failure retries later and holds back its group only',
+    () async {
+      final store = await _storeWith(<PendingMlsMessage>[
+        _commit('a1', 'conv_a'),
+        _commit('a2', 'conv_a'),
+        _commit('b1', 'conv_b'),
+      ]);
+      final api = _OutboxApi()
+        ..failures['a1'] = <Object>[ApiException(503, '')];
+      final state = await _start(api, store);
 
-    await _waitFor(() => api.sent.contains('b1'));
-    expect(api.sent, isNot(contains('a2')));
-    final pending = await store.pendingMlsMessages();
-    expect(pending.map((item) => item.idempotencyKey), <String>['a1', 'a2']);
-    final a1 = pending.first;
-    expect(a1.attemptCount, 1);
-    expect(a1.terminal, isFalse);
-    expect(a1.failureClass, 'retryable:503');
-    expect(a1.nextAttemptAt, isNotNull);
-    expect(state.mlsConversationFailed('conv_a'), isFalse);
+      await _waitFor(() => api.sent.contains('b1'));
+      expect(api.sent, isNot(contains('a2')));
+      final pending = await store.pendingMlsMessages();
+      expect(pending.map((item) => item.idempotencyKey), <String>['a1', 'a2']);
+      final a1 = pending.first;
+      expect(a1.attemptCount, 1);
+      expect(a1.terminal, isFalse);
+      expect(a1.failureClass, 'retryable:503');
+      expect(a1.nextAttemptAt, isNotNull);
+      expect(state.mlsConversationFailed('conv_a'), isFalse);
 
-    // The retry timer delivers both, in order.
-    await _waitFor(() => api.sent.contains('a2'),
-        timeout: const Duration(seconds: 20));
-    expect(api.sent.where((key) => key.startsWith('a')), <String>['a1', 'a2']);
-    expect(await store.pendingMlsMessages(), isEmpty);
-    state.dispose();
-  });
+      // The retry timer delivers both, in order.
+      await _waitFor(
+        () => api.sent.contains('a2'),
+        timeout: const Duration(seconds: 20),
+      );
+      expect(api.sent.where((key) => key.startsWith('a')), <String>[
+        'a1',
+        'a2',
+      ]);
+      expect(await store.pendingMlsMessages(), isEmpty);
+      state.dispose();
+    },
+  );
 
   test('a network error is retryable, not terminal', () async {
-    final store =
-        await _storeWith(<PendingMlsMessage>[_commit('a1', 'conv_a')]);
+    final store = await _storeWith(<PendingMlsMessage>[
+      _commit('a1', 'conv_a'),
+    ]);
     final api = _OutboxApi()
       ..failures['a1'] = <Object>[const SocketException('down')];
     final state = await _start(api, store);
-    await _waitFor(() async =>
-        (await store.pendingMlsMessages()).firstOrNull?.attemptCount == 1);
+    await _waitFor(
+      () async =>
+          (await store.pendingMlsMessages()).firstOrNull?.attemptCount == 1,
+    );
     final item = (await store.pendingMlsMessages()).single;
     expect(item.terminal, isFalse);
     expect(item.failureClass, 'retryable:network');
@@ -64,9 +75,7 @@ void main() {
       _commit('b1', 'conv_b'),
     ]);
     final api = _OutboxApi()
-      ..failures['a1'] = <Object>[
-        ApiException(403, '{"error":"forbidden"}'),
-      ];
+      ..failures['a1'] = <Object>[ApiException(403, '{"error":"forbidden"}')];
     final state = await _start(api, store);
 
     await _waitFor(() => state.mlsConversationFailed('conv_a'));
@@ -153,47 +162,62 @@ void main() {
     state.dispose();
   });
 
-  test('application messages wait behind their group control messages',
-      () async {
-    final store =
-        await _storeWith(<PendingMlsMessage>[_commit('a1', 'conv_a')]);
-    await store.enqueueEnvelope(MessageEnvelope(
-      conversationId: 'conv_a',
-      idempotencyKey: 'app_a',
-      ciphertext: <int>[1],
-      cryptoProtocol: 'mls10-openmls-v1',
-    ));
-    await store.enqueueEnvelope(MessageEnvelope(
-      conversationId: 'conv_b',
-      idempotencyKey: 'app_b',
-      ciphertext: <int>[1],
-      cryptoProtocol: 'mls10-openmls-v1',
-    ));
-    final api = _OutboxApi()..failures['a1'] = <Object>[ApiException(503, '')];
-    final state = await _start(api, store);
-    await _waitFor(() => api.envelopes.contains('app_b'));
-    expect(api.envelopes, isNot(contains('app_a')));
-    await _waitFor(() => api.envelopes.contains('app_a'),
-        timeout: const Duration(seconds: 20));
-    expect(api.sent.indexOf('a1'), isNonNegative);
-    state.dispose();
-  });
+  test(
+    'application messages wait behind their group control messages',
+    () async {
+      final store = await _storeWith(<PendingMlsMessage>[
+        _commit('a1', 'conv_a'),
+      ]);
+      await store.enqueueEnvelope(
+        MessageEnvelope(
+          conversationId: 'conv_a',
+          idempotencyKey: 'app_a',
+          ciphertext: <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+        ),
+      );
+      await store.enqueueEnvelope(
+        MessageEnvelope(
+          conversationId: 'conv_b',
+          idempotencyKey: 'app_b',
+          ciphertext: <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+        ),
+      );
+      final api = _OutboxApi()
+        ..failures['a1'] = <Object>[ApiException(503, '')];
+      final state = await _start(api, store);
+      await _waitFor(() => api.envelopes.contains('app_b'));
+      expect(api.envelopes, isNot(contains('app_a')));
+      await _waitFor(
+        () => api.envelopes.contains('app_a'),
+        timeout: const Duration(seconds: 20),
+      );
+      expect(api.sent.indexOf('a1'), isNonNegative);
+      state.dispose();
+    },
+  );
 
-  test('a retry that falls due while it is being scheduled still goes out',
-      () async {
-    final store = _SlowAfterFailureStore();
-    await store.saveSession(_session);
-    await _queue(store, <PendingMlsMessage>[_commit('a1', 'conv_a')]);
-    final api = _OutboxApi()
-      ..failures['a1'] = <Object>[ApiException(503, ''), ApiException(503, '')];
-    final state = await _start(api, store);
-    // The first retry runs from its timer after startup has settled. When
-    // it fails, the scheduler reads the queue only after the next backoff
-    // has passed; that retry must still be timed, not left for a wake.
-    await _waitFor(() => api.sent.contains('a1'));
-    expect(await store.pendingMlsMessages(), isEmpty);
-    state.dispose();
-  });
+  test(
+    'a retry that falls due while it is being scheduled still goes out',
+    () async {
+      final store = _SlowAfterFailureStore();
+      await store.saveSession(_session);
+      await _queue(store, <PendingMlsMessage>[_commit('a1', 'conv_a')]);
+      final api = _OutboxApi()
+        ..failures['a1'] = <Object>[
+          ApiException(503, ''),
+          ApiException(503, ''),
+        ];
+      final state = await _start(api, store);
+      // The first retry runs from its timer after startup has settled. When
+      // it fails, the scheduler reads the queue only after the next backoff
+      // has passed; that retry must still be timed, not left for a wake.
+      await _waitFor(() => api.sent.contains('a1'));
+      expect(await store.pendingMlsMessages(), isEmpty);
+      state.dispose();
+    },
+  );
 }
 
 const _session = Session(
@@ -204,8 +228,11 @@ const _session = Session(
   deviceSecret: 'secret',
 );
 
-PendingMlsMessage _commit(String key, String conversationId,
-        {String? revocationDeviceId}) =>
+PendingMlsMessage _commit(
+  String key,
+  String conversationId, {
+  String? revocationDeviceId,
+}) =>
     PendingMlsMessage(
       idempotencyKey: key,
       conversationId: conversationId,
@@ -217,16 +244,18 @@ PendingMlsMessage _commit(String key, String conversationId,
 Future<void> _queue(LocalStore store, List<PendingMlsMessage> messages) async {
   if (messages.isEmpty) return;
   final counter = (await store.loadCryptoState())?.counter ?? 0;
-  await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-    expectedCounter: counter,
-    expectedCursor: await store.loadSyncCursor(),
-    state: StoredCryptoState(
-      counter: counter + 1,
-      stateKey: List<int>.filled(32, 1),
-      sealedState: const <int>[1],
+  await store.commitOutgoingMlsTransition(
+    OutgoingMlsStateTransition(
+      expectedCounter: counter,
+      expectedCursor: await store.loadSyncCursor(),
+      state: StoredCryptoState(
+        counter: counter + 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: const <int>[1],
+      ),
+      messages: messages,
     ),
-    messages: messages,
-  ));
+  );
 }
 
 Future<MemoryLocalStore> _storeWith(List<PendingMlsMessage> messages) async {
@@ -236,8 +265,11 @@ Future<MemoryLocalStore> _storeWith(List<PendingMlsMessage> messages) async {
   return store;
 }
 
-Future<AppState> _start(_OutboxApi api, MemoryLocalStore store,
-    {_OutboxCrypto? crypto}) async {
+Future<AppState> _start(
+  _OutboxApi api,
+  MemoryLocalStore store, {
+  _OutboxCrypto? crypto,
+}) async {
   final state = AppState(
     apiClientFactory: (_) => api,
     cryptoService: crypto ?? _OutboxCrypto(store),
@@ -257,8 +289,10 @@ Future<void> _settle() async {
   }
 }
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 15)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -288,8 +322,11 @@ class _OutboxApi extends ApiClient with LegacySyncPageFake {
   Future<List<Device>> devices(String token) async => const <Device>[];
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
@@ -346,14 +383,19 @@ class _OutboxCrypto implements MlsConversationCryptoService {
   Future<void> createRevocationCommit(MlsRevocation revocation) async {
     revocationCommits++;
     await _queue(store, <PendingMlsMessage>[
-      _commit('rev_commit_$revocationCommits', revocation.conversationId,
-          revocationDeviceId: revocation.revokedDeviceId),
+      _commit(
+        'rev_commit_$revocationCommits',
+        revocation.conversationId,
+        revocationDeviceId: revocation.revokedDeviceId,
+      ),
     ]);
   }
 
   @override
   Future<MessageEnvelope> encrypt(
-          String conversationId, String plaintext) async =>
+    String conversationId,
+    String plaintext,
+  ) async =>
       MessageEnvelope(
         conversationId: conversationId,
         idempotencyKey: 'app_${DateTime.now().microsecondsSinceEpoch}',
@@ -394,10 +436,12 @@ class _SlowAfterFailureStore extends MemoryLocalStore {
     required bool terminal,
     DateTime? nextAttemptAt,
   }) async {
-    await super.recordMlsOutboxFailure(idempotencyKey,
-        failureClass: failureClass,
-        terminal: terminal,
-        nextAttemptAt: nextAttemptAt);
+    await super.recordMlsOutboxFailure(
+      idempotencyKey,
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt,
+    );
     _failures++;
   }
 

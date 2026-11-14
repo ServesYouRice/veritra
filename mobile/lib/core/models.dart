@@ -500,10 +500,12 @@ class MessageEnvelope {
           const <Object?>[],
       replyToId: json['reply_to_id'] as String?,
       threadRootId: json['thread_root_id'] as String?,
-      frankCommit:
-          ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
-      sealedBody:
-          ReceivedMessageEnvelope.frankCommitFromJson(json['sealed_body']),
+      frankCommit: ReceivedMessageEnvelope.frankCommitFromJson(
+        json['frank_commit'],
+      ),
+      sealedBody: ReceivedMessageEnvelope.frankCommitFromJson(
+        json['sealed_body'],
+      ),
       sealedToken: json['l2_sealed_token'] == null
           ? null
           : SealedToken.fromLocalJson(json['l2_sealed_token']),

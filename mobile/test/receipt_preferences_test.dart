@@ -70,7 +70,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markReadPrivate(
-      String token, String conversationId, String id) async {
+    String token,
+    String conversationId,
+    String id,
+  ) async {
     reads.add('private');
   }
 }
@@ -118,42 +121,51 @@ void main() {
 
   setUp(() => FlutterSecureStorage.setMockInitialValues(<String, String>{}));
 
-  test('a keystore read error keeps the receipt private, then retries',
-      () async {
-    final storage = _FlakyStorage();
-    await storage.write(key: SecureReceiptPreferenceStore.key, value: 'off');
-    storage.failReads = true;
-    final preferences =
-        ReceiptPreferences(SecureReceiptPreferenceStore(storage: storage));
-    final api = _Api();
-    final state = _state(api, preferences);
-    addTearDown(state.dispose);
+  test(
+    'a keystore read error keeps the receipt private, then retries',
+    () async {
+      final storage = _FlakyStorage();
+      await storage.write(key: SecureReceiptPreferenceStore.key, value: 'off');
+      storage.failReads = true;
+      final preferences = ReceiptPreferences(
+        SecureReceiptPreferenceStore(storage: storage),
+      );
+      final api = _Api();
+      final state = _state(api, preferences);
+      addTearDown(state.dispose);
 
-    await state.markNewestMessageRead('c1');
-    expect(api.reads, <String>['private'],
-        reason: 'an unreadable "off" was treated as "on"');
-    expect(preferences.shareReadReceipts, isFalse);
+      await state.markNewestMessageRead('c1');
+      expect(
+          api.reads,
+          <String>[
+            'private',
+          ],
+          reason: 'an unreadable "off" was treated as "on"');
+      expect(preferences.shareReadReceipts, isFalse);
 
-    // The failed read is not remembered: the next receipt reads again.
-    storage.failReads = false;
-    await state.markNewestMessageRead('c1');
-    expect(api.reads, <String>['private', 'private']);
-    expect(preferences.sendReadReceipts, isFalse);
+      // The failed read is not remembered: the next receipt reads again.
+      storage.failReads = false;
+      await state.markNewestMessageRead('c1');
+      expect(api.reads, <String>['private', 'private']);
+      expect(preferences.sendReadReceipts, isFalse);
 
-    await storage.write(key: SecureReceiptPreferenceStore.key, value: 'on');
-    final fresh =
-        ReceiptPreferences(SecureReceiptPreferenceStore(storage: storage));
-    storage.failReads = true;
-    await fresh.loaded;
-    expect(fresh.shareReadReceipts, isFalse);
-    storage.failReads = false;
-    await fresh.loaded;
-    expect(fresh.shareReadReceipts, isTrue);
-  });
+      await storage.write(key: SecureReceiptPreferenceStore.key, value: 'on');
+      final fresh = ReceiptPreferences(
+        SecureReceiptPreferenceStore(storage: storage),
+      );
+      storage.failReads = true;
+      await fresh.loaded;
+      expect(fresh.shareReadReceipts, isFalse);
+      storage.failReads = false;
+      await fresh.loaded;
+      expect(fresh.shareReadReceipts, isTrue);
+    },
+  );
 
   test('an absent value still means on', () async {
     final preferences = ReceiptPreferences(
-        SecureReceiptPreferenceStore(storage: _FlakyStorage()));
+      SecureReceiptPreferenceStore(storage: _FlakyStorage()),
+    );
     final api = _Api();
     final state = _state(api, preferences);
     addTearDown(state.dispose);
@@ -162,20 +174,24 @@ void main() {
     expect(preferences.sendReadReceipts, isTrue);
   });
 
-  test('a choice made in this run applies at once, even before a read',
-      () async {
-    final storage = _FlakyStorage()..failReads = true;
-    final preferences =
-        ReceiptPreferences(SecureReceiptPreferenceStore(storage: storage));
-    expect(await preferences.setSendReadReceipts(true), isTrue);
-    await preferences.loaded;
-    expect(preferences.shareReadReceipts, isTrue);
-  });
+  test(
+    'a choice made in this run applies at once, even before a read',
+    () async {
+      final storage = _FlakyStorage()..failReads = true;
+      final preferences = ReceiptPreferences(
+        SecureReceiptPreferenceStore(storage: storage),
+      );
+      expect(await preferences.setSendReadReceipts(true), isTrue);
+      await preferences.loaded;
+      expect(preferences.shareReadReceipts, isTrue);
+    },
+  );
 
   test('a failed save is reported and the choice still applies', () async {
     final storage = _FlakyStorage()..failWrites = true;
-    final preferences =
-        ReceiptPreferences(SecureReceiptPreferenceStore(storage: storage));
+    final preferences = ReceiptPreferences(
+      SecureReceiptPreferenceStore(storage: storage),
+    );
     var notified = 0;
     preferences.addListener(() => notified++);
 

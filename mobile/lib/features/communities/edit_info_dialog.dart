@@ -35,17 +35,20 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
         : widget.state.communityDisplayName(widget.community) ?? '',
   );
   late final _topic = TextEditingController(
-      text: widget.channel == null
-          ? ''
-          : widget.state.channelTopic(widget.channel!) ?? '');
+    text: widget.channel == null
+        ? ''
+        : widget.state.channelTopic(widget.channel!) ?? '',
+  );
   bool _saving = false;
   bool _failed = false;
 
   bool get _allowed =>
       _owner != null &&
       identical(widget.state.session, _owner) &&
-      widget.state.mayEditCommunityInfo(widget.community.id,
-          widget.channel == null ? infoKindCommunity : infoKindChannel);
+      widget.state.mayEditCommunityInfo(
+        widget.community.id,
+        widget.channel == null ? infoKindCommunity : infoKindChannel,
+      );
 
   /// The same name rule as creating ([infoNameError]).
   String? _nameError(AppLocalizations l10n) =>
@@ -53,8 +56,11 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
 
   bool get _topicValid =>
       widget.channel == null ||
-      ProfileRecordCodec.validText(_topic.text.trim(),
-          max: infoTopicMax, allowEmpty: true);
+      ProfileRecordCodec.validText(
+        _topic.text.trim(),
+        max: infoTopicMax,
+        allowEmpty: true,
+      );
 
   bool get _valid => infoNameError(_name.text) == null && _topicValid;
 
@@ -68,10 +74,15 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
     try {
       final channel = widget.channel;
       saved = channel == null
-          ? await widget.state.publishCommunityInfo(widget.community.id,
-              name: _name.text.trim())
-          : await widget.state.publishChannelInfo(channel,
-              name: _name.text.trim(), topic: _topic.text.trim());
+          ? await widget.state.publishCommunityInfo(
+              widget.community.id,
+              name: _name.text.trim(),
+            )
+          : await widget.state.publishChannelInfo(
+              channel,
+              name: _name.text.trim(),
+              topic: _topic.text.trim(),
+            );
     } catch (_) {
       // Display fixed copy, never server text or record contents.
     }
@@ -94,60 +105,70 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
           return PopScope(
             canPop: !_saving,
             child: AlertDialog(
-              title: Text(widget.channel == null
-                  ? l10n.communityEditInfo
-                  : l10n.channelEditInfo),
+              title: Text(
+                widget.channel == null
+                    ? l10n.communityEditInfo
+                    : l10n.channelEditInfo,
+              ),
               content: SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  TextField(
-                    controller: _name,
-                    enabled: !_saving && _allowed,
-                    autofocus: true,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      labelText: widget.channel == null
-                          ? l10n.communityName
-                          : l10n.communityChannelName,
-                      // Always shown while it is what keeps Save off.
-                      errorText: _nameError(l10n),
-                    ),
-                  ),
-                  if (widget.channel != null)
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     TextField(
-                      controller: _topic,
+                      controller: _name,
                       enabled: !_saving && _allowed,
-                      maxLength: infoTopicMax,
+                      autofocus: true,
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        labelText: l10n.channelTopic,
-                        errorText:
-                            _topicValid ? null : l10n.validationTopicInvalid,
+                        labelText: widget.channel == null
+                            ? l10n.communityName
+                            : l10n.communityChannelName,
+                        // Always shown while it is what keeps Save off.
+                        errorText: _nameError(l10n),
                       ),
                     ),
-                  if (widget.channel != null &&
-                      widget.channel!.isRouted &&
-                      widget.state.channelHistoryAvailable &&
-                      widget.state.canCreateChannel(widget.community.id))
-                    ChannelHistorySetting(
-                        state: widget.state, channel: widget.channel!),
-                  if (widget.channel != null &&
-                      widget.state.mayConvertChannel(widget.channel!))
-                    ChannelConversionAction(
-                        state: widget.state, channel: widget.channel!),
-                  // Why Save is off, in words: a field error sits under its
-                  // field; this says so when the cause is not a field.
-                  if (!_allowed)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        l10n.channelEditNotAllowed,
-                        key: const Key('edit-not-allowed'),
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error),
+                    if (widget.channel != null)
+                      TextField(
+                        controller: _topic,
+                        enabled: !_saving && _allowed,
+                        maxLength: infoTopicMax,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: l10n.channelTopic,
+                          errorText:
+                              _topicValid ? null : l10n.validationTopicInvalid,
+                        ),
                       ),
-                    ),
-                  if (_failed) Text(l10n.communityInfoEditFailed),
-                ]),
+                    if (widget.channel != null &&
+                        widget.channel!.isRouted &&
+                        widget.state.channelHistoryAvailable &&
+                        widget.state.canCreateChannel(widget.community.id))
+                      ChannelHistorySetting(
+                        state: widget.state,
+                        channel: widget.channel!,
+                      ),
+                    if (widget.channel != null &&
+                        widget.state.mayConvertChannel(widget.channel!))
+                      ChannelConversionAction(
+                        state: widget.state,
+                        channel: widget.channel!,
+                      ),
+                    // Why Save is off, in words: a field error sits under its
+                    // field; this says so when the cause is not a field.
+                    if (!_allowed)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          l10n.channelEditNotAllowed,
+                          key: const Key('edit-not-allowed'),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    if (_failed) Text(l10n.communityInfoEditFailed),
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
@@ -177,8 +198,11 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
 /// A change is a record that applies when it comes back in sync order; until
 /// then the switch shows it pending.
 class ChannelHistorySetting extends StatefulWidget {
-  const ChannelHistorySetting(
-      {required this.state, required this.channel, super.key});
+  const ChannelHistorySetting({
+    required this.state,
+    required this.channel,
+    super.key,
+  });
 
   final AppState state;
   final Channel channel;
@@ -188,8 +212,9 @@ class ChannelHistorySetting extends StatefulWidget {
 }
 
 class _ChannelHistorySettingState extends State<ChannelHistorySetting> {
-  late Future<C7ChannelView?> _view =
-      widget.state.channelHistory(widget.channel);
+  late Future<C7ChannelView?> _view = widget.state.channelHistory(
+    widget.channel,
+  );
   bool _sending = false;
 
   // A block, not an arrow: setState must not be handed the Future.
@@ -227,9 +252,11 @@ class _ChannelHistorySettingState extends State<ChannelHistorySetting> {
         return SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(l10n.channelHistoryFullLabel),
-          subtitle: Text(note == null
-              ? l10n.channelHistoryProofLine
-              : '${l10n.channelHistoryProofLine}\n$note'),
+          subtitle: Text(
+            note == null
+                ? l10n.channelHistoryProofLine
+                : '${l10n.channelHistoryProofLine}\n$note',
+          ),
           value: view.full,
           onChanged: _sending || view.pending ? null : _change,
         );

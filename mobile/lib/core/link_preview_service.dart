@@ -194,8 +194,7 @@ class IoLinkPreviewTransport implements LinkPreviewTransport {
 
 /// Turns downloaded image bytes into a small PNG thumbnail, or null.
 typedef LinkPreviewThumbnailEncoder = Future<LinkPreviewThumbnail?> Function(
-  Uint8List imageBytes,
-);
+    Uint8List imageBytes);
 
 class _Fetched {
   const _Fetched(this.response, this.finalUrl);

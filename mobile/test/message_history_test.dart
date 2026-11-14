@@ -51,26 +51,37 @@ void main() {
           _insert('dev_a:1', 'acct_a', 'dev_a', 'hello', at: 1),
         ]);
         await _commit(store, <MessageEffect>[
-          _insert('dev_b:1', 'acct_b', 'dev_b', 'hi back',
-              at: 2, replyTo: 'dev_a:1'),
+          _insert(
+            'dev_b:1',
+            'acct_b',
+            'dev_b',
+            'hi back',
+            at: 2,
+            replyTo: 'dev_a:1',
+          ),
           const ReactionEffect(
-              targetKey: 'dev_a:1',
-              reactorAccountId: 'acct_b',
-              reaction: '👍',
-              at: 2),
+            targetKey: 'dev_a:1',
+            reactorAccountId: 'acct_b',
+            reaction: '👍',
+            at: 2,
+          ),
         ]);
         await _commit(store, <MessageEffect>[
           _action('dev_a:2', 'acct_a', 'dev_a', at: 3),
           const EditMessageEffect(
-              targetKey: 'dev_a:1',
-              editorAccountId: 'acct_a',
-              body: 'hello!',
-              at: 3),
+            targetKey: 'dev_a:1',
+            editorAccountId: 'acct_a',
+            body: 'hello!',
+            at: 3,
+          ),
         ]);
 
         var messages = await store.loadMessages('conv_1');
-        expect(messages.map((item) => item.key),
-            <String>['dev_a:1', 'dev_b:1', 'dev_a:2']);
+        expect(messages.map((item) => item.key), <String>[
+          'dev_a:1',
+          'dev_b:1',
+          'dev_a:2',
+        ]);
         expect(messages.first.body, 'hello!');
         expect(messages.first.editedAt, 3);
         expect(messages[1].replyTo, 'dev_a:1');
@@ -78,7 +89,10 @@ void main() {
 
         await _commit(store, <MessageEffect>[
           const DeleteMessageEffect(
-              targetKey: 'dev_a:1', deleterAccountId: 'acct_a', at: 4),
+            targetKey: 'dev_a:1',
+            deleterAccountId: 'acct_a',
+            at: 4,
+          ),
         ]);
         messages = await store.loadMessages('conv_1');
         expect(messages.first.body, isNull);
@@ -94,12 +108,16 @@ void main() {
         ]);
         await _commit(store, <MessageEffect>[
           const EditMessageEffect(
-              targetKey: 'dev_a:1',
-              editorAccountId: 'acct_b',
-              body: 'forged',
-              at: 2),
+            targetKey: 'dev_a:1',
+            editorAccountId: 'acct_b',
+            body: 'forged',
+            at: 2,
+          ),
           const DeleteMessageEffect(
-              targetKey: 'dev_a:1', deleterAccountId: 'acct_b', at: 2),
+            targetKey: 'dev_a:1',
+            deleterAccountId: 'acct_b',
+            at: 2,
+          ),
         ]);
         final message = (await store.loadMessages('conv_1')).single;
         expect(message.body, 'original');
@@ -123,18 +141,27 @@ void main() {
         final store = entry.value();
         await _begin(store);
         await _commit(store, <MessageEffect>[
-          _insert('dev_a:1', 'acct_a', 'dev_a', 'mine',
-              at: 1, state: LocalMessageState.pending, serverId: null),
+          _insert(
+            'dev_a:1',
+            'acct_a',
+            'dev_a',
+            'mine',
+            at: 1,
+            state: LocalMessageState.pending,
+            serverId: null,
+          ),
         ]);
         final cursor = await store.loadSyncCursor();
-        await store.commitSyncEvent(SyncEventCommit(
-          eventKey: 'echo',
-          conversationId: 'conv_1',
-          expectedCursor: cursor,
-          cursor: cursor + 1,
-          envelope: _envelope('srv_9', 'dev_a', '1'),
-          ownMessageKey: 'dev_a:1',
-        ));
+        await store.commitSyncEvent(
+          SyncEventCommit(
+            eventKey: 'echo',
+            conversationId: 'conv_1',
+            expectedCursor: cursor,
+            cursor: cursor + 1,
+            envelope: _envelope('srv_9', 'dev_a', '1'),
+            ownMessageKey: 'dev_a:1',
+          ),
+        );
         final message = (await store.loadMessages('conv_1')).single;
         expect(message.serverMessageId, 'srv_9');
         expect(message.state, LocalMessageState.sent);
@@ -180,19 +207,23 @@ void main() {
       ],
       reactions: const <LocalMessageReaction>[
         LocalMessageReaction(
-            targetKey: 'dev_a:1',
-            reactorAccountId: 'acct_b',
-            reaction: '👍',
-            updatedAt: 1),
+          targetKey: 'dev_a:1',
+          reactorAccountId: 'acct_b',
+          reaction: '👍',
+          updatedAt: 1,
+        ),
         LocalMessageReaction(
-            targetKey: 'dev_a:1',
-            reactorAccountId: 'acct_c',
-            reaction: '👍',
-            updatedAt: 2),
+          targetKey: 'dev_a:1',
+          reactorAccountId: 'acct_c',
+          reaction: '👍',
+          updatedAt: 2,
+        ),
       ],
     );
     expect(
-        history.forEnvelope(_envelope('srv_1', 'dev_a', '1'))?.body, 'hello');
+      history.forEnvelope(_envelope('srv_1', 'dev_a', '1'))?.body,
+      'hello',
+    );
     expect(history.hides(_envelope('srv_2', 'dev_b', '2')), isTrue);
     expect(history.hides(_envelope('srv_1', 'dev_a', '1')), isFalse);
     // A different sender device cannot borrow another device's text.
@@ -206,24 +237,28 @@ void main() {
 final List<int> _stateKey = List<int>.filled(32, 7);
 
 Future<void> _begin(LocalStore store) => store.saveCryptoState(
-    StoredCryptoState(counter: 1, stateKey: _stateKey, sealedState: <int>[1]),
-    0);
+      StoredCryptoState(counter: 1, stateKey: _stateKey, sealedState: <int>[1]),
+      0,
+    );
 
 Future<void> _commit(LocalStore store, List<MessageEffect> effects) async {
   final current = (await store.loadCryptoState())!;
   final cursor = await store.loadSyncCursor();
-  await store.commitMlsTransition(MlsStateTransition(
-    messageId: 'event:${cursor + 1}',
-    conversationId: 'conv_1',
-    expectedCounter: current.counter,
-    expectedCursor: cursor,
-    state: StoredCryptoState(
+  await store.commitMlsTransition(
+    MlsStateTransition(
+      messageId: 'event:${cursor + 1}',
+      conversationId: 'conv_1',
+      expectedCounter: current.counter,
+      expectedCursor: cursor,
+      state: StoredCryptoState(
         counter: current.counter + 1,
         stateKey: _stateKey,
-        sealedState: <int>[current.counter + 1]),
-    cursor: cursor + 1,
-    messageEffects: effects,
-  ));
+        sealedState: <int>[current.counter + 1],
+      ),
+      cursor: cursor + 1,
+      messageEffects: effects,
+    ),
+  );
 }
 
 InsertMessageEffect _insert(
@@ -249,8 +284,12 @@ InsertMessageEffect _insert(
       state: state,
     );
 
-InsertMessageEffect _action(String key, String account, String device,
-        {required int at}) =>
+InsertMessageEffect _action(
+  String key,
+  String account,
+  String device, {
+  required int at,
+}) =>
     InsertMessageEffect(
       key: key,
       serverMessageId: 'srv_$key',

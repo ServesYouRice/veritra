@@ -9,36 +9,47 @@ part of 'encrypted_database.dart';
 
 extension FiledReportSql on EncryptedLocalDatabase {
   Future<void> _createFiledReports() async {
-    await customStatement('CREATE TABLE IF NOT EXISTS local_filed_reports ('
-        'origin TEXT NOT NULL CHECK(length(origin) BETWEEN 1 AND 256), '
-        'account_id TEXT NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128), '
-        'message_key TEXT NOT NULL CHECK(length(message_key) BETWEEN 1 AND 260), '
-        'filed_at INTEGER NOT NULL, '
-        'PRIMARY KEY(origin, account_id, message_key))');
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_filed_reports ('
+      'origin TEXT NOT NULL CHECK(length(origin) BETWEEN 1 AND 256), '
+      'account_id TEXT NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128), '
+      'message_key TEXT NOT NULL CHECK(length(message_key) BETWEEN 1 AND 260), '
+      'filed_at INTEGER NOT NULL, '
+      'PRIMARY KEY(origin, account_id, message_key))',
+    );
   }
 
   Future<bool> readReportFiled(
-      String origin, String accountId, String messageKey) async {
+    String origin,
+    String accountId,
+    String messageKey,
+  ) async {
     final row = await customSelect(
-        'SELECT 1 AS found FROM local_filed_reports '
-        'WHERE origin = ? AND account_id = ? AND message_key = ?',
-        variables: [
-          Variable.withString(origin),
-          Variable.withString(accountId),
-          Variable.withString(messageKey),
-        ]).getSingleOrNull();
+      'SELECT 1 AS found FROM local_filed_reports '
+      'WHERE origin = ? AND account_id = ? AND message_key = ?',
+      variables: [
+        Variable.withString(origin),
+        Variable.withString(accountId),
+        Variable.withString(messageKey),
+      ],
+    ).getSingleOrNull();
     return row != null;
   }
 
   Future<void> writeReportFiled(
-      String origin, String accountId, String messageKey, int filedAt) {
+    String origin,
+    String accountId,
+    String messageKey,
+    int filedAt,
+  ) {
     if (origin.isEmpty || accountId.isEmpty || messageKey.isEmpty) {
       throw const FormatException('invalid filed report');
     }
     return customStatement(
-        'INSERT OR IGNORE INTO local_filed_reports '
-        '(origin, account_id, message_key, filed_at) VALUES (?, ?, ?, ?)',
-        <Object?>[origin, accountId, messageKey, filedAt]);
+      'INSERT OR IGNORE INTO local_filed_reports '
+      '(origin, account_id, message_key, filed_at) VALUES (?, ?, ?, ?)',
+      <Object?>[origin, accountId, messageKey, filedAt],
+    );
   }
 
   Future<void> _clearFiledReports() =>

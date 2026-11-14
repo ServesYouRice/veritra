@@ -145,13 +145,14 @@ class NativeCryptoService
   }) async {
     try {
       return bindings.l2FrankDvVerify(
-          seed: seed,
-          senderFrankKey: senderFrankKey,
-          conversationId: conversationId,
-          accountId: accountId,
-          deviceId: deviceId,
-          commit: commit,
-          designation: designation);
+        seed: seed,
+        senderFrankKey: senderFrankKey,
+        conversationId: conversationId,
+        accountId: accountId,
+        deviceId: deviceId,
+        commit: commit,
+        designation: designation,
+      );
     } on Object {
       // A check that errors proves nothing.
       return 0;
@@ -166,10 +167,11 @@ class NativeCryptoService
     required int count,
   }) =>
       bindings.l2TokenRequest(
-          publicKey: publicKey,
-          conversationId: conversationId,
-          epoch: epoch,
-          count: count);
+        publicKey: publicKey,
+        conversationId: conversationId,
+        epoch: epoch,
+        count: count,
+      );
 
   @override
   List<SealedToken> sealedTokenFinalize({
@@ -189,9 +191,15 @@ class NativeCryptoService
             keyId: keyId,
             epoch: epoch,
             nonce: Uint8List.sublistView(
-                out, offset, offset + SealedToken.nonceBytes),
+              out,
+              offset,
+              offset + SealedToken.nonceBytes,
+            ),
             output: Uint8List.sublistView(
-                out, offset + SealedToken.nonceBytes, offset + size),
+              out,
+              offset + SealedToken.nonceBytes,
+              offset + size,
+            ),
           ),
       ];
     } finally {
@@ -207,14 +215,26 @@ class NativeCryptoService
     bool create = false,
     int? layoutGeneration,
   }) =>
-      _serial(() => _c7Propose(conversationId, channelId,
-          full: full, create: create, layoutGeneration: layoutGeneration));
+      _serial(
+        () => _c7Propose(
+          conversationId,
+          channelId,
+          full: full,
+          create: create,
+          layoutGeneration: layoutGeneration,
+        ),
+      );
 
   @override
   Future<C7ChannelView?> c7ChannelView(
-      String conversationId, String channelId) async {
+    String conversationId,
+    String channelId,
+  ) async {
     if (!_c7Active(conversationId)) return null;
-    final book = (await _c7LoadBook(conversationId, channelId))
+    final book = (await _c7LoadBook(
+      conversationId,
+      channelId,
+    ))
         .expirePending(_c7NowMs());
     return C7ChannelView(
       full: book.mode == c7ModeFull,
@@ -230,15 +250,25 @@ class NativeCryptoService
       _serial(() => _c7Due(conversationIds));
 
   @override
-  Future<MessageEnvelope?> c7Send(C7Due due) => _serial(() => switch (due) {
-        C7DueSync(:final conversationId, :final forEpoch) =>
-          _c7SendSync(conversationId, forEpoch),
-        C7DueRequest(:final conversationId) => _c7SendRequest(conversationId),
-        C7DueRepropose() => throw ArgumentError.value(
-            due, 'due', 'the app proposes a stale record again'),
-        C7DueMove() => throw ArgumentError.value(
-            due, 'due', 'the app proposes a move with its layout generation'),
-      });
+  Future<MessageEnvelope?> c7Send(C7Due due) => _serial(
+        () => switch (due) {
+          C7DueSync(:final conversationId, :final forEpoch) => _c7SendSync(
+              conversationId,
+              forEpoch,
+            ),
+          C7DueRequest(:final conversationId) => _c7SendRequest(conversationId),
+          C7DueRepropose() => throw ArgumentError.value(
+              due,
+              'due',
+              'the app proposes a stale record again',
+            ),
+          C7DueMove() => throw ArgumentError.value(
+              due,
+              'due',
+              'the app proposes a move with its layout generation',
+            ),
+        },
+      );
 
   @override
   Future<void> c7NoteMove({
@@ -260,38 +290,46 @@ class NativeCryptoService
         final oldEpoch = own ? _c7EpochOf(fromConversationId) : null;
         final oldGen = oldEpoch == null
             ? null
-            : (await _c7LoadBook(fromConversationId, channelId))
+            : (await _c7LoadBook(
+                fromConversationId,
+                channelId,
+              ))
                 .sealGenAt(oldEpoch);
         final noted = _c7NotedMove(
-            moves,
-            C7Move(
-              channelId: channelId,
-              fromConversationId: fromConversationId,
-              toConversationId: toConversationId,
-              // Review L-6: the record continues the chain from the old
-              // group, so a device that holds none owes nothing.
-              owed: own && oldEpoch != null,
-              wrapEpoch: oldGen?.epoch,
-              wrapKey: oldGen == null ? null : Uint8List.fromList(oldGen.key!),
-              wrapClose: oldGen == null ? null : oldEpoch,
-              // The mover holds the posts and moves its own rows.
-              imported: own,
-            ),
-            own: own);
+          moves,
+          C7Move(
+            channelId: channelId,
+            fromConversationId: fromConversationId,
+            toConversationId: toConversationId,
+            // Review L-6: the record continues the chain from the old
+            // group, so a device that holds none owes nothing.
+            owed: own && oldEpoch != null,
+            wrapEpoch: oldGen?.epoch,
+            wrapKey: oldGen == null ? null : Uint8List.fromList(oldGen.key!),
+            wrapClose: oldGen == null ? null : oldEpoch,
+            // The mover holds the posts and moves its own rows.
+            imported: own,
+          ),
+          own: own,
+        );
         if (noted == null) return;
         await localStore.saveSetting(c7MovesSetting, noted);
       });
 
   @override
-  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
-          {int? layoutGeneration}) =>
+  Future<MessageEnvelope?> c7ProposeMove(
+    C7DueMove due, {
+    int? layoutGeneration,
+  }) =>
       _serial(() async {
         final move = (await _c7LoadMoves())
-            .where((m) =>
-                m.owed &&
-                m.channelId == due.channelId &&
-                m.fromConversationId == due.fromConversationId &&
-                m.toConversationId == due.conversationId)
+            .where(
+              (m) =>
+                  m.owed &&
+                  m.channelId == due.channelId &&
+                  m.fromConversationId == due.fromConversationId &&
+                  m.toConversationId == due.conversationId,
+            )
             .firstOrNull;
         if (move == null || !_c7Active(due.conversationId)) return null;
         if (_c7EpochOf(due.fromConversationId) == null) {
@@ -299,25 +337,28 @@ class NativeCryptoService
           // record; it stops owing it instead of failing every pass.
           final moves = await _c7LoadMoves();
           await localStore.saveSetting(
-              c7MovesSetting,
-              C7Move.encodeAll(<C7Move>[
-                for (final m in moves)
-                  m.same(move) ? m.copyWith(owed: false) : m,
-              ]));
+            c7MovesSetting,
+            C7Move.encodeAll(<C7Move>[
+              for (final m in moves) m.same(move) ? m.copyWith(owed: false) : m,
+            ]),
+          );
           return null;
         }
         final from = await _c7LoadBook(due.fromConversationId, due.channelId);
         final wrapEpoch = move.wrapEpoch;
         final wrapKey = move.wrapKey;
         final wrapClose = move.wrapClose;
-        return _c7Propose(due.conversationId, due.channelId,
-            full: from.mode == c7ModeFull,
-            create: false,
-            layoutGeneration: layoutGeneration,
-            moveFrom: due.fromConversationId,
-            moveAt: wrapEpoch == null || wrapKey == null || wrapClose == null
-                ? null
-                : (epoch: wrapEpoch, key: wrapKey, close: wrapClose));
+        return _c7Propose(
+          due.conversationId,
+          due.channelId,
+          full: from.mode == c7ModeFull,
+          create: false,
+          layoutGeneration: layoutGeneration,
+          moveFrom: due.fromConversationId,
+          moveAt: wrapEpoch == null || wrapKey == null || wrapClose == null
+              ? null
+              : (epoch: wrapEpoch, key: wrapKey, close: wrapClose),
+        );
       });
 
   /// Review M-B: only a move whose import can run is due: C7 active in its
@@ -348,8 +389,15 @@ class NativeCryptoService
   }) async {
     // Review L-10: device lists are fetched before the serialized section.
     final proofs = await _c7JudgeFormer(keys, channel.rows);
-    return _serial(() => _c7ImportMoved(move,
-        channel: channel, groupLevel: groupLevel, keys: keys, proofs: proofs));
+    return _serial(
+      () => _c7ImportMoved(
+        move,
+        channel: channel,
+        groupLevel: groupLevel,
+        keys: keys,
+        proofs: proofs,
+      ),
+    );
   }
 
   @override
@@ -358,8 +406,11 @@ class NativeCryptoService
     final group = await _c7LoadGroup(conversationId);
     return <String, bool>{
       for (final channel in group.channels)
-        for (final (key, full)
-            in (await _c7LoadBook(conversationId, channel)).lines)
+        for (final (key, full) in (await _c7LoadBook(
+          conversationId,
+          channel,
+        ))
+            .lines)
           key: full,
     };
   }
@@ -399,7 +450,8 @@ class NativeCryptoService
       final group = await _c7LoadGroup(conversationId);
       if (group.joinEpoch == null) continue;
       final state = C7ImportState.decode(
-          await localStore.loadSetting(c7ImportSetting(conversationId)));
+        await localStore.loadSetting(c7ImportSetting(conversationId)),
+      );
       for (final channel in _c7ImportChannelsOf(conversationId)) {
         if (state.cursors.containsKey(channel)) continue;
         if (_c7ImportReady(await _c7LoadBook(conversationId, channel))) {
@@ -424,28 +476,36 @@ class NativeCryptoService
     // here, before the serialized section, never inside it. The keys are
     // the ones the import will use ([_c7ImportKeys]).
     final state = C7ImportState.decode(
-        await localStore.loadSetting(c7ImportSetting(conversationId)));
+      await localStore.loadSetting(c7ImportSetting(conversationId)),
+    );
     final proofs = await _c7JudgeFormer(
-        _c7ImportKeys(state, formerKeys, first: first),
-        <C7HistoryRow>[for (final page in channels.values) ...page.rows]);
-    return _serial(() => _c7Import(conversationId,
+      _c7ImportKeys(state, formerKeys, first: first),
+      <C7HistoryRow>[for (final page in channels.values) ...page.rows],
+    );
+    return _serial(
+      () => _c7Import(
+        conversationId,
         groupLevel: groupLevel,
         channels: channels,
         formerKeys: formerKeys,
         first: first,
-        proofs: proofs));
+        proofs: proofs,
+      ),
+    );
   }
 
   @override
   Future<String?> c7EarlierCursor(
-      String conversationId, String channelId) async {
+    String conversationId,
+    String channelId,
+  ) async {
     if (!_c7Active(conversationId)) return null;
     if ((await _c7LoadBook(conversationId, channelId)).mode != c7ModeFull) {
       return null;
     }
     return C7ImportState.decode(
-            await localStore.loadSetting(c7ImportSetting(conversationId)))
-        .cursors[channelId];
+      await localStore.loadSetting(c7ImportSetting(conversationId)),
+    ).cursors[channelId];
   }
 
   @override
@@ -454,19 +514,22 @@ class NativeCryptoService
         final miss = tombstone.conversationId.isEmpty
             ? _c7None
             : await _c7Miss(tombstone.conversationId);
-        await localStore.commitSyncEvent(SyncEventCommit(
-          eventKey: tombstone.eventKey,
-          conversationId: tombstone.conversationId,
-          expectedCursor: tombstone.expectedCursor,
-          cursor: tombstone.cursor,
-          checkCanCommit: tombstone.checkCanCommit,
-          c7Settings: <String, String?>{...tombstone.c7Settings, ...miss},
-        ));
+        await localStore.commitSyncEvent(
+          SyncEventCommit(
+            eventKey: tombstone.eventKey,
+            conversationId: tombstone.conversationId,
+            expectedCursor: tombstone.expectedCursor,
+            cursor: tombstone.cursor,
+            checkCanCommit: tombstone.checkCanCommit,
+            c7Settings: <String, String?>{...tombstone.c7Settings, ...miss},
+          ),
+        );
       });
 
   String? _c7PrivateChannel(String conversationId) => switch (_authority) {
-        final ConversationCommunitySource source =>
-          source.privateGroupChannel(conversationId),
+        final ConversationCommunitySource source => source.privateGroupChannel(
+            conversationId,
+          ),
         _ => null,
       };
 
@@ -521,10 +584,12 @@ class NativeCryptoService
     try {
       return <String>{
         for (final leaf in device.groupMembers(conversationId))
-          if (verdicts.any((row) =>
-              row.verdict == LeafVerdict.approved &&
-              row.sameLeaf(leaf.accountId, leaf.deviceId) &&
-              _sameBytes(row.signingKey, leaf.signingKey)))
+          if (verdicts.any(
+            (row) =>
+                row.verdict == LeafVerdict.approved &&
+                row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+                _sameBytes(row.signingKey, leaf.signingKey),
+          ))
             utf8.decode(leaf.accountId),
       };
     } catch (_) {
@@ -553,11 +618,15 @@ class NativeCryptoService
   }
 
   void _rememberVerdicts(ApprovalLeafChange change) {
-    _verdictWrites.update(change.conversationId, (n) => n + 1,
-        ifAbsent: () => 1);
+    _verdictWrites.update(
+      change.conversationId,
+      (n) => n + 1,
+      ifAbsent: () => 1,
+    );
     if (change.replaceAll) {
-      _verdictCache[change.conversationId] =
-          List<ApprovalLeaf>.of(change.leaves);
+      _verdictCache[change.conversationId] = List<ApprovalLeaf>.of(
+        change.leaves,
+      );
       return;
     }
     final cached = _verdictCache[change.conversationId];
@@ -676,10 +745,9 @@ class NativeCryptoService
             _deviceId != deviceId) {
           throw StateError('the active identity is not this device');
         }
-        return Uint8List.fromList(device.c7Sign(
-          domain: inviteBindingSigningDomain,
-          message: message,
-        ));
+        return Uint8List.fromList(
+          device.c7Sign(domain: inviteBindingSigningDomain, message: message),
+        );
       });
 
   @override
@@ -738,9 +806,10 @@ class NativeCryptoService
     required Uint8List plaintext,
   }) async =>
       bindings.sealReport(
-          recipientPublicKey: recipientPublicKey,
-          aad: aad,
-          plaintext: plaintext);
+        recipientPublicKey: recipientPublicKey,
+        aad: aad,
+        plaintext: plaintext,
+      );
 
   @override
   Future<Uint8List> openReport({
@@ -759,11 +828,12 @@ class NativeCryptoService
     required Uint8List payload,
   }) async =>
       bindings.frankCommit(
-          key: key,
-          conversationId: conversationId,
-          senderDeviceId: senderDeviceId,
-          actionId: actionId,
-          payload: payload);
+        key: key,
+        conversationId: conversationId,
+        senderDeviceId: senderDeviceId,
+        actionId: actionId,
+        payload: payload,
+      );
 
   // K0 recovery (ABI 11). The bindings are synchronous; each call is
   // serialized with the MLS operations only where it touches the device.
@@ -790,13 +860,14 @@ class NativeCryptoService
     required Uint8List plaintext,
   }) async =>
       bindings.sealBackup(
-          accountId: accountId,
-          sourceDeviceId: sourceDeviceId,
-          createdAtMs: createdAtMs,
-          counter: counter,
-          plaintextVersion: k1BackupPlaintextVersion,
-          rkPub: rkPub,
-          plaintext: plaintext);
+        accountId: accountId,
+        sourceDeviceId: sourceDeviceId,
+        createdAtMs: createdAtMs,
+        counter: counter,
+        plaintextVersion: k1BackupPlaintextVersion,
+        rkPub: rkPub,
+        plaintext: plaintext,
+      );
 
   @override
   int get k1BackupMaxPlaintextBytes =>
@@ -814,19 +885,21 @@ class NativeCryptoService
     String? sourceDeviceId,
   }) async =>
       bindings.openBackup(
-          ciphertext: ciphertext,
-          entropy: entropy,
-          accountId: accountId,
-          sourceDeviceId: sourceDeviceId);
+        ciphertext: ciphertext,
+        entropy: entropy,
+        accountId: accountId,
+        sourceDeviceId: sourceDeviceId,
+      );
 
   @override
   Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
     final derived = bindings.deriveRecoveryKey(entropy);
     return RecoveryKeyValues(
-        rkPub: derived.rkPub,
-        rkId: derived.rkId,
-        rkAuthPub: derived.rkAuthPub,
-        rkListPub: derived.rkListPub);
+      rkPub: derived.rkPub,
+      rkId: derived.rkId,
+      rkAuthPub: derived.rkAuthPub,
+      rkListPub: derived.rkListPub,
+    );
   }
 
   @override
@@ -838,11 +911,12 @@ class NativeCryptoService
     required String origin,
   }) async =>
       bindings.signRecoveryProof(
-          entropy: entropy,
-          challenge: challenge,
-          signingKey: signingKey,
-          keyPackage: keyPackage,
-          origin: origin);
+        entropy: entropy,
+        challenge: challenge,
+        signingKey: signingKey,
+        keyPackage: keyPackage,
+        origin: origin,
+      );
 
   // L1 approved-device list (D94). The rules live in Rust; the pins in the
   // app. Without pins no add is staged and every leaf is "checking".
@@ -854,8 +928,10 @@ class NativeCryptoService
 
   @override
   Future<List<MlsDeviceRef>> missingApprovedDevices(
-      String? conversationId, Iterable<String> accountIds,
-      {Set<String> excluding = const <String>{}}) async {
+    String? conversationId,
+    Iterable<String> accountIds, {
+    Set<String> excluding = const <String>{},
+  }) async {
     final pins = _deviceListPins;
     if (pins == null) return const [];
     final present = await _serial(() async {
@@ -866,7 +942,7 @@ class NativeCryptoService
         for (final leaf in _requiredDevice().groupMembers(conversationId))
           (
             accountId: utf8.decode(leaf.accountId),
-            deviceId: utf8.decode(leaf.deviceId)
+            deviceId: utf8.decode(leaf.deviceId),
           ),
       };
     });
@@ -884,9 +960,10 @@ class NativeCryptoService
       try {
         pairs = remaining > Duration.zero
             ? await pins.approvedDevices(account).timeout(
-                remaining < deviceListJudgeTimeout
-                    ? remaining
-                    : deviceListJudgeTimeout)
+                  remaining < deviceListJudgeTimeout
+                      ? remaining
+                      : deviceListJudgeTimeout,
+                )
             : await pins.approvedDevices(account, refreshFirst: false);
       } on Object {
         // A failed refresh cannot invent additions. Existing pins still work.
@@ -902,7 +979,9 @@ class NativeCryptoService
 
   @override
   DeviceListChainResult checkChain(
-          String accountId, List<List<int>> statements) =>
+    String accountId,
+    List<List<int>> statements,
+  ) =>
       bindings.checkDeviceListChain(idBytes(accountId), statements);
 
   @override
@@ -913,10 +992,11 @@ class NativeCryptoService
     required List<DeviceListPair> history,
   }) =>
       bindings.checkDeviceListStep(
-          expectedAccountId: idBytes(accountId),
-          prev: prev,
-          statement: statement,
-          history: history);
+        expectedAccountId: idBytes(accountId),
+        prev: prev,
+        statement: statement,
+        history: history,
+      );
 
   @override
   Future<Uint8List> signDeviceList(DeviceListBody body) => _serial(() async {
@@ -928,7 +1008,8 @@ class NativeCryptoService
 
   @override
   Future<Uint8List> currentSigningKey() => _serial(
-      () async => Uint8List.fromList(_requiredDevice().signingPublicKey()));
+        () async => Uint8List.fromList(_requiredDevice().signingPublicKey()),
+      );
 
   @override
   Future<Uint8List> currentFrankKey() => _serial(() async {
@@ -981,7 +1062,11 @@ class NativeCryptoService
         final previous = await _requiredState();
         try {
           final statement = _requiredDevice().signRecoveryDeviceList(
-              prev: prev, body: body, history: history, entropy: entropy);
+            prev: prev,
+            body: body,
+            history: history,
+            entropy: entropy,
+          );
           // A held seed was dropped by the signing: store that at once.
           if (entropy == null) {
             await localStore.commitLocalMlsState(
@@ -1042,8 +1127,12 @@ class NativeCryptoService
     if (pins == null) return LeafVerdict.checking;
     try {
       final verdict = await pins
-          .judge(leaf.accountId, leaf.deviceId, leaf.signingKey,
-              refreshFirst: network)
+          .judge(
+            leaf.accountId,
+            leaf.deviceId,
+            leaf.signingKey,
+            refreshFirst: network,
+          )
           .timeout(deviceListJudgeTimeout);
       if (verdict == LeafVerdict.approved &&
           await _alertedPastPin(leaf.accountId)) {
@@ -1077,7 +1166,8 @@ class NativeCryptoService
 
   /// The heads, list ids and alerting devices kept by [alertHeadSetting].
   Future<List<({int head, String listId, String deviceId})>> _alerted(
-      String accountId) async {
+    String accountId,
+  ) async {
     final value = await localStore.loadSetting(alertHeadSetting(accountId));
     if (value == null) return const [];
     final out = <({int head, String listId, String deviceId})>[];
@@ -1111,7 +1201,9 @@ class NativeCryptoService
   ///   never knew it): the old alert names nothing in it and stops counting
   ///   (review M3), so it cannot hold the account's leaves for good.
   static bool _alertHolds(
-      ({int head, String listId, String deviceId}) alert, DeviceListPin? pin) {
+    ({int head, String listId, String deviceId}) alert,
+    DeviceListPin? pin,
+  ) {
     if (pin == null) return true;
     final alerter = utf8.encode(alert.deviceId);
     final rows =
@@ -1149,8 +1241,13 @@ class NativeCryptoService
   /// (L1), and a head the server keeps from this device holds the account's
   /// leaves as `checking`. Never throws; it runs after the message's
   /// transition has committed.
-  Future<void> _applyDeviceListAlert(String conversationId, String accountId,
-      String deviceId, int headVersion, String listId) async {
+  Future<void> _applyDeviceListAlert(
+    String conversationId,
+    String accountId,
+    String deviceId,
+    int headVersion,
+    String listId,
+  ) async {
     try {
       if (!deviceId.contains('\n')) {
         final pin = await localStore.loadDeviceListPin(accountId);
@@ -1158,7 +1255,9 @@ class NativeCryptoService
           for (final alert in await _alerted(accountId))
             if (alert.deviceId != deviceId && _alertHolds(alert, pin)) alert,
         ];
-        final own = (await _alerted(accountId))
+        final own = (await _alerted(
+          accountId,
+        ))
             .where((alert) => alert.deviceId == deviceId)
             .firstOrNull;
         final next =
@@ -1200,8 +1299,9 @@ class NativeCryptoService
     if (pin == null) return const [];
     final due = <({String conversationId, Map<String, Object?> body})>[];
     for (final conversationId in _ownAlertsDue.toList()) {
-      final sent =
-          await localStore.loadSetting(alertSentSetting(conversationId));
+      final sent = await localStore.loadSetting(
+        alertSentSetting(conversationId),
+      );
       if (sent == '${pin.version}') {
         _ownAlertsDue.remove(conversationId);
         continue;
@@ -1222,9 +1322,13 @@ class NativeCryptoService
   /// [headVersion], so the same alert is not sent again.
   @override
   Future<void> markOwnDeviceAlertSent(
-      String conversationId, int headVersion) async {
+    String conversationId,
+    int headVersion,
+  ) async {
     await localStore.saveSetting(
-        alertSentSetting(conversationId), '$headVersion');
+      alertSentSetting(conversationId),
+      '$headVersion',
+    );
     _ownAlertsDue.remove(conversationId);
   }
 
@@ -1287,9 +1391,11 @@ class NativeCryptoService
     // device with another key) is reported to the group.
     final own = _accountId;
     if (own != null &&
-        rows.any((row) =>
-            row.verdict == LeafVerdict.unapproved &&
-            _sameBytes(row.accountId, idBytes(own)))) {
+        rows.any(
+          (row) =>
+              row.verdict == LeafVerdict.unapproved &&
+              _sameBytes(row.accountId, idBytes(own)),
+        )) {
       _ownAlertsDue.add(conversationId);
     }
     return ApprovalLeafChange(
@@ -1359,7 +1465,8 @@ class NativeCryptoService
   /// one the server sent). Packages of devices not approved now are left
   /// out; reconcile offers them again later.
   Future<List<({DeviceKeyPackage package, Uint8List signingKey})>> _gateAdds(
-      List<DeviceKeyPackage> adds) async {
+    List<DeviceKeyPackage> adds,
+  ) async {
     final pins = _deviceListPins;
     if (pins == null) return const [];
     final out = <({DeviceKeyPackage package, Uint8List signingKey})>[];
@@ -1417,11 +1524,19 @@ class NativeCryptoService
         // A frozen pre-join state whose identity was promoted once must not
         // open again, whatever the active MLS state is (finding 4).
         await _refusePromoted(accountId, deviceId);
-        final restored = _formatChecked(() => bindings.restoreRecords(accountId,
-                deviceId, state.stateKey, state.counter, state.sealedState, [
+        final restored = _formatChecked(
+          () => bindings.restoreRecords(
+            accountId,
+            deviceId,
+            state.stateKey,
+            state.counter,
+            state.sealedState,
+            [
               for (final change in state.changes)
-                if (change.sealed != null) change.sealed!
-            ]));
+                if (change.sealed != null) change.sealed!,
+            ],
+          ),
+        );
         if (restored.generation != state.counter) {
           restored.device.close();
           throw StateError('MLS rollback counter mismatch');
@@ -1496,7 +1611,9 @@ class NativeCryptoService
               // identity change), and the frozen pending state is no
               // replacement for it (finding 4).
               await localStore.isEnrollmentPromoted(
-                  accountId: accountId, deviceId: deviceId)) {
+                accountId: accountId,
+                deviceId: deviceId,
+              )) {
             throw StateError('protected MLS state is unavailable');
           }
           final first = _firstState ??= () {
@@ -1556,15 +1673,16 @@ class NativeCryptoService
         }
         // The store checks the pending row, the ledger, the MLS state and
         // the session in the same transaction that writes them.
-        final outcome =
-            await localStore.promotePendingEnrollment(EnrollmentPromotion(
-          kind: kind,
-          session: session,
-          promotionId: promotionId,
-          expectedState: first,
-          promotedAt: _clock().toUtc(),
-          transfer: transfer,
-        ));
+        final outcome = await localStore.promotePendingEnrollment(
+          EnrollmentPromotion(
+            kind: kind,
+            session: session,
+            promotionId: promotionId,
+            expectedState: first,
+            promotedAt: _clock().toUtc(),
+            transfer: transfer,
+          ),
+        );
         if (outcome == EnrollmentPromotionOutcome.promoted) {
           // The device in memory is exactly the state just stored.
           _firstState = null;
@@ -1598,14 +1716,18 @@ class NativeCryptoService
 
   Future<void> _refusePromoted(String accountId, String deviceId) async {
     if (await localStore.isEnrollmentPromoted(
-        accountId: accountId, deviceId: deviceId)) {
+      accountId: accountId,
+      deviceId: deviceId,
+    )) {
       throw StateError('this enrollment was already promoted');
     }
   }
 
   @override
-  Future<void> activateExistingSessionBounded(Session session,
-          {required void Function() checkCanCommit}) =>
+  Future<void> activateExistingSessionBounded(
+    Session session, {
+    required void Function() checkCanCommit,
+  }) =>
       _serial(() async {
         checkCanCommit();
         final origin = canonicalizeServerOrigin(session.baseUrl);
@@ -1629,8 +1751,12 @@ class NativeCryptoService
           _adoptNoticeOrigin(origin, accountId, deviceId);
           return;
         }
-        final restored = await _openStored(accountId, deviceId, stored,
-            checkCanCommit: checkCanCommit);
+        final restored = await _openStored(
+          accountId,
+          deviceId,
+          stored,
+          checkCanCommit: checkCanCommit,
+        );
         var adopted = false;
         try {
           checkCanCommit();
@@ -1687,48 +1813,54 @@ class NativeCryptoService
     String conversationId,
     List<DeviceKeyPackage> claimedPackages,
   ) =>
-      _gateAdds(claimedPackages).then((approved) => _serial(() async {
-            final previous = await _requiredState();
-            try {
-              final device = _requiredDevice();
-              // C4: a group or a community's shared group starts with the
-              // genesis record (its creator owns it); a DM and a private
-              // channel's group carry none.
-              if (roleRecordKinds
-                  .contains(_authority?.conversationKind(conversationId))) {
-                device.createGroupWithRoles(
-                    conversationId,
-                    encodeGovernance(
-                        GovernanceState.genesis(_requiredAccount())));
-              } else {
-                device.createGroup(conversationId);
-              }
-              // One staged commit adds everyone (card I51). With nobody else to
-              // add, the bundle only records this device as the group's first
-              // member, so later devices can be added by reconcile. A device
-              // the approved-device lists do not approve now is left out and
-              // added by reconcile once they do (L1, D94).
-              final bundle = approved.isEmpty
-                  ? const MlsCommitBundle(epoch: 0)
-                  : _stage(device, conversationId,
-                      adds: approved,
-                      record:
-                          await _plannedRecord(conversationId, adds: approved));
-              await localStore.commitOutgoingMlsTransition(
-                OutgoingMlsStateTransition(
-                  expectedCounter: previous.counter,
-                  expectedCursor: await localStore.loadSyncCursor(),
-                  state: _sealNext(previous),
-                  messages: <PendingMlsMessage>[
-                    _bundleItem(conversationId, bundle)
-                  ],
-                ),
+      _gateAdds(claimedPackages).then(
+        (approved) => _serial(() async {
+          final previous = await _requiredState();
+          try {
+            final device = _requiredDevice();
+            // C4: a group or a community's shared group starts with the
+            // genesis record (its creator owns it); a DM and a private
+            // channel's group carry none.
+            if (roleRecordKinds.contains(
+              _authority?.conversationKind(conversationId),
+            )) {
+              device.createGroupWithRoles(
+                conversationId,
+                encodeGovernance(GovernanceState.genesis(_requiredAccount())),
               );
-            } catch (_) {
-              await _restorePrevious(previous);
-              rethrow;
+            } else {
+              device.createGroup(conversationId);
             }
-          }));
+            // One staged commit adds everyone (card I51). With nobody else to
+            // add, the bundle only records this device as the group's first
+            // member, so later devices can be added by reconcile. A device
+            // the approved-device lists do not approve now is left out and
+            // added by reconcile once they do (L1, D94).
+            final bundle = approved.isEmpty
+                ? const MlsCommitBundle(epoch: 0)
+                : _stage(
+                    device,
+                    conversationId,
+                    adds: approved,
+                    record:
+                        await _plannedRecord(conversationId, adds: approved),
+                  );
+            await localStore.commitOutgoingMlsTransition(
+              OutgoingMlsStateTransition(
+                expectedCounter: previous.counter,
+                expectedCursor: await localStore.loadSyncCursor(),
+                state: _sealNext(previous),
+                messages: <PendingMlsMessage>[
+                  _bundleItem(conversationId, bundle)
+                ],
+              ),
+            );
+          } catch (_) {
+            await _restorePrevious(previous);
+            rethrow;
+          }
+        }),
+      );
 
   @override
   Future<void> stageMembershipChange(
@@ -1736,47 +1868,56 @@ class NativeCryptoService
     List<DeviceKeyPackage> adds = const <DeviceKeyPackage>[],
     List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
   }) =>
-      _gateAdds(adds).then((approved) => _serial(() async {
-            if (adds.isEmpty && removes.isEmpty) {
-              throw ArgumentError('a membership change needs a device');
-            }
-            if (approved.isEmpty && removes.isEmpty) {
-              // No device of this change is on its account's approved-device
-              // list now: nothing is staged and the change stays pending.
-              throw DeviceListNotApprovedException(
-                  [for (final add in adds) add.deviceId]);
-            }
-            await _requireNotPaused(conversationId);
-            // C4: a removal that would prune a governing account and that
-            // this device cannot prove stays pending for a device that can.
-            final proven = await _provenRemoves(conversationId, removes);
-            if (approved.isEmpty && proven.isEmpty) {
-              throw GovernanceRemovalUnprovenException(conversationId);
-            }
-            final previous = await _requiredState();
-            try {
-              final bundle = _stage(_requiredDevice(), conversationId,
-                  adds: approved,
-                  removes: proven,
-                  record: await _plannedRecord(conversationId,
-                      adds: approved, removes: proven),
-                  leaveStatements:
-                      await _leaveStatementsFor(conversationId, proven));
-              await localStore.commitOutgoingMlsTransition(
-                OutgoingMlsStateTransition(
-                  expectedCounter: previous.counter,
-                  expectedCursor: await localStore.loadSyncCursor(),
-                  state: _sealNext(previous),
-                  messages: <PendingMlsMessage>[
-                    _bundleItem(conversationId, bundle)
-                  ],
-                ),
-              );
-            } catch (_) {
-              await _restorePrevious(previous);
-              rethrow;
-            }
-          }));
+      _gateAdds(adds).then(
+        (approved) => _serial(() async {
+          if (adds.isEmpty && removes.isEmpty) {
+            throw ArgumentError('a membership change needs a device');
+          }
+          if (approved.isEmpty && removes.isEmpty) {
+            // No device of this change is on its account's approved-device
+            // list now: nothing is staged and the change stays pending.
+            throw DeviceListNotApprovedException([
+              for (final add in adds) add.deviceId,
+            ]);
+          }
+          await _requireNotPaused(conversationId);
+          // C4: a removal that would prune a governing account and that
+          // this device cannot prove stays pending for a device that can.
+          final proven = await _provenRemoves(conversationId, removes);
+          if (approved.isEmpty && proven.isEmpty) {
+            throw GovernanceRemovalUnprovenException(conversationId);
+          }
+          final previous = await _requiredState();
+          try {
+            final bundle = _stage(
+              _requiredDevice(),
+              conversationId,
+              adds: approved,
+              removes: proven,
+              record: await _plannedRecord(
+                conversationId,
+                adds: approved,
+                removes: proven,
+              ),
+              leaveStatements:
+                  await _leaveStatementsFor(conversationId, proven),
+            );
+            await localStore.commitOutgoingMlsTransition(
+              OutgoingMlsStateTransition(
+                expectedCounter: previous.counter,
+                expectedCursor: await localStore.loadSyncCursor(),
+                state: _sealNext(previous),
+                messages: <PendingMlsMessage>[
+                  _bundleItem(conversationId, bundle)
+                ],
+              ),
+            );
+          } catch (_) {
+            await _restorePrevious(previous);
+            rethrow;
+          }
+        }),
+      );
 
   @override
   Future<void> stageSelfUpdate(String conversationId) => _serial(() async {
@@ -1790,8 +1931,11 @@ class NativeCryptoService
           // one is open the owner's update is the cancel.
           final cancel = _ownerCancelRecord(conversationId);
           if (cancel != null) {
-            final bundle =
-                _stage(_requiredDevice(), conversationId, record: cancel);
+            final bundle = _stage(
+              _requiredDevice(),
+              conversationId,
+              record: cancel,
+            );
             await localStore.commitOutgoingMlsTransition(
               OutgoingMlsStateTransition(
                 expectedCounter: previous.counter,
@@ -1828,86 +1972,89 @@ class NativeCryptoService
       });
 
   @override
-  Future<void> completeCommitBundle(PendingMlsMessage item) =>
-      _serial(() async {
-        final bundle = MlsCommitBundle.decode(item.payload);
-        await _requireNotPaused(item.conversationId);
-        // Sync may have merged this accepted commit while the outbox worker
-        // waited for the server's answer, settling its entry, and later
-        // commits may have moved the group on since. Nothing is left to do,
-        // and the epoch check below would see a fork that is not there.
-        if (!await _isQueuedBundle(item)) return;
-        final previous = await _requiredState();
-        try {
-          int? infoRemovalEpoch;
-          var c7Settings = const <String, String?>{};
-          if (bundle.hasCommit) {
-            final device = _requiredDevice();
-            final ({int epoch, bool pending}) before;
-            try {
-              before = device.groupEpoch(item.conversationId);
-            } on NativeCryptoException {
-              // The group is gone: the user left or deleted the chat (D70),
-              // or this device was removed. Nothing is left to merge, and
-              // the entry settles instead of failing on every retry. A
-              // group that is stored but failed to load is not gone.
-              if (!await _groupGone(previous, item.conversationId)) rethrow;
-              await localStore.commitLocalMlsState(
-                expectedCounter: previous.counter,
-                expectedCursor: await localStore.loadSyncCursor(),
-                state: _sealNext(previous),
-                resolvedMlsOutboxKey: item.idempotencyKey,
-              );
-              return;
-            }
-            if (before.pending) {
-              final outcome = device.c7MergePendingCommit(item.conversationId);
+  Future<void> completeCommitBundle(PendingMlsMessage item) => _serial(
+        () async {
+          final bundle = MlsCommitBundle.decode(item.payload);
+          await _requireNotPaused(item.conversationId);
+          // Sync may have merged this accepted commit while the outbox worker
+          // waited for the server's answer, settling its entry, and later
+          // commits may have moved the group on since. Nothing is left to do,
+          // and the epoch check below would see a fork that is not there.
+          if (!await _isQueuedBundle(item)) return;
+          final previous = await _requiredState();
+          try {
+            int? infoRemovalEpoch;
+            var c7Settings = const <String, String?>{};
+            if (bundle.hasCommit) {
+              final device = _requiredDevice();
+              final ({int epoch, bool pending}) before;
               try {
-                if (outcome.removedAny && !outcome.removedSelf) {
-                  infoRemovalEpoch = outcome.newEpoch;
+                before = device.groupEpoch(item.conversationId);
+              } on NativeCryptoException {
+                // The group is gone: the user left or deleted the chat (D70),
+                // or this device was removed. Nothing is left to merge, and
+                // the entry settles instead of failing on every retry. A
+                // group that is stored but failed to load is not gone.
+                if (!await _groupGone(previous, item.conversationId)) rethrow;
+                await localStore.commitLocalMlsState(
+                  expectedCounter: previous.counter,
+                  expectedCursor: await localStore.loadSyncCursor(),
+                  state: _sealNext(previous),
+                  resolvedMlsOutboxKey: item.idempotencyKey,
+                );
+                return;
+              }
+              if (before.pending) {
+                final outcome =
+                    device.c7MergePendingCommit(item.conversationId);
+                try {
+                  if (outcome.removedAny && !outcome.removedSelf) {
+                    infoRemovalEpoch = outcome.newEpoch;
+                  }
+                  c7Settings = await _c7Commit(
+                    item.conversationId,
+                    outcome,
+                    own: true,
+                  );
+                } finally {
+                  outcome.wipeRoot();
                 }
-                c7Settings =
-                    await _c7Commit(item.conversationId, outcome, own: true);
-              } finally {
-                outcome.wipeRoot();
+              }
+              final after = device.groupEpoch(item.conversationId);
+              // Fail closed if the group is not where the accepted commit
+              // leads: that would mean a fork.
+              if (after.pending || after.epoch != bundle.epoch + 1) {
+                throw StateError(
+                    'accepted MLS commit does not match the group');
               }
             }
-            final after = device.groupEpoch(item.conversationId);
-            // Fail closed if the group is not where the accepted commit
-            // leads: that would mean a fork.
-            if (after.pending || after.epoch != bundle.epoch + 1) {
-              throw StateError('accepted MLS commit does not match the group');
+            final own = bundle.hasCommit
+                ? _ownCommitEffects(item.conversationId, bundle)
+                : (observation: null, settings: const <String, String?>{});
+            await localStore.commitLocalMlsState(
+              governanceObservation: own.observation,
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+              resolvedMlsOutboxKey: item.idempotencyKey,
+              // C4 proofs share the C7 settings channel.
+              c7Settings: <String, String?>{...c7Settings, ...own.settings},
+              infoRemoval: infoRemovalEpoch == null
+                  ? null
+                  : (
+                      conversationId: item.conversationId,
+                      epoch: infoRemovalEpoch
+                    ),
+            );
+            if (bundle.hasCommit) {
+              await _rejudgeAfterOwnCommit(item.conversationId);
             }
+          } catch (_) {
+            await _restorePrevious(previous);
+            rethrow;
           }
-          final own = bundle.hasCommit
-              ? _ownCommitEffects(item.conversationId, bundle)
-              : (
-                  observation: null,
-                  settings: const <String, String?>{},
-                );
-          await localStore.commitLocalMlsState(
-            governanceObservation: own.observation,
-            expectedCounter: previous.counter,
-            expectedCursor: await localStore.loadSyncCursor(),
-            state: _sealNext(previous),
-            resolvedMlsOutboxKey: item.idempotencyKey,
-            // C4 proofs share the C7 settings channel.
-            c7Settings: <String, String?>{...c7Settings, ...own.settings},
-            infoRemoval: infoRemovalEpoch == null
-                ? null
-                : (
-                    conversationId: item.conversationId,
-                    epoch: infoRemovalEpoch
-                  ),
-          );
-          if (bundle.hasCommit) {
-            await _rejudgeAfterOwnCommit(item.conversationId);
-          }
-        } catch (_) {
-          await _restorePrevious(previous);
-          rethrow;
-        }
-      });
+        },
+      );
 
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
@@ -2000,9 +2147,11 @@ class NativeCryptoService
   /// inside [_serial], so sync cannot settle it between this check and the
   /// change that follows.
   Future<bool> _isQueuedBundle(PendingMlsMessage item) async =>
-      (await localStore.pendingMlsMessages()).any((queued) =>
-          queued.kind == MlsCommitBundle.kind &&
-          queued.idempotencyKey == item.idempotencyKey);
+      (await localStore.pendingMlsMessages()).any(
+        (queued) =>
+            queued.kind == MlsCommitBundle.kind &&
+            queued.idempotencyKey == item.idempotencyKey,
+      );
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(String conversationId) =>
@@ -2036,16 +2185,20 @@ class NativeCryptoService
   /// else (a poisoned or stale handle, a stored group that failed to load)
   /// is not a missing group.
   Future<bool> _groupGone(
-      StoredCryptoState previous, String conversationId) async {
+    StoredCryptoState previous,
+    String conversationId,
+  ) async {
     if (!_handleAnswers() || _deviceCounter != previous.counter) return false;
     final stored = await localStore.loadCryptoState();
     if (stored == null || stored.counter != previous.counter) return false;
     // The bytes the bindings send as the group id: the low byte of each
     // code unit (they refuse an id with a unit above 0xff before any call).
     final id = [for (final unit in conversationId.codeUnits) unit & 0xff];
-    return !(await localStore.loadCryptoRecords()).any((record) =>
-        record.kind == cryptoRecordKindGroup &&
-        _sameBytes(record.recordId, id));
+    return !(await localStore.loadCryptoRecords()).any(
+      (record) =>
+          record.kind == cryptoRecordKindGroup &&
+          _sameBytes(record.recordId, id),
+    );
   }
 
   static bool _sameBytes(List<int> a, List<int> b) {
@@ -2099,12 +2252,17 @@ class NativeCryptoService
     ];
     // C4: a commit whose record must change carries it ([_plannedRecord]).
     ({List<int> commit, List<int> welcome, int epoch}) plain() => record == null
-        ? device.stageCommitKeyed(conversationId,
-            adds: keyedAdds, removes: keyedRemoves)
-        : device.stageCommitWithRoles(conversationId,
+        ? device.stageCommitKeyed(
+            conversationId,
+            adds: keyedAdds,
+            removes: keyedRemoves,
+          )
+        : device.stageCommitWithRoles(
+            conversationId,
             record: encodeGovernance(record),
             adds: keyedAdds,
-            removes: keyedRemoves);
+            removes: keyedRemoves,
+          );
     // C4 leave proof in the commit (ABI 24): the leavers' own statements
     // ride in the commit's authenticated data. Best effort: a list Rust
     // refuses is dropped and the commit goes as before.
@@ -2113,11 +2271,13 @@ class NativeCryptoService
       staged = plain();
     } else {
       try {
-        staged = device.stageCommitProven(conversationId,
-            record: record == null ? null : encodeGovernance(record),
-            leaveStatements: leaveStatements,
-            adds: keyedAdds,
-            removes: keyedRemoves);
+        staged = device.stageCommitProven(
+          conversationId,
+          record: record == null ? null : encodeGovernance(record),
+          leaveStatements: leaveStatements,
+          adds: keyedAdds,
+          removes: keyedRemoves,
+        );
       } on NativeCryptoException catch (error) {
         if (error.kind != NativeCryptoError.invalidArgument) rethrow;
         staged = plain();
@@ -2168,11 +2328,14 @@ class NativeCryptoService
   /// The accounts whose every leaf [removes] takes out of [groupId]: the
   /// ones the commit drops from the account roster.
   Set<String> _accountsLeaving(
-      NativeCryptoDevice device, String groupId, List<MlsDeviceRef> removes) {
+    NativeCryptoDevice device,
+    String groupId,
+    List<MlsDeviceRef> removes,
+  ) {
     if (removes.isEmpty) return const <String>{};
     final removing = <String>{
       for (final remove in removes)
-        '${remove.accountId}\u0000${remove.deviceId}'
+        '${remove.accountId}\u0000${remove.deviceId}',
     };
     final touched = <String>{};
     final staying = <String>{};
@@ -2201,10 +2364,14 @@ class NativeCryptoService
   /// its list approves proves the leave, as its `member_leave` would (owner
   /// decision B: a removed leaf proves nothing).
   Future<bool> _removalProven(
-      String groupId, String account, List<LeafPair> leaves,
-      {List<LeafPair> provenLeaves = const <LeafPair>[]}) async {
-    if (await localStore
-            .loadSetting(governanceLeaveSetting(groupId, account)) !=
+    String groupId,
+    String account,
+    List<LeafPair> leaves, {
+    List<LeafPair> provenLeaves = const <LeafPair>[],
+  }) async {
+    if (await localStore.loadSetting(
+          governanceLeaveSetting(groupId, account),
+        ) !=
         null) {
       return true;
     }
@@ -2233,7 +2400,9 @@ class NativeCryptoService
   /// the server for a device that can: the kicker, or any member once the
   /// leaver's proof or its list arrives.
   Future<List<MlsDeviceRef>> _provenRemoves(
-      String groupId, List<MlsDeviceRef> removes) async {
+    String groupId,
+    List<MlsDeviceRef> removes,
+  ) async {
     if (removes.isEmpty) return removes;
     final device = _requiredDevice();
     final bytes = device.groupRoleState(groupId).record;
@@ -2260,13 +2429,16 @@ class NativeCryptoService
   Future<bool> _holdsLeaveProof(String groupId, String account) async =>
       await localStore.loadSetting(governanceLeaveSetting(groupId, account)) !=
           null ||
-      await localStore
-              .loadSetting(governanceLeaveSignedSetting(groupId, account)) !=
+      await localStore.loadSetting(
+            governanceLeaveSignedSetting(groupId, account),
+          ) !=
           null;
 
   /// The proof settings a removal spends or a re-add voids for [account].
   static Map<String, String?> _leaveProofsCleared(
-          String groupId, String account) =>
+    String groupId,
+    String account,
+  ) =>
       <String, String?>{
         governanceLeaveSetting(groupId, account): null,
         governanceLeaveSignedSetting(groupId, account): null,
@@ -2277,16 +2449,22 @@ class NativeCryptoService
   /// the commit): at most one per leaf, at most 16. Rust keeps only those
   /// that still verify and name a leaf the commit removes.
   Future<List<Uint8List>> _leaveStatementsFor(
-      String groupId, List<MlsDeviceRef> removes) async {
+    String groupId,
+    List<MlsDeviceRef> removes,
+  ) async {
     if (removes.isEmpty || governanceOf(groupId) == null) {
       return const <Uint8List>[];
     }
     final out = <Uint8List>[];
     final leaves = <int>{};
-    for (final account
-        in _accountsLeaving(_requiredDevice(), groupId, removes)) {
-      final stored = await localStore
-          .loadSetting(governanceLeaveSignedSetting(groupId, account));
+    for (final account in _accountsLeaving(
+      _requiredDevice(),
+      groupId,
+      removes,
+    )) {
+      final stored = await localStore.loadSetting(
+        governanceLeaveSignedSetting(groupId, account),
+      );
       if (stored == null) continue;
       final Uint8List statement;
       try {
@@ -2325,8 +2503,13 @@ class NativeCryptoService
       for (final add in adds) add.package.accountId,
     };
     final next = requiredRecord(prev, self, before: before, after: after);
-    final check =
-        validateCommit(prev, next, self, before: before, after: after);
+    final check = validateCommit(
+      prev,
+      next,
+      self,
+      before: before,
+      after: after,
+    );
     if (!check.ok) throw GovernanceCommandException(check.reject!.name);
     return next == prev ? null : next;
   }
@@ -2383,8 +2566,14 @@ class NativeCryptoService
     if (committer == null || before == null || after == null) {
       throw const GovernanceRefusedException('ids_not_text');
     }
-    final check = validateCommit(prev, next, committer,
-        before: before, after: after, epoch: review.epoch);
+    final check = validateCommit(
+      prev,
+      next,
+      committer,
+      before: before,
+      after: after,
+      epoch: review.epoch,
+    );
     if (!check.ok) throw GovernanceRefusedException(check.reject!.name);
 
     // L1 gate: a leaf on no approved-device list may still commit adds,
@@ -2399,8 +2588,12 @@ class NativeCryptoService
       return judged == LeafVerdict.approved;
     }
 
-    final expected =
-        requiredRecord(prev, committer, before: before, after: after);
+    final expected = requiredRecord(
+      prev,
+      committer,
+      before: before,
+      after: after,
+    );
     final ownerCancel = committer == prev.owner && prev.election != null;
     // Held, never refused: the committer's list may approve the leaf on a
     // later read (a device linked since the last fetch), so sync applies
@@ -2421,8 +2614,12 @@ class NativeCryptoService
         // Held, never refused: the other members hold the proof this
         // device may lack (a newcomer's Welcome carries none), and the
         // proof or the leaver's list may still arrive.
-        if (!await _removalProven(groupId, gone, leaves,
-            provenLeaves: review.provenLeaves)) {
+        if (!await _removalProven(
+          groupId,
+          gone,
+          leaves,
+          provenLeaves: review.provenLeaves,
+        )) {
           throw const GovernanceHeldException('removal_unproven');
         }
       }
@@ -2516,8 +2713,10 @@ class NativeCryptoService
   /// The observation an application message adds: the owner's posts are
   /// its activity, and a first message starts this device's clocks.
   Future<GovernanceObservationChange?> _applicationObservation(
-      String groupId, String sender,
-      {required bool approved}) async {
+    String groupId,
+    String sender, {
+    required bool approved,
+  }) async {
     final record = governanceOf(groupId);
     if (record == null) return null;
     if (sender != record.owner &&
@@ -2566,9 +2765,11 @@ class NativeCryptoService
   @override
   Future<void> stageRoleChange(
     String groupId,
-    GovernanceState Function(GovernanceCommands commands,
-            GovernanceObservations? observed, DateTime now)
-        build,
+    GovernanceState Function(
+      GovernanceCommands commands,
+      GovernanceObservations? observed,
+      DateTime now,
+    ) build,
   ) =>
       _serial(() async {
         await _requireNotPaused(groupId);
@@ -2590,11 +2791,12 @@ class NativeCryptoService
         final prev = decodeGovernance(bytes);
         final next = build(
           GovernanceCommands(
-              state: prev,
-              actor: _requiredAccount(),
-              members: roster,
-              // C5: a timeout names the epoch this commit produces.
-              epoch: device.groupEpoch(groupId).epoch + 1),
+            state: prev,
+            actor: _requiredAccount(),
+            members: roster,
+            // C5: a timeout names the epoch this commit produces.
+            epoch: device.groupEpoch(groupId).epoch + 1,
+          ),
           await localStore.loadGovernanceObservations(groupId),
           _clock().toUtc(),
         );
@@ -2616,7 +2818,9 @@ class NativeCryptoService
       });
 
   PendingMlsMessage _bundleItem(
-          String conversationId, MlsCommitBundle bundle) =>
+    String conversationId,
+    MlsCommitBundle bundle,
+  ) =>
       PendingMlsMessage(
         idempotencyKey: _randomIdempotencyKey(),
         conversationId: conversationId,
@@ -2629,12 +2833,16 @@ class NativeCryptoService
       _processMlsMessage(message);
 
   @override
-  Future<void> processMlsMessageBounded(MlsMessage message,
-          {required void Function() checkCanCommit}) =>
+  Future<void> processMlsMessageBounded(
+    MlsMessage message, {
+    required void Function() checkCanCommit,
+  }) =>
       _processMlsMessage(message, checkCanCommit: checkCanCommit);
 
-  Future<void> _processMlsMessage(MlsMessage message,
-          {void Function()? checkCanCommit}) =>
+  Future<void> _processMlsMessage(
+    MlsMessage message, {
+    void Function()? checkCanCommit,
+  }) =>
       _serial(() async {
         checkCanCommit?.call();
         final marker = 'mls:${message.syncEventId}:${message.id}';
@@ -2654,9 +2862,11 @@ class NativeCryptoService
             // accepted: merge it now if the worker has not yet (card I51).
             final bundle = message.kind == 'commit'
                 ? (await localStore.pendingMlsMessages())
-                    .where((item) =>
-                        item.kind == MlsCommitBundle.kind &&
-                        item.idempotencyKey == message.idempotencyKey)
+                    .where(
+                      (item) =>
+                          item.kind == MlsCommitBundle.kind &&
+                          item.idempotencyKey == message.idempotencyKey,
+                    )
                     .firstOrNull
                 : null;
             if (bundle != null) {
@@ -2672,8 +2882,11 @@ class NativeCryptoService
                   if (outcome.removedAny && !outcome.removedSelf) {
                     infoRemovalEpoch = outcome.newEpoch;
                   }
-                  c7Settings = await _c7Commit(message.conversationId, outcome,
-                      own: true);
+                  c7Settings = await _c7Commit(
+                    message.conversationId,
+                    outcome,
+                    own: true,
+                  );
                 } finally {
                   outcome.wipeRoot();
                 }
@@ -2682,21 +2895,25 @@ class NativeCryptoService
               if (after.pending || after.epoch != expected) {
                 throw StateError('own MLS commit does not match the group');
               }
-              final own = _ownCommitEffects(message.conversationId,
-                  MlsCommitBundle.decode(bundle.payload));
-              await localStore.commitMlsTransition(MlsStateTransition(
-                governanceObservation: own.observation,
-                checkCanCommit: checkCanCommit,
-                messageId: marker,
-                conversationId: message.conversationId,
-                expectedCounter: previous.counter,
-                expectedCursor: previousCursor,
-                state: _sealNext(previous),
-                cursor: message.syncEventId,
-                resolvedMlsOutboxKey: bundle.idempotencyKey,
-                infoRemovalEpoch: infoRemovalEpoch,
-                c7Settings: <String, String?>{...c7Settings, ...own.settings},
-              ));
+              final own = _ownCommitEffects(
+                message.conversationId,
+                MlsCommitBundle.decode(bundle.payload),
+              );
+              await localStore.commitMlsTransition(
+                MlsStateTransition(
+                  governanceObservation: own.observation,
+                  checkCanCommit: checkCanCommit,
+                  messageId: marker,
+                  conversationId: message.conversationId,
+                  expectedCounter: previous.counter,
+                  expectedCursor: previousCursor,
+                  state: _sealNext(previous),
+                  cursor: message.syncEventId,
+                  resolvedMlsOutboxKey: bundle.idempotencyKey,
+                  infoRemovalEpoch: infoRemovalEpoch,
+                  c7Settings: <String, String?>{...c7Settings, ...own.settings},
+                ),
+              );
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;
             }
@@ -2708,21 +2925,25 @@ class NativeCryptoService
               // twin, or an accepted commit it dropped): the group forked,
               // so stop here rather than fill the chat with D54
               // placeholders.
-              final built =
-                  mlsMessageEpoch(message.payload, message.conversationId);
+              final built = mlsMessageEpoch(
+                message.payload,
+                message.conversationId,
+              );
               final group =
                   _requiredDevice().groupEpoch(message.conversationId);
               if (built == null || group.epoch <= built) {
                 throw StateError('own MLS commit was never merged here');
               }
             }
-            await localStore.commitSyncEvent(SyncEventCommit(
-              checkCanCommit: checkCanCommit,
-              eventKey: marker,
-              conversationId: message.conversationId,
-              expectedCursor: previousCursor,
-              cursor: message.syncEventId,
-            ));
+            await localStore.commitSyncEvent(
+              SyncEventCommit(
+                checkCanCommit: checkCanCommit,
+                eventKey: marker,
+                conversationId: message.conversationId,
+                expectedCursor: previousCursor,
+                cursor: message.syncEventId,
+              ),
+            );
             return;
           }
           final device = _requiredDevice();
@@ -2741,14 +2962,19 @@ class NativeCryptoService
                 // actual MLS leaf matches the locally verified invitation.
                 // The outer failure path restores the consumed key package
                 // and group state, so a rejected Welcome is retryable.
-                final anchor =
-                    await localStore.loadInviteAnchor(message.conversationId);
+                final anchor = await localStore.loadInviteAnchor(
+                  message.conversationId,
+                );
                 if (anchor != null) {
-                  final key = device.memberSignatureKey(message.conversationId,
-                      anchor.accountId, anchor.deviceId);
+                  final key = device.memberSignatureKey(
+                    message.conversationId,
+                    anchor.accountId,
+                    anchor.deviceId,
+                  );
                   if (!_sameBytes(key, anchor.signingKey)) {
                     throw StateError(
-                        'Invitation does not match the encrypted group');
+                      'Invitation does not match the encrypted group',
+                    );
                   }
                 }
                 // C4: a joiner starts both waits now; a Welcome is no
@@ -2784,27 +3010,29 @@ class NativeCryptoService
                 // holds, or one that expired (D74). Nothing was consumed
                 // and nothing can be: sync moves on, and the chat says to
                 // ask to be added again.
-                await localStore.commitMlsTransition(MlsStateTransition(
-                  checkCanCommit: checkCanCommit,
-                  messageId: marker,
-                  conversationId: message.conversationId,
-                  expectedCounter: previous.counter,
-                  expectedCursor: previousCursor,
-                  state: _sealNext(previous),
-                  cursor: message.syncEventId,
-                  messageEffects: <MessageEffect>[
-                    InsertMessageEffect(
-                      key: 'welcome-unavailable:'
-                          '${message.syncEventId}:${message.id}',
-                      conversationId: message.conversationId,
-                      senderAccountId: message.senderAccountId,
-                      senderDeviceId: message.senderDeviceId,
-                      kind: LocalMessageKind.invalid,
-                      createdAt: message.createdAt.millisecondsSinceEpoch,
-                      state: LocalMessageState.received,
-                    ),
-                  ],
-                ));
+                await localStore.commitMlsTransition(
+                  MlsStateTransition(
+                    checkCanCommit: checkCanCommit,
+                    messageId: marker,
+                    conversationId: message.conversationId,
+                    expectedCounter: previous.counter,
+                    expectedCursor: previousCursor,
+                    state: _sealNext(previous),
+                    cursor: message.syncEventId,
+                    messageEffects: <MessageEffect>[
+                      InsertMessageEffect(
+                        key: 'welcome-unavailable:'
+                            '${message.syncEventId}:${message.id}',
+                        conversationId: message.conversationId,
+                        senderAccountId: message.senderAccountId,
+                        senderDeviceId: message.senderDeviceId,
+                        kind: LocalMessageKind.invalid,
+                        createdAt: message.createdAt.millisecondsSinceEpoch,
+                        state: LocalMessageState.received,
+                      ),
+                    ],
+                  ),
+                );
                 return;
               }
               break;
@@ -2824,10 +3052,14 @@ class NativeCryptoService
               // then restores the committed state (the ratchet step is used
               // up) and the conversation pauses on this commit (I33).
               final review = device.stageIncomingCommit(
-                  message.conversationId, message.payload);
+                message.conversationId,
+                message.payload,
+              );
               try {
-                final judged =
-                    await _judgeIncomingCommit(message.conversationId, review);
+                final judged = await _judgeIncomingCommit(
+                  message.conversationId,
+                  review,
+                );
                 commitObservation = judged.observation;
                 commitSettings = judged.settings;
               } catch (_) {
@@ -2835,15 +3067,19 @@ class NativeCryptoService
                 rethrow;
               }
               final pairs = device.mergeIncomingCommit(
-                  message.conversationId, message.payload);
+                message.conversationId,
+                message.payload,
+              );
               final root = pairs.root;
               try {
                 if (pairs.removed && !pairs.removedSelf) {
                   infoRemovalEpoch = pairs.epoch;
                 }
                 c7Settings = await _c7Commit(
-                    message.conversationId, pairs.c7Outcome,
-                    own: false);
+                  message.conversationId,
+                  pairs.c7Outcome,
+                  own: false,
+                );
               } finally {
                 root?.fillRange(0, root.length, 0);
               }
@@ -2857,39 +3093,46 @@ class NativeCryptoService
           // merged group unjudged. A group this device left has no leaves.
           final ApprovalLeafChange approval;
           if (await _hasGroup(message.conversationId)) {
-            approval = await _judgeGroup(message.conversationId,
-                welcome: message.kind == 'welcome');
+            approval = await _judgeGroup(
+              message.conversationId,
+              welcome: message.kind == 'welcome',
+            );
           } else {
             approval = ApprovalLeafChange(
-                conversationId: message.conversationId,
-                leaves: const [],
-                replaceAll: true);
+              conversationId: message.conversationId,
+              leaves: const [],
+              replaceAll: true,
+            );
           }
           // C7: the re-add wipe and the newcomer's floor (decision 5).
           final welcomeC7 = message.kind == 'welcome'
-              ? await _c7Welcome(message.conversationId,
-                  device.groupEpoch(message.conversationId).epoch)
+              ? await _c7Welcome(
+                  message.conversationId,
+                  device.groupEpoch(message.conversationId).epoch,
+                )
               : null;
           checkCanCommit?.call();
           final next = _sealNext(previous);
-          await localStore.commitMlsTransition(MlsStateTransition(
-            checkCanCommit: checkCanCommit,
-            messageId: marker,
-            conversationId: message.conversationId,
-            expectedCounter: previous.counter,
-            expectedCursor: previousCursor,
-            state: next,
-            cursor: message.syncEventId,
-            approvalLeaves: approval,
-            infoRemovalEpoch: infoRemovalEpoch,
-            governanceObservation: commitObservation,
-            // C4 leave proofs share the C7 settings channel.
-            c7Settings: <String, String?>{
-              ...c7Settings,
-              ...?welcomeC7,
-              ...commitSettings,
-            },
-          ));
+          await localStore.commitMlsTransition(
+            MlsStateTransition(
+              checkCanCommit: checkCanCommit,
+              messageId: marker,
+              conversationId: message.conversationId,
+              expectedCounter: previous.counter,
+              expectedCursor: previousCursor,
+              state: next,
+              cursor: message.syncEventId,
+              approvalLeaves: approval,
+              infoRemovalEpoch: infoRemovalEpoch,
+              governanceObservation: commitObservation,
+              // C4 leave proofs share the C7 settings channel.
+              c7Settings: <String, String?>{
+                ...c7Settings,
+                ...?welcomeC7,
+                ...commitSettings,
+              },
+            ),
+          );
           _rememberVerdicts(approval);
         } catch (_) {
           await _restorePrevious(previous);
@@ -2898,54 +3141,61 @@ class NativeCryptoService
       });
 
   @override
-  Future<void> createRevocationCommit(MlsRevocation revocation) =>
-      _serial(() async {
-        if (revocation.coordinatorDeviceId != _deviceId ||
-            revocation.state != 'pending') {
-          throw StateError('device is not the pending revocation coordinator');
-        }
-        await _requireNotPaused(revocation.conversationId);
-        final removes = <MlsDeviceRef>[
-          (
-            accountId: revocation.revokedAccountId,
-            deviceId: revocation.revokedDeviceId,
-          ),
-        ];
-        if ((await _provenRemoves(revocation.conversationId, removes))
-            .isEmpty) {
-          throw GovernanceRemovalUnprovenException(revocation.conversationId);
-        }
-        final previous = await _requiredState();
-        try {
-          final bundle = _stage(
-            _requiredDevice(),
-            revocation.conversationId,
-            removes: removes,
-            revocationDeviceId: revocation.revokedDeviceId,
-            record: await _plannedRecord(revocation.conversationId,
-                removes: removes),
-            leaveStatements:
-                await _leaveStatementsFor(revocation.conversationId, removes),
-          );
-          await localStore.commitOutgoingMlsTransition(
-            OutgoingMlsStateTransition(
-              expectedCounter: previous.counter,
-              expectedCursor: await localStore.loadSyncCursor(),
-              state: _sealNext(previous),
-              messages: <PendingMlsMessage>[
-                _bundleItem(revocation.conversationId, bundle),
-              ],
+  Future<void> createRevocationCommit(MlsRevocation revocation) => _serial(
+        () async {
+          if (revocation.coordinatorDeviceId != _deviceId ||
+              revocation.state != 'pending') {
+            throw StateError(
+                'device is not the pending revocation coordinator');
+          }
+          await _requireNotPaused(revocation.conversationId);
+          final removes = <MlsDeviceRef>[
+            (
+              accountId: revocation.revokedAccountId,
+              deviceId: revocation.revokedDeviceId,
             ),
-          );
-        } catch (_) {
-          await _restorePrevious(previous);
-          rethrow;
-        }
-      });
+          ];
+          if ((await _provenRemoves(revocation.conversationId, removes))
+              .isEmpty) {
+            throw GovernanceRemovalUnprovenException(revocation.conversationId);
+          }
+          final previous = await _requiredState();
+          try {
+            final bundle = _stage(
+              _requiredDevice(),
+              revocation.conversationId,
+              removes: removes,
+              revocationDeviceId: revocation.revokedDeviceId,
+              record: await _plannedRecord(
+                revocation.conversationId,
+                removes: removes,
+              ),
+              leaveStatements: await _leaveStatementsFor(
+                revocation.conversationId,
+                removes,
+              ),
+            );
+            await localStore.commitOutgoingMlsTransition(
+              OutgoingMlsStateTransition(
+                expectedCounter: previous.counter,
+                expectedCursor: await localStore.loadSyncCursor(),
+                state: _sealNext(previous),
+                messages: <PendingMlsMessage>[
+                  _bundleItem(revocation.conversationId, bundle),
+                ],
+              ),
+            );
+          } catch (_) {
+            await _restorePrevious(previous);
+            rethrow;
+          }
+        },
+      );
 
   @override
   Future<ConversationSafetyNumber> conversationSafetyNumber(
-          String conversationId) =>
+    String conversationId,
+  ) =>
       _serial(() async {
         final value =
             _requiredDevice().conversationSafetyNumber(conversationId);
@@ -2962,7 +3212,9 @@ class NativeCryptoService
 
   @override
   Future<EncryptedCallSignal> encryptCallSignal(
-          String conversationId, Map<String, Object?> signal) =>
+    String conversationId,
+    Map<String, Object?> signal,
+  ) =>
       _serial(() async {
         await _requireNotPaused(conversationId);
         await _requireApproved(conversationId);
@@ -2979,9 +3231,10 @@ class NativeCryptoService
           );
           final ciphertext = _requiredDevice().encrypt(conversationId, payload);
           await localStore.commitLocalMlsState(
-              expectedCounter: previous.counter,
-              expectedCursor: cursor,
-              state: _sealNext(previous));
+            expectedCounter: previous.counter,
+            expectedCursor: cursor,
+            state: _sealNext(previous),
+          );
           return EncryptedCallSignal(<String, Object?>{
             'version': 1,
             'ciphertext': base64Encode(ciphertext),
@@ -2997,18 +3250,24 @@ class NativeCryptoService
 
   @override
   Future<Map<String, Object?>?> processCallSignal(
-          CallSession call, int syncEventId) =>
+    CallSession call,
+    int syncEventId,
+  ) =>
       _processCallSignal(call, syncEventId);
 
   @override
   Future<Map<String, Object?>?> processCallSignalBounded(
-          CallSession call, int syncEventId,
-          {required void Function() checkCanCommit}) =>
+    CallSession call,
+    int syncEventId, {
+    required void Function() checkCanCommit,
+  }) =>
       _processCallSignal(call, syncEventId, checkCanCommit: checkCanCommit);
 
   Future<Map<String, Object?>?> _processCallSignal(
-          CallSession call, int syncEventId,
-          {void Function()? checkCanCommit}) =>
+    CallSession call,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  }) =>
       _serial(() async {
         checkCanCommit?.call();
         final metadata = call.metadata;
@@ -3025,7 +3284,10 @@ class NativeCryptoService
         // The server's envelope fields are checked before the ratchet can
         // step (P2).
         AppPayloadCodec.validateContext(
-            call.conversationId, senderDeviceId, actionId);
+          call.conversationId,
+          senderDeviceId,
+          actionId,
+        );
         final marker = 'call:$syncEventId:${call.id}:$actionId';
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState(checkCanCommit: checkCanCommit);
@@ -3036,13 +3298,15 @@ class NativeCryptoService
         }
         if (senderDeviceId == _deviceId) {
           checkCanCommit?.call();
-          await localStore.commitSyncEvent(SyncEventCommit(
-            checkCanCommit: checkCanCommit,
-            eventKey: marker,
-            conversationId: call.conversationId,
-            expectedCursor: cursor,
-            cursor: syncEventId,
-          ));
+          await localStore.commitSyncEvent(
+            SyncEventCommit(
+              checkCanCommit: checkCanCommit,
+              eventKey: marker,
+              conversationId: call.conversationId,
+              expectedCursor: cursor,
+              cursor: syncEventId,
+            ),
+          );
           return null;
         }
         // Calls are two-party DMs, so the sender is whichever party is not
@@ -3058,13 +3322,14 @@ class NativeCryptoService
             // Null when this device can never decrypt the signal (D54): it
             // is dropped and sync moves past it.
             plaintext = await _decryptOrUndecryptable(
-                previous,
-                () => _requiredDevice().decrypt(
-                      call.conversationId,
-                      ciphertext,
-                      senderAccountId: senderAccountId,
-                      senderDeviceId: senderDeviceId,
-                    ));
+              previous,
+              () => _requiredDevice().decrypt(
+                call.conversationId,
+                ciphertext,
+                senderAccountId: senderAccountId,
+                senderDeviceId: senderDeviceId,
+              ),
+            );
           } on NativeCryptoException catch (error) {
             // The server also delivers a caller's signals to the caller's
             // other devices, where the guessed sender account is wrong. The
@@ -3076,7 +3341,10 @@ class NativeCryptoService
           // other that cannot be used.
           if (plaintext != null) {
             final verdict = await _senderVerdict(
-                call.conversationId, senderAccountId, senderDeviceId);
+              call.conversationId,
+              senderAccountId,
+              senderDeviceId,
+            );
             if (verdict != LeafVerdict.approved &&
                 verdict != LeafVerdict.removed) {
               plaintext.fillRange(0, plaintext.length, 0);
@@ -3088,18 +3356,23 @@ class NativeCryptoService
           // no signal.
           final outcome = plaintext == null
               ? const InvalidAppPayload()
-              : AppPayloadCodec().classify(plaintext,
+              : AppPayloadCodec().classify(
+                  plaintext,
                   conversationId: call.conversationId,
                   senderDeviceId: senderDeviceId,
-                  actionId: actionId);
-          await localStore.commitMlsTransition(MlsStateTransition(
+                  actionId: actionId,
+                );
+          await localStore.commitMlsTransition(
+            MlsStateTransition(
               checkCanCommit: checkCanCommit,
               messageId: marker,
               conversationId: call.conversationId,
               expectedCounter: previous.counter,
               expectedCursor: cursor,
               state: _sealNext(previous),
-              cursor: syncEventId));
+              cursor: syncEventId,
+            ),
+          );
           if (outcome is DecodedAppPayload &&
               outcome.payload.type == AppPayloadType.callSignal) {
             return Map<String, Object?>.from(
@@ -3114,8 +3387,12 @@ class NativeCryptoService
 
   @override
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext) =>
-      encryptPayload(conversationId, AppPayloadType.text,
-          <String, Object?>{'text': plaintext},
+      encryptPayload(
+          conversationId,
+          AppPayloadType.text,
+          <String, Object?>{
+            'text': plaintext,
+          },
           draftText: plaintext);
 
   /// Encrypts one text, reply, edit, delete or reaction payload (D22) and
@@ -3131,8 +3408,13 @@ class NativeCryptoService
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   }) =>
-      _encryptPayload(conversationId, type, body,
-          attachmentRefs: attachmentRefs, draftText: draftText);
+      _encryptPayload(
+        conversationId,
+        type,
+        body,
+        attachmentRefs: attachmentRefs,
+        draftText: draftText,
+      );
 
   @override
   Future<MessageEnvelope> encryptChannelPayload(
@@ -3144,11 +3426,15 @@ class NativeCryptoService
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   }) =>
-      _encryptPayload(conversationId, type, body,
-          attachmentRefs: attachmentRefs,
-          draftText: draftText,
-          routeChannelId: channelId,
-          routeGeneration: layoutGeneration);
+      _encryptPayload(
+        conversationId,
+        type,
+        body,
+        attachmentRefs: attachmentRefs,
+        draftText: draftText,
+        routeChannelId: channelId,
+        routeGeneration: layoutGeneration,
+      );
 
   @override
   Future<MessageEnvelope> encryptExpiringPayload(
@@ -3161,19 +3447,26 @@ class NativeCryptoService
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   }) =>
-      _encryptPayload(conversationId, type, body,
-          attachmentRefs: attachmentRefs,
-          draftText: draftText,
-          routeChannelId: channelId,
-          routeGeneration: layoutGeneration,
-          expiresAt: expiresAt);
+      _encryptPayload(
+        conversationId,
+        type,
+        body,
+        attachmentRefs: attachmentRefs,
+        draftText: draftText,
+        routeChannelId: channelId,
+        routeGeneration: layoutGeneration,
+        expiresAt: expiresAt,
+      );
 
   @override
   Future<MessageEnvelope?> reencryptSealedAsIdentified(
-      MessageEnvelope sealed) async {
+    MessageEnvelope sealed,
+  ) async {
     if (!sealed.sealed) return null;
     final raw = await localStore.loadSealedOwnPostFallback(
-        sealed.conversationId, sealed.idempotencyKey);
+      sealed.conversationId,
+      sealed.idempotencyKey,
+    );
     if (raw == null) return null;
     final Object? decoded;
     try {
@@ -3201,8 +3494,10 @@ class NativeCryptoService
       draftText: null,
       expiresAt: expiresAtMs == null
           ? null
-          : DateTime.fromMillisecondsSinceEpoch(expiresAtMs as int,
-              isUtc: true),
+          : DateTime.fromMillisecondsSinceEpoch(
+              expiresAtMs as int,
+              isUtc: true,
+            ),
       replaceSealedKey: sealed.idempotencyKey,
     );
   }
@@ -3280,7 +3575,9 @@ class NativeCryptoService
           // (receivers drop it on this leaf's next commit), and the signed
           // statement after it is best effort.
           await localStore.saveSetting(
-              governanceLeaveSignedOutSetting(conversationId), '1');
+            governanceLeaveSignedOutSetting(conversationId),
+            '1',
+          );
         }
         final sharedGroup =
             _authority?.conversationKind(conversationId) == 'community_shared';
@@ -3351,8 +3648,9 @@ class NativeCryptoService
               // The signed statement is made now, for this leaf as it is.
               body: signedLeave
                   ? <String, Object?>{
-                      'statement': base64
-                          .encode(_requiredDevice().signLeave(conversationId)),
+                      'statement': base64.encode(
+                        _requiredDevice().signLeave(conversationId),
+                      ),
                     }
                   : leaveProof
                       ? <String, Object?>{'epoch': groupEpoch.epoch}
@@ -3393,10 +3691,11 @@ class NativeCryptoService
                       final frank = sealedFrank!;
                       if (frank.ownerKeys.isEmpty) return null;
                       return _requiredDevice().l2FrankDesignate(
-                          conversationId: conversationId,
-                          commit: sealedCommit!,
-                          listedKey: frank.listedKey,
-                          ownerKeys: frank.ownerKeys);
+                        conversationId: conversationId,
+                        commit: sealedCommit!,
+                        listedKey: frank.listedKey,
+                        ownerKeys: frank.ownerKeys,
+                      );
                     },
             );
             payload = framed.padded;
@@ -3433,7 +3732,12 @@ class NativeCryptoService
             // sealed in the current period (decision 7); everything else
             // under a random key (I4).
             final generation = await _c7SealGen(
-                conversationId, channelId ?? c7Private, type, epoch, body);
+              conversationId,
+              channelId ?? c7Private,
+              type,
+              epoch,
+              body,
+            );
             if (generation != null && c7HistoryPostTypes.contains(type)) {
               c7Gen = c7GenTag(generation.key!);
             }
@@ -3506,7 +3810,8 @@ class NativeCryptoService
                         if (expiresAt != null)
                           'expires_at_ms':
                               expiresAt.toUtc().millisecondsSinceEpoch,
-                      })),
+                      }),
+                    ),
               messageEffects: replacing
                   ? const <MessageEffect>[]
                   : info || leaveProof || reportKey || deviceAlert
@@ -3527,10 +3832,11 @@ class NativeCryptoService
                       : _c7Recorded(
                           messageEffectsFor(
                             DecryptedAppPayload(
-                                type: type,
-                                actionId: idempotencyKey,
-                                body: body,
-                                channelId: channelId),
+                              type: type,
+                              actionId: idempotencyKey,
+                              body: body,
+                              channelId: channelId,
+                            ),
                             conversationId: conversationId,
                             senderAccountId: _accountId!,
                             senderDeviceId: deviceId,
@@ -3544,12 +3850,16 @@ class NativeCryptoService
                             authority: _authority,
                           ),
                           messageKey(deviceId, idempotencyKey),
-                          c7Gen),
+                          c7Gen,
+                        ),
               communityInfo: info && !replacing
                   ? <CommunityInfoEvent>[
                       communityInfoEventFor(
                         DecryptedAppPayload(
-                            type: type, actionId: idempotencyKey, body: body),
+                          type: type,
+                          actionId: idempotencyKey,
+                          body: body,
+                        ),
                         conversationId: conversationId,
                         senderAccountId: _accountId!,
                         senderDeviceId: deviceId,
@@ -3572,17 +3882,27 @@ class NativeCryptoService
   /// The `invalid` row for an undecodable message. Keyed by the sync event,
   /// never by the envelope's idempotency key (P3).
   InsertMessageEffect _invalidRow(
-          ReceivedMessageEnvelope envelope, int syncEventId) =>
-      _placeholderRow(envelope, 'invalid:$syncEventId:${envelope.id}',
-          LocalMessageKind.invalid);
+    ReceivedMessageEnvelope envelope,
+    int syncEventId,
+  ) =>
+      _placeholderRow(
+        envelope,
+        'invalid:$syncEventId:${envelope.id}',
+        LocalMessageKind.invalid,
+      );
 
   /// Whether clear envelope metadata carries the C4 leave-notice mark.
   static bool _marksLeaveNotice(Object? metadata) =>
       metadata is Map && metadata[leaveNoticeMetadataKey] == true;
 
   InsertMessageEffect _placeholderRow(
-          ReceivedMessageEnvelope envelope, String key, String kind,
-          {String? body, bool senderHidden = false, String? channelId}) =>
+    ReceivedMessageEnvelope envelope,
+    String key,
+    String kind, {
+    String? body,
+    bool senderHidden = false,
+    String? channelId,
+  }) =>
       InsertMessageEffect(
         key: key,
         serverMessageId: envelope.id,
@@ -3606,42 +3926,57 @@ class NativeCryptoService
     // L2-3: a sealed envelope only through processSealedApplicationMessage.
     if (envelope.sealed) {
       return Future<List<int>?>.error(
-          const FormatException('sealed envelope on the identified path'));
+        const FormatException('sealed envelope on the identified path'),
+      );
     }
     return _processApplicationMessage(envelope, syncEventId);
   }
 
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId,
-      {void Function()? checkCanCommit}) async {
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  }) async {
     if (!envelope.sealed) {
       throw const FormatException('identified envelope on the sealed path');
     }
     var resolved = envelope.withSender('', '');
-    final plaintext = await _processApplicationMessage(envelope, syncEventId,
-        checkCanCommit: checkCanCommit, onSender: (named) => resolved = named);
+    final plaintext = await _processApplicationMessage(
+      envelope,
+      syncEventId,
+      checkCanCommit: checkCanCommit,
+      onSender: (named) => resolved = named,
+    );
     if (plaintext != null) plaintext.fillRange(0, plaintext.length, 0);
     return resolved;
   }
 
   @override
   Future<List<int>?> processApplicationMessageBounded(
-      ReceivedMessageEnvelope envelope, int syncEventId,
-      {required void Function() checkCanCommit}) {
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    required void Function() checkCanCommit,
+  }) {
     if (envelope.sealed) {
       return Future<List<int>?>.error(
-          const FormatException('sealed envelope on the identified path'));
+        const FormatException('sealed envelope on the identified path'),
+      );
     }
-    return _processApplicationMessage(envelope, syncEventId,
-        checkCanCommit: checkCanCommit);
+    return _processApplicationMessage(
+      envelope,
+      syncEventId,
+      checkCanCommit: checkCanCommit,
+    );
   }
 
   /// [onSender] hears the sender a sealed envelope resolved to (L2-3).
   Future<List<int>?> _processApplicationMessage(
-      ReceivedMessageEnvelope incoming, int syncEventId,
-      {void Function()? checkCanCommit,
-      void Function(ReceivedMessageEnvelope)? onSender}) {
+    ReceivedMessageEnvelope incoming,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+    void Function(ReceivedMessageEnvelope)? onSender,
+  }) {
     // L2-3: a sealed envelope names no sender; whatever it says about one is
     // dropped here, and the sender comes from MLS only (decryptSealed).
     final sealed = incoming.sealed;
@@ -3663,8 +3998,11 @@ class NativeCryptoService
       // The server's envelope fields are checked before the ratchet can
       // step: a malformed event stops sync with nothing consumed (P2). A
       // sealed envelope's sender is checked once MLS has named it.
-      AppPayloadCodec.validateContext(envelope.conversationId,
-          sealed ? 'sealed' : envelope.senderDeviceId, envelope.idempotencyKey);
+      AppPayloadCodec.validateContext(
+        envelope.conversationId,
+        sealed ? 'sealed' : envelope.senderDeviceId,
+        envelope.idempotencyKey,
+      );
       if (envelope.id.isEmpty || envelope.id.length > 128) {
         throw const FormatException('invalid message envelope id');
       }
@@ -3693,23 +4031,30 @@ class NativeCryptoService
         // Our own message: its text was stored when it was encrypted, and
         // MLS cannot decrypt a message for its own sender. C7: an own
         // record applies now, in sync order (decision 4).
-        final ownC7 =
-            await _c7OwnEcho(envelope.conversationId, envelope.idempotencyKey);
+        final ownC7 = await _c7OwnEcho(
+          envelope.conversationId,
+          envelope.idempotencyKey,
+        );
         operationFence();
-        await localStore.commitSyncEvent(SyncEventCommit(
-          checkCanCommit: operationFence,
-          eventKey: marker,
-          conversationId: envelope.conversationId,
-          expectedCursor: cursor,
-          cursor: syncEventId,
-          envelope: envelope,
-          ownMessageKey:
-              messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
-          allowOwnPinEffect: pinAllowed(
+        await localStore.commitSyncEvent(
+          SyncEventCommit(
+            checkCanCommit: operationFence,
+            eventKey: marker,
+            conversationId: envelope.conversationId,
+            expectedCursor: cursor,
+            cursor: syncEventId,
+            envelope: envelope,
+            ownMessageKey: messageKey(
+              envelope.senderDeviceId,
+              envelope.idempotencyKey,
+            ),
+            allowOwnPinEffect: pinAllowed(
               kind: _authority?.conversationKind(envelope.conversationId),
-              role: _authority?.roleOf(envelope.conversationId, _accountId!)),
-          c7Settings: ownC7,
-        ));
+              role: _authority?.roleOf(envelope.conversationId, _accountId!),
+            ),
+            c7Settings: ownC7,
+          ),
+        );
         return null;
       }
       try {
@@ -3740,19 +4085,25 @@ class NativeCryptoService
             }) opened;
             try {
               opened = device.decryptSealed(
-                  envelope.conversationId, envelope.ciphertext);
+                envelope.conversationId,
+                envelope.ciphertext,
+              );
             } on FormatException {
               // A sender id that is not UTF-8: unreadable like any other.
               throw const NativeCryptoException(
-                  NativeCryptoError.operationFailed);
+                NativeCryptoError.operationFailed,
+              );
             }
             // MLS named the sender. It must be a well-formed id and never
             // this device, whose own posts were recognised above; anything
             // else is a placeholder like any message this device cannot
             // read, with no sender.
             try {
-              AppPayloadCodec.validateContext(envelope.conversationId,
-                  opened.deviceId, envelope.idempotencyKey);
+              AppPayloadCodec.validateContext(
+                envelope.conversationId,
+                opened.deviceId,
+                envelope.idempotencyKey,
+              );
               if (opened.accountId.isEmpty ||
                   opened.accountId.length > 128 ||
                   opened.deviceId == _deviceId) {
@@ -3761,7 +4112,8 @@ class NativeCryptoService
             } on FormatException {
               opened.plaintext.fillRange(0, opened.plaintext.length, 0);
               throw const NativeCryptoException(
-                  NativeCryptoError.operationFailed);
+                NativeCryptoError.operationFailed,
+              );
             }
             envelope = envelope.withSender(opened.accountId, opened.deviceId);
             onSender?.call(envelope);
@@ -3773,26 +4125,29 @@ class NativeCryptoService
             // moves past it and the conversation shows a placeholder with
             // no content. The committed group is already back in memory.
             final miss = await _c7Miss(envelope.conversationId);
-            await localStore.commitMlsTransition(MlsStateTransition(
-              checkCanCommit: operationFence,
-              messageId: marker,
-              conversationId: envelope.conversationId,
-              expectedCounter: previous.counter,
-              expectedCursor: cursor,
-              state: _sealNext(previous),
-              cursor: syncEventId,
-              upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-              c7Settings: miss,
-              messageEffects: <MessageEffect>[
-                // An `invalid` row holds no content and offers no action;
-                // the timeline reads this key prefix to say "couldn't
-                // unlock" rather than "couldn't read".
-                _placeholderRow(
+            await localStore.commitMlsTransition(
+              MlsStateTransition(
+                checkCanCommit: operationFence,
+                messageId: marker,
+                conversationId: envelope.conversationId,
+                expectedCounter: previous.counter,
+                expectedCursor: cursor,
+                state: _sealNext(previous),
+                cursor: syncEventId,
+                upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+                c7Settings: miss,
+                messageEffects: <MessageEffect>[
+                  // An `invalid` row holds no content and offers no action;
+                  // the timeline reads this key prefix to say "couldn't
+                  // unlock" rather than "couldn't read".
+                  _placeholderRow(
                     envelope,
                     'undecryptable:$syncEventId:${envelope.id}',
-                    LocalMessageKind.invalid),
-              ],
-            ));
+                    LocalMessageKind.invalid,
+                  ),
+                ],
+              ),
+            );
             return null;
           }
           plaintext = decrypted;
@@ -3804,29 +4159,35 @@ class NativeCryptoService
           // L1 (D94): a message from a leaf that is not approved never
           // speaks as its account. The ratchet has moved, so the state and
           // the cursor commit; the text is not kept.
-          final verdict = await _senderVerdict(envelope.conversationId,
-              envelope.senderAccountId, envelope.senderDeviceId);
+          final verdict = await _senderVerdict(
+            envelope.conversationId,
+            envelope.senderAccountId,
+            envelope.senderDeviceId,
+          );
           senderVerdict = verdict;
           if (verdict != LeafVerdict.approved &&
               verdict != LeafVerdict.removed) {
             plaintext.fillRange(0, plaintext.length, 0);
             final miss = await _c7Miss(envelope.conversationId);
-            await localStore.commitMlsTransition(MlsStateTransition(
-              checkCanCommit: operationFence,
-              messageId: marker,
-              conversationId: envelope.conversationId,
-              expectedCounter: previous.counter,
-              expectedCursor: cursor,
-              state: _sealNext(previous),
-              cursor: syncEventId,
-              c7Settings: miss,
-              messageEffects: <MessageEffect>[
-                _placeholderRow(
+            await localStore.commitMlsTransition(
+              MlsStateTransition(
+                checkCanCommit: operationFence,
+                messageId: marker,
+                conversationId: envelope.conversationId,
+                expectedCounter: previous.counter,
+                expectedCursor: cursor,
+                state: _sealNext(previous),
+                cursor: syncEventId,
+                c7Settings: miss,
+                messageEffects: <MessageEffect>[
+                  _placeholderRow(
                     envelope,
                     '$unapprovedSenderKeyPrefix$syncEventId:${envelope.id}',
-                    LocalMessageKind.invalid),
-              ],
-            ));
+                    LocalMessageKind.invalid,
+                  ),
+                ],
+              ),
+            );
             return null;
           }
           // C7: a two-part message's reference names its sealed body. A
@@ -3860,20 +4221,22 @@ class NativeCryptoService
             c7Channel = routeChannel is String ? routeChannel : null;
             if (opened == null) {
               final miss = await _c7Miss(envelope.conversationId);
-              await localStore.commitMlsTransition(MlsStateTransition(
-                checkCanCommit: operationFence,
-                messageId: marker,
-                conversationId: envelope.conversationId,
-                expectedCounter: previous.counter,
-                expectedCursor: cursor,
-                state: _sealNext(previous),
-                cursor: syncEventId,
-                upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-                c7Settings: miss,
-                messageEffects: <MessageEffect>[
-                  _invalidRow(envelope, syncEventId),
-                ],
-              ));
+              await localStore.commitMlsTransition(
+                MlsStateTransition(
+                  checkCanCommit: operationFence,
+                  messageId: marker,
+                  conversationId: envelope.conversationId,
+                  expectedCounter: previous.counter,
+                  expectedCursor: cursor,
+                  state: _sealNext(previous),
+                  cursor: syncEventId,
+                  upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+                  c7Settings: miss,
+                  messageEffects: <MessageEffect>[
+                    _invalidRow(envelope, syncEventId),
+                  ],
+                ),
+              );
               return null;
             }
             c7Opened = opened;
@@ -3885,25 +4248,28 @@ class NativeCryptoService
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).
           final miss = await _c7Miss(envelope.conversationId);
-          await localStore.commitMlsTransition(MlsStateTransition(
-            checkCanCommit: operationFence,
-            messageId: marker,
-            conversationId: envelope.conversationId,
-            expectedCounter: previous.counter,
-            expectedCursor: cursor,
-            state: _sealNext(previous),
-            cursor: syncEventId,
-            c7Settings: miss,
-            upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-            messageEffects: <MessageEffect>[
-              // Keyed by the sync event: the claimed idempotency key is
-              // not authenticated (P3).
-              _placeholderRow(
+          await localStore.commitMlsTransition(
+            MlsStateTransition(
+              checkCanCommit: operationFence,
+              messageId: marker,
+              conversationId: envelope.conversationId,
+              expectedCounter: previous.counter,
+              expectedCursor: cursor,
+              state: _sealNext(previous),
+              cursor: syncEventId,
+              c7Settings: miss,
+              upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+              messageEffects: <MessageEffect>[
+                // Keyed by the sync event: the claimed idempotency key is
+                // not authenticated (P3).
+                _placeholderRow(
                   envelope,
                   'unverifiable:$syncEventId:${envelope.id}',
-                  LocalMessageKind.unverifiable),
-            ],
-          ));
+                  LocalMessageKind.unverifiable,
+                ),
+              ],
+            ),
+          );
           return null;
         }
         // From here the ratchet has moved: whatever the payload is, the
@@ -3994,19 +4360,32 @@ class NativeCryptoService
                 final opened = c7Opened!;
                 settings = switch (payload.type) {
                   AppPayloadType.historyChange => opened.trailer.isEmpty
-                      ? await _c7ApplyProposal(envelope, payload,
+                      ? await _c7ApplyProposal(
+                          envelope,
+                          payload,
                           routeChannel: c7Channel,
                           epoch: mlsMessageEpoch(
-                              envelope.ciphertext, envelope.conversationId),
-                          verdict: senderVerdict)
+                            envelope.ciphertext,
+                            envelope.conversationId,
+                          ),
+                          verdict: senderVerdict,
+                        )
                       : await _c7Miss(envelope.conversationId),
                   AppPayloadType.historySync => await _c7ApplySync(
-                      envelope, payload, opened.trailer,
+                      envelope,
+                      payload,
+                      opened.trailer,
                       epoch: mlsMessageEpoch(
-                          envelope.ciphertext, envelope.conversationId),
-                      verdict: senderVerdict),
+                        envelope.ciphertext,
+                        envelope.conversationId,
+                      ),
+                      verdict: senderVerdict,
+                    ),
                   AppPayloadType.historySyncRequest => opened.trailer.isEmpty
-                      ? await _c7ApplyRequest(envelope.conversationId, payload)
+                      ? await _c7ApplyRequest(
+                          envelope.conversationId,
+                          payload,
+                        )
                       : const <String, String?>{},
                   _ => const <String, String?>{},
                 };
@@ -4014,7 +4393,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                   ),
@@ -4031,7 +4412,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
@@ -4040,8 +4423,9 @@ class NativeCryptoService
                 // Kept only from a community conversation (its shared group
                 // or a private channel's group): a DM or plain group never
                 // seeds community keys or announcements.
-                final kind =
-                    _authority?.conversationKind(envelope.conversationId);
+                final kind = _authority?.conversationKind(
+                  envelope.conversationId,
+                );
                 // Owner decision B: info keys and info edits are admin
                 // actions; none is taken from a leaf its list removed.
                 final roleActionFromRemoved =
@@ -4062,7 +4446,9 @@ class NativeCryptoService
                           // succeeded, so this epoch is authenticated (it
                           // selects the epoch secrets and is in the AAD).
                           epoch: mlsMessageEpoch(
-                              envelope.ciphertext, envelope.conversationId),
+                            envelope.ciphertext,
+                            envelope.conversationId,
+                          ),
                         ),
                       ];
                 reveal = null;
@@ -4076,7 +4462,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
@@ -4106,7 +4494,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
@@ -4116,8 +4506,9 @@ class NativeCryptoService
                     governanceOf(envelope.conversationId) != null) {
                   settings = <String, String?>{
                     governanceLeaveSignedSetting(
-                            envelope.conversationId, envelope.senderAccountId):
-                        payload.body['statement'] as String,
+                      envelope.conversationId,
+                      envelope.senderAccountId,
+                    ): payload.body['statement'] as String,
                   };
                 }
                 reveal = null;
@@ -4128,14 +4519,18 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
                   ),
                 ];
                 final epoch = mlsMessageEpoch(
-                    envelope.ciphertext, envelope.conversationId);
+                  envelope.ciphertext,
+                  envelope.conversationId,
+                );
                 // Owner decision B (review M1): a leaf its list removed (a
                 // stolen or replaced phone) has no role, so its leave proof
                 // never strips a governing account; only an approved leaf's
@@ -4146,8 +4541,9 @@ class NativeCryptoService
                     governanceOf(envelope.conversationId) != null) {
                   settings = <String, String?>{
                     governanceLeaveSetting(
-                            envelope.conversationId, envelope.senderAccountId):
-                        epoch.toString(),
+                      envelope.conversationId,
+                      envelope.senderAccountId,
+                    ): epoch.toString(),
                   };
                 }
                 reveal = null;
@@ -4161,7 +4557,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
@@ -4197,7 +4595,9 @@ class NativeCryptoService
                     sender: envelope.senderAccountId,
                     channelId: payload.channelId,
                     serverRestricts: roles.serverRestrictsPosting(
-                        envelope.conversationId, payload.channelId),
+                      envelope.conversationId,
+                      payload.channelId,
+                    ),
                     senderRemoved: senderVerdict == LeafVerdict.removed,
                   )) {
                 effects = <MessageEffect>[
@@ -4236,7 +4636,9 @@ class NativeCryptoService
                   _placeholderRow(
                     envelope,
                     messageKey(
-                        envelope.senderDeviceId, envelope.idempotencyKey),
+                      envelope.senderDeviceId,
+                      envelope.idempotencyKey,
+                    ),
                     LocalMessageKind.action,
                     senderHidden: true,
                     channelId: payload.channelId,
@@ -4250,18 +4652,21 @@ class NativeCryptoService
               // sealed under the current one records it (decision 7).
               String? postGen;
               final postChannel = payload.channelId ?? c7Channel;
-              final postEpoch =
-                  mlsMessageEpoch(envelope.ciphertext, envelope.conversationId);
+              final postEpoch = mlsMessageEpoch(
+                envelope.ciphertext,
+                envelope.conversationId,
+              );
               if (c7Opened != null &&
                   c7Opened.trailer.isEmpty &&
                   postChannel != null &&
                   postEpoch != null &&
                   c7HistoryPostTypes.contains(payload.type)) {
                 (:settings, gen: postGen) = await _c7GenCheck(
-                    envelope: envelope,
-                    channelId: postChannel,
-                    epoch: postEpoch,
-                    opened: c7Opened);
+                  envelope: envelope,
+                  channelId: postChannel,
+                  epoch: postEpoch,
+                  opened: c7Opened,
+                );
               }
               effects = _c7Recorded(
                 messageEffectsFor(
@@ -4276,9 +4681,10 @@ class NativeCryptoService
                   // wins. A payload without one (an older sender) keeps the
                   // server-stamped time, as before.
                   expiresAt: effectiveExpiryMillis(
-                      senderMs: payload.expiresAtMs,
-                      serverMs:
-                          envelope.expiresAt?.toUtc().millisecondsSinceEpoch),
+                    senderMs: payload.expiresAtMs,
+                    serverMs:
+                        envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+                  ),
                   authority: _authority,
                   // Owner decision B: a leaf its account's list removed
                   // (a stolen or replaced phone) keeps ordinary messages but
@@ -4348,33 +4754,47 @@ class NativeCryptoService
         // C4: the owner's posts are its activity; a first message also
         // starts this device's clocks for a group it holds a record for.
         final observation = await _applicationObservation(
-            envelope.conversationId, envelope.senderAccountId,
-            approved: senderVerdict == LeafVerdict.approved);
+          envelope.conversationId,
+          envelope.senderAccountId,
+          approved: senderVerdict == LeafVerdict.approved,
+        );
         operationFence();
-        await localStore.commitMlsTransition(MlsStateTransition(
-          checkCanCommit: operationFence,
-          messageId: marker,
-          conversationId: envelope.conversationId,
-          expectedCounter: previous.counter,
-          expectedCursor: cursor,
-          state: _sealNext(previous),
-          cursor: syncEventId,
-          upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-          messageEffects: effects,
-          noticeReferences: noticePayload && (capture ?? sealedCapture) != null
-              ? _noticeReferences((capture ?? sealedCapture)!.owner, envelope,
-                  syncEventId, effects)
-              : const <LocalNoticeReference>[],
-          // A reveal for a row this transition does not leave live (an edit,
-          // an invalid placeholder) is dropped by the store, not an error.
-          frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
-          communityInfo: info,
-          c7Settings: settings,
-          governanceObservation: observation,
-        ));
+        await localStore.commitMlsTransition(
+          MlsStateTransition(
+            checkCanCommit: operationFence,
+            messageId: marker,
+            conversationId: envelope.conversationId,
+            expectedCounter: previous.counter,
+            expectedCursor: cursor,
+            state: _sealNext(previous),
+            cursor: syncEventId,
+            upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+            messageEffects: effects,
+            noticeReferences:
+                noticePayload && (capture ?? sealedCapture) != null
+                    ? _noticeReferences(
+                        (capture ?? sealedCapture)!.owner,
+                        envelope,
+                        syncEventId,
+                        effects,
+                      )
+                    : const <LocalNoticeReference>[],
+            // A reveal for a row this transition does not leave live (an edit,
+            // an invalid placeholder) is dropped by the store, not an error.
+            frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
+            communityInfo: info,
+            c7Settings: settings,
+            governanceObservation: observation,
+          ),
+        );
         if (alert != null) {
-          await _applyDeviceListAlert(envelope.conversationId, alert.accountId,
-              envelope.senderDeviceId, alert.headVersion, alert.listId);
+          await _applyDeviceListAlert(
+            envelope.conversationId,
+            alert.accountId,
+            envelope.senderDeviceId,
+            alert.headVersion,
+            alert.listId,
+          );
         }
         return text;
       } catch (_) {
@@ -4412,10 +4832,11 @@ class NativeCryptoService
   /// needs since the server row names no sender. Nothing a receiver keeps
   /// is a signature over the message.
   ({AppPayloadOutcome outcome, FrankReveal? reveal}) _checkFranking(
-      ReceivedMessageEnvelope envelope,
-      List<int> plaintext,
-      AppPayloadOutcome outcome,
-      {bool sealed = false}) {
+    ReceivedMessageEnvelope envelope,
+    List<int> plaintext,
+    AppPayloadOutcome outcome, {
+    bool sealed = false,
+  }) {
     if (outcome is InvalidAppPayload) return (outcome: outcome, reveal: null);
     switch (AppPayloadCodec.frankOf(plaintext)) {
       case Unfranked():
@@ -4448,8 +4869,10 @@ class NativeCryptoService
         return (
           outcome: outcome,
           reveal: FrankReveal(
-            messageKey:
-                messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+            messageKey: messageKey(
+              envelope.senderDeviceId,
+              envelope.idempotencyKey,
+            ),
             conversationId: envelope.conversationId,
             envelopeId: envelope.id,
             frankKey: key,
@@ -4472,7 +4895,9 @@ class NativeCryptoService
   Future<bool> _isOwnSealedPost(ReceivedMessageEnvelope envelope) async {
     if (_deviceId == null) return false;
     final digest = await localStore.loadSealedOwnPostDigest(
-        envelope.conversationId, envelope.idempotencyKey);
+      envelope.conversationId,
+      envelope.idempotencyKey,
+    );
     if (digest == null) return false;
     final actual = sha256(envelope.ciphertext);
     var difference = digest.length ^ actual.length;
@@ -4483,7 +4908,8 @@ class NativeCryptoService
   }
 
   ({LocalNoticeOwner owner, int generation})? _captureNoticeOwner(
-      ReceivedMessageEnvelope envelope) {
+    ReceivedMessageEnvelope envelope,
+  ) {
     final origin = _noticeOrigin, accountId = _accountId, deviceId = _deviceId;
     if (!_noticeCaptureEnabled ||
         _pendingEnrollment ||
@@ -4496,8 +4922,11 @@ class NativeCryptoService
     }
     return (
       owner: LocalNoticeOwner(
-          origin: origin, accountId: accountId, deviceId: deviceId),
-      generation: _noticeCaptureGeneration
+        origin: origin,
+        accountId: accountId,
+        deviceId: deviceId,
+      ),
+      generation: _noticeCaptureGeneration,
     );
   }
 
@@ -4513,16 +4942,19 @@ class NativeCryptoService
   }
 
   List<LocalNoticeReference> _noticeReferences(
-      LocalNoticeOwner owner,
-      ReceivedMessageEnvelope envelope,
-      int eventId,
-      List<MessageEffect> effects) {
+    LocalNoticeOwner owner,
+    ReceivedMessageEnvelope envelope,
+    int eventId,
+    List<MessageEffect> effects,
+  ) {
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
     return [
       for (final effect in effects.whereType<InsertMessageEffect>())
         if (effect.state == LocalMessageState.received &&
-            const {LocalMessageKind.text, LocalMessageKind.attachment}
-                .contains(effect.kind) &&
+            const {
+              LocalMessageKind.text,
+              LocalMessageKind.attachment,
+            }.contains(effect.kind) &&
             !effect.senderHidden &&
             effect.body != null &&
             effect.senderAccountId != owner.accountId &&
@@ -4535,16 +4967,17 @@ class NativeCryptoService
                 messageKey(envelope.senderDeviceId, envelope.idempotencyKey) &&
             (effect.expiresAt == null || effect.expiresAt! > now))
           LocalNoticeReference(
-              owner: owner,
-              eventId: eventId,
-              messageKey: effect.key,
-              serverMessageId: envelope.id,
-              conversationId: effect.conversationId,
-              channelId: effect.channelId,
-              senderAccountId: effect.senderAccountId,
-              senderDeviceId: effect.senderDeviceId,
-              createdAt: effect.createdAt,
-              expiresAt: effect.expiresAt),
+            owner: owner,
+            eventId: eventId,
+            messageKey: effect.key,
+            serverMessageId: envelope.id,
+            conversationId: effect.conversationId,
+            channelId: effect.channelId,
+            senderAccountId: effect.senderAccountId,
+            senderDeviceId: effect.senderDeviceId,
+            createdAt: effect.createdAt,
+            expiresAt: effect.expiresAt,
+          ),
     ];
   }
 
@@ -4570,8 +5003,10 @@ class NativeCryptoService
 
   @override
   Future<K2ReceiveResult> k2ReceiveBegin(
-          K2LinkContext context, List<int> secret,
-          {required int originalExpiresAt}) =>
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+  }) =>
       _serial(() async {
         final device = _requiredDevice();
         if (!_pendingEnrollment) {
@@ -4583,39 +5018,50 @@ class NativeCryptoService
           throw const K2TransferException(
               'the pending state is already sealed');
         }
-        return device.k2ReceiveBegin(context, secret,
-            originalExpiresAt: originalExpiresAt, now: _nowMs);
+        return device.k2ReceiveBegin(
+          context,
+          secret,
+          originalExpiresAt: originalExpiresAt,
+          now: _nowMs,
+        );
       });
 
   @override
-  Future<K2ProofResult> k2EnrollmentProof(K2TransferId id,
-          {required String locator,
-          required List<int> reservationRequestId,
-          required String deviceName,
-          required List<int> challenge,
-          required List<int> keyPackage,
-          required List<int> claimTokenHash,
-          required List<int> deviceSecretHash,
-          required List<int> initialSessionHash}) =>
+  Future<K2ProofResult> k2EnrollmentProof(
+    K2TransferId id, {
+    required String locator,
+    required List<int> reservationRequestId,
+    required String deviceName,
+    required List<int> challenge,
+    required List<int> keyPackage,
+    required List<int> claimTokenHash,
+    required List<int> deviceSecretHash,
+    required List<int> initialSessionHash,
+  }) =>
       _serial(() async {
         if (!_pendingEnrollment) {
           throw const K2TransferException('no pending enrollment identity');
         }
-        return _requiredDevice().k2EnrollmentProof(id,
-            now: _nowMs,
-            locator: locator,
-            reservationRequestId: reservationRequestId,
-            deviceName: deviceName,
-            challenge: challenge,
-            keyPackage: keyPackage,
-            claimTokenHash: claimTokenHash,
-            deviceSecretHash: deviceSecretHash,
-            initialSessionHash: initialSessionHash);
+        return _requiredDevice().k2EnrollmentProof(
+          id,
+          now: _nowMs,
+          locator: locator,
+          reservationRequestId: reservationRequestId,
+          deviceName: deviceName,
+          challenge: challenge,
+          keyPackage: keyPackage,
+          claimTokenHash: claimTokenHash,
+          deviceSecretHash: deviceSecretHash,
+          initialSessionHash: initialSessionHash,
+        );
       });
 
   @override
-  Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
-          {required int approvedAt}) =>
+  Future<bool> k2VerifyPendingApproval(
+    K2TransferId id,
+    List<int> approvalTag, {
+    required int approvedAt,
+  }) =>
       _serial(() async {
         final first = _firstState;
         final accountId = _accountId;
@@ -4629,19 +5075,31 @@ class NativeCryptoService
         // A scratch device from the frozen state: the approval is applied in
         // memory only and the copy is closed, so nothing is sealed, stored
         // or changed on the pending identity.
-        final scratch = _formatChecked(() => bindings.restoreRecords(accountId,
-                deviceId, first.stateKey, first.counter, first.sealedState, [
+        final scratch = _formatChecked(
+          () => bindings.restoreRecords(
+            accountId,
+            deviceId,
+            first.stateKey,
+            first.counter,
+            first.sealedState,
+            [
               for (final change in first.changes)
-                if (change.sealed != null) change.sealed!
-            ]));
+                if (change.sealed != null) change.sealed!,
+            ],
+          ),
+        );
         try {
           // approved_at is the server's clock. A clock here that runs behind
           // it would make native refuse a genuine approval as one from the
           // future, so only this scratch check lifts `now` to it. The tag and
           // the link-expiry bound are still checked natively, and the real
           // apply after promotion keeps the real clock and its retry.
-          scratch.device.k2ApplyApproval(id, approvalTag,
-              approvedAt: approvedAt, now: max(_nowMs, approvedAt));
+          scratch.device.k2ApplyApproval(
+            id,
+            approvalTag,
+            approvedAt: approvedAt,
+            now: max(_nowMs, approvedAt),
+          );
           return true;
         } on NativeCryptoException catch (err) {
           if (err.kind == NativeCryptoError.operationFailed) return false;
@@ -4667,41 +5125,71 @@ class NativeCryptoService
 
   @override
   Future<List<int>> k2SourceCommitment(
-          String serverOrigin, List<int> sourceRandom) =>
-      _serial(() async =>
-          _requiredDevice().k2SourceCommitment(serverOrigin, sourceRandom));
+    String serverOrigin,
+    List<int> sourceRandom,
+  ) =>
+      _serial(
+        () async =>
+            _requiredDevice().k2SourceCommitment(serverOrigin, sourceRandom),
+      );
 
   @override
-  Future<int> k2ApplyApproval(K2TransferId id, List<int> approvalTag,
-          {required int approvedAt}) =>
-      _serial(() => _transferMutation<int>((device) async =>
-          device.k2ApplyApproval(id, approvalTag,
-              approvedAt: approvedAt, now: _nowMs)));
+  Future<int> k2ApplyApproval(
+    K2TransferId id,
+    List<int> approvalTag, {
+    required int approvedAt,
+  }) =>
+      _serial(
+        () => _transferMutation<int>(
+          (device) async => device.k2ApplyApproval(
+            id,
+            approvalTag,
+            approvedAt: approvedAt,
+            now: _nowMs,
+          ),
+        ),
+      );
 
   @override
-  Future<K2Verification> k2SourceAccept(K2LinkContext context, List<int> secret,
-          {required int originalExpiresAt,
-          required List<int> transcriptHash,
-          required List<int> claimTag,
-          required List<int> sourceRandom}) =>
-      _serial(() => _transferMutation<K2Verification>((device) async =>
-          device.k2SourceAccept(context, secret,
-              originalExpiresAt: originalExpiresAt,
-              now: _nowMs,
-              transcriptHash: transcriptHash,
-              claimTag: claimTag,
-              sourceRandom: sourceRandom)));
+  Future<K2Verification> k2SourceAccept(
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+    required List<int> transcriptHash,
+    required List<int> claimTag,
+    required List<int> sourceRandom,
+  }) =>
+      _serial(
+        () => _transferMutation<K2Verification>(
+          (device) async => device.k2SourceAccept(
+            context,
+            secret,
+            originalExpiresAt: originalExpiresAt,
+            now: _nowMs,
+            transcriptHash: transcriptHash,
+            claimTag: claimTag,
+            sourceRandom: sourceRandom,
+          ),
+        ),
+      );
 
   @override
-  Future<int> k2SourceConfirm(K2TransferId id, String typedSas,
-      {required String recipientDeviceId,
-      required String claimRequestHash}) async {
+  Future<int> k2SourceConfirm(
+    K2TransferId id,
+    String typedSas, {
+    required String recipientDeviceId,
+    required String claimRequestHash,
+  }) async {
     // Read the link's original expiry first: the row's latest deadline.
     final original =
         (await k2Inspect(id)).originalExpiresAt + _k2TransferWindowMs;
-    return _serial(() => _transferMutation<int>((device) async {
-          final existing =
-              await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId);
+    return _serial(
+      () => _transferMutation<int>(
+        (device) async {
+          final existing = await localStore.loadHistoryTransfer(
+            id.serverOrigin,
+            id.linkId,
+          );
           if (existing != null &&
               (existing.direction != historyTransferOutgoing ||
                   existing.stage != HistoryTransferStage.approving)) {
@@ -4716,19 +5204,21 @@ class NativeCryptoService
           }
           return device.k2SourceConfirm(id, typedSas, now: _nowMs);
         },
-            row: (_) async => HistoryTransferProgress(
-                  origin: id.serverOrigin,
-                  linkId: id.linkId,
-                  direction: historyTransferOutgoing,
-                  accountId: _accountId!,
-                  deviceId: _deviceId!,
-                  peerDeviceId: recipientDeviceId,
-                  stage: HistoryTransferStage.approving,
-                  expiresAt: original,
-                  payloadJson: jsonEncode(<String, Object?>{
-                    'claim_request_hash': claimRequestHash
-                  }),
-                )));
+        row: (_) async => HistoryTransferProgress(
+          origin: id.serverOrigin,
+          linkId: id.linkId,
+          direction: historyTransferOutgoing,
+          accountId: _accountId!,
+          deviceId: _deviceId!,
+          peerDeviceId: recipientDeviceId,
+          stage: HistoryTransferStage.approving,
+          expiresAt: original,
+          payloadJson: jsonEncode(<String, Object?>{
+            'claim_request_hash': claimRequestHash,
+          }),
+        ),
+      ),
+    );
   }
 
   @override
@@ -4742,8 +5232,10 @@ class NativeCryptoService
       });
 
   @override
-  Future<HistoryTransferProgress> k2SourcePrepare(K2TransferId id,
-          {required String cacheDirectory}) =>
+  Future<HistoryTransferProgress> k2SourcePrepare(
+    K2TransferId id, {
+    required String cacheDirectory,
+  }) =>
       _serial(() async {
         k2RequireLinkId(id.linkId);
         final row = await _transferRow(id, historyTransferOutgoing);
@@ -4762,18 +5254,22 @@ class NativeCryptoService
               // The exporter allocated this counter and creation time in its
               // own transaction; native binds exactly these to the bundle.
               final snapshot = HistorySnapshot.decode(encoded);
-              final stream = device.k2SourceBegin(id,
-                  now: _nowMs,
-                  createdAt: snapshot.createdAt,
-                  snapshotCounter: snapshot.counter,
-                  plaintextVersion: k2HistoryPlaintextVersion,
-                  payloadLength: encoded.length);
+              final stream = device.k2SourceBegin(
+                id,
+                now: _nowMs,
+                createdAt: snapshot.createdAt,
+                snapshotCounter: snapshot.counter,
+                plaintextVersion: k2HistoryPlaintextVersion,
+                payloadLength: encoded.length,
+              );
               try {
                 var offset = 0;
                 while (offset < encoded.length) {
                   final end = min(encoded.length, offset + _k2ChunkBytes);
                   offset = stream.write(
-                      offset, Uint8List.sublistView(encoded, offset, end));
+                    offset,
+                    Uint8List.sublistView(encoded, offset, end),
+                  );
                 }
                 final bundle = stream.sourceFinish(now: _nowMs);
                 final directory = Directory(cacheDirectory);
@@ -4784,8 +5280,11 @@ class NativeCryptoService
                 }
                 final path = '$cacheDirectory${Platform.pathSeparator}'
                     '$_k2SourcePrefix${bundle.transferId}$_k2SourceSuffix';
-                cached =
-                    await _drainCiphertext(stream, bundle.ciphertextSize, path);
+                cached = await _drainCiphertext(
+                  stream,
+                  bundle.ciphertextSize,
+                  path,
+                );
                 return row.copyWith(
                   stage: HistoryTransferStage.snapshotReady,
                   transferId: bundle.transferId,
@@ -4809,7 +5308,9 @@ class NativeCryptoService
           if (file != null) {
             try {
               final stored = await localStore.loadHistoryTransfer(
-                  id.serverOrigin, id.linkId);
+                id.serverOrigin,
+                id.linkId,
+              );
               if (stored?.filePath != file.path && file.existsSync()) {
                 file.deleteSync();
               }
@@ -4822,7 +5323,10 @@ class NativeCryptoService
   /// Drains the source stream's ciphertext into [path] (private working
   /// directory): a temporary file, flushed, then renamed. Never plaintext.
   Future<File> _drainCiphertext(
-      K2HistoryStream stream, int size, String path) async {
+    K2HistoryStream stream,
+    int size,
+    String path,
+  ) async {
     final temporary = File('$path.part');
     final handle = temporary.openSync(mode: FileMode.write);
     var closed = false;
@@ -4850,28 +5354,31 @@ class NativeCryptoService
   }
 
   @override
-  Future<HistoryTransferProgress> k2SourcePosted(K2TransferId id) =>
-      _serial(() => _transferMutation<HistoryTransferProgress>((device) async {
-            final row = await _transferRow(id, historyTransferOutgoing);
-            if (row.stage == HistoryTransferStage.uploaded) {
-              // A retry after the commit: native posted is idempotent.
-              device.k2SourcePosted(id, now: _nowMs);
-              return row;
-            }
-            if (row.stage != HistoryTransferStage.snapshotReady) {
-              throw const K2TransferException('no cached copy to post');
-            }
+  Future<HistoryTransferProgress> k2SourcePosted(K2TransferId id) => _serial(
+        () => _transferMutation<HistoryTransferProgress>((device) async {
+          final row = await _transferRow(id, historyTransferOutgoing);
+          if (row.stage == HistoryTransferStage.uploaded) {
+            // A retry after the commit: native posted is idempotent.
             device.k2SourcePosted(id, now: _nowMs);
-            return row.copyWith(stage: HistoryTransferStage.uploaded);
-          }, row: (progress) async => progress));
+            return row;
+          }
+          if (row.stage != HistoryTransferStage.snapshotReady) {
+            throw const K2TransferException('no cached copy to post');
+          }
+          device.k2SourcePosted(id, now: _nowMs);
+          return row.copyWith(stage: HistoryTransferStage.uploaded);
+        }, row: (progress) async => progress),
+      );
 
   @override
-  Future<HistoryTransferProgress> k2ReceiveHandoff(K2TransferId id,
-          {required List<int> handoff,
-          required String transferId,
-          required List<int> ciphertextSha256,
-          required int ciphertextSize,
-          required String downloadPath}) =>
+  Future<HistoryTransferProgress> k2ReceiveHandoff(
+    K2TransferId id, {
+    required List<int> handoff,
+    required String transferId,
+    required List<int> ciphertextSha256,
+    required int ciphertextSize,
+    required String downloadPath,
+  }) =>
       _serial(() async {
         k2RequireLinkId(id.linkId);
         final row = await _transferRow(id, historyTransferIncoming);
@@ -4883,8 +5390,12 @@ class NativeCryptoService
           return row;
         }
         return _transferMutation<HistoryTransferProgress>((device) async {
-          final begun = device.k2ReceiveBeginBundle(id, handoff,
-              now: _nowMs, plaintextVersion: k2HistoryPlaintextVersion);
+          final begun = device.k2ReceiveBeginBundle(
+            id,
+            handoff,
+            now: _nowMs,
+            plaintextVersion: k2HistoryPlaintextVersion,
+          );
           begun.stream.close();
           if (begun.transferId != transferId ||
               !_sameBytes(begun.ciphertextHash, ciphertextSha256) ||
@@ -4907,8 +5418,11 @@ class NativeCryptoService
   /// ciphertext file. The caller closes the stream. The digest, header and
   /// every chunk are checked by native before any plaintext can be read.
   ({K2HistoryStream stream, K2OpenedBundleResult opened}) _openReceivedBundle(
-      NativeCryptoDevice device, K2TransferId id, HistoryTransferProgress row,
-      {bool reportRejection = false}) {
+    NativeCryptoDevice device,
+    K2TransferId id,
+    HistoryTransferProgress row, {
+    bool reportRejection = false,
+  }) {
     if (row.handoff == null ||
         row.transferId == null ||
         row.ciphertextSha256 == null ||
@@ -4916,8 +5430,12 @@ class NativeCryptoService
         row.filePath == null) {
       throw const K2TransferException('no handoff is stored');
     }
-    final begun = device.k2ReceiveBeginBundle(id, row.handoff!,
-        now: _nowMs, plaintextVersion: k2HistoryPlaintextVersion);
+    final begun = device.k2ReceiveBeginBundle(
+      id,
+      row.handoff!,
+      now: _nowMs,
+      plaintextVersion: k2HistoryPlaintextVersion,
+    );
     final stream = begun.stream;
     // Native refusing the ciphertext itself (digest, header or a chunk
     // failing authentication) is a rejection of the bytes; every other
@@ -4947,8 +5465,9 @@ class NativeCryptoService
       try {
         var offset = 0;
         while (offset < begun.ciphertextSize) {
-          final chunk = handle
-              .readSync(min(_k2ChunkBytes, begun.ciphertextSize - offset));
+          final chunk = handle.readSync(
+            min(_k2ChunkBytes, begun.ciphertextSize - offset),
+          );
           if (chunk.isEmpty) {
             throw const K2TransferException('the download is incomplete');
           }
@@ -4972,9 +5491,12 @@ class NativeCryptoService
         final row = await _transferRow(id, historyTransferIncoming);
         await _requiredState();
         try {
-          _openReceivedBundle(_requiredDevice(), id, row, reportRejection: true)
-              .stream
-              .close();
+          _openReceivedBundle(
+            _requiredDevice(),
+            id,
+            row,
+            reportRejection: true,
+          ).stream.close();
           return true;
         } on _K2BundleRejected {
           // Only the native digest, header or chunk authentication failing
@@ -5015,7 +5537,10 @@ class NativeCryptoService
                 throw const K2TransferException('the history is too long');
               }
               payload.setRange(
-                  offset, offset + chunk.bytes.length, chunk.bytes);
+                offset,
+                offset + chunk.bytes.length,
+                chunk.bytes,
+              );
             } finally {
               _wipe(chunk.bytes);
             }
@@ -5029,16 +5554,18 @@ class NativeCryptoService
           // header's, never the snapshot's own claims: the importer refuses
           // a snapshot whose inner values differ.
           await localStore.importHistorySnapshot(
-              payload,
-              HistoryImportContext(
-                  origin: id.serverOrigin,
-                  accountId: row.accountId,
-                  sourceDeviceId: row.peerDeviceId,
-                  recipientDeviceId: row.deviceId,
-                  transferId: row.transferId!,
-                  digest: _hex(row.ciphertextSha256!),
-                  snapshotCounter: bundle.opened.snapshotCounter,
-                  snapshotCreatedAt: bundle.opened.createdAt));
+            payload,
+            HistoryImportContext(
+              origin: id.serverOrigin,
+              accountId: row.accountId,
+              sourceDeviceId: row.peerDeviceId,
+              recipientDeviceId: row.deviceId,
+              transferId: row.transferId!,
+              digest: _hex(row.ciphertextSha256!),
+              snapshotCounter: bundle.opened.snapshotCounter,
+              snapshotCreatedAt: bundle.opened.createdAt,
+            ),
+          );
         } finally {
           bundle.stream.close();
           _wipe(payload);
@@ -5059,8 +5586,10 @@ class NativeCryptoService
 
   @override
   Future<void> k2Abandon(K2TransferId id) => _serial(() async {
-        await _removeTransfer(id,
-            await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId));
+        await _removeTransfer(
+          id,
+          await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId),
+        );
       });
 
   @override
@@ -5126,7 +5655,9 @@ class NativeCryptoService
   /// then the ciphertext file, then the row. Each step is safe to repeat, so
   /// a crash between them is finished by the next call.
   Future<void> _removeTransfer(
-      K2TransferId id, HistoryTransferProgress? row) async {
+    K2TransferId id,
+    HistoryTransferProgress? row,
+  ) async {
     final previous = await _requiredState();
     try {
       if (_requiredDevice().k2Forget(id)) {
@@ -5152,9 +5683,13 @@ class NativeCryptoService
   /// The stored progress row of [id] for [direction] (either when null), or a
   /// [K2TransferException].
   Future<HistoryTransferProgress> _transferRow(
-      K2TransferId id, String? direction) async {
-    final row =
-        await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId);
+    K2TransferId id,
+    String? direction,
+  ) async {
+    final row = await localStore.loadHistoryTransfer(
+      id.serverOrigin,
+      id.linkId,
+    );
     if (row == null || (direction != null && row.direction != direction)) {
       throw const K2TransferException('no such transfer');
     }
@@ -5178,15 +5713,17 @@ class NativeCryptoService
       final cursor = await localStore.loadSyncCursor();
       if (progress == null) {
         await localStore.commitLocalMlsState(
-            expectedCounter: previous.counter,
-            expectedCursor: cursor,
-            state: next);
+          expectedCounter: previous.counter,
+          expectedCursor: cursor,
+          state: next,
+        );
       } else {
         await localStore.commitHistoryTransferState(
-            expectedCounter: previous.counter,
-            expectedCursor: cursor,
-            state: next,
-            transfer: progress);
+          expectedCounter: previous.counter,
+          expectedCursor: cursor,
+          state: next,
+          transfer: progress,
+        );
       }
       return result;
     } catch (_) {
@@ -5210,8 +5747,9 @@ class NativeCryptoService
     }
   }
 
-  Future<StoredCryptoState> _requiredState(
-      {void Function()? checkCanCommit}) async {
+  Future<StoredCryptoState> _requiredState({
+    void Function()? checkCanCommit,
+  }) async {
     // A pending enrollment's fresh device must never be sealed over the state
     // already stored here; only activateSession may adopt or replace it.
     if (_pendingEnrollment) {
@@ -5255,10 +5793,16 @@ class NativeCryptoService
             deviceId == null) {
           throw StateError('native MLS device is not active');
         }
-        final restored = await _restoreCommitted(accountId, deviceId,
-            minimumCounter: _deviceCounter ?? 0);
-        final handle = _TrackedCallGroup(restored.device, bindings,
-            onClose: (handle) => _callGroups.remove(handle));
+        final restored = await _restoreCommitted(
+          accountId,
+          deviceId,
+          minimumCounter: _deviceCounter ?? 0,
+        );
+        final handle = _TrackedCallGroup(
+          restored.device,
+          bindings,
+          onClose: (handle) => _callGroups.remove(handle),
+        );
         _callGroups.add(handle);
         return handle;
       });
@@ -5334,7 +5878,9 @@ class NativeCryptoService
   /// group restored again. Any other error, including a [ratchetAdvanced]
   /// one from either attempt, is rethrown.
   Future<List<int>?> _decryptOrUndecryptable(
-      StoredCryptoState previous, List<int> Function() decrypt) async {
+    StoredCryptoState previous,
+    List<int> Function() decrypt,
+  ) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         return decrypt();
@@ -5392,8 +5938,11 @@ class NativeCryptoService
     try {
       // The committed state, which is [previous] unless a commit landed
       // whose outcome was lost; never an older one.
-      restored = await _restoreCommitted(_accountId!, _deviceId!,
-          minimumCounter: previous.counter);
+      restored = await _restoreCommitted(
+        _accountId!,
+        _deviceId!,
+        minimumCounter: previous.counter,
+      );
     } catch (_) {
       _device?.close();
       _device = null;
@@ -5405,7 +5954,10 @@ class NativeCryptoService
   }
 
   static StoredCryptoState _sealedState(
-          int counter, List<int> stateKey, NativeChangeSet sealed) =>
+    int counter,
+    List<int> stateKey,
+    NativeChangeSet sealed,
+  ) =>
       StoredCryptoState(
         counter: counter,
         stateKey: List<int>.from(stateKey),
@@ -5434,15 +5986,21 @@ class NativeCryptoService
   /// section 5); the device then comes from what was stored, so the
   /// migrated records are read back before anything builds on them.
   Future<({NativeCryptoDevice device, int counter})> _openStored(
-      String accountId, String deviceId, StoredCryptoState stored,
-      {void Function()? checkCanCommit}) async {
+    String accountId,
+    String deviceId,
+    StoredCryptoState stored, {
+    void Function()? checkCanCommit,
+  }) async {
     if (_isLegacyFormat(stored.sealedState)) {
-      final migrated = _formatChecked(() => bindings.migrateLegacyState(
+      final migrated = _formatChecked(
+        () => bindings.migrateLegacyState(
           accountId,
           deviceId,
           stored.stateKey,
           stored.counter,
-          stored.sealedState));
+          stored.sealedState,
+        ),
+      );
       try {
         final next = stored.counter + 1;
         final sealed = migrated.device.sealChanges(stored.stateKey, next);
@@ -5457,16 +6015,21 @@ class NativeCryptoService
         migrated.device.close();
       }
     }
-    return _restoreCommitted(accountId, deviceId,
-        minimumCounter: stored.counter);
+    return _restoreCommitted(
+      accountId,
+      deviceId,
+      minimumCounter: stored.counter,
+    );
   }
 
   /// Restores the committed state: the root and every record, read in one
   /// transaction. Its generation must equal the stored counter, which must
   /// be at least [minimumCounter].
   Future<({NativeCryptoDevice device, int counter})> _restoreCommitted(
-      String accountId, String deviceId,
-      {required int minimumCounter}) async {
+    String accountId,
+    String deviceId, {
+    required int minimumCounter,
+  }) async {
     final snapshot = await localStore.loadCryptoSnapshot();
     final state = snapshot.state;
     if (state == null) {
@@ -5475,13 +6038,16 @@ class NativeCryptoService
     if (state.counter < minimumCounter) {
       throw StateError('MLS rollback counter mismatch');
     }
-    final restored = _formatChecked(() => bindings.restoreRecords(
+    final restored = _formatChecked(
+      () => bindings.restoreRecords(
         accountId,
         deviceId,
         state.stateKey,
         state.counter,
         state.sealedState,
-        [for (final record in snapshot.records) record.sealed]));
+        [for (final record in snapshot.records) record.sealed],
+      ),
+    );
     if (restored.generation != state.counter) {
       restored.device.close();
       throw StateError('MLS rollback counter mismatch');
@@ -5533,11 +6099,13 @@ class NativeCryptoService
 /// The app-level form of a native record-limit error: names the
 /// conversation when the record is its group (kind 2), else nothing.
 CryptoRecordLimitExceeded recordLimitFromNative(
-        NativeRecordLimitException error) =>
+  NativeRecordLimitException error,
+) =>
     CryptoRecordLimitExceeded(
-        conversationId: error.recordKind == 2 && error.recordId.isNotEmpty
-            ? String.fromCharCodes(error.recordId)
-            : null);
+      conversationId: error.recordKind == 2 && error.recordId.isNotEmpty
+          ? String.fromCharCodes(error.recordId)
+          : null,
+    );
 
 List<int> _randomBytes(int length) {
   final random = Random.secure();
@@ -5616,25 +6184,31 @@ List<MessageEffect> profileKeyEffects(
   }
   final accountKey = parseProfileKey(account);
   if (accountKey != null) {
-    effects.add(ProfileKeyEffect(
+    effects.add(
+      ProfileKeyEffect(
         kind: profileSubjectAccount,
         subjectId: senderAccountId,
         key: accountKey.key,
         keyId: accountKey.keyId,
         version: accountKey.version,
-        receivedAt: receivedAt));
+        receivedAt: receivedAt,
+      ),
+    );
   }
   final groupKey = parseProfileKey(group);
   // Only a plain group has a group profile; a DM, a community or a channel
   // takes none (C3 may reuse this later). An unknown kind is refused too.
   if (groupKey != null && conversationKind == 'group') {
-    effects.add(ProfileKeyEffect(
+    effects.add(
+      ProfileKeyEffect(
         kind: profileSubjectConversation,
         subjectId: conversationId,
         key: groupKey.key,
         keyId: groupKey.keyId,
         version: groupKey.version,
-        receivedAt: receivedAt));
+        receivedAt: receivedAt,
+      ),
+    );
   }
   return effects;
 }
@@ -5660,8 +6234,10 @@ List<MessageEffect> messageEffectsFor(
   bool senderActsWithRole = true,
 }) {
   final body = payload.body;
-  final decoration = messageDecoration(body,
-      members: authority?.memberAccounts(conversationId) ?? const {});
+  final decoration = messageDecoration(
+    body,
+    members: authority?.memberAccounts(conversationId) ?? const {},
+  );
   final forwarded = body['forwarded'];
   final rawHops = forwarded is Map ? forwarded['hops'] : null;
   final hops = rawHops is int ? rawHops.clamp(1, 5) : null;
@@ -5700,9 +6276,11 @@ List<MessageEffect> messageEffectsFor(
         ...keys(),
       ],
     AppPayloadType.reply => <MessageEffect>[
-        row(LocalMessageKind.text,
-            text: body['text'] as String,
-            replyTo: body['reply_to_id'] as String),
+        row(
+          LocalMessageKind.text,
+          text: body['text'] as String,
+          replyTo: body['reply_to_id'] as String,
+        ),
         ...keys(),
       ],
     AppPayloadType.edit => <MessageEffect>[
@@ -5748,23 +6326,24 @@ List<MessageEffect> messageEffectsFor(
     AppPayloadType.pin => <MessageEffect>[
         row(LocalMessageKind.action),
         if (pinAllowed(
-            kind: authority?.conversationKind(conversationId),
-            role: senderActsWithRole
-                ? authority?.roleOf(conversationId, senderAccountId)
-                : null))
+          kind: authority?.conversationKind(conversationId),
+          role: senderActsWithRole
+              ? authority?.roleOf(conversationId, senderAccountId)
+              : null,
+        ))
           PinMessageEffect(
-              conversationId: conversationId,
-              targetKey: body['message_id'] as String,
-              accountId: senderAccountId,
-              at: createdAt,
-              pinned: body['pinned'] as bool,
-              durationSeconds: body['pinned'] == true
-                  ? body['duration_seconds'] as int
-                  : null,
-              channelId: payload.channelId,
-              pendingActionKey: state == LocalMessageState.pending
-                  ? messageKey(senderDeviceId, payload.actionId)
-                  : null),
+            conversationId: conversationId,
+            targetKey: body['message_id'] as String,
+            accountId: senderAccountId,
+            at: createdAt,
+            pinned: body['pinned'] as bool,
+            durationSeconds:
+                body['pinned'] == true ? body['duration_seconds'] as int : null,
+            channelId: payload.channelId,
+            pendingActionKey: state == LocalMessageState.pending
+                ? messageKey(senderDeviceId, payload.actionId)
+                : null,
+          ),
       ],
     AppPayloadType.poll => <MessageEffect>[
         row(LocalMessageKind.poll, text: pollRowBody(body)),
@@ -5772,10 +6351,7 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.profileKey ||
     AppPayloadType.groupProfileKey =>
-      <MessageEffect>[
-        row(LocalMessageKind.action),
-        ...keys(),
-      ],
+      <MessageEffect>[row(LocalMessageKind.action), ...keys()],
     AppPayloadType.pollVote => <MessageEffect>[
         row(LocalMessageKind.action),
         PollVoteEffect(
@@ -5795,21 +6371,27 @@ List<MessageEffect> messageEffectsFor(
           channelId: payload.channelId,
         ),
       ],
-    AppPayloadType.callSignal =>
-      throw const FormatException('call signals are not messages'),
+    AppPayloadType.callSignal => throw const FormatException(
+        'call signals are not messages',
+      ),
     AppPayloadType.infoKey ||
     AppPayloadType.infoKeyRequest ||
     AppPayloadType.infoUpdate =>
-      throw const FormatException('community info payloads are not messages'),
+      throw const FormatException(
+        'community info payloads are not messages',
+      ),
     AppPayloadType.memberLeave ||
     AppPayloadType.memberLeaveSigned =>
       throw const FormatException('leave proofs are not messages'),
-    AppPayloadType.deviceListAlert =>
-      throw const FormatException('device list alerts are not messages'),
+    AppPayloadType.deviceListAlert => throw const FormatException(
+        'device list alerts are not messages',
+      ),
     AppPayloadType.historyChange ||
     AppPayloadType.historySync ||
     AppPayloadType.historySyncRequest =>
-      throw const FormatException('C7 history payloads are not messages'),
+      throw const FormatException(
+        'C7 history payloads are not messages',
+      ),
     AppPayloadType.reportKey ||
     AppPayloadType.reportKeyRequest =>
       throw const FormatException('report key payloads are not messages'),
@@ -5854,9 +6436,9 @@ CommunityInfoEvent communityInfoEventFor(
   );
 }
 
-String _randomIdempotencyKey() => _randomBytes(24)
-    .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-    .join();
+String _randomIdempotencyKey() => _randomBytes(
+      24,
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
 /// The epoch an MLS commit was built on, read from its clear header, or null
 /// when [message] is not an MLS 1.0 public or private message of the group
@@ -5913,7 +6495,10 @@ int? mlsMessageEpoch(List<int> message, String groupId) {
 /// moderator. Everyone else's messages it may delete (`mayActOn`): an
 /// account the record does not name is a member.
 Set<String>? moderatorProtectsFor(
-    ConversationAuthority? authority, String conversationId, String actor) {
+  ConversationAuthority? authority,
+  String conversationId,
+  String actor,
+) {
   final roles =
       authority is VerifiedRoleSource ? authority as VerifiedRoleSource : null;
   final GovernanceState? record;
@@ -6001,7 +6586,9 @@ extension _C7Engine on NativeCryptoService {
 
   String? _c7CommunityOf(String conversationId) => switch (_authority) {
         final ConversationCommunitySource source =>
-          source.conversationCommunity(conversationId),
+          source.conversationCommunity(
+            conversationId,
+          ),
         _ => null,
       };
 
@@ -6038,7 +6625,10 @@ extension _C7Engine on NativeCryptoService {
   }) async {
     final moves = await _c7LoadMoves();
     final probe = C7Move(
-        channelId: channelId, fromConversationId: from, toConversationId: to);
+      channelId: channelId,
+      fromConversationId: from,
+      toConversationId: to,
+    );
     final known = moves.where(probe.same).firstOrNull;
     final C7Move next;
     if (own) {
@@ -6072,7 +6662,10 @@ extension _C7Engine on NativeCryptoService {
   /// reached (option A), unless the move is already known with a wrap or
   /// imported.
   List<C7Move> _c7MovesWithWrap(
-      List<C7Move> moves, C7Move probe, C7MoveWrap wrap) {
+    List<C7Move> moves,
+    C7Move probe,
+    C7MoveWrap wrap,
+  ) {
     final known = moves.where(probe.same).firstOrNull;
     if (known != null && (known.wrapKey != null || known.imported)) {
       return moves;
@@ -6102,15 +6695,19 @@ extension _C7Engine on NativeCryptoService {
 
   Future<C7GroupState> _c7LoadGroup(String conversationId) async =>
       C7GroupState.decode(
-          await localStore.loadSetting(c7GroupSetting(conversationId)));
+        await localStore.loadSetting(c7GroupSetting(conversationId)),
+      );
 
   Future<C7ChannelBook> _c7LoadBook(
-          String conversationId, String channelId) async =>
+    String conversationId,
+    String channelId,
+  ) async =>
       C7ChannelBook.decode(
-          await localStore
-              .loadSetting(c7ChannelSetting(conversationId, channelId)),
-          channelId,
-          conversationId);
+        await localStore
+            .loadSetting(c7ChannelSetting(conversationId, channelId)),
+        channelId,
+        conversationId,
+      );
 
   /// The channels a `history_sync` from this device names besides those it
   /// keeps a chain for: the server's list and a private group's own channel
@@ -6148,8 +6745,10 @@ extension _C7Engine on NativeCryptoService {
   /// channel fetches them more than once; the first fetch of a device
   /// wins).
   List<C7FormerKey> _c7ImportKeys(
-      C7ImportState state, List<C7FormerKey> fetched,
-      {required bool first}) {
+    C7ImportState state,
+    List<C7FormerKey> fetched, {
+    required bool first,
+  }) {
     if (!first) return state.keys;
     final out = <C7FormerKey>[...state.keys];
     for (final key in fetched) {
@@ -6160,8 +6759,11 @@ extension _C7Engine on NativeCryptoService {
 
   /// The settings that store [group] and [books] (each book's channel joins
   /// the group's channel list).
-  Map<String, String?> _c7Put(String conversationId, C7GroupState group,
-      Iterable<C7ChannelBook> books) {
+  Map<String, String?> _c7Put(
+    String conversationId,
+    C7GroupState group,
+    Iterable<C7ChannelBook> books,
+  ) {
     final out = <String, String?>{};
     final channels = <String>{...group.channels};
     for (final book in books) {
@@ -6202,7 +6804,9 @@ extension _C7Engine on NativeCryptoService {
   /// or null when it holds no leaf there (decision 8: records and slots are
   /// checked only against keys in the tree).
   ({String accountId, Uint8List key})? _c7TreeKey(
-      String conversationId, String deviceId) {
+    String conversationId,
+    String deviceId,
+  ) {
     try {
       for (final leaf in _requiredDevice().groupMembers(conversationId)) {
         if (utf8.decode(leaf.deviceId) == deviceId) {
@@ -6237,7 +6841,10 @@ extension _C7Engine on NativeCryptoService {
   /// opened a generation that removal closes: the removal's generation is
   /// derived from the kept root (decision 5, "Rekey").
   C7ChannelBook _c7CatchUp(
-      C7ChannelBook book, C7GroupState group, String communityId) {
+    C7ChannelBook book,
+    C7GroupState group,
+    String communityId,
+  ) {
     final root = group.root;
     final rootEpoch = group.rootEpoch;
     if (root == null ||
@@ -6248,9 +6855,13 @@ extension _C7Engine on NativeCryptoService {
       return book;
     }
     return book.rekey(
-        rootEpoch,
-        C7Keys(bindings).rekeyChk(
-            root: root, communityId: communityId, channelId: book.channelId));
+      rootEpoch,
+      C7Keys(bindings).rekeyChk(
+        root: root,
+        communityId: communityId,
+        channelId: book.channelId,
+      ),
+    );
   }
 
   // ---- commits and Welcomes -------------------------------------------------
@@ -6263,8 +6874,10 @@ extension _C7Engine on NativeCryptoService {
   /// `history_sync` duty, due at once when this device committed ([own])
   /// and after a jittered delay otherwise.
   Future<Map<String, String?>> _c7Commit(
-      String conversationId, C7CommitOutcome outcome,
-      {required bool own}) async {
+    String conversationId,
+    C7CommitOutcome outcome, {
+    required bool own,
+  }) async {
     if (!_c7Active(conversationId)) return _c7None;
     final group = await _c7LoadGroup(conversationId);
     final next = group.afterCommit(outcome);
@@ -6276,23 +6889,28 @@ extension _C7Engine on NativeCryptoService {
     final books = <C7ChannelBook>[];
     for (final channel in group.channels) {
       final book = await _c7LoadBook(conversationId, channel);
-      books.add(root != null && community != null
-          ? book.rekey(
-              epoch,
-              C7Keys(bindings).rekeyChk(
-                  root: root, communityId: community, channelId: channel))
-          : book);
+      books.add(
+        root != null && community != null
+            ? book.rekey(
+                epoch,
+                C7Keys(bindings).rekeyChk(
+                  root: root,
+                  communityId: community,
+                  channelId: channel,
+                ),
+              )
+            : book,
+      );
     }
     final due = _c7NowMs() + (own ? 0 : _c7FallbackDelayMs(conversationId));
     return _c7Put(
       conversationId,
       next.withSnapshot(
-        epoch,
-        <String, C7SlotSnapshot>{
-          for (final book in books) book.channelId: book.snapshot(epoch),
-        },
-        due,
-      ),
+          epoch,
+          <String, C7SlotSnapshot>{
+            for (final book in books) book.channelId: book.snapshot(epoch),
+          },
+          due),
       books,
     );
   }
@@ -6301,14 +6919,17 @@ extension _C7Engine on NativeCryptoService {
   /// the group id from an earlier membership is dropped (Trace 4, the re-add
   /// wipe) and the request timer starts.
   Future<Map<String, String?>> _c7Welcome(
-      String conversationId, int joinEpoch) async {
+    String conversationId,
+    int joinEpoch,
+  ) async {
     if (!c7SealedBodies) return _c7None;
     final old = await _c7LoadGroup(conversationId);
     return <String, String?>{
       ..._c7Wipe(conversationId, old),
-      c7GroupSetting(conversationId): C7GroupState.joined(joinEpoch,
-              requestDueAtMs: _c7NowMs() + c7RequestDelay.inMilliseconds)
-          .encode(),
+      c7GroupSetting(conversationId): C7GroupState.joined(
+        joinEpoch,
+        requestDueAtMs: _c7NowMs() + c7RequestDelay.inMilliseconds,
+      ).encode(),
     };
   }
 
@@ -6415,7 +7036,10 @@ extension _C7Engine on NativeCryptoService {
   /// [effects] with the row [key] recorded as sealed under the C7
   /// generation [gen] (decision 7); unchanged when [gen] is null.
   List<MessageEffect> _c7Recorded(
-          List<MessageEffect> effects, String key, String? gen) =>
+    List<MessageEffect> effects,
+    String key,
+    String? gen,
+  ) =>
       gen == null
           ? effects
           : <MessageEffect>[
@@ -6452,15 +7076,18 @@ extension _C7Engine on NativeCryptoService {
     final C7CompactRecord compact;
     final C7Record record;
     try {
-      compact =
-          C7CompactRecord.decode(base64Decode(payload.body['r']! as String));
-      record = compact.expand(C7RecordContext(
-        communityId: utf8.encode(community),
-        channelId: utf8.encode(channel),
-        groupId: utf8.encode(conversationId),
-        epoch: epoch,
-        actorDeviceId: utf8.encode(envelope.senderDeviceId),
-      ));
+      compact = C7CompactRecord.decode(
+        base64Decode(payload.body['r']! as String),
+      );
+      record = compact.expand(
+        C7RecordContext(
+          communityId: utf8.encode(community),
+          channelId: utf8.encode(channel),
+          groupId: utf8.encode(conversationId),
+          epoch: epoch,
+          actorDeviceId: utf8.encode(envelope.senderDeviceId),
+        ),
+      );
     } on Object {
       return _c7None;
     }
@@ -6480,8 +7107,12 @@ extension _C7Engine on NativeCryptoService {
       return _c7None;
     }
     final book = await _c7LoadBook(conversationId, channel);
-    final step = book.applyRecord(record, record.encode(),
-        source: C7Source.proposalLive, key: compact.key);
+    final step = book.applyRecord(
+      record,
+      record.encode(),
+      source: C7Source.proposalLive,
+      key: compact.key,
+    );
     if (step.row == C7Row.invalid) return _c7None;
     final next = _c7CatchUp(step.book, group, community);
     final applied = step.row == C7Row.adopt ||
@@ -6490,7 +7121,9 @@ extension _C7Engine on NativeCryptoService {
     return <String, String?>{
       ..._c7Put(conversationId, group, <C7ChannelBook>[
         book.lineAfter(
-            next, messageKey(envelope.senderDeviceId, envelope.idempotencyKey)),
+          next,
+          messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+        ),
       ]),
       // A wrap is taken only from a move this device applied into `full`.
       if (move && applied && next.mode == c7ModeFull)
@@ -6508,7 +7141,9 @@ extension _C7Engine on NativeCryptoService {
   /// applied now, or reported stale (sequenced after a membership commit:
   /// the app proposes it again) or lost (decision 4, "Own proposals").
   Future<Map<String, String?>> _c7OwnEcho(
-      String conversationId, String actionId) async {
+    String conversationId,
+    String actionId,
+  ) async {
     if (!_c7Active(conversationId)) return _c7None;
     final group = await _c7LoadGroup(conversationId);
     final community = _c7CommunityOf(conversationId);
@@ -6526,15 +7161,20 @@ extension _C7Engine on NativeCryptoService {
             !_c7MayRecord(conversationId, _accountId!)) {
           return _c7Put(conversationId, group, <C7ChannelBook>[rest]);
         }
-        final step = rest.applyRecord(record, late.record,
-            source: C7Source.proposalLive, key: late.key);
+        final step = rest.applyRecord(
+          record,
+          late.record,
+          source: C7Source.proposalLive,
+          key: late.key,
+        );
         return <String, String?>{
           ..._c7Put(conversationId, group, <C7ChannelBook>[
             rest.lineAfter(
-                community == null
-                    ? step.book
-                    : _c7CatchUp(step.book, group, community),
-                messageKey(_deviceId!, actionId)),
+              community == null
+                  ? step.book
+                  : _c7CatchUp(step.book, group, community),
+              messageKey(_deviceId!, actionId),
+            ),
           ]),
           if (record.reason == c7ReasonMove &&
               (step.row == C7Row.adopt ||
@@ -6554,23 +7194,30 @@ extension _C7Engine on NativeCryptoService {
       final record = pending.full;
       if (record.epoch < group.floor) {
         // Kept, so the app can propose the same setting again.
-        return _c7Put(conversationId, group,
-            <C7ChannelBook>[book.copyWith(ownNotice: 'stale')]);
+        return _c7Put(conversationId, group, <C7ChannelBook>[
+          book.copyWith(ownNotice: 'stale'),
+        ]);
       }
       if (!_c7MayRecord(conversationId, _accountId!)) {
         return _c7Put(conversationId, group, <C7ChannelBook>[
           book.copyWith(clearPending: true, ownNotice: 'lost'),
         ]);
       }
-      final step = book.applyRecord(record, pending.record,
-          source: C7Source.proposalLive, key: pending.key, ownProposal: true);
+      final step = book.applyRecord(
+        record,
+        pending.record,
+        source: C7Source.proposalLive,
+        key: pending.key,
+        ownProposal: true,
+      );
       return <String, String?>{
         ..._c7Put(conversationId, group, <C7ChannelBook>[
           book.lineAfter(
-              community == null
-                  ? step.book
-                  : _c7CatchUp(step.book, group, community),
-              messageKey(_deviceId!, actionId)),
+            community == null
+                ? step.book
+                : _c7CatchUp(step.book, group, community),
+            messageKey(_deviceId!, actionId),
+          ),
         ]),
         // An own move that came back applied is no longer owed.
         if (record.reason == c7ReasonMove &&
@@ -6688,8 +7335,10 @@ extension _C7Engine on NativeCryptoService {
         continue;
       }
       final book = await _c7LoadBook(conversationId, slot.channelId);
-      final signer =
-          _c7TreeKey(conversationId, utf8.decode(record.actorDeviceId));
+      final signer = _c7TreeKey(
+        conversationId,
+        utf8.decode(record.actorDeviceId),
+      );
       if (book.hasHead) {
         if (signer == null ||
             !c7VerifyRecord(bindings, record, signer.key) ||
@@ -6700,8 +7349,13 @@ extension _C7Engine on NativeCryptoService {
           !c7VerifyRecord(bindings, record, signer.key)) {
         continue;
       }
-      final step = book.applyRecord(record, Uint8List.fromList(slot.head),
-          source: C7Source.report, key: slot.key, entry: entry);
+      final step = book.applyRecord(
+        record,
+        Uint8List.fromList(slot.head),
+        source: C7Source.report,
+        key: slot.key,
+        entry: entry,
+      );
       if (step.row == C7Row.invalid) continue;
       var next = _c7CatchUp(step.book, group, community);
       if (step.row == C7Row.noop && entry != null) {
@@ -6728,7 +7382,9 @@ extension _C7Engine on NativeCryptoService {
     final duty = group.duties[forEpoch];
     if (matches && duty != null && !duty.settled) {
       group = group.withDuty(
-          forEpoch, C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true));
+        forEpoch,
+        C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true),
+      );
     }
     if (newcomer) {
       // Usable: every channel this device knows is settled, by this
@@ -6751,12 +7407,14 @@ extension _C7Engine on NativeCryptoService {
             ? group.copyWith(
                 joinSynced: true,
                 reask: true,
-                requestDueAtMs: _c7NowMs() + c7ZeroHeadReask.inMilliseconds)
+                requestDueAtMs: _c7NowMs() + c7ZeroHeadReask.inMilliseconds,
+              )
             : group.copyWith(joinSynced: true, clearRequest: true);
       } else if (group.requestDueAtMs == null) {
         group = group.copyWith(
-            requestDueAtMs: _c7NowMs() +
-                c7RequestDelayAfter(group.requestsSent).inMilliseconds);
+          requestDueAtMs: _c7NowMs() +
+              c7RequestDelayAfter(group.requestsSent).inMilliseconds,
+        );
       }
     }
     return _c7Put(conversationId, group, changed);
@@ -6766,19 +7424,22 @@ extension _C7Engine on NativeCryptoService {
   /// snapshot for that commit sends again after its jittered delay, unless a
   /// matching `history_sync` arrives first.
   Future<Map<String, String?>> _c7ApplyRequest(
-      String conversationId, DecryptedAppPayload payload) async {
+    String conversationId,
+    DecryptedAppPayload payload,
+  ) async {
     if (!_c7Active(conversationId)) return _c7None;
     final forEpoch = payload.body['for_epoch'];
     if (forEpoch is! int) return _c7None;
     final group = await _c7LoadGroup(conversationId);
     if (!group.snapshots.containsKey(forEpoch)) return _c7None;
     return _c7Put(
-        conversationId,
-        group.withDuty(
-            forEpoch,
-            C7SyncDuty(
-                dueAtMs: _c7NowMs() + _c7FallbackDelayMs(conversationId))),
-        const <C7ChannelBook>[]);
+      conversationId,
+      group.withDuty(
+        forEpoch,
+        C7SyncDuty(dueAtMs: _c7NowMs() + _c7FallbackDelayMs(conversationId)),
+      ),
+      const <C7ChannelBook>[],
+    );
   }
 
   // ---- sending ------------------------------------------------------------------
@@ -6791,8 +7452,13 @@ extension _C7Engine on NativeCryptoService {
   /// the post. A target this device holds no generation for (sealed under
   /// a random key, before this period, before schema 41, or restored from
   /// a snapshot) gets a random key: a gap, never a leak.
-  Future<C7Gen?> _c7SealGen(String conversationId, String? channelId,
-      AppPayloadType type, int epoch, Map<String, Object?> body) async {
+  Future<C7Gen?> _c7SealGen(
+    String conversationId,
+    String? channelId,
+    AppPayloadType type,
+    int epoch,
+    Map<String, Object?> body,
+  ) async {
     final post = c7HistoryPostTypes.contains(type);
     if (channelId == null ||
         !(post || c7TargetedTypes.contains(type)) ||
@@ -6823,8 +7489,9 @@ extension _C7Engine on NativeCryptoService {
     required String? channelId,
     required int? layoutGeneration,
     required ({Uint8List vap1, Uint8List trailer}) Function(
-            String actionId, int epoch)
-        build,
+      String actionId,
+      int epoch,
+    ) build,
     required Map<String, String?> Function(String actionId, int epoch)
         settingsFor,
     ({Uint8List chk, int generation})? seal,
@@ -6946,7 +7613,10 @@ extension _C7Engine on NativeCryptoService {
     final group = await _c7LoadGroup(conversationId);
     // A proposal pending past its timeout no longer blocks (owner,
     // 2026-11-12); it moves to `late` in the write that stores this one.
-    var book = (await _c7LoadBook(conversationId, channelId))
+    var book = (await _c7LoadBook(
+      conversationId,
+      channelId,
+    ))
         .expirePending(_c7NowMs());
     if (book.pending != null && book.ownNotice != 'stale') {
       throw StateError('a history change is already pending here');
@@ -6988,9 +7658,11 @@ extension _C7Engine on NativeCryptoService {
         moveFrom == null ? null : moveAt?.close ?? _c7EpochOf(moveFrom);
     final head = old != null ? old.headRecord : book.headRecord;
     if (old == null && create != (head == null && book.chain.highestSeq < 0)) {
-      throw StateError(create
-          ? 'this channel already has a history record'
-          : 'a switch needs the record before it');
+      throw StateError(
+        create
+            ? 'this channel already has a history record'
+            : 'a switch needs the record before it',
+      );
     }
     // A closed channel recovers with a switch above every seq seen,
     // chained from its own head (decision 4, row 3 or 5).
@@ -7048,7 +7720,9 @@ extension _C7Engine on NativeCryptoService {
           sig: Uint8List(64),
         );
         final sig = device.c7Sign(
-            domain: c7HistorySignatureDomain, message: unsigned.signedFields());
+          domain: c7HistorySignatureDomain,
+          message: unsigned.signedFields(),
+        );
         signed = C7Record(
           communityId: unsigned.communityId,
           channelId: unsigned.channelId,
@@ -7114,7 +7788,9 @@ extension _C7Engine on NativeCryptoService {
   /// the snapshot fixed at that merge, and settles the duty with it. Null
   /// when it is no longer owed.
   Future<MessageEnvelope?> _c7SendSync(
-      String conversationId, int forEpoch) async {
+    String conversationId,
+    int forEpoch,
+  ) async {
     if (!_c7Active(conversationId)) return null;
     final group = await _c7LoadGroup(conversationId);
     final snapshot = group.snapshots[forEpoch];
@@ -7124,10 +7800,13 @@ extension _C7Engine on NativeCryptoService {
       return null;
     }
     final settled = group.withDuty(
-        forEpoch, C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true));
-    final extra = _c7KnownChannels(conversationId, group)
-        .where((channel) => !snapshot.containsKey(channel))
-        .toList();
+      forEpoch,
+      C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true),
+    );
+    final extra = _c7KnownChannels(
+      conversationId,
+      group,
+    ).where((channel) => !snapshot.containsKey(channel)).toList();
     if (snapshot.isEmpty && extra.isEmpty) {
       // Nothing to name: the duty is settled with nothing sent.
       final previous = await _requiredState();
@@ -7176,10 +7855,13 @@ extension _C7Engine on NativeCryptoService {
       expectedCursor: await localStore.loadSyncCursor(),
       state: _sealNext(previous),
       c7Settings: _c7Put(
-          conversationId,
-          group.withDuty(
-              forEpoch, C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true)),
-          const <C7ChannelBook>[]),
+        conversationId,
+        group.withDuty(
+          forEpoch,
+          C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true),
+        ),
+        const <C7ChannelBook>[],
+      ),
     );
   }
 
@@ -7189,11 +7871,15 @@ extension _C7Engine on NativeCryptoService {
   /// does not already say so) lists it with that key now or did once. A
   /// device list that cannot be fetched or verified proves nothing.
   Future<bool> _c7FormerProven(
-      String account, String deviceId, Uint8List signingKey,
-      {bool network = true}) async {
+    String account,
+    String deviceId,
+    Uint8List signingKey, {
+    bool network = true,
+  }) async {
     final verdict = await _judgeLeaf(
-        LeafPair(idBytes(account), idBytes(deviceId), signingKey),
-        network: network);
+      LeafPair(idBytes(account), idBytes(deviceId), signingKey),
+      network: network,
+    );
     return verdict == LeafVerdict.approved || verdict == LeafVerdict.removed;
   }
 
@@ -7203,15 +7889,20 @@ extension _C7Engine on NativeCryptoService {
   /// crypto operation). Keyed by [_c7ProofKey], so a proof is only ever
   /// used for the exact account, device and key it judged.
   Future<Map<String, bool>> _c7JudgeFormer(
-      Iterable<C7FormerKey> keys, Iterable<C7HistoryRow> rows) async {
+    Iterable<C7FormerKey> keys,
+    Iterable<C7HistoryRow> rows,
+  ) async {
     final senders = <String>{for (final row in rows) row.senderDeviceId};
     final out = <String, bool>{};
     for (final key in keys) {
       if (!senders.contains(key.deviceId)) continue;
       final at = _c7ProofKey(key.accountId, key.deviceId, key.signingKey);
       if (out.containsKey(at)) continue;
-      out[at] =
-          await _c7FormerProven(key.accountId, key.deviceId, key.signingKey);
+      out[at] = await _c7FormerProven(
+        key.accountId,
+        key.deviceId,
+        key.signingKey,
+      );
     }
     return out;
   }
@@ -7244,9 +7935,10 @@ extension _C7Engine on NativeCryptoService {
           expectedCursor: await localStore.loadSyncCursor(),
           state: _sealNext(previous),
           c7Settings: _c7Put(
-              conversationId,
-              group.copyWith(reask: false, clearRequest: true),
-              const <C7ChannelBook>[]),
+            conversationId,
+            group.copyWith(reask: false, clearRequest: true),
+            const <C7ChannelBook>[],
+          ),
         );
         return null;
       }
@@ -7268,16 +7960,17 @@ extension _C7Engine on NativeCryptoService {
       ),
       // Asked again, with backoff, until a usable history_sync arrives.
       settingsFor: (_, __) => _c7Put(
-          conversationId,
-          group.copyWith(
-            requestsSent: group.requestsSent + 1,
-            requestDueAtMs: _c7NowMs() +
-                (group.joinSynced
-                        ? c7ZeroHeadReask
-                        : c7RequestDelayAfter(group.requestsSent + 1))
-                    .inMilliseconds,
-          ),
-          const <C7ChannelBook>[]),
+        conversationId,
+        group.copyWith(
+          requestsSent: group.requestsSent + 1,
+          requestDueAtMs: _c7NowMs() +
+              (group.joinSynced
+                      ? c7ZeroHeadReask
+                      : c7RequestDelayAfter(group.requestsSent + 1))
+                  .inMilliseconds,
+        ),
+        const <C7ChannelBook>[],
+      ),
       target: <String, Object?>{c7SyncRequestForEpochKey: joinEpoch},
     );
   }
@@ -7309,7 +8002,8 @@ extension _C7Engine on NativeCryptoService {
     final group = await _c7LoadGroup(conversationId);
     if (group.joinEpoch == null) return 0;
     final state = C7ImportState.decode(
-        await localStore.loadSetting(c7ImportSetting(conversationId)));
+      await localStore.loadSetting(c7ImportSetting(conversationId)),
+    );
     final keptKeys = _c7ImportKeys(state, formerKeys, first: first);
     final former = <String, C7FormerKey>{
       for (final key in keptKeys) key.deviceId: key,
@@ -7380,16 +8074,18 @@ extension _C7Engine on NativeCryptoService {
                 (candidate.close == null || epoch < candidate.close!))
               candidate,
         ];
-        final opened = _c7OpenHistoryRow(row,
-            tries: tries,
-            keys: keys,
-            communityId: community,
-            channelId: channel,
-            groupId: conversationId,
-            epoch: epoch,
-            treeConversationId: conversationId,
-            former: former,
-            communityShared: shared);
+        final opened = _c7OpenHistoryRow(
+          row,
+          tries: tries,
+          keys: keys,
+          communityId: community,
+          channelId: channel,
+          groupId: conversationId,
+          epoch: epoch,
+          treeConversationId: conversationId,
+          former: former,
+          communityShared: shared,
+        );
         if (opened == null) continue;
         final payload = opened.payload;
         if (payload.type == AppPayloadType.historyChange) {
@@ -7401,42 +8097,57 @@ extension _C7Engine on NativeCryptoService {
           // actor may record now.
           final wrapped = !opened.inTree
               ? null
-              : _c7HistoryMove(payload,
+              : _c7HistoryMove(
+                  payload,
                   communityId: community,
                   channelId: channel,
                   conversationId: conversationId,
                   epoch: epoch,
                   actorDeviceId: row.senderDeviceId,
                   signer: opened.signer,
-                  account: opened.account);
+                  account: opened.account,
+                );
           if (wrapped != null) {
             moves = _c7MovesWithWrap(moves, wrapped.probe, wrapped.wrap);
           }
           continue;
         }
-        await _c7CollectHistory(opened, row, payload,
-            conversationId: conversationId,
-            posts: posts,
-            actions: actions,
-            proven: proven,
-            proofs: proofs);
+        await _c7CollectHistory(
+          opened,
+          row,
+          payload,
+          conversationId: conversationId,
+          posts: posts,
+          actions: actions,
+          proven: proven,
+          proofs: proofs,
+        );
       }
     }
     if (!took) return 0;
     final (ordered, imported) = _c7OrderImport(posts, actions);
-    final next =
-        C7ImportState(cursors: cursors, keys: keptKeys, candidates: candidates);
+    final next = C7ImportState(
+      cursors: cursors,
+      keys: keptKeys,
+      candidates: candidates,
+    );
     // The group counts as imported once its handover is in (joinSynced):
     // every channel it left without a head is then known to have none.
     final done = first && group.joinSynced && !group.imported;
-    await localStore.importC7History(ordered, c7Settings: <String, String?>{
-      if (changedBooks.isNotEmpty || done)
-        ..._c7Put(conversationId, done ? group.copyWith(imported: true) : group,
-            changedBooks),
-      c7ImportSetting(conversationId): next.encode(),
-      if (!identical(moves, movesBefore))
-        c7MovesSetting: C7Move.encodeAll(moves),
-    });
+    await localStore.importC7History(
+      ordered,
+      c7Settings: <String, String?>{
+        if (changedBooks.isNotEmpty || done)
+          ..._c7Put(
+            conversationId,
+            done ? group.copyWith(imported: true) : group,
+            changedBooks,
+          ),
+        c7ImportSetting(conversationId): next.encode(),
+        if (!identical(moves, movesBefore))
+          c7MovesSetting: C7Move.encodeAll(moves),
+      },
+    );
     return imported;
   }
 
@@ -7455,18 +8166,21 @@ extension _C7Engine on NativeCryptoService {
     required String account,
   }) {
     try {
-      final compact =
-          C7CompactRecord.decode(base64Decode(payload.body['r']! as String));
+      final compact = C7CompactRecord.decode(
+        base64Decode(payload.body['r']! as String),
+      );
       if (compact.reason != c7ReasonMove || compact.mode != c7ModeFull) {
         return null;
       }
-      final record = compact.expand(C7RecordContext(
-        communityId: utf8.encode(communityId),
-        channelId: utf8.encode(channelId),
-        groupId: utf8.encode(conversationId),
-        epoch: epoch,
-        actorDeviceId: utf8.encode(actorDeviceId),
-      ));
+      final record = compact.expand(
+        C7RecordContext(
+          communityId: utf8.encode(communityId),
+          channelId: utf8.encode(channelId),
+          groupId: utf8.encode(conversationId),
+          epoch: epoch,
+          actorDeviceId: utf8.encode(actorDeviceId),
+        ),
+      );
       final from = utf8.decode(record.closeGroupId);
       final wrap = C7MoveWrap.decodeFor(compact);
       if (wrap == null ||
@@ -7477,9 +8191,10 @@ extension _C7Engine on NativeCryptoService {
       }
       return (
         probe: C7Move(
-            channelId: channelId,
-            fromConversationId: from,
-            toConversationId: conversationId),
+          channelId: channelId,
+          fromConversationId: from,
+          toConversationId: conversationId,
+        ),
         wrap: wrap,
       );
     } on Object {
@@ -7526,11 +8241,11 @@ extension _C7Engine on NativeCryptoService {
       // Review M-B: done; nothing of the move's period is kept to open.
       final moves = await _c7LoadMoves();
       await localStore.saveSetting(
-          c7MovesSetting,
-          C7Move.encodeAll(<C7Move>[
-            for (final m in moves)
-              m.same(move) ? m.copyWith(imported: true) : m,
-          ]));
+        c7MovesSetting,
+        C7Move.encodeAll(<C7Move>[
+          for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
+        ]),
+      );
       return 0;
     }
     final toShared = _authority?.conversationKind(to) == 'community_shared';
@@ -7544,7 +8259,11 @@ extension _C7Engine on NativeCryptoService {
     final walked = c7WalkMoved(
       bindings: bindings,
       start: C7Gen(
-          epoch: wrapEpoch, groupId: from, key: wrapKey, close: wrapClose + 1),
+        epoch: wrapEpoch,
+        groupId: from,
+        key: wrapKey,
+        close: wrapClose + 1,
+      ),
       syncs: groupLevel.rows,
       communityId: community,
       fromConversationId: from,
@@ -7565,18 +8284,20 @@ extension _C7Engine on NativeCryptoService {
           if (candidate.covers(from, epoch)) candidate,
       ];
       if (tries.isEmpty) continue;
-      final opened = _c7OpenHistoryRow(row,
-          tries: tries,
-          keys: c7keys,
-          communityId: community,
-          channelId: channelId,
-          groupId: from,
-          epoch: epoch,
-          // Decision 8 in the new group: a key in its tree wins over
-          // anything the server lists for the same device.
-          treeConversationId: to,
-          former: former,
-          communityShared: fromShared);
+      final opened = _c7OpenHistoryRow(
+        row,
+        tries: tries,
+        keys: c7keys,
+        communityId: community,
+        channelId: channelId,
+        groupId: from,
+        epoch: epoch,
+        // Decision 8 in the new group: a key in its tree wins over
+        // anything the server lists for the same device.
+        treeConversationId: to,
+        former: former,
+        communityShared: fromShared,
+      );
       if (opened == null) continue;
       final sent = opened.payload;
       // Rehomed: the new conversation names the channel only when it is a
@@ -7588,20 +8309,27 @@ extension _C7Engine on NativeCryptoService {
         channelId: toShared ? channelId : null,
         expiresAtMs: sent.expiresAtMs,
       );
-      await _c7CollectHistory(opened, row, payload,
-          conversationId: to,
-          posts: posts,
-          actions: actions,
-          proven: proven,
-          proofs: proofs);
+      await _c7CollectHistory(
+        opened,
+        row,
+        payload,
+        conversationId: to,
+        posts: posts,
+        actions: actions,
+        proven: proven,
+        proofs: proofs,
+      );
     }
     final (ordered, imported) = _c7OrderImport(posts, actions);
     final moves = await _c7LoadMoves();
-    await localStore.importC7History(ordered, c7Settings: <String, String?>{
-      c7MovesSetting: C7Move.encodeAll(<C7Move>[
-        for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
-      ]),
-    });
+    await localStore.importC7History(
+      ordered,
+      c7Settings: <String, String?>{
+        c7MovesSetting: C7Move.encodeAll(<C7Move>[
+          for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
+        ]),
+      },
+    );
     return imported;
   }
 
@@ -7731,8 +8459,10 @@ extension _C7Engine on NativeCryptoService {
           record: roles.governanceOf(conversationId),
           sender: account,
           channelId: payload.channelId,
-          serverRestricts:
-              roles.serverRestrictsPosting(conversationId, payload.channelId),
+          serverRestricts: roles.serverRestrictsPosting(
+            conversationId,
+            payload.channelId,
+          ),
           senderRemoved: listed != null,
         )) {
       return;
@@ -7749,7 +8479,9 @@ extension _C7Engine on NativeCryptoService {
         state: LocalMessageState.received,
         // The sender's signed expiry; the route serves none of its own.
         expiresAt: effectiveExpiryMillis(
-            senderMs: payload.expiresAtMs, serverMs: null),
+          senderMs: payload.expiresAtMs,
+          serverMs: null,
+        ),
         authority: authority,
         // A device no longer in the group never acts with a role.
         senderActsWithRole: listed == null,
@@ -7781,8 +8513,11 @@ extension _C7Engine on NativeCryptoService {
         final named = proven[row.senderDeviceId] ??=
             proofs[_c7ProofKey(account, row.senderDeviceId, opened.signer)] ??
                 await _c7FormerProven(
-                    account, row.senderDeviceId, opened.signer,
-                    network: false);
+                  account,
+                  row.senderDeviceId,
+                  opened.signer,
+                  network: false,
+                );
         insert = insert.markedC7Former(named: named);
       }
       if (payload.type == AppPayloadType.attachmentManifest) {
@@ -7799,7 +8534,9 @@ extension _C7Engine on NativeCryptoService {
   /// delete applies like any other action, after its target. Returns the
   /// effects and the posts they insert.
   (List<MessageEffect>, int) _c7OrderImport(
-      List<_C7Post> posts, List<List<MessageEffect>> actions) {
+    List<_C7Post> posts,
+    List<List<MessageEffect>> actions,
+  ) {
     final authors = <String, String>{
       for (final post in posts) post.key: post.account,
     };
@@ -7826,10 +8563,7 @@ extension _C7Engine on NativeCryptoService {
         for (final effect in action)
           if (!deleted.contains(targetOf(effect))) effect,
     ];
-    return (
-      ordered,
-      posts.where((post) => !deleted.contains(post.key)).length,
-    );
+    return (ordered, posts.where((post) => !deleted.contains(post.key)).length);
   }
 
   Future<List<C7Due>> _c7Due(Iterable<String> conversationIds) async {
@@ -7855,8 +8589,13 @@ extension _C7Engine on NativeCryptoService {
         if (book.ownNotice == 'stale' &&
             pending != null &&
             pending.full.reason != c7ReasonMove) {
-          out.add(C7DueRepropose(conversationId, channel,
-              full: pending.full.mode == c7ModeFull));
+          out.add(
+            C7DueRepropose(
+              conversationId,
+              channel,
+              full: pending.full.mode == c7ModeFull,
+            ),
+          );
         }
       }
       // C3 conversion: an own move is owed once the new group's epoch is
@@ -7867,11 +8606,14 @@ extension _C7Engine on NativeCryptoService {
         if ((_c7EpochOf(conversationId) ?? 0) == 0) continue;
         // Review L-6: no record without the old group ([c7ProposeMove]).
         if (_c7EpochOf(move.fromConversationId) == null) continue;
-        final book = await _c7LoadBook(conversationId, move.channelId)
-            .then((book) => book.expirePending(now));
+        final book = await _c7LoadBook(
+          conversationId,
+          move.channelId,
+        ).then((book) => book.expirePending(now));
         if (book.pending != null && book.ownNotice != 'stale') continue;
         out.add(
-            C7DueMove(conversationId, move.channelId, move.fromConversationId));
+          C7DueMove(conversationId, move.channelId, move.fromConversationId),
+        );
       }
     }
     return out;

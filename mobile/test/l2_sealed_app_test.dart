@@ -36,39 +36,56 @@ void main() {
     for (final bent in <String>[
       text.replaceFirst('","d":"', '","d" :"'),
       text.replaceFirst(RegExp(r'"d":"[^"]*"'), '"d":""'),
-      text.replaceFirst(RegExp(r'"d":"[^"]*"'),
-          '"d":"${base64.encode(designation.sublist(0, 47))}"'),
       text.replaceFirst(
-          RegExp(r'"d":"[^"]*"'), '"d":"${base64.encode(designation)}=="'),
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64.encode(designation.sublist(0, 47))}"',
+      ),
       text.replaceFirst(
-          RegExp(r'"d":"[^"]*"'),
-          '"d":"${base64.encode(<int>[
-                ...designation.sublist(48, 96),
-                ...designation.sublist(0, 48)
-              ])}"'),
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64.encode(designation)}=="',
+      ),
       text.replaceFirst(
-          RegExp(r'"d":"[^"]*"'),
-          '"d":"${base64.encode(<int>[
-                ...designation.sublist(0, 48),
-                ...designation.sublist(0, 48)
-              ])}"'),
-      text.replaceFirst(RegExp(r'"d":"[^"]*"'),
-          '"d":"${base64.encode(_designation(17, seed: 1))}"'),
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64.encode(<int>[
+              ...designation.sublist(48, 96),
+              ...designation.sublist(0, 48)
+            ])}"',
+      ),
       text.replaceFirst(
-          RegExp(r'"d":"[^"]*"'), '"d":"${base64Url.encode(designation)}"'),
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64.encode(<int>[
+              ...designation.sublist(0, 48),
+              ...designation.sublist(0, 48)
+            ])}"',
+      ),
+      text.replaceFirst(
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64.encode(_designation(17, seed: 1))}"',
+      ),
+      text.replaceFirst(
+        RegExp(r'"d":"[^"]*"'),
+        '"d":"${base64Url.encode(designation)}"',
+      ),
     ]) {
-      expect(splitFrank(Uint8List.fromList(utf8.encode(bent))),
-          isA<MalformedFrank>(),
-          reason: bent);
+      expect(
+        splitFrank(Uint8List.fromList(utf8.encode(bent))),
+        isA<MalformedFrank>(),
+        reason: bent,
+      );
     }
-    expect(() => frankWireJson(canonical, key, designation: Uint8List(47)),
-        throwsFormatException);
-    expect(() => frankWireJson(canonical, key, designation: Uint8List(0)),
-        throwsFormatException);
     expect(
-        () => frankWireJson(canonical, key,
-            designation: _designation(17, seed: 2)),
-        throwsFormatException);
+      () => frankWireJson(canonical, key, designation: Uint8List(47)),
+      throwsFormatException,
+    );
+    expect(
+      () => frankWireJson(canonical, key, designation: Uint8List(0)),
+      throwsFormatException,
+    );
+    expect(
+      () =>
+          frankWireJson(canonical, key, designation: _designation(17, seed: 2)),
+      throwsFormatException,
+    );
   });
 
   // Item (g): splitFrank against random and mutated inputs. Whatever it
@@ -80,7 +97,8 @@ void main() {
     for (var round = 0; round < 3000; round++) {
       final canonical = _randomObject(random);
       final key = Uint8List.fromList(
-          List<int>.generate(32, (_) => random.nextInt(256)));
+        List<int>.generate(32, (_) => random.nextInt(256)),
+      );
       final n = random.nextInt(17); // 0 = plain form
       final designation =
           n == 0 ? null : _designation(n, seed: random.nextInt(1 << 30));
@@ -99,7 +117,7 @@ void main() {
         1 => <int>[
             ...mutated.sublist(0, at),
             random.nextInt(128),
-            ...mutated.sublist(at)
+            ...mutated.sublist(at),
           ],
         2 => <int>[...mutated.sublist(0, at), ...mutated.sublist(at + 1)],
         _ => mutated.sublist(0, at),
@@ -108,10 +126,14 @@ void main() {
       if (again is Franked) {
         accepted++;
         expect(
-            frankWireJson(again.canonical, again.key,
-                designation: again.designation),
-            bent,
-            reason: utf8.decode(bent, allowMalformed: true));
+          frankWireJson(
+            again.canonical,
+            again.key,
+            designation: again.designation,
+          ),
+          bent,
+          reason: utf8.decode(bent, allowMalformed: true),
+        );
       } else {
         refused++;
       }
@@ -150,81 +172,98 @@ void main() {
     test('the session route refuses a sealed envelope', () async {
       final api = ApiClient(baseUrl: server.origin);
       addTearDown(api.close);
-      await expectLater(api.sendEnvelope('session-token', _envelope(_token(1))),
-          throwsStateError);
+      await expectLater(
+        api.sendEnvelope('session-token', _envelope(_token(1))),
+        throwsStateError,
+      );
       expect(server.requests, isEmpty);
     });
 
-    test('a lost answer is retried under the same key, and lands once',
-        () async {
-      final poster = SealedPostClient(baseUrl: server.origin);
-      addTearDown(poster.close);
-      final tokens = _tokens();
-      final envelope = _envelope(_token(1));
-      // The first post lands but its answer is lost.
-      server.dropNextAnswer = true;
-      await expectLater(
+    test(
+      'a lost answer is retried under the same key, and lands once',
+      () async {
+        final poster = SealedPostClient(baseUrl: server.origin);
+        addTearDown(poster.close);
+        final tokens = _tokens();
+        final envelope = _envelope(_token(1));
+        // The first post lands but its answer is lost.
+        server.dropNextAnswer = true;
+        await expectLater(
           postSealedMessage(
-              poster: poster,
-              envelope: envelope,
-              tokens: tokens,
-              rewrite: (_) async => true),
-          throwsA(anything));
-      // The outbox retries the same envelope; the server knows the post.
-      await postSealedMessage(
+            poster: poster,
+            envelope: envelope,
+            tokens: tokens,
+            rewrite: (_) async => true,
+          ),
+          throwsA(anything),
+        );
+        // The outbox retries the same envelope; the server knows the post.
+        await postSealedMessage(
           poster: poster,
           envelope: envelope,
           tokens: tokens,
-          rewrite: (_) async => true);
-      expect(server.stored, hasLength(1));
-      expect(server.requests, hasLength(2));
-      expect(server.requests[0].body, server.requests[1].body);
-    });
+          rewrite: (_) async => true,
+        );
+        expect(server.stored, hasLength(1));
+        expect(server.requests, hasLength(2));
+        expect(server.requests[0].body, server.requests[1].body);
+      },
+    );
 
-    test('a spent or expired token is replaced and the same bytes posted',
-        () async {
-      final poster = SealedPostClient(baseUrl: server.origin);
-      addTearDown(poster.close);
-      final store = MemoryLocalStore();
-      final tokens = _tokens(store: store);
-      await tokens.debugTrust(store, _conversation);
-      server.refuseNext.add('sealed_token_spent');
-      final rewritten = <MessageEnvelope>[];
-      await postSealedMessage(
+    test(
+      'a spent or expired token is replaced and the same bytes posted',
+      () async {
+        final poster = SealedPostClient(baseUrl: server.origin);
+        addTearDown(poster.close);
+        final store = MemoryLocalStore();
+        final tokens = _tokens(store: store);
+        await tokens.debugTrust(store, _conversation);
+        server.refuseNext.add('sealed_token_spent');
+        final rewritten = <MessageEnvelope>[];
+        await postSealedMessage(
           poster: poster,
           envelope: _envelope(_token(1)),
           tokens: tokens,
           rewrite: (next) async {
             rewritten.add(next);
             return true;
-          });
-      expect(server.requests, hasLength(2));
-      final first = jsonDecode(server.requests[0].body) as Map;
-      final second = jsonDecode(server.requests[1].body) as Map;
-      expect(second['idempotency_key'], first['idempotency_key']);
-      expect(second['ciphertext'], first['ciphertext']);
-      expect(second['frank_commit'], first['frank_commit']);
-      expect(second['token'], isNot(first['token']));
-      expect(rewritten.single.sealedToken!.nonce, isNot(_token(1).nonce));
-      expect(
-          rewritten.single.idempotencyKey, _envelope(_token(1)).idempotencyKey);
-    });
+          },
+        );
+        expect(server.requests, hasLength(2));
+        final first = jsonDecode(server.requests[0].body) as Map;
+        final second = jsonDecode(server.requests[1].body) as Map;
+        expect(second['idempotency_key'], first['idempotency_key']);
+        expect(second['ciphertext'], first['ciphertext']);
+        expect(second['frank_commit'], first['frank_commit']);
+        expect(second['token'], isNot(first['token']));
+        expect(rewritten.single.sealedToken!.nonce, isNot(_token(1).nonce));
+        expect(
+          rewritten.single.idempotencyKey,
+          _envelope(_token(1)).idempotencyKey,
+        );
+      },
+    );
 
-    test('with no token to replace it the message waits, still sealed',
-        () async {
-      final poster = SealedPostClient(baseUrl: server.origin);
-      addTearDown(poster.close);
-      server.refuseNext.add('sealed_token_expired');
-      await expectLater(
+    test(
+      'with no token to replace it the message waits, still sealed',
+      () async {
+        final poster = SealedPostClient(baseUrl: server.origin);
+        addTearDown(poster.close);
+        server.refuseNext.add('sealed_token_expired');
+        await expectLater(
           postSealedMessage(
-              poster: poster,
-              envelope: _envelope(_token(1)),
-              tokens: _tokens(),
-              rewrite: (_) async => true),
+            poster: poster,
+            envelope: _envelope(_token(1)),
+            tokens: _tokens(),
+            rewrite: (_) async => true,
+          ),
           throwsA(
-              isA<ApiException>().having((e) => e.statusCode, 'status', 503)));
-      expect(server.requests, hasLength(1));
-    });
+            isA<ApiException>().having((e) => e.statusCode, 'status', 503),
+          ),
+        );
+        expect(server.requests, hasLength(1));
+      },
+    );
 
     test('not eligible fails the message and drops the tokens', () async {
       final poster = SealedPostClient(baseUrl: server.origin);
@@ -234,77 +273,118 @@ void main() {
       await tokens.debugTrust(store, _conversation);
       server.refuseNext.add('sealed_not_eligible');
       await expectLater(
-          postSealedMessage(
-              poster: poster,
-              envelope: _envelope(_token(1)),
-              tokens: tokens,
-              rewrite: (_) async => true),
-          throwsA(isA<ApiException>()
-              .having((e) => e.serverCode, 'code', 'sealed_not_eligible')));
+        postSealedMessage(
+          poster: poster,
+          envelope: _envelope(_token(1)),
+          tokens: tokens,
+          rewrite: (_) async => true,
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.serverCode,
+            'code',
+            'sealed_not_eligible',
+          ),
+        ),
+      );
       expect(tokens.activeIn(_conversation), isFalse);
       expect(await tokens.takeFor(_conversation), isNull);
       expect(server.requests, hasLength(1));
     });
 
-    test('not eligible never sends identified; the message waits for a choice',
-        () async {
-      // Owner decision 2026-11-12 ("Ask before re-sending"): a hostile
-      // server could answer sealed_not_eligible to unmask the sender of a
-      // post it chose. The refusal is rethrown and the outbox keeps the
-      // message for the person; only their tap re-sends it identified.
-      final poster = SealedPostClient(baseUrl: server.origin);
-      addTearDown(poster.close);
-      final store = MemoryLocalStore();
-      final tokens = _tokens(store: store);
-      await tokens.debugTrust(store, _conversation);
-      final envelope = _envelope(_token(1));
-      server.refuseNext.add('sealed_not_eligible');
-      await expectLater(
+    test(
+      'not eligible never sends identified; the message waits for a choice',
+      () async {
+        // Owner decision 2026-11-12 ("Ask before re-sending"): a hostile
+        // server could answer sealed_not_eligible to unmask the sender of a
+        // post it chose. The refusal is rethrown and the outbox keeps the
+        // message for the person; only their tap re-sends it identified.
+        final poster = SealedPostClient(baseUrl: server.origin);
+        addTearDown(poster.close);
+        final store = MemoryLocalStore();
+        final tokens = _tokens(store: store);
+        await tokens.debugTrust(store, _conversation);
+        final envelope = _envelope(_token(1));
+        server.refuseNext.add('sealed_not_eligible');
+        await expectLater(
           postSealedMessage(
-              poster: poster,
-              envelope: envelope,
-              tokens: tokens,
-              rewrite: (_) async => true),
-          throwsA(isA<ApiException>()
-              .having((e) => e.statusCode, 'status', 409)
-              .having((e) => e.serverCode, 'code', 'sealed_not_eligible')));
-      expect(server.requests, hasLength(1));
-      expect(server.stored, isEmpty);
-      expect(tokens.activeIn(_conversation), isFalse);
+            poster: poster,
+            envelope: envelope,
+            tokens: tokens,
+            rewrite: (_) async => true,
+          ),
+          throwsA(
+            isA<ApiException>()
+                .having((e) => e.statusCode, 'status', 409)
+                .having((e) => e.serverCode, 'code', 'sealed_not_eligible'),
+          ),
+        );
+        expect(server.requests, hasLength(1));
+        expect(server.stored, isEmpty);
+        expect(tokens.activeIn(_conversation), isFalse);
 
-      // The outbox records it terminal under the class that offers the
-      // choice; nothing else does.
-      PendingEnvelopeRecord record(MessageEnvelope envelope,
-              {required bool terminal, String? failure}) =>
-          PendingEnvelopeRecord(
+        // The outbox records it terminal under the class that offers the
+        // choice; nothing else does.
+        PendingEnvelopeRecord record(
+          MessageEnvelope envelope, {
+          required bool terminal,
+          String? failure,
+        }) =>
+            PendingEnvelopeRecord(
               envelope: envelope,
               attemptCount: 1,
               terminal: terminal,
-              failureClass: failure);
-      expect(
-          sealedNeedsResendChoice(record(envelope,
-              terminal: true, failure: sealedRefusedFailureClass)),
-          isTrue);
-      expect(
-          sealedNeedsResendChoice(record(envelope,
-              terminal: false, failure: sealedRefusedFailureClass)),
-          isFalse);
-      expect(
-          sealedNeedsResendChoice(record(envelope,
-              terminal: true, failure: 'terminal:409:idempotency_conflict')),
-          isFalse);
-      final identified = MessageEnvelope(
-        conversationId: envelope.conversationId,
-        idempotencyKey: envelope.idempotencyKey,
-        ciphertext: const <int>[4, 5, 6],
-        cryptoProtocol: envelope.cryptoProtocol,
-        cryptoMetadata: envelope.cryptoMetadata,
-      );
-      expect(
-          sealedNeedsResendChoice(record(identified,
-              terminal: true, failure: sealedRefusedFailureClass)),
-          isFalse);
-    });
+              failureClass: failure,
+            );
+        expect(
+          sealedNeedsResendChoice(
+            record(
+              envelope,
+              terminal: true,
+              failure: sealedRefusedFailureClass,
+            ),
+          ),
+          isTrue,
+        );
+        expect(
+          sealedNeedsResendChoice(
+            record(
+              envelope,
+              terminal: false,
+              failure: sealedRefusedFailureClass,
+            ),
+          ),
+          isFalse,
+        );
+        expect(
+          sealedNeedsResendChoice(
+            record(
+              envelope,
+              terminal: true,
+              failure: 'terminal:409:idempotency_conflict',
+            ),
+          ),
+          isFalse,
+        );
+        final identified = MessageEnvelope(
+          conversationId: envelope.conversationId,
+          idempotencyKey: envelope.idempotencyKey,
+          ciphertext: const <int>[4, 5, 6],
+          cryptoProtocol: envelope.cryptoProtocol,
+          cryptoMetadata: envelope.cryptoMetadata,
+        );
+        expect(
+          sealedNeedsResendChoice(
+            record(
+              identified,
+              terminal: true,
+              failure: sealedRefusedFailureClass,
+            ),
+          ),
+          isFalse,
+        );
+      },
+    );
 
     test('a 404 from the sealed routes waits instead of failing', () async {
       // Review low (a): the routes answer 404 while the switch is off.
@@ -312,14 +392,18 @@ void main() {
       addTearDown(poster.close);
       server.refuseNext.add('404:not_found');
       await expectLater(
-          postSealedMessage(
-              poster: poster,
-              envelope: _envelope(_token(1)),
-              tokens: _tokens(),
-              rewrite: (_) async => true),
-          throwsA(isA<ApiException>()
+        postSealedMessage(
+          poster: poster,
+          envelope: _envelope(_token(1)),
+          tokens: _tokens(),
+          rewrite: (_) async => true,
+        ),
+        throwsA(
+          isA<ApiException>()
               .having((e) => e.statusCode, 'status', 503)
-              .having((e) => e.serverCode, 'code', 'sealed_unavailable')));
+              .having((e) => e.serverCode, 'code', 'sealed_unavailable'),
+        ),
+      );
     });
 
     test('outcomes', () {
@@ -331,72 +415,83 @@ void main() {
       expect(of(409, 'sealed_not_eligible'), SealedPostOutcome.terminal);
       expect(of(409, 'idempotency_conflict'), SealedPostOutcome.terminal);
       expect(
-          of(400, 'sealed_request_authenticated'), SealedPostOutcome.terminal);
+        of(400, 'sealed_request_authenticated'),
+        SealedPostOutcome.terminal,
+      );
       expect(of(429, 'rate_limited'), SealedPostOutcome.retry);
       expect(of(503, 'unavailable'), SealedPostOutcome.retry);
-      expect(sealedPostOutcome(const SocketException('x')),
-          SealedPostOutcome.retry);
+      expect(
+        sealedPostOutcome(const SocketException('x')),
+        SealedPostOutcome.retry,
+      );
     });
 
     // The re-encryption "Send normally" runs (AppState.sendSealedNormally).
-    test('send normally re-encrypts, waits, or refuses, and sends nothing',
-        () async {
-      final sealed = _envelope(_token(1));
-      final identified = MessageEnvelope(
-        conversationId: sealed.conversationId,
-        idempotencyKey: sealed.idempotencyKey,
-        ciphertext: const <int>[4, 5, 6],
-        cryptoProtocol: sealed.cryptoProtocol,
-        cryptoMetadata: sealed.cryptoMetadata,
-      );
-      final store = _MlsQueue();
-      final crypto = _FakeCrypto();
-      Future<SealedResend> resend(Object? with_, [MessageEnvelope? of]) =>
-          reencryptSealedForResend(
-              crypto: with_, localStore: store, sealed: of ?? sealed);
+    test(
+      'send normally re-encrypts, waits, or refuses, and sends nothing',
+      () async {
+        final sealed = _envelope(_token(1));
+        final identified = MessageEnvelope(
+          conversationId: sealed.conversationId,
+          idempotencyKey: sealed.idempotencyKey,
+          ciphertext: const <int>[4, 5, 6],
+          cryptoProtocol: sealed.cryptoProtocol,
+          cryptoMetadata: sealed.cryptoMetadata,
+        );
+        final store = _MlsQueue();
+        final crypto = _FakeCrypto();
+        Future<SealedResend> resend(Object? with_, [MessageEnvelope? of]) =>
+            reencryptSealedForResend(
+              crypto: with_,
+              localStore: store,
+              sealed: of ?? sealed,
+            );
 
-      // A crypto service that cannot seal: nothing to do.
-      expect(await resend(Object()), SealedResend.unavailable);
-      expect(await resend(null), SealedResend.unavailable);
+        // A crypto service that cannot seal: nothing to do.
+        expect(await resend(Object()), SealedResend.unavailable);
+        expect(await resend(null), SealedResend.unavailable);
 
-      // The fresh identified copy takes the entry's place.
-      crypto.reencrypt = (_) => identified;
-      expect(await resend(crypto), SealedResend.queued);
-      expect(crypto.reencrypts, 1);
-      // Only a sealed message is ever re-encrypted.
-      expect(await resend(crypto, identified), SealedResend.unavailable);
-      expect(crypto.reencrypts, 1);
+        // The fresh identified copy takes the entry's place.
+        crypto.reencrypt = (_) => identified;
+        expect(await resend(crypto), SealedResend.queued);
+        expect(crypto.reencrypts, 1);
+        // Only a sealed message is ever re-encrypted.
+        expect(await resend(crypto, identified), SealedResend.unavailable);
+        expect(crypto.reencrypts, 1);
 
-      // Nothing left to send it with, or a copy still sealed.
-      crypto.reencrypt = (_) => null;
-      expect(await resend(crypto), SealedResend.unavailable);
-      crypto.reencrypt = (sealed) => sealed;
-      expect(await resend(crypto), SealedResend.unavailable);
+        // Nothing left to send it with, or a copy still sealed.
+        crypto.reencrypt = (_) => null;
+        expect(await resend(crypto), SealedResend.unavailable);
+        crypto.reencrypt = (sealed) => sealed;
+        expect(await resend(crypto), SealedResend.unavailable);
 
-      // An MLS control message queued for this conversation: waits, and
-      // nothing is encrypted.
-      crypto.reencrypt = (_) => identified;
-      crypto.reencrypts = 0;
-      store.pending = <PendingMlsMessage>[
-        PendingMlsMessage(
+        // An MLS control message queued for this conversation: waits, and
+        // nothing is encrypted.
+        crypto.reencrypt = (_) => identified;
+        crypto.reencrypts = 0;
+        store.pending = <PendingMlsMessage>[
+          PendingMlsMessage(
             idempotencyKey: 'mls_1',
             conversationId: sealed.conversationId,
             kind: 'commit',
-            payload: const <int>[1]),
-      ];
-      expect(await resend(crypto), SealedResend.held);
-      expect(crypto.reencrypts, 0);
-      // One for another conversation does not hold it.
-      store.pending = <PendingMlsMessage>[
-        const PendingMlsMessage(
+            payload: const <int>[1],
+          ),
+        ];
+        expect(await resend(crypto), SealedResend.held);
+        expect(crypto.reencrypts, 0);
+        // One for another conversation does not hold it.
+        store.pending = <PendingMlsMessage>[
+          const PendingMlsMessage(
             idempotencyKey: 'mls_2',
             conversationId: 'conv_other',
             kind: 'commit',
-            payload: <int>[1]),
-      ];
-      expect(await resend(crypto), SealedResend.queued);
-      expect(crypto.reencrypts, 1);
-    });
+            payload: <int>[1],
+          ),
+        ];
+        expect(await resend(crypto), SealedResend.queued);
+        expect(crypto.reencrypts, 1);
+      },
+    );
   });
 
   group('sync reads', () {
@@ -415,7 +510,9 @@ void main() {
 
       await readAll();
       expect(
-          server.requests.map((r) => r.query['sealed']), everyElement(isNull));
+        server.requests.map((r) => r.query['sealed']),
+        everyElement(isNull),
+      );
       server.requests.clear();
       api.readsSealedEvents = true;
       await readAll();
@@ -430,11 +527,12 @@ void main() {
       final api = _SealedApi();
       final crypto = _FakeCrypto();
       final sealed = SealedSender(
-          origin: 'https://chat.example.org',
-          localStore: store,
-          crypto: crypto,
-          loadFrankContext: () async => _frank,
-          clock: () => _now);
+        origin: 'https://chat.example.org',
+        localStore: store,
+        crypto: crypto,
+        loadFrankContext: () async => _frank,
+        clock: () => _now,
+      );
       sealed.enabled = true;
       api.remaining = 40;
       await sealed.refresh(api, 't', <Conversation>[
@@ -452,8 +550,9 @@ void main() {
 
       // A pass with tokens still held fetches nothing.
       api.batches.clear();
-      await sealed.refresh(api, 't',
-          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
+      await sealed.refresh(api, 't', <Conversation>[
+        Conversation(id: _conversation, kind: 'dm'),
+      ]);
       expect(api.batches, isEmpty); // inside the refresh interval
     });
 
@@ -463,14 +562,15 @@ void main() {
       final crypto = _FakeCrypto();
       var now = _now;
       final sealed = SealedSender(
-          origin: 'https://chat.example.org',
-          localStore: store,
-          crypto: crypto,
-          loadFrankContext: () async => _frank,
-          clock: () => now);
+        origin: 'https://chat.example.org',
+        localStore: store,
+        crypto: crypto,
+        loadFrankContext: () async => _frank,
+        clock: () => now,
+      );
       sealed.enabled = true;
       final conversations = <Conversation>[
-        Conversation(id: _conversation, kind: 'dm')
+        Conversation(id: _conversation, kind: 'dm'),
       ];
       await sealed.refresh(api, 't', conversations);
       expect(await sealed.takeFor(_conversation), isNotNull);
@@ -490,34 +590,46 @@ void main() {
       await sealed.acceptChangedKey();
       now = now.add(const Duration(hours: 1));
       await sealed.refresh(api, 't', conversations);
-      expect((await store.loadSealedKeyPin('https://chat.example.org'))!.keyId,
-          'b' * 32);
+      expect(
+        (await store.loadSealedKeyPin('https://chat.example.org'))!.keyId,
+        'b' * 32,
+      );
       expect(api.batches, isNotEmpty);
       expect((await sealed.takeFor(_conversation))!.keyId, 'b' * 32);
     });
 
-    test('an ineligible conversation keeps no tokens and stays identified',
-        () async {
-      final store = MemoryLocalStore();
-      final api = _SealedApi();
-      final sealed = SealedSender(
+    test(
+      'an ineligible conversation keeps no tokens and stays identified',
+      () async {
+        final store = MemoryLocalStore();
+        final api = _SealedApi();
+        final sealed = SealedSender(
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: _FakeCrypto(),
           loadFrankContext: () async => _frank,
-          clock: () => _now);
-      sealed.enabled = true;
-      await store.saveSealedTokens(<SealedToken>[_token(9, epoch: api.epoch)]);
-      api.eligible = false;
-      await sealed.refresh(api, 't',
-          <Conversation>[Conversation(id: _conversation, kind: 'group')]);
-      expect(api.batches, isEmpty);
-      expect(sealed.activeIn(_conversation), isFalse);
-      expect(
-          await store.countSealedTokens(_conversation,
-              keyId: _keyId, epoch: api.epoch),
-          0);
-    });
+          clock: () => _now,
+        );
+        sealed.enabled = true;
+        await store.saveSealedTokens(<SealedToken>[
+          _token(9, epoch: api.epoch),
+        ]);
+        api.eligible = false;
+        await sealed.refresh(api, 't', <Conversation>[
+          Conversation(id: _conversation, kind: 'group'),
+        ]);
+        expect(api.batches, isEmpty);
+        expect(sealed.activeIn(_conversation), isFalse);
+        expect(
+          await store.countSealedTokens(
+            _conversation,
+            keyId: _keyId,
+            epoch: api.epoch,
+          ),
+          0,
+        );
+      },
+    );
 
     test('without its own franking key listed, nothing goes sealed', () async {
       // Fail safe: the context is null when this device's key is not on its
@@ -525,25 +637,28 @@ void main() {
       final store = MemoryLocalStore();
       final api = _SealedApi();
       final sealed = SealedSender(
-          origin: 'https://chat.example.org',
-          localStore: store,
-          crypto: _FakeCrypto(),
-          loadFrankContext: () async => null,
-          clock: () => _now);
+        origin: 'https://chat.example.org',
+        localStore: store,
+        crypto: _FakeCrypto(),
+        loadFrankContext: () async => null,
+        clock: () => _now,
+      );
       sealed.enabled = true;
-      await sealed.refresh(api, 't',
-          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
+      await sealed.refresh(api, 't', <Conversation>[
+        Conversation(id: _conversation, kind: 'dm'),
+      ]);
       expect(api.batches, isNotEmpty);
       expect(sealed.frankContext, isNull);
       expect(await sealed.takeFor(_conversation), isNull);
     });
 
-    test('the designation context is read on the token pass, never on a send',
-        () async {
-      final store = MemoryLocalStore();
-      final api = _SealedApi();
-      var reads = 0;
-      final sealed = SealedSender(
+    test(
+      'the designation context is read on the token pass, never on a send',
+      () async {
+        final store = MemoryLocalStore();
+        final api = _SealedApi();
+        var reads = 0;
+        final sealed = SealedSender(
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: _FakeCrypto(),
@@ -551,29 +666,34 @@ void main() {
             reads++;
             return _frank;
           },
-          clock: () => _now);
-      sealed.enabled = true;
-      await sealed.refresh(api, 't',
-          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
-      expect(reads, 1);
-      for (var i = 0; i < 5; i++) {
-        expect(await sealed.takeFor(_conversation), isNotNull);
-        expect(sealed.frankContext, same(_frank));
-      }
-      expect(reads, 1);
-    });
+          clock: () => _now,
+        );
+        sealed.enabled = true;
+        await sealed.refresh(api, 't', <Conversation>[
+          Conversation(id: _conversation, kind: 'dm'),
+        ]);
+        expect(reads, 1);
+        for (var i = 0; i < 5; i++) {
+          expect(await sealed.takeFor(_conversation), isNotNull);
+          expect(sealed.frankContext, same(_frank));
+        }
+        expect(reads, 1);
+      },
+    );
 
     test('off: nothing is fetched and no token is handed out', () async {
       final store = MemoryLocalStore();
       final api = _SealedApi();
       final sealed = SealedSender(
-          origin: 'https://chat.example.org',
-          localStore: store,
-          crypto: _FakeCrypto(),
-          loadFrankContext: () async => _frank,
-          clock: () => _now);
-      await sealed.refresh(api, 't',
-          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
+        origin: 'https://chat.example.org',
+        localStore: store,
+        crypto: _FakeCrypto(),
+        loadFrankContext: () async => _frank,
+        clock: () => _now,
+      );
+      await sealed.refresh(api, 't', <Conversation>[
+        Conversation(id: _conversation, kind: 'dm'),
+      ]);
       expect(api.asked, isEmpty);
       expect(await sealed.takeFor(_conversation), isNull);
     });
@@ -618,8 +738,9 @@ SealedSender _tokens({MemoryLocalStore? store}) => SealedSender(
 
 /// A designation context as the token pass would cache it.
 final SealedFrankContext _frank = SealedFrankContext(
-    listedKey: List<int>.filled(32, 9),
-    ownerKeys: <List<int>>[List<int>.filled(32, 3)]);
+  listedKey: List<int>.filled(32, 9),
+  ownerKeys: <List<int>>[List<int>.filled(32, 3)],
+);
 
 /// [n] entries with strictly ascending random key ids.
 Uint8List _designation(int n, {required int seed}) {
@@ -639,7 +760,7 @@ Uint8List _designation(int n, {required int seed}) {
   return Uint8List.fromList(<int>[
     for (final kid in sorted) ...<int>[
       ...kid,
-      ...List<int>.generate(32, (_) => random.nextInt(256))
+      ...List<int>.generate(32, (_) => random.nextInt(256)),
     ],
   ]);
 }
@@ -666,7 +787,8 @@ Uint8List _randomObject(Random random) {
       1 => random.nextInt(1 << 20),
       2 => <String, Object?>{'frank': tricky[random.nextInt(tricky.length)]},
       _ => base64.encode(
-          List<int>.generate(random.nextInt(70), (_) => random.nextInt(256))),
+          List<int>.generate(random.nextInt(70), (_) => random.nextInt(256)),
+        ),
     };
     map[name] = value;
   }
@@ -677,8 +799,9 @@ extension on SealedSender {
   /// Pins the test key and marks [conversationId] eligible, as a token pass
   /// would have.
   Future<void> debugTrust(MemoryLocalStore store, String conversationId) =>
-      refresh(_SealedApi(), 't',
-          <Conversation>[Conversation(id: conversationId, kind: 'dm')]);
+      refresh(_SealedApi(), 't', <Conversation>[
+        Conversation(id: conversationId, kind: 'dm'),
+      ]);
 }
 
 class _MlsQueue extends MemoryLocalStore {
@@ -697,7 +820,8 @@ class _FakeCrypto implements SealedSendingCryptoService {
 
   @override
   Future<MessageEnvelope?> reencryptSealedAsIdentified(
-      MessageEnvelope sealed) async {
+    MessageEnvelope sealed,
+  ) async {
     final answer = reencrypt;
     if (answer == null) throw UnimplementedError();
     reencrypts++;
@@ -706,8 +830,10 @@ class _FakeCrypto implements SealedSendingCryptoService {
 
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
-          ReceivedMessageEnvelope envelope, int syncEventId,
-          {void Function()? checkCanCommit}) =>
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  }) =>
       throw UnimplementedError();
 
   @override
@@ -760,7 +886,9 @@ class _SealedApi extends ApiClient {
 
   @override
   Future<SealedConversationState> sealedConversation(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     asked.add(conversationId);
     return SealedConversationState(
       key: SealedServerKey(keyId: keyId, publicKey: publicKey),
@@ -815,8 +943,14 @@ class _Loopback {
 
   Future<void> _handle(HttpRequest request) async {
     final body = await utf8.decodeStream(request);
-    requests.add(_Request(
-        request.uri.path, request.uri.queryParameters, request.headers, body));
+    requests.add(
+      _Request(
+        request.uri.path,
+        request.uri.queryParameters,
+        request.headers,
+        body,
+      ),
+    );
     final response = request.response;
     response.headers.contentType = ContentType.json;
     if (request.uri.path == '/api/v1/sealed/messages') {
@@ -854,11 +988,13 @@ class _Loopback {
       return;
     }
     if (request.uri.path.endsWith('/sync-events')) {
-      response.write(jsonEncode(<String, Object?>{
-        'events': <Object?>[],
-        'scope': 'conversation',
-        'scope_id': _conversation,
-      }));
+      response.write(
+        jsonEncode(<String, Object?>{
+          'events': <Object?>[],
+          'scope': 'conversation',
+          'scope_id': _conversation,
+        }),
+      );
     } else {
       response.write('{"events":[]}');
     }

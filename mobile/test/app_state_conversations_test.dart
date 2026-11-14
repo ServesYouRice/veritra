@@ -100,8 +100,11 @@ class _RefreshApi extends ApiClient with LegacySyncPageFake {
       const <MlsRevocation>[];
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
@@ -203,11 +206,9 @@ void main() {
         expect(state.conversationsLoaded, loaded);
         expect(state.errorFor(Ops.conversations), isNull);
         expect(
-            (await store.loadSnapshot())
-                ?.conversations
-                .map((c) => c.id)
-                .toList(),
-            snapshot?.conversations.map((c) => c.id).toList());
+          (await store.loadSnapshot())?.conversations.map((c) => c.id).toList(),
+          snapshot?.conversations.map((c) => c.id).toList(),
+        );
         if (asBob) {
           expect(state.composerDrafts.textFor('conv_bob'), 'hello bob');
         }
@@ -301,27 +302,33 @@ void main() {
       });
     }
 
-    test('a refresh for the still-current session publishes as before',
-        () async {
-      final gate = api.conversationGate[_alice.token] = Completer<void>();
-      final refresh = state.refreshConversations();
-      await _waitFor(() => api.held.contains(_alice.token));
-      var notified = 0;
-      state.addListener(() => notified++);
-      gate.complete();
-      await refresh;
-      expect(state.conversations.map((c) => c.id), <String>['conv_alice']);
-      expect(state.conversationsLoaded, isTrue);
-      expect(notified, greaterThan(0));
-      expect((await store.loadSnapshot())?.conversations.map((c) => c.id),
-          <String>['conv_alice']);
+    test(
+      'a refresh for the still-current session publishes as before',
+      () async {
+        final gate = api.conversationGate[_alice.token] = Completer<void>();
+        final refresh = state.refreshConversations();
+        await _waitFor(() => api.held.contains(_alice.token));
+        var notified = 0;
+        state.addListener(() => notified++);
+        gate.complete();
+        await refresh;
+        expect(state.conversations.map((c) => c.id), <String>['conv_alice']);
+        expect(state.conversationsLoaded, isTrue);
+        expect(notified, greaterThan(0));
+        expect(
+          (await store.loadSnapshot())?.conversations.map((c) => c.id),
+          <String>['conv_alice'],
+        );
 
-      await state.refreshCommunities();
-      expect(state.communities.map((c) => c.id), <String>['comm_alice']);
-      expect(state.channelsByCommunity['comm_alice']?.map((c) => c.id),
-          <String>['chan_alice']);
-      await state.refreshInvites();
-      expect(state.invites.map((i) => i.id), <String>['inv_alice']);
-    });
+        await state.refreshCommunities();
+        expect(state.communities.map((c) => c.id), <String>['comm_alice']);
+        expect(
+          state.channelsByCommunity['comm_alice']?.map((c) => c.id),
+          <String>['chan_alice'],
+        );
+        await state.refreshInvites();
+        expect(state.invites.map((i) => i.id), <String>['inv_alice']);
+      },
+    );
   });
 }

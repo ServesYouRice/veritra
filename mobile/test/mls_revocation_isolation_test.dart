@@ -16,41 +16,55 @@ import 'package:private_messenger/sync/sync_service.dart';
 
 const _origin = 'https://example.test';
 const _session = Session(
-    baseUrl: _origin,
-    token: 'token',
-    accountId: 'alice',
-    deviceId: 'dev_alice',
-    deviceSecret: 'secret');
+  baseUrl: _origin,
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'dev_alice',
+  deviceSecret: 'secret',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a revocation that cannot be committed does not fail the pass',
-      () async {
-    FlutterSecureStorage.setMockInitialValues({});
-    final store = MemoryLocalStore();
-    await store.saveSession(_session);
-    await store.saveCryptoState(
+  test(
+    'a revocation that cannot be committed does not fail the pass',
+    () async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final store = MemoryLocalStore();
+      await store.saveSession(_session);
+      await store.saveCryptoState(
         StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
-    final api = _Api();
-    final crypto = _Crypto();
-    final state = AppState(
+          counter: 1,
+          stateKey: List.filled(32, 1),
+          sealedState: [1],
+        ),
+        0,
+      );
+      final api = _Api();
+      final crypto = _Crypto();
+      final state = AppState(
         apiClientFactory: (_) => api,
         cryptoService: crypto,
         localStore: store,
-        syncServiceFactory: (_, __) => _QuietSync());
-    addTearDown(state.dispose);
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await state.tryRestoreSession();
-    await _until(() => api.claims.isNotEmpty);
-    expect(crypto.attempted, ['conv-x', 'conv-y'],
-        reason: 'a failed revocation must not skip the later ones');
-    expect(crypto.committed, ['conv-y']);
-    expect(api.claims, contains('conv-a'),
-        reason: 'membership reconcile must still run after the failure');
-  });
+        syncServiceFactory: (_, __) => _QuietSync(),
+      );
+      addTearDown(state.dispose);
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await state.tryRestoreSession();
+      await _until(() => api.claims.isNotEmpty);
+      expect(
+        crypto.attempted,
+        ['conv-x', 'conv-y'],
+        reason: 'a failed revocation must not skip the later ones',
+      );
+      expect(crypto.committed, ['conv-y']);
+      expect(
+        api.claims,
+        contains('conv-a'),
+        reason: 'membership reconcile must still run after the failure',
+      );
+    },
+  );
 }
 
 Future<void> _until(bool Function() condition) async {
@@ -62,13 +76,14 @@ Future<void> _until(bool Function() condition) async {
 }
 
 MlsRevocation _revocation(String conversationId) => MlsRevocation(
-    conversationId: conversationId,
-    revokedDeviceId: 'dev_bob_tablet',
-    revokedAccountId: 'bob',
-    coordinatorDeviceId: 'dev_alice',
-    state: 'pending',
-    commitMessageId: null,
-    requestedAt: DateTime.utc(2026, 10, 31));
+      conversationId: conversationId,
+      revokedDeviceId: 'dev_bob_tablet',
+      revokedAccountId: 'bob',
+      coordinatorDeviceId: 'dev_alice',
+      state: 'pending',
+      commitMessageId: null,
+      requestedAt: DateTime.utc(2026, 10, 31),
+    );
 
 class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
@@ -77,23 +92,32 @@ class _Api extends ApiClient with LegacySyncPageFake {
   @override
   void close() {}
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const [];
   @override
-  Future<List<MlsRevocation>> mlsRevocations(String token) async =>
-      [_revocation('conv-x'), _revocation('conv-y')];
+  Future<List<MlsRevocation>> mlsRevocations(String token) async => [
+        _revocation('conv-x'),
+        _revocation('conv-y'),
+      ];
   @override
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async => [
         MlsPendingChange(
-            conversationId: 'conv-a',
-            epoch: 3,
-            add: const [(accountId: 'carol', deviceId: 'dev_carol')],
-            remove: const []),
+          conversationId: 'conv-a',
+          epoch: 3,
+          add: const [(accountId: 'carol', deviceId: 'dev_carol')],
+          remove: const [],
+        ),
       ];
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String conversationId, List<String> deviceIds) async {
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
     claims.add(conversationId);
     return const [];
   }
@@ -119,7 +143,8 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 3, pending: false);
   @override
   Future<void> activateSession(Session session) async {}

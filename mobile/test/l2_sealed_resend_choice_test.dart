@@ -116,10 +116,11 @@ void main() {
 
     store.pending = <PendingMlsMessage>[
       const PendingMlsMessage(
-          idempotencyKey: 'mls_1',
-          conversationId: _conversation,
-          kind: 'update',
-          payload: <int>[1]),
+        idempotencyKey: 'mls_1',
+        conversationId: _conversation,
+        kind: 'update',
+        payload: <int>[1],
+      ),
     ];
     await state.sendSealedNormally(_key);
     expect(state.errorFor(Ops.send), state.l10n.outboxSealedResendHeld);
@@ -167,7 +168,11 @@ MessageEnvelope _sealedEnvelope() => MessageEnvelope(
     );
 
 Future<AppState> _start(
-    _Api api, LocalStore store, _Crypto crypto, _RefusingPoster poster) async {
+  _Api api,
+  LocalStore store,
+  _Crypto crypto,
+  _RefusingPoster poster,
+) async {
   final state = AppState(
     apiClientFactory: (_) => api,
     cryptoService: crypto,
@@ -248,17 +253,24 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <String, Object?>{'enabled': false};
 
   @override
-  Future<Map<String, Object?>> setupStatus() async =>
-      const <String, Object?>{'sealed_sender': true};
+  Future<Map<String, Object?>> setupStatus() async => const <String, Object?>{
+        'sealed_sender': true,
+      };
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <MlsMessage>[];
 
   @override
@@ -284,7 +296,8 @@ class _Crypto
 
   @override
   Future<MessageEnvelope?> reencryptSealedAsIdentified(
-      MessageEnvelope sealed) async {
+    MessageEnvelope sealed,
+  ) async {
     reencrypts++;
     final identified = MessageEnvelope(
       conversationId: sealed.conversationId,
@@ -302,10 +315,11 @@ class _Crypto
   Future<void> activateSession(Session session) async {}
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override

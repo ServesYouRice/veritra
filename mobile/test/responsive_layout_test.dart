@@ -25,13 +25,18 @@ Future<void> _openSettings(WidgetTester tester) async {
 /// Drags every vertical list on screen to its end so lazily built rows are
 /// laid out too, not just the first screenful.
 Future<void> _scrollThrough(WidgetTester tester) async {
-  final lists = find.byWidgetPredicate((widget) =>
-      widget is Scrollable && widget.axisDirection == AxisDirection.down);
+  final lists = find.byWidgetPredicate(
+    (widget) =>
+        widget is Scrollable && widget.axisDirection == AxisDirection.down,
+  );
   final count = lists.evaluate().length;
   for (var i = 0; i < count; i++) {
     for (var step = 0; step < 6; step++) {
-      await tester.drag(lists.at(i), const Offset(0, -400),
-          warnIfMissed: false);
+      await tester.drag(
+        lists.at(i),
+        const Offset(0, -400),
+        warnIfMissed: false,
+      );
       await tester.pump();
     }
   }
@@ -73,10 +78,9 @@ void main() {
           final AppState state = screen.value.connected
               ? await connectedState()
               : disconnectedState();
-          await tester.pumpWidget(veritraTestApp(
-            state: state,
-            textScale: viewport.textScale,
-          ));
+          await tester.pumpWidget(
+            veritraTestApp(state: state, textScale: viewport.textScale),
+          );
           await tester.pumpAndSettle();
           await screen.value.open?.call(tester);
           await _scrollThrough(tester);
@@ -87,21 +91,23 @@ void main() {
     });
   }
 
-  testWidgets('the compact nav keeps destination names in semantics at 320 px',
-      (tester) async {
-    final semantics = tester.ensureSemantics();
-    setWindowSize(tester, narrowPhoneSize);
-    await tester.pumpWidget(veritraTestApp(state: await connectedState()));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'the compact nav keeps destination names in semantics at 320 px',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      setWindowSize(tester, narrowPhoneSize);
+      await tester.pumpWidget(veritraTestApp(state: await connectedState()));
+      await tester.pumpAndSettle();
 
-    expect(shellLayoutFor(narrowPhoneSize.width), ShellLayout.compact);
-    for (final label in <String>['Chats', 'Communities', 'Settings']) {
-      expect(find.bySemanticsLabel(label), findsWidgets);
-    }
-    // The floating nav once filled the whole screen and covered the list.
-    expect(find.text('@alice').hitTestable(), findsOneWidget);
-    semantics.dispose();
-  });
+      expect(shellLayoutFor(narrowPhoneSize.width), ShellLayout.compact);
+      for (final label in <String>['Chats', 'Communities', 'Settings']) {
+        expect(find.bySemanticsLabel(label), findsWidgets);
+      }
+      // The floating nav once filled the whole screen and covered the list.
+      expect(find.text('@alice').hitTestable(), findsOneWidget);
+      semantics.dispose();
+    },
+  );
 
   group('reduced motion', () {
     Future<double> chatLeftEdgeOneFrameAfterOpening(
@@ -109,10 +115,12 @@ void main() {
       required bool disableAnimations,
     }) async {
       setWindowSize(tester, phoneSize);
-      await tester.pumpWidget(veritraTestApp(
-        state: await connectedState(),
-        disableAnimations: disableAnimations,
-      ));
+      await tester.pumpWidget(
+        veritraTestApp(
+          state: await connectedState(),
+          disableAnimations: disableAnimations,
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('@alice'));
       await tester.pump();
@@ -123,15 +131,20 @@ void main() {
     }
 
     testWidgets('opening a chat slides in by default', (tester) async {
-      final left = await chatLeftEdgeOneFrameAfterOpening(tester,
-          disableAnimations: false);
+      final left = await chatLeftEdgeOneFrameAfterOpening(
+        tester,
+        disableAnimations: false,
+      );
       expect(left, greaterThan(0));
     });
 
-    testWidgets('opening a chat does not move when animations are off',
-        (tester) async {
-      final left = await chatLeftEdgeOneFrameAfterOpening(tester,
-          disableAnimations: true);
+    testWidgets('opening a chat does not move when animations are off', (
+      tester,
+    ) async {
+      final left = await chatLeftEdgeOneFrameAfterOpening(
+        tester,
+        disableAnimations: true,
+      );
       expect(left, 0);
     });
   });

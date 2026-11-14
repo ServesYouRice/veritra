@@ -107,10 +107,12 @@ void main() {
         .padded;
 
     int? read(Uint8List padded) {
-      final outcome = codec.classify(padded,
-          conversationId: 'conv_1',
-          senderDeviceId: 'dev_1',
-          actionId: 'action_1');
+      final outcome = codec.classify(
+        padded,
+        conversationId: 'conv_1',
+        senderDeviceId: 'dev_1',
+        actionId: 'action_1',
+      );
       return (outcome as DecodedAppPayload).payload.expiresAtMs;
     }
 

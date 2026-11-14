@@ -54,27 +54,34 @@ abstract interface class K2TransferCryptoService {
   /// whose frozen state then holds the record; afterwards it is refused,
   /// because the pending state cannot change (no schema change needed).
   Future<K2ReceiveResult> k2ReceiveBegin(
-      K2LinkContext context, List<int> secret,
-      {required int originalExpiresAt});
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+  });
 
   /// Signs the v3 claim over the stored context. Reads native state only.
-  Future<K2ProofResult> k2EnrollmentProof(K2TransferId id,
-      {required String locator,
-      required List<int> reservationRequestId,
-      required String deviceName,
-      required List<int> challenge,
-      required List<int> keyPackage,
-      required List<int> claimTokenHash,
-      required List<int> deviceSecretHash,
-      required List<int> initialSessionHash});
+  Future<K2ProofResult> k2EnrollmentProof(
+    K2TransferId id, {
+    required String locator,
+    required List<int> reservationRequestId,
+    required String deviceName,
+    required List<int> challenge,
+    required List<int> keyPackage,
+    required List<int> claimTokenHash,
+    required List<int> deviceSecretHash,
+    required List<int> initialSessionHash,
+  });
 
   /// Checks the approval tag of a waiting link against the stored context
   /// before the new device completes at the server, without changing any
   /// state: the pending state is frozen, so the check runs on a scratch copy
   /// of it that is dropped at once. False only when native rejects the tag
   /// or time; anything else passes through.
-  Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
-      {required int approvedAt});
+  Future<bool> k2VerifyPendingApproval(
+    K2TransferId id,
+    List<int> approvalTag, {
+    required int approvedAt,
+  });
 
   /// The SAS to show, from the random the source revealed (L1-3). Native
   /// opens the commitment pinned at [k2ReceiveBegin] and refuses a random
@@ -90,31 +97,43 @@ abstract interface class K2TransferCryptoService {
   /// Verifies the approval tag and fixes the transfer deadline (returned,
   /// epoch milliseconds). The recipient runs it after promotion as the first
   /// active commit; the source after its approval POST.
-  Future<int> k2ApplyApproval(K2TransferId id, List<int> approvalTag,
-      {required int approvedAt});
+  Future<int> k2ApplyApproval(
+    K2TransferId id,
+    List<int> approvalTag, {
+    required int approvedAt,
+  });
 
   // --- Source ---
 
   /// This device's commitment to [sourceRandom] (32 fresh random bytes) for
   /// a link it is about to create on [serverOrigin] (L1-3). Pure.
   Future<List<int>> k2SourceCommitment(
-      String serverOrigin, List<int> sourceRandom);
+    String serverOrigin,
+    List<int> sourceRandom,
+  );
 
   /// Accepts the claim and returns this device's SAS. Committed first: only
   /// then may [sourceRandom] be revealed to the server, and native refuses
   /// any other claim for the link afterwards.
-  Future<K2Verification> k2SourceAccept(K2LinkContext context, List<int> secret,
-      {required int originalExpiresAt,
-      required List<int> transcriptHash,
-      required List<int> claimTag,
-      required List<int> sourceRandom});
+  Future<K2Verification> k2SourceAccept(
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+    required List<int> transcriptHash,
+    required List<int> claimTag,
+    required List<int> sourceRandom,
+  });
 
   /// Confirms the typed SAS: native intent, an `approving` progress row (its
   /// deadline is the latest the native record can live, the original link
   /// expiry plus seven days; native enforces the real one) and the claim
   /// request digest, in one commit. Returns the intent time.
-  Future<int> k2SourceConfirm(K2TransferId id, String typedSas,
-      {required String recipientDeviceId, required String claimRequestHash});
+  Future<int> k2SourceConfirm(
+    K2TransferId id,
+    String typedSas, {
+    required String recipientDeviceId,
+    required String claimRequestHash,
+  });
 
   /// The approval tag to POST. Refused until [k2SourceConfirm]'s commit is
   /// stored (the progress row is the proof).
@@ -124,8 +143,10 @@ abstract interface class K2TransferCryptoService {
   /// ciphertext into a durable file under [cacheDirectory] and commits the
   /// frozen handoff, manifest and `snapshot_ready` row, all before any
   /// upload. A retry after the commit returns the stored row.
-  Future<HistoryTransferProgress> k2SourcePrepare(K2TransferId id,
-      {required String cacheDirectory});
+  Future<HistoryTransferProgress> k2SourcePrepare(
+    K2TransferId id, {
+    required String cacheDirectory,
+  });
 
   /// The server holds exactly this ciphertext and handoff: native posted
   /// state and the `uploaded` row.
@@ -136,12 +157,14 @@ abstract interface class K2TransferCryptoService {
   /// Verifies [handoff] natively against the pinned context, checks it names
   /// the transfer the server described, and commits the frozen handoff,
   /// digest, size and `downloading` row before any download.
-  Future<HistoryTransferProgress> k2ReceiveHandoff(K2TransferId id,
-      {required List<int> handoff,
-      required String transferId,
-      required List<int> ciphertextSha256,
-      required int ciphertextSize,
-      required String downloadPath});
+  Future<HistoryTransferProgress> k2ReceiveHandoff(
+    K2TransferId id, {
+    required List<int> handoff,
+    required String transferId,
+    required List<int> ciphertextSha256,
+    required int ciphertextSize,
+    required String downloadPath,
+  });
 
   /// Feeds the whole downloaded file to a native stream: true only when the
   /// digest, header and every chunk authenticate. Changes no state.

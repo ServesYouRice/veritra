@@ -93,10 +93,11 @@ class FakeApi implements RoomApi {
     final nonce = 'nonce_${self.deviceId}_${server.joins}';
     lastNonce = nonce;
     server.seats[self.id] = RoomSeat(
-        deviceId: self.deviceId,
-        accountId: self.accountId,
-        inGroup: created,
-        offerNonce: nonce);
+      deviceId: self.deviceId,
+      accountId: self.accountId,
+      inGroup: created,
+      offerNonce: nonce,
+    );
     return RoomJoinInfo(
       callId: server.callId,
       groupId: server.groupId,
@@ -112,24 +113,29 @@ class FakeApi implements RoomApi {
 
   @override
   Future<RoomState> state(String callId) async => RoomState(
-      callId: callId,
-      groupId: server.groupId,
-      epoch: server.epoch,
-      seats: server.seats.values.toList());
+        callId: callId,
+        groupId: server.groupId,
+        epoch: server.epoch,
+        seats: server.seats.values.toList(),
+      );
 
   @override
-  Future<List<RoomCommitRecord>> commits(String callId,
-      {required int after}) async {
+  Future<List<RoomCommitRecord>> commits(
+    String callId, {
+    required int after,
+  }) async {
     if (!server.seats.containsKey(self.id)) throw const RoomGone();
     return server.log.where((c) => c.epoch > after).toList();
   }
 
   @override
-  Future<int> sendCommit(String callId,
-      {required int expectedEpoch,
-      required Uint8List commit,
-      Uint8List? welcome,
-      List<String> addedDeviceIds = const []}) async {
+  Future<int> sendCommit(
+    String callId, {
+    required int expectedEpoch,
+    required Uint8List commit,
+    Uint8List? welcome,
+    List<String> addedDeviceIds = const [],
+  }) async {
     server.sentCommits++;
     if (server.forceConflicts > 0) {
       server.forceConflicts--;
@@ -137,41 +143,48 @@ class FakeApi implements RoomApi {
     }
     if (expectedEpoch != server.epoch) throw const RoomEpochConflict();
     server.epoch++;
-    server.log.add(RoomCommitRecord(
+    server.log.add(
+      RoomCommitRecord(
         epoch: server.epoch,
         committerDeviceId: self.deviceId,
         commit: commit,
-        welcome: welcome));
+        welcome: welcome,
+      ),
+    );
     for (final id in addedDeviceIds) {
       final key = server.seats.keys.firstWhere((k) => k.endsWith('/$id'));
       final seat = server.seats[key]!;
       server.seats[key] = RoomSeat(
-          deviceId: seat.deviceId,
-          accountId: seat.accountId,
-          inGroup: true,
-          offerKeyPackage: seat.offerKeyPackage,
-          offerSignature: seat.offerSignature,
-          offerNonce: seat.offerNonce,
-          offerExpiresAt: seat.offerExpiresAt);
+        deviceId: seat.deviceId,
+        accountId: seat.accountId,
+        inGroup: true,
+        offerKeyPackage: seat.offerKeyPackage,
+        offerSignature: seat.offerSignature,
+        offerNonce: seat.offerNonce,
+        offerExpiresAt: seat.offerExpiresAt,
+      );
     }
     return server.epoch;
   }
 
   @override
-  Future<void> sendOffer(String callId,
-      {required String nonce,
-      required Uint8List keyPackage,
-      required Uint8List signature,
-      required int expiresAt}) async {
+  Future<void> sendOffer(
+    String callId, {
+    required String nonce,
+    required Uint8List keyPackage,
+    required Uint8List signature,
+    required int expiresAt,
+  }) async {
     final seat = server.seats[self.id]!;
     server.seats[self.id] = RoomSeat(
-        deviceId: seat.deviceId,
-        accountId: seat.accountId,
-        inGroup: false,
-        offerKeyPackage: keyPackage,
-        offerSignature: signature,
-        offerNonce: nonce,
-        offerExpiresAt: expiresAt);
+      deviceId: seat.deviceId,
+      accountId: seat.accountId,
+      inGroup: false,
+      offerKeyPackage: keyPackage,
+      offerSignature: signature,
+      offerNonce: nonce,
+      offerExpiresAt: expiresAt,
+    );
   }
 
   @override
@@ -207,12 +220,20 @@ class FakeCrypto implements CallGroupCrypto {
   }
 
   static Uint8List welcomeFor(
-          int epoch, List<CallMember> members, List<String> targets) =>
+    int epoch,
+    List<CallMember> members,
+    List<String> targets,
+  ) =>
       b('W;$epoch;${members.map(_enc).join(',')};${targets.join(',')}');
 
   static Uint8List commitOf(
-          int newEpoch, List<CallMember> adds, List<CallMember> removes) =>
-      b('C;$newEpoch;${adds.map(_enc).join(',')};${removes.map(_enc).join(',')}');
+    int newEpoch,
+    List<CallMember> adds,
+    List<CallMember> removes,
+  ) =>
+      b(
+        'C;$newEpoch;${adds.map(_enc).join(',')};${removes.map(_enc).join(',')}',
+      );
 
   @override
   void createGroup(Uint8List groupId) {
@@ -235,9 +256,10 @@ class FakeCrypto implements CallGroupCrypto {
   @override
   JoinOffer makeJoinOffer(Uint8List groupId, String nonce, int expiresAt) =>
       JoinOffer(
-          keyPackage: b('kp_${self.id}_$nonce'),
-          signature: b('sig:${self.id}:$nonce'),
-          expiresAt: expiresAt);
+        keyPackage: b('kp_${self.id}_$nonce'),
+        signature: b('sig:${self.id}:$nonce'),
+        expiresAt: expiresAt,
+      );
 
   @override
   bool verifyJoinOffer({
@@ -257,9 +279,11 @@ class FakeCrypto implements CallGroupCrypto {
   int currentEpoch(Uint8List groupId) => _epoch;
 
   @override
-  StagedCommit stageCommit(Uint8List groupId,
-      {List<({Uint8List keyPackage, CallMember member})> adds = const [],
-      List<CallMember> removes = const []}) {
+  StagedCommit stageCommit(
+    Uint8List groupId, {
+    List<({Uint8List keyPackage, CallMember member})> adds = const [],
+    List<CallMember> removes = const [],
+  }) {
     final addMembers = [for (final a in adds) a.member];
     staged = s(commitOf(_epoch + 1, addMembers, removes));
     final after = [
@@ -303,9 +327,10 @@ class FakeCrypto implements CallGroupCrypto {
       ...adds,
     ];
     return ProcessedCommit(
-        epoch: _epoch,
-        added: adds,
-        removedSelf: removes.any((r) => r.id == self.id));
+      epoch: _epoch,
+      added: adds,
+      removedSelf: removes.any((r) => r.id == self.id),
+    );
   }
 
   @override
@@ -318,7 +343,10 @@ class FakeCrypto implements CallGroupCrypto {
 
   @override
   Uint8List decryptApplication(
-      Uint8List groupId, Uint8List ciphertext, CallMember sender) {
+    Uint8List groupId,
+    Uint8List ciphertext,
+    CallMember sender,
+  ) {
     final p = s(ciphertext).split(';');
     if (p.length != 4 ||
         p[0] != 'A' ||
@@ -332,7 +360,11 @@ class FakeCrypto implements CallGroupCrypto {
 
   @override
   Uint8List mediaKey(
-      Uint8List groupId, String callId, CallMember sender, int stream) {
+    Uint8List groupId,
+    String callId,
+    CallMember sender,
+    int stream,
+  ) {
     keyRequests.add('$_epoch/${sender.id}/$stream');
     return b('K($callId,$_epoch,${sender.id},$stream)');
   }
@@ -358,7 +390,8 @@ class FakeParent implements ParentGroupView {
   bool hasMember(String conversationId, CallMember member) =>
       known &&
       list.any(
-          (m) => m.id == member.id && s(m.signingKey) == s(member.signingKey));
+        (m) => m.id == member.id && s(m.signingKey) == s(member.signingKey),
+      );
   @override
   List<CallMember>? members(String conversationId) =>
       known ? List.of(list) : null;
@@ -395,9 +428,13 @@ class FakeKeys implements FrameKeySink {
 }
 
 class Device {
-  Device(String name, FakeServer server, FakeClock clock, FakeParent parent,
-      {RoomCryptorSettings? settings})
-      : self = member(name),
+  Device(
+    String name,
+    FakeServer server,
+    FakeClock clock,
+    FakeParent parent, {
+    RoomCryptorSettings? settings,
+  })  : self = member(name),
         crypto = FakeCrypto(member(name)),
         keys = FakeKeys(settings: settings ?? const RoomCryptorSettings()) {
     api = FakeApi(server, self);
@@ -430,10 +467,11 @@ class FakeKeyProvider implements rtc.KeyProvider {
   String get id => 'kp';
 
   @override
-  Future<bool> setKey(
-      {required String participantId,
-      required int index,
-      required Uint8List key}) async {
+  Future<bool> setKey({
+    required String participantId,
+    required int index,
+    required Uint8List key,
+  }) async {
     if (refuse) return false;
     keys['$participantId@$index'] = Uint8List.fromList(key);
     log.add('key $participantId@$index');

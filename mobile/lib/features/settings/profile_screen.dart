@@ -111,7 +111,8 @@ class ProfileScreen extends StatelessWidget {
                   leading: const Icon(Icons.badge_outlined),
                   title: Text(l10n.profileEditTile),
                   subtitle: Text(
-                      state.profiles?.own?.name ?? l10n.profileDisplayNameHint),
+                    state.profiles?.own?.name ?? l10n.profileDisplayNameHint,
+                  ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => ProfileEditScreen.account(state: state),
@@ -215,10 +216,7 @@ class _IdentityRow extends StatelessWidget {
         : theme.textTheme.bodyMedium;
     return ListTile(
       leading: ExcludeSemantics(child: Icon(icon)),
-      title: Text(
-        label.toUpperCase(),
-        style: theme.textTheme.labelSmall,
-      ),
+      title: Text(label.toUpperCase(), style: theme.textTheme.labelSmall),
       subtitle: Text(value, style: valueStyle),
       trailing: copyValue == null
           ? null

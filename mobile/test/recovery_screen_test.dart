@@ -60,16 +60,19 @@ Future<_RecoveryAppState> _show(
     ..recoveryMessage = _longMessage
     ..localStoreFailure = failure;
   addTearDown(state.dispose);
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(context)
-          .copyWith(textScaler: TextScaler.linear(textScale)),
-      child: child!,
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+      home: AppShell(state: state),
     ),
-    home: AppShell(state: state),
-  ));
+  );
   await tester.pump();
   return state;
 }
@@ -77,13 +80,10 @@ Future<_RecoveryAppState> _show(
 void main() {
   final l10n = englishL10n;
 
-  testWidgets('on a short screen with large text every action is reachable',
-      (tester) async {
-    final state = await _show(
-      tester,
-      size: const Size(320, 360),
-      textScale: 2,
-    );
+  testWidgets('on a short screen with large text every action is reachable', (
+    tester,
+  ) async {
+    final state = await _show(tester, size: const Size(320, 360), textScale: 2);
     expect(tester.takeException(), isNull, reason: 'no overflow');
 
     await tester.ensureVisible(find.text(l10n.shellRetryRestore));
@@ -121,7 +121,10 @@ void main() {
         tester.getBottomLeft(find.text(l10n.shellContinueToSignIn)).dy;
     final space = 1400 - bottom;
     expect(top, greaterThan(100), reason: 'not pinned to the top');
-    expect((top - space).abs(), lessThan(48),
-        reason: 'equal room above and below');
+    expect(
+      (top - space).abs(),
+      lessThan(48),
+      reason: 'equal room above and below',
+    );
   });
 }

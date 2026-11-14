@@ -37,8 +37,12 @@ class _NoSync implements SyncService {
   Future<void> dispose() async {}
 }
 
-Conversation _dm(String id, String peer, String createdBy,
-        {int? retentionSeconds}) =>
+Conversation _dm(
+  String id,
+  String peer,
+  String createdBy, {
+  int? retentionSeconds,
+}) =>
     Conversation(
       id: id,
       kind: 'dm',
@@ -86,8 +90,9 @@ Widget _app(Widget home) => MaterialApp(
     );
 
 void main() {
-  testWidgets('requests collapse into one row and stay out of Archived',
-      (tester) async {
+  testWidgets('requests collapse into one row and stay out of Archived', (
+    tester,
+  ) async {
     final state = await _state(tester, <Conversation>[
       _dm('mine', 'acct_pal', 'acct_me'),
       _dm('req1', 'acct_stranger', 'acct_stranger'),
@@ -123,8 +128,9 @@ void main() {
     expect(find.byKey(const Key('requests-row')), findsOneWidget);
   });
 
-  testWidgets('New chat is in the top bar and nothing floats over a row',
-      (tester) async {
+  testWidgets('New chat is in the top bar and nothing floats over a row', (
+    tester,
+  ) async {
     final state = await _state(tester, <Conversation>[
       _dm('mine', 'acct_pal', 'acct_me'),
     ]);
@@ -163,8 +169,9 @@ void main() {
     );
   });
 
-  testWidgets('the empty state offers Start a chat, and Invite for an admin',
-      (tester) async {
+  testWidgets('the empty state offers Start a chat, and Invite for an admin', (
+    tester,
+  ) async {
     final member = await _state(tester, const <Conversation>[]);
     await tester.pumpWidget(_app(ChatListScreen(state: member)));
     await tester.pump();
@@ -193,8 +200,9 @@ void main() {
     expect(find.text(englishL10n.chatListArchivedEmptyTitle), findsOneWidget);
   });
 
-  testWidgets('a named group shows its initials, an unnamed one its icon',
-      (tester) async {
+  testWidgets('a named group shows its initials, an unnamed one its icon', (
+    tester,
+  ) async {
     final state = await _state(tester, <Conversation>[
       Conversation(id: 'g1', kind: 'group', title: 'book club'),
       Conversation(id: 'g2', kind: 'group'),
@@ -203,5 +211,24 @@ void main() {
     await tester.pump();
     expect(find.text('BC'), findsOneWidget);
     expect(find.byIcon(Icons.group_outlined), findsOneWidget);
+  });
+
+  testWidgets('U36: a swipe opens the row actions and keeps the row', (
+    tester,
+  ) async {
+    final state = await _state(tester, <Conversation>[
+      _dm('mine', 'acct_pal', 'acct_me'),
+    ]);
+    await tester.pumpWidget(_app(ChatListScreen(state: state)));
+    await tester.pump();
+
+    await tester.drag(find.textContaining('pal').first, const Offset(-400, 0));
+    await tester.pumpAndSettle();
+    // The same menu a long press opens.
+    expect(find.text(englishL10n.w8Archive), findsOneWidget);
+    expect(find.text(englishL10n.chatListDetails), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('pal'), findsWidgets);
   });
 }

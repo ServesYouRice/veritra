@@ -9,7 +9,7 @@ Future<void> stripW8Schema(EncryptedLocalDatabase database) async {
     'local_pins',
     'local_pending_pins',
     'local_starred',
-    'local_conversation_prefs'
+    'local_conversation_prefs',
   ]) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }
@@ -25,11 +25,12 @@ Future<void> stripW8Schema(EncryptedLocalDatabase database) async {
     'sender_hidden',
     'sender_removed',
     'c7_gen',
-    'c7_former'
+    'c7_former',
   ]) {
     if (columns.contains(column))
-      await database
-          .customStatement('ALTER TABLE local_messages DROP COLUMN $column');
+      await database.customStatement(
+        'ALTER TABLE local_messages DROP COLUMN $column',
+      );
   }
 }
 
@@ -39,7 +40,7 @@ Future<void> stripNoticeSchema(EncryptedLocalDatabase database) async {
   for (final table in [
     'local_notice_references',
     'local_notice_decisions',
-    'local_notice_usage'
+    'local_notice_usage',
   ]) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }
@@ -55,7 +56,8 @@ Future<void> stripCryptoRecordsSchema(EncryptedLocalDatabase database) async {
 /// Remove schema17's pending device enrollment (K2/K0) from a historical
 /// fixture.
 Future<void> stripPendingEnrollmentSchema(
-    EncryptedLocalDatabase database) async {
+  EncryptedLocalDatabase database,
+) async {
   await stripK2TransferSchema(database);
   for (final table in PendingEnrollmentSql.tables) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
@@ -66,8 +68,9 @@ Future<void> stripPendingEnrollmentSchema(
 /// historical fixture. The trigger goes first: it names the table.
 Future<void> stripFrankRevealSchema(EncryptedLocalDatabase database) async {
   await stripCommunityInfoSchema(database);
-  await database
-      .customStatement('DROP TRIGGER IF EXISTS local_frank_reveals_tombstone');
+  await database.customStatement(
+    'DROP TRIGGER IF EXISTS local_frank_reveals_tombstone',
+  );
   for (final table in FrankRevealSql.tables) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }
@@ -84,8 +87,9 @@ Future<void> stripK2TransferSchema(EncryptedLocalDatabase database) async {
 
 /// Remove schema31's community info tables (C3) from a fixture.
 Future<void> stripCommunityInfoSchema(EncryptedLocalDatabase database) async {
-  await database
-      .customStatement('DROP INDEX IF EXISTS local_info_events_subject');
+  await database.customStatement(
+    'DROP INDEX IF EXISTS local_info_events_subject',
+  );
   for (final table in CommunityInfoSql.tables) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }

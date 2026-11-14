@@ -77,43 +77,49 @@ void main() {
       h.dispose();
     });
 
-    test('createOwner: a failed key-package publish still starts sync',
-        () async {
-      final h = _Harness(mls: true);
-      h.api.publishFailures.add(ApiException(503, '{"error":"unavailable"}'));
+    test(
+      'createOwner: a failed key-package publish still starts sync',
+      () async {
+        final h = _Harness(mls: true);
+        h.api.publishFailures.add(ApiException(503, '{"error":"unavailable"}'));
 
-      await h.state.createOwner(_origin, 'owner', 'password', 'setup');
+        await h.state.createOwner(_origin, 'owner', 'password', 'setup');
 
-      expect(h.state.session?.token, 'token-owner');
-      expect(h.state.error, isNotNull);
-      await settle();
-      expect(h.syncStarts, 1);
-      h.dispose();
-    });
+        expect(h.state.session?.token, 'token-owner');
+        expect(h.state.error, isNotNull);
+        await settle();
+        expect(h.syncStarts, 1);
+        h.dispose();
+      },
+    );
 
-    test('registerWithInvite: a failed conversation refresh still starts sync',
-        () async {
-      final h = _Harness();
-      h.api.conversationsFailure = ApiException(500, '{"error":"internal"}');
+    test(
+      'registerWithInvite: a failed conversation refresh still starts sync',
+      () async {
+        final h = _Harness();
+        h.api.conversationsFailure = ApiException(500, '{"error":"internal"}');
 
-      await h.state.registerWithInvite(_origin, 'JOIN', 'owner', 'password');
+        await h.state.registerWithInvite(_origin, 'JOIN', 'owner', 'password');
 
-      expect(h.state.session?.token, 'token-owner');
-      expect(h.state.error, isNotNull);
-      await settle();
-      expect(h.syncStarts, 1);
-      h.dispose();
-    });
+        expect(h.state.session?.token, 'token-owner');
+        expect(h.state.error, isNotNull);
+        await settle();
+        expect(h.syncStarts, 1);
+        h.dispose();
+      },
+    );
 
     test('login: a failed device refresh still starts sync', () async {
       final h = _Harness();
-      await h.store.saveSession(const Session(
-        baseUrl: _origin,
-        token: '',
-        accountId: 'acct_owner',
-        deviceId: 'dev_owner',
-        deviceSecret: 'secret',
-      ));
+      await h.store.saveSession(
+        const Session(
+          baseUrl: _origin,
+          token: '',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+          deviceSecret: 'secret',
+        ),
+      );
       h.api.devicesFailure = const SocketException('offline');
 
       await h.state.login(_origin, 'owner', 'password');
@@ -125,69 +131,78 @@ void main() {
       h.dispose();
     });
 
-    test('login: a 401 after sign-in clears the session and starts nothing',
-        () async {
-      final h = _Harness();
-      await h.store.saveSession(const Session(
-        baseUrl: _origin,
-        token: '',
-        accountId: 'acct_owner',
-        deviceId: 'dev_owner',
-        deviceSecret: 'secret',
-      ));
-      h.api.devicesFailure = ApiException(401, '{"error":"unauthorized"}');
+    test(
+      'login: a 401 after sign-in clears the session and starts nothing',
+      () async {
+        final h = _Harness();
+        await h.store.saveSession(
+          const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_owner',
+            deviceId: 'dev_owner',
+            deviceSecret: 'secret',
+          ),
+        );
+        h.api.devicesFailure = ApiException(401, '{"error":"unauthorized"}');
 
-      await h.state.login(_origin, 'owner', 'password');
-      await settle();
+        await h.state.login(_origin, 'owner', 'password');
+        await settle();
 
-      expect(h.state.session, isNull);
-      expect(h.syncStarts, 0);
-      h.dispose();
-    });
+        expect(h.state.session, isNull);
+        expect(h.syncStarts, 0);
+        h.dispose();
+      },
+    );
   });
 
   group('TASK-037: a failed sync startup is visible and recovers', () {
-    test('restore: a lease failure shows offline, and resume starts sync',
-        () async {
-      final errors = <Object>[];
-      await guarded(errors, () async {
-        final store = _FaultStore()..acquireFailures = 1;
-        await store.saveSession(_owner);
-        final h = _Harness(store: store);
+    test(
+      'restore: a lease failure shows offline, and resume starts sync',
+      () async {
+        final errors = <Object>[];
+        await guarded(errors, () async {
+          final store = _FaultStore()..acquireFailures = 1;
+          await store.saveSession(_owner);
+          final h = _Harness(store: store);
 
-        await h.state.tryRestoreSession();
-        await settle();
+          await h.state.tryRestoreSession();
+          await settle();
 
+          expect(errors, isEmpty);
+          expect(h.state.lifecycle, SessionLifecycle.ready);
+          expect(h.state.session?.token, _owner.token);
+          expect(h.state.syncError, isNotNull);
+          expect(h.state.connectionStatus, ConnectionStatus.offline);
+          expect(h.syncStarts, 0);
+          expect(h.api.syncCalls, 0);
+
+          h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+          await waitFor(() => h.api.syncCalls > 0);
+          expect(h.syncStarts, 1);
+          await waitFor(
+            () => h.state.connectionStatus == ConnectionStatus.online,
+          );
+          expect(h.state.syncError, isNull);
+          h.dispose();
+        });
         expect(errors, isEmpty);
-        expect(h.state.lifecycle, SessionLifecycle.ready);
-        expect(h.state.session?.token, _owner.token);
-        expect(h.state.syncError, isNotNull);
-        expect(h.state.connectionStatus, ConnectionStatus.offline);
-        expect(h.syncStarts, 0);
-        expect(h.api.syncCalls, 0);
-
-        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
-        await waitFor(() => h.api.syncCalls > 0);
-        expect(h.syncStarts, 1);
-        await waitFor(
-            () => h.state.connectionStatus == ConnectionStatus.online);
-        expect(h.state.syncError, isNull);
-        h.dispose();
-      });
-      expect(errors, isEmpty);
-    });
+      },
+    );
 
     test('login: a lease failure is not a sign-in failure', () async {
       final errors = <Object>[];
       await guarded(errors, () async {
         final store = _FaultStore()..acquireFailures = 1;
-        await store.saveSession(const Session(
-          baseUrl: _origin,
-          token: '',
-          accountId: 'acct_owner',
-          deviceId: 'dev_owner',
-          deviceSecret: 'secret',
-        ));
+        await store.saveSession(
+          const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_owner',
+            deviceId: 'dev_owner',
+            deviceSecret: 'secret',
+          ),
+        );
         final h = _Harness(store: store);
 
         await h.state.login(_origin, 'owner', 'password');
@@ -206,37 +221,41 @@ void main() {
       expect(errors, isEmpty);
     });
 
-    test('reauthenticate: a failed release of the old lease recovers',
-        () async {
-      final errors = <Object>[];
-      await guarded(errors, () async {
-        final store = _FaultStore();
-        await store.saveSession(const Session(
-          baseUrl: _origin,
-          token: 'token-owner',
-          accountId: 'acct_owner',
-          deviceId: 'dev_owner',
-          deviceSecret: 'secret',
-        ));
-        final h = _Harness(store: store);
-        await h.state.tryRestoreSession();
-        await waitFor(() => h.api.syncCalls > 0);
-        expect(h.syncStarts, 1);
+    test(
+      'reauthenticate: a failed release of the old lease recovers',
+      () async {
+        final errors = <Object>[];
+        await guarded(errors, () async {
+          final store = _FaultStore();
+          await store.saveSession(
+            const Session(
+              baseUrl: _origin,
+              token: 'token-owner',
+              accountId: 'acct_owner',
+              deviceId: 'dev_owner',
+              deviceSecret: 'secret',
+            ),
+          );
+          final h = _Harness(store: store);
+          await h.state.tryRestoreSession();
+          await waitFor(() => h.api.syncCalls > 0);
+          expect(h.syncStarts, 1);
 
-        store.releaseFailures = 1;
-        h.api.rotatedToken = 'token-rotated';
-        expect(await h.state.reauthenticate('password'), isTrue);
-        await settle();
-        expect(h.state.connectionStatus, ConnectionStatus.offline);
-        expect(h.syncStarts, 1);
+          store.releaseFailures = 1;
+          h.api.rotatedToken = 'token-rotated';
+          expect(await h.state.reauthenticate('password'), isTrue);
+          await settle();
+          expect(h.state.connectionStatus, ConnectionStatus.offline);
+          expect(h.syncStarts, 1);
 
-        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
-        await waitFor(() => h.api.syncTokens.contains('token-rotated'));
-        expect(h.syncStarts, 2);
-        h.dispose();
-      });
-      expect(errors, isEmpty);
-    });
+          h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+          await waitFor(() => h.api.syncTokens.contains('token-rotated'));
+          expect(h.syncStarts, 2);
+          h.dispose();
+        });
+        expect(errors, isEmpty);
+      },
+    );
 
     test('resume never starts sync for a session that was replaced', () async {
       final errors = <Object>[];
@@ -258,25 +277,29 @@ void main() {
       expect(errors, isEmpty);
     });
 
-    test('resume never starts sync for a session whose MLS activation failed',
-        () async {
-      final h = _Harness(mls: true);
-      h.crypto!.activationFailure = StateError('keystore locked');
-      await h.store.saveSession(const Session(
-        baseUrl: _origin,
-        token: '',
-        accountId: 'acct_owner',
-        deviceId: 'dev_owner',
-        deviceSecret: 'secret',
-      ));
+    test(
+      'resume never starts sync for a session whose MLS activation failed',
+      () async {
+        final h = _Harness(mls: true);
+        h.crypto!.activationFailure = StateError('keystore locked');
+        await h.store.saveSession(
+          const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_owner',
+            deviceId: 'dev_owner',
+            deviceSecret: 'secret',
+          ),
+        );
 
-      await h.state.login(_origin, 'owner', 'password');
-      expect(h.state.error, isNotNull);
-      h.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await settle();
-      expect(h.syncStarts, 0);
-      h.dispose();
-    });
+        await h.state.login(_origin, 'owner', 'password');
+        expect(h.state.error, isNotNull);
+        h.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await settle();
+        expect(h.syncStarts, 0);
+        h.dispose();
+      },
+    );
   });
 
   group('TASK-043: export and manual retry stay off the session queue', () {
@@ -326,60 +349,69 @@ void main() {
       await waitFor(() => h.api.exportBefores.isNotEmpty);
 
       expect(
-          await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked), isTrue);
+        await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked),
+        isTrue,
+      );
       expect(await h.store.pendingEnvelopes(), hasLength(1));
       await h.state.logout().timeout(blocked);
       expect(h.state.session, isNull);
 
       page.complete(null);
       expect(await export, isNull);
-      expect(h.api.exportBefores, hasLength(1),
-          reason: 'the export kept paging after sign-out');
+      expect(
+        h.api.exportBefores,
+        hasLength(1),
+        reason: 'the export kept paging after sign-out',
+      );
       expect(exportFiles(), isEmpty);
       h.dispose();
     });
 
-    test('the final page answered after an account switch is not kept',
-        () async {
-      final h = signedIn();
-      final page = h.api.exportGates[1] = Completer<Object?>();
-      final export = h.state.exportAccount();
-      await waitFor(() => h.api.exportBefores.length == 2);
+    test(
+      'the final page answered after an account switch is not kept',
+      () async {
+        final h = signedIn();
+        final page = h.api.exportGates[1] = Completer<Object?>();
+        final export = h.state.exportAccount();
+        await waitFor(() => h.api.exportBefores.length == 2);
 
-      await h.state.logout().timeout(blocked);
-      h.state
-        ..api = h.api
-        ..session = bob;
-      page.complete(null);
+        await h.state.logout().timeout(blocked);
+        h.state
+          ..api = h.api
+          ..session = bob;
+        page.complete(null);
 
-      expect(await export, isNull);
-      expect(exportFiles(), isEmpty);
-      expect(h.state.error, isNull);
-      expect(h.state.busy, isFalse);
-      expect(h.state.session?.token, bob.token);
-      h.dispose();
-    });
+        expect(await export, isNull);
+        expect(exportFiles(), isEmpty);
+        expect(h.state.error, isNull);
+        expect(h.state.busy, isFalse);
+        expect(h.state.session?.token, bob.token);
+        h.dispose();
+      },
+    );
 
-    test('a 401 for the old session leaves the new session signed in',
-        () async {
-      final h = signedIn();
-      final page = h.api.exportGates[1] = Completer<Object?>();
-      final export = h.state.exportAccount();
-      await waitFor(() => h.api.exportBefores.length == 2);
+    test(
+      'a 401 for the old session leaves the new session signed in',
+      () async {
+        final h = signedIn();
+        final page = h.api.exportGates[1] = Completer<Object?>();
+        final export = h.state.exportAccount();
+        await waitFor(() => h.api.exportBefores.length == 2);
 
-      await h.state.logout().timeout(blocked);
-      h.state
-        ..api = h.api
-        ..session = bob;
-      page.complete(ApiException(401, '{"error":"unauthorized"}'));
+        await h.state.logout().timeout(blocked);
+        h.state
+          ..api = h.api
+          ..session = bob;
+        page.complete(ApiException(401, '{"error":"unauthorized"}'));
 
-      expect(await export, isNull);
-      await Future<void>.delayed(Duration.zero);
-      expect(h.state.session?.token, bob.token);
-      expect(h.state.error, isNull);
-      expect(exportFiles(), isEmpty);
-      h.dispose();
-    });
+        expect(await export, isNull);
+        await Future<void>.delayed(Duration.zero);
+        expect(h.state.session?.token, bob.token);
+        expect(h.state.error, isNull);
+        expect(exportFiles(), isEmpty);
+        h.dispose();
+      },
+    );
 
     test('a 401 for the current session still signs it out', () async {
       final h = signedIn();
@@ -402,7 +434,9 @@ void main() {
       expect(h.state.outboxState('env_1'), OutboxDeliveryState.sending);
 
       expect(
-          await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked), isTrue);
+        await h.state.sendMessageTo('conv_1', 'hi').timeout(blocked),
+        isTrue,
+      );
       send.complete(null);
       await retry;
       await waitFor(() async => (await h.store.pendingEnvelopes()).isEmpty);
@@ -410,25 +444,27 @@ void main() {
       h.dispose();
     });
 
-    test('a retry 401 for the old session leaves the new session signed in',
-        () async {
-      final h = signedIn();
-      await h.store.enqueueEnvelope(_envelope('env_1'));
-      final send = h.api.sendGate = Completer<Object?>();
-      final retry = h.state.retryEnvelope('env_1');
-      await waitFor(() => h.api.sent.contains('env_1'));
+    test(
+      'a retry 401 for the old session leaves the new session signed in',
+      () async {
+        final h = signedIn();
+        await h.store.enqueueEnvelope(_envelope('env_1'));
+        final send = h.api.sendGate = Completer<Object?>();
+        final retry = h.state.retryEnvelope('env_1');
+        await waitFor(() => h.api.sent.contains('env_1'));
 
-      await h.state.logout().timeout(blocked);
-      h.state
-        ..api = h.api
-        ..session = bob;
-      send.complete(ApiException(401, '{"error":"unauthorized"}'));
-      await retry;
-      await Future<void>.delayed(Duration.zero);
+        await h.state.logout().timeout(blocked);
+        h.state
+          ..api = h.api
+          ..session = bob;
+        send.complete(ApiException(401, '{"error":"unauthorized"}'));
+        await retry;
+        await Future<void>.delayed(Duration.zero);
 
-      expect(h.state.session?.token, bob.token);
-      h.dispose();
-    });
+        expect(h.state.session?.token, bob.token);
+        h.dispose();
+      },
+    );
   });
 
   group('TASK-028: key-package supply survives failures and restarts', () {
@@ -451,51 +487,56 @@ void main() {
 
     int sum(List<int> counts) => counts.fold(0, (a, b) => a + b);
 
-    test('createOwner: a failed first publish goes out after the catch-up',
-        () async {
-      final h = _Harness(mls: true);
-      h.api.publishFailures.add(ApiException(503, '{"error":"unavailable"}'));
+    test(
+      'createOwner: a failed first publish goes out after the catch-up',
+      () async {
+        final h = _Harness(mls: true);
+        h.api.publishFailures.add(ApiException(503, '{"error":"unavailable"}'));
 
-      await h.state.createOwner(_origin, 'owner', 'password', 'setup');
-      expect(h.state.error, isNotNull);
-      expect(await owed(h.store), 5);
+        await h.state.createOwner(_origin, 'owner', 'password', 'setup');
+        expect(h.state.error, isNotNull);
+        expect(await owed(h.store), 5);
 
-      await waitFor(() => h.api.published.isNotEmpty);
-      expect(h.api.published, <int>[5]);
-      await waitFor(() async => await owed(h.store) == 0);
-      h.dispose();
-    });
+        await waitFor(() => h.api.published.isNotEmpty);
+        expect(h.api.published, <int>[5]);
+        await waitFor(() async => await owed(h.store) == 0);
+        h.dispose();
+      },
+    );
 
-    test('registerWithInvite: a failed first publish goes out after a restart',
-        () async {
-      final first = _Harness(mls: true);
-      first.api.publishFailures
-        ..add(const SocketException('offline'))
-        ..add(const SocketException('offline'));
-      await first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw');
-      expect(first.state.error, isNotNull);
-      // The catch-up retry fails too; nothing went out.
-      await waitFor(() => first.api.publishAttempts == 2);
-      expect(first.api.published, isEmpty);
-      first.dispose();
+    test(
+      'registerWithInvite: a failed first publish goes out after a restart',
+      () async {
+        final first = _Harness(mls: true);
+        first.api.publishFailures
+          ..add(const SocketException('offline'))
+          ..add(const SocketException('offline'));
+        await first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw');
+        expect(first.state.error, isNotNull);
+        // The catch-up retry fails too; nothing went out.
+        await waitFor(() => first.api.publishAttempts == 2);
+        expect(first.api.published, isEmpty);
+        first.dispose();
 
-      final second = _Harness(mls: true, store: first.store, api: first.api);
-      await second.state.tryRestoreSession();
-      await waitFor(() => second.api.published.isNotEmpty);
-      expect(second.api.published, <int>[5]);
-      await waitFor(() async => await owed(second.store) == 0);
-      second.dispose();
-    });
+        final second = _Harness(mls: true, store: first.store, api: first.api);
+        await second.state.tryRestoreSession();
+        await waitFor(() => second.api.published.isNotEmpty);
+        expect(second.api.published, <int>[5]);
+        await waitFor(() async => await owed(second.store) == 0);
+        second.dispose();
+      },
+    );
 
     test('password sign-in publishes what the device still owes', () async {
       final h = _Harness(mls: true);
       await h.store.saveSession(deviceSession);
       await h.store.saveSetting(
-          'mls.key_package_need',
-          jsonEncode(<String, Object?>{
-            'scope': '$_origin\u0000acct_owner\u0000dev_owner',
-            'need': 3,
-          }));
+        'mls.key_package_need',
+        jsonEncode(<String, Object?>{
+          'scope': '$_origin\u0000acct_owner\u0000dev_owner',
+          'need': 3,
+        }),
+      );
 
       await h.state.login(_origin, 'owner', 'password');
       expect(h.state.error, isNull);
@@ -550,8 +591,11 @@ void main() {
         }
         await first.state.tryRestoreSession();
         await waitFor(() => _deaths.contains(point));
-        expect(await owed(first.store), 1,
-            reason: 'the need was not durable before the death');
+        expect(
+          await owed(first.store),
+          1,
+          reason: 'the need was not durable before the death',
+        );
         first.dispose();
         _deaths.clear();
         api.dieAfterPublish = false;
@@ -570,36 +614,45 @@ void main() {
 
     for (final register in <bool>[false, true]) {
       final name = register ? 'registerWithInvite' : 'createOwner';
-      test('$name: a death during the first publish is redone on restore',
-          () async {
-        final first = _Harness(mls: true);
-        first.crypto!.dieAt = 'after-generation';
-        unawaited(register
-            ? first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw')
-            : first.state.createOwner(_origin, 'owner', 'pw', 'setup'));
-        await waitFor(() => _deaths.contains('after-generation'));
-        expect((await first.store.loadSession())?.deviceId, 'dev_owner');
-        expect(await owed(first.store), 5);
-        first.dispose();
-        _deaths.clear();
+      test(
+        '$name: a death during the first publish is redone on restore',
+        () async {
+          final first = _Harness(mls: true);
+          first.crypto!.dieAt = 'after-generation';
+          unawaited(
+            register
+                ? first.state.registerWithInvite(_origin, 'JOIN', 'owner', 'pw')
+                : first.state.createOwner(_origin, 'owner', 'pw', 'setup'),
+          );
+          await waitFor(() => _deaths.contains('after-generation'));
+          expect((await first.store.loadSession())?.deviceId, 'dev_owner');
+          expect(await owed(first.store), 5);
+          first.dispose();
+          _deaths.clear();
 
-        final second = _Harness(mls: true, store: first.store, api: first.api);
-        await second.state.tryRestoreSession();
-        await waitFor(() async => await owed(second.store) == 0);
-        expect(first.api.published, <int>[5]);
-        second.dispose();
-      });
+          final second = _Harness(
+            mls: true,
+            store: first.store,
+            api: first.api,
+          );
+          await second.state.tryRestoreSession();
+          await waitFor(() async => await owed(second.store) == 0);
+          expect(first.api.published, <int>[5]);
+          second.dispose();
+        },
+      );
     }
 
     test('a record of another account or device is never applied', () async {
       final h = _Harness(mls: true);
       await h.store.saveSession(_owner);
       await h.store.saveSetting(
-          'mls.key_package_need',
-          jsonEncode(<String, Object?>{
-            'scope': '$_origin\u0000acct_other\u0000dev_other',
-            'need': 5,
-          }));
+        'mls.key_package_need',
+        jsonEncode(<String, Object?>{
+          'scope': '$_origin\u0000acct_other\u0000dev_other',
+          'need': 5,
+        }),
+      );
       await h.state.tryRestoreSession();
       await waitFor(() => h.state.connectionStatus == ConnectionStatus.online);
       await settle();
@@ -726,11 +779,8 @@ class _FaultStore extends MemoryLocalStore {
 /// factory. With [mls] it runs a minimal MLS crypto fake, so key packages
 /// are created and published.
 class _Harness {
-  _Harness({
-    bool mls = false,
-    LocalStore? store,
-    _Api? api,
-  })  : store = store ?? MemoryLocalStore(),
+  _Harness({bool mls = false, LocalStore? store, _Api? api})
+      : store = store ?? MemoryLocalStore(),
         api = api ?? _Api() {
     crypto = mls ? _MlsCrypto(this.store) : null;
     state = build();
@@ -804,7 +854,8 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
-          String inviteCode) async =>
+    String inviteCode,
+  ) async =>
       _reservation;
 
   @override
@@ -843,10 +894,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<Session?> completeDeviceLinkClaim(
-          String linkId,
-          String claimToken,
-          List<int> expectedTranscriptHash,
-          List<int> expectedApprovalTag) async =>
+    String linkId,
+    String claimToken,
+    List<int> expectedTranscriptHash,
+    List<int> expectedApprovalTag,
+  ) async =>
       signedIn;
 
   @override
@@ -907,8 +959,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<MlsMessage> mlsMessage(String token, String messageId) async =>
-      _welcome(events.firstWhere(
-          (event) => (event.payload as Map)['mls_message_id'] == messageId));
+      _welcome(
+        events.firstWhere(
+          (event) => (event.payload as Map)['mls_message_id'] == messageId,
+        ),
+      );
 
   @override
   Future<List<SyncEvent>> syncEvents(
@@ -982,7 +1037,10 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<String?> reauthenticate(
-          String token, String password, String deviceSecret) async =>
+    String token,
+    String password,
+    String deviceSecret,
+  ) async =>
       rotatedToken;
 
   @override
@@ -1009,12 +1067,14 @@ class _MlsCrypto extends TestOnlyCryptoService
     final marker = 'mls:${message.syncEventId}:${message.id}';
     if (await store.hasProcessedMlsMessage(marker)) return;
     if (dieAt == 'before-commit') await _die('before-commit');
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: marker,
-      conversationId: message.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: message.syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: marker,
+        conversationId: message.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: message.syncEventId,
+      ),
+    );
     if (dieAt == 'after-commit') await _die('after-commit');
   }
 
@@ -1025,12 +1085,13 @@ class _MlsCrypto extends TestOnlyCryptoService
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-      {int count = 5}) async {
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async {
     created.add(count);
     if (dieAt == 'after-generation') await _die('after-generation');
     return <List<int>>[
-      for (var i = 0; i < count; i++) <int>[i]
+      for (var i = 0; i < count; i++) <int>[i],
     ];
   }
 

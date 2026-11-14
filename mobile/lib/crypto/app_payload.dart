@@ -146,7 +146,10 @@ bool isValidLeaveSignedBody(Map<String, Object?> body) {
 /// own-device alert (the native service refuses an expiring one, and the
 /// alert would be lost in every chat with a timer).
 DateTime? senderExpiryFor(
-    AppPayloadType type, int? retentionSeconds, DateTime now) {
+  AppPayloadType type,
+  int? retentionSeconds,
+  DateTime now,
+) {
   if (retentionSeconds == null ||
       retentionSeconds <= 0 ||
       infoPayloadTypes.contains(type) ||
@@ -320,8 +323,9 @@ class FrankingPolicy {
       acceptUnfranked ||
       switch (outcome) {
         UnsupportedAppPayload(:final hidden) => hidden,
-        DecodedAppPayload(:final payload) =>
-          unfrankedPayloadTypes.contains(payload.type.name),
+        DecodedAppPayload(:final payload) => unfrankedPayloadTypes.contains(
+            payload.type.name,
+          ),
         InvalidAppPayload() => false,
       };
 }
@@ -358,21 +362,33 @@ class AppPayloadCodec {
             reportKeyPayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
-            body.keys.any(const {
-              'entities',
-              'mentions',
-              'link_preview',
-              'forwarded',
-              'profile_key',
-              'group_profile_key'
-            }.contains)
+            body.keys.any(
+              const {
+                'entities',
+                'mentions',
+                'link_preview',
+                'forwarded',
+                'profile_key',
+                'group_profile_key',
+              }.contains,
+            )
         ? 2
         : 1;
     _validateBody(type, body, version: version);
     return _frame(
-        _innerJson(version, type, conversationId, senderDeviceId, actionId,
-            body, channelId, hidden, null),
-        paddedLength: paddedLength);
+      _innerJson(
+        version,
+        type,
+        conversationId,
+        senderDeviceId,
+        actionId,
+        body,
+        channelId,
+        hidden,
+        null,
+      ),
+      paddedLength: paddedLength,
+    );
   }
 
   /// Encodes a franked payload (C6, `docs/crypto.md` "Franking v1"). Always
@@ -395,44 +411,61 @@ class AppPayloadCodec {
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     _validateBody(type, body, version: 2);
-    final canonical = _innerJson(2, type, conversationId, senderDeviceId,
-        actionId, body, channelId, hidden, expiresAtMs);
+    final canonical = _innerJson(
+      2,
+      type,
+      conversationId,
+      senderDeviceId,
+      actionId,
+      body,
+      channelId,
+      hidden,
+      expiresAtMs,
+    );
     // L2-3: a payload sent sealed may carry the sender's designation of the
     // commitment to `P` to the pinned owner keys, which only the caller can
     // make (it holds the device's franking key), so it is asked for once `P`
     // exists. Null or empty is the plain form.
     final designation = sealedDesignation?.call(canonical);
     return (
-      padded: _frame(frankWireJson(canonical, frankKey,
+      padded: _frame(
+        frankWireJson(
+          canonical,
+          frankKey,
           designation:
-              designation == null || designation.isEmpty ? null : designation)),
-      canonical: canonical
+              designation == null || designation.isEmpty ? null : designation,
+        ),
+      ),
+      canonical: canonical,
     );
   }
 
   static Uint8List _innerJson(
-          int version,
-          AppPayloadType type,
-          String conversationId,
-          String senderDeviceId,
-          String actionId,
-          Map<String, Object?> body,
-          String? channelId,
-          bool hidden,
-          int? expiresAtMs) =>
-      utf8.encode(jsonEncode(<String, Object?>{
-        'v': version,
-        'type': type.wireName,
-        'conversation_id': conversationId,
-        'sender_device_id': senderDeviceId,
-        'action_id': actionId,
-        if (channelId != null) 'channel_id': channelId,
-        if (hidden) 'hidden': true,
-        // The sender's expiry (v2 only: a v1 receiver refuses extra keys,
-        // and every v2 receiver ignores keys it does not know).
-        if (expiresAtMs != null) 'expires_at': expiresAtMs,
-        'body': body,
-      }));
+    int version,
+    AppPayloadType type,
+    String conversationId,
+    String senderDeviceId,
+    String actionId,
+    Map<String, Object?> body,
+    String? channelId,
+    bool hidden,
+    int? expiresAtMs,
+  ) =>
+      utf8.encode(
+        jsonEncode(<String, Object?>{
+          'v': version,
+          'type': type.wireName,
+          'conversation_id': conversationId,
+          'sender_device_id': senderDeviceId,
+          'action_id': actionId,
+          if (channelId != null) 'channel_id': channelId,
+          if (hidden) 'hidden': true,
+          // The sender's expiry (v2 only: a v1 receiver refuses extra keys,
+          // and every v2 receiver ignores keys it does not know).
+          if (expiresAtMs != null) 'expires_at': expiresAtMs,
+          'body': body,
+        }),
+      );
 
   /// The length of the `VAP1` value for an inner JSON of [innerBytes]: the
   /// 8-byte header, then the next 256-byte bucket. C7 budgets its record
@@ -481,17 +514,20 @@ class AppPayloadCodec {
         !_constantTimePrefix(padded, _magic)) {
       throw const FormatException('invalid application payload framing');
     }
-    final length = ByteData.sublistView(Uint8List.fromList(padded))
-        .getUint32(4, Endian.big);
+    final length = ByteData.sublistView(
+      Uint8List.fromList(padded),
+    ).getUint32(4, Endian.big);
     if (length <= 0 || length > padded.length - _headerLength) {
       throw const FormatException('invalid application payload length');
     }
     final Object? decoded;
     try {
-      decoded = jsonDecode(utf8.decode(
-        padded.sublist(_headerLength, _headerLength + length),
-        allowMalformed: false,
-      ));
+      decoded = jsonDecode(
+        utf8.decode(
+          padded.sublist(_headerLength, _headerLength + length),
+          allowMalformed: false,
+        ),
+      );
     } catch (_) {
       throw const FormatException('invalid application payload encoding');
     }
@@ -540,7 +576,8 @@ class AppPayloadCodec {
         return const MalformedFrank();
       }
       return splitFrank(
-          Uint8List.sublistView(bytes, _headerLength, _headerLength + length));
+        Uint8List.sublistView(bytes, _headerLength, _headerLength + length),
+      );
     } catch (_) {
       return const MalformedFrank();
     }
@@ -549,7 +586,10 @@ class AppPayloadCodec {
   /// Checks the envelope fields the server supplied (P2). The decrypted
   /// context is compared against these afterwards.
   static void validateContext(
-      String conversationId, String deviceId, String actionId) {
+    String conversationId,
+    String deviceId,
+    String actionId,
+  ) {
     if (conversationId.isEmpty ||
         deviceId.isEmpty ||
         actionId.isEmpty ||
@@ -580,8 +620,9 @@ class AppPayloadCodec {
           !_constantTimePrefix(padded, _magic)) {
         return const InvalidAppPayload();
       }
-      final length = ByteData.sublistView(Uint8List.fromList(padded))
-          .getUint32(4, Endian.big);
+      final length = ByteData.sublistView(
+        Uint8List.fromList(padded),
+      ).getUint32(4, Endian.big);
       if (length <= 0 || length > padded.length - _headerLength) {
         return const InvalidAppPayload();
       }
@@ -613,7 +654,9 @@ class AppPayloadCodec {
       }
       if (version > appPayloadVersion) {
         return UnsupportedAppPayload(
-            rawJson: rawJson, hidden: map['hidden'] == true);
+          rawJson: rawJson,
+          hidden: map['hidden'] == true,
+        );
       }
       if (version == 1 &&
           (map.length != _v1Keys.length || !map.keys.every(_v1Keys.contains))) {
@@ -624,23 +667,31 @@ class AppPayloadCodec {
           .firstOrNull;
       if (type == null) {
         return UnsupportedAppPayload(
-            rawJson: rawJson, hidden: map['hidden'] == true);
+          rawJson: rawJson,
+          hidden: map['hidden'] == true,
+        );
       }
       final body = Map<String, Object?>.from(map['body'] as Map);
       _validateBody(type, body, version: version);
-      return DecodedAppPayload(DecryptedAppPayload(
+      return DecodedAppPayload(
+        DecryptedAppPayload(
           type: type,
           actionId: actionId,
           body: body,
           channelId: map['channel_id'] as String?,
-          expiresAtMs: version >= 2 ? _readExpiryMs(map['expires_at']) : null));
+          expiresAtMs: version >= 2 ? _readExpiryMs(map['expires_at']) : null,
+        ),
+      );
     } catch (_) {
       return const InvalidAppPayload();
     }
   }
 
-  void _validateBody(AppPayloadType type, Map<String, Object?> body,
-      {int version = 1}) {
+  void _validateBody(
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    int version = 1,
+  }) {
     bool stringField(String name, {int max = maxAppTextLength}) =>
         body[name] is String && (body[name] as String).length <= max;
     final valid = switch (type) {
@@ -663,8 +714,11 @@ class AppPayloadCodec {
           stringField('message_id', max: 128) &&
           body['pinned'] is bool &&
           (body['pinned'] == false ||
-              const [86400, 604800, 2592000]
-                  .contains(body['duration_seconds'])),
+              const [
+                86400,
+                604800,
+                2592000,
+              ].contains(body['duration_seconds'])),
       AppPayloadType.poll => version >= 2 && isValidPollBody(body),
       AppPayloadType.pollVote => version >= 2 && isValidPollVoteBody(body),
       AppPayloadType.pollClose => version >= 2 && isValidPollCloseBody(body),

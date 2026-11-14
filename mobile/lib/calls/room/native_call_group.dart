@@ -9,8 +9,11 @@ import 'room_ports.dart';
 /// B6 (ABI 22) join signature domain; Rust prepends it to the message.
 const b6JoinDomain = 'veritra-b6-join-v1';
 
-List<int> _lp(List<int> value) =>
-    [(value.length >> 8) & 0xff, value.length & 0xff, ...value];
+List<int> _lp(List<int> value) => [
+      (value.length >> 8) & 0xff,
+      value.length & 0xff,
+      ...value,
+    ];
 
 List<int> _u64(int value) {
   final out = ByteData(8)..setUint64(0, value);
@@ -86,7 +89,10 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
       ),
     );
     return JoinOffer(
-        keyPackage: keyPackage, signature: signature, expiresAt: expiresAt);
+      keyPackage: keyPackage,
+      signature: signature,
+      expiresAt: expiresAt,
+    );
   }
 
   @override
@@ -129,7 +135,9 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
     if (adds.isEmpty && removes.isEmpty) {
       final staged = device.stageSelfUpdate(name);
       return StagedCommit(
-          commit: Uint8List.fromList(staged.commit), epoch: staged.epoch);
+        commit: Uint8List.fromList(staged.commit),
+        epoch: staged.epoch,
+      );
     }
     final staged = device.stageCommitKeyed(
       name,
@@ -189,13 +197,26 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
 
   @override
   Uint8List decryptApplication(
-          Uint8List groupId, Uint8List ciphertext, CallMember sender) =>
-      Uint8List.fromList(device.decrypt(_groupName(groupId), ciphertext,
-          senderAccountId: sender.accountId, senderDeviceId: sender.deviceId));
+    Uint8List groupId,
+    Uint8List ciphertext,
+    CallMember sender,
+  ) =>
+      Uint8List.fromList(
+        device.decrypt(
+          _groupName(groupId),
+          ciphertext,
+          senderAccountId: sender.accountId,
+          senderDeviceId: sender.deviceId,
+        ),
+      );
 
   @override
   Uint8List mediaKey(
-      Uint8List groupId, String callId, CallMember sender, int stream) {
+    Uint8List groupId,
+    String callId,
+    CallMember sender,
+    int stream,
+  ) {
     return device.b6MediaKey(
       groupId: _groupName(groupId),
       callId: callId,
@@ -218,20 +239,20 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
 class NativeParentGroupView implements ParentGroupView {
   /// [judged] returns the stored verdicts of a conversation's leaves, or
   /// null while they are not loaded; [load] loads them.
-  NativeParentGroupView(NativeCryptoDevice device,
-      {required List<ApprovalLeaf>? Function(String conversationId) judged,
-      required Future<List<ApprovalLeaf>?> Function(String conversationId)
-          load})
-      : this.live(() => device, judged: judged, load: load);
+  NativeParentGroupView(
+    NativeCryptoDevice device, {
+    required List<ApprovalLeaf>? Function(String conversationId) judged,
+    required Future<List<ApprovalLeaf>?> Function(String conversationId) load,
+  }) : this.live(() => device, judged: judged, load: load);
 
   /// Reads the device [current] returns at each call, so a replaced or
   /// closed handle is never used; null lists nobody (fail closed: no one
   /// can be added).
-  NativeParentGroupView.live(NativeCryptoDevice? Function() current,
-      {required List<ApprovalLeaf>? Function(String conversationId) judged,
-      required Future<List<ApprovalLeaf>?> Function(String conversationId)
-          load})
-      : _device = current,
+  NativeParentGroupView.live(
+    NativeCryptoDevice? Function() current, {
+    required List<ApprovalLeaf>? Function(String conversationId) judged,
+    required Future<List<ApprovalLeaf>?> Function(String conversationId) load,
+  })  : _device = current,
         _judged = judged,
         _load = load;
   final NativeCryptoDevice? Function() _device;
@@ -241,7 +262,9 @@ class NativeParentGroupView implements ParentGroupView {
   /// Every leaf of the parent with whether it is approved; empty for an
   /// unknown group or no device, null while the verdicts are not loaded.
   List<(CallMember, bool)>? _leaves(
-      String conversationId, List<ApprovalLeaf>? verdicts) {
+    String conversationId,
+    List<ApprovalLeaf>? verdicts,
+  ) {
     final device = _device();
     if (device == null) return const [];
     final List<LeafPair> tree;
@@ -256,10 +279,12 @@ class NativeParentGroupView implements ParentGroupView {
         for (final leaf in tree)
           (
             _member(leaf),
-            verdicts.any((row) =>
-                row.verdict == LeafVerdict.approved &&
-                row.sameLeaf(leaf.accountId, leaf.deviceId) &&
-                _sameBytes(row.signingKey, leaf.signingKey)),
+            verdicts.any(
+              (row) =>
+                  row.verdict == LeafVerdict.approved &&
+                  row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+                  _sameBytes(row.signingKey, leaf.signingKey),
+            ),
           ),
       ];
     } catch (_) {

@@ -34,12 +34,16 @@ Future<bool> toggleBlock(
   if (!context.mounted) return ok;
   messenger.showSnackBar(
     SnackBar(
-      content: Text(ok
-          ? (blocked ? l10n.blockedUnblocked(label) : l10n.searchBlocked(label))
-          : state.errorFor(Ops.blocks) ??
-              (blocked
-                  ? l10n.blockedUnblockFailed(label)
-                  : l10n.searchBlockFailed)),
+      content: Text(
+        ok
+            ? (blocked
+                ? l10n.blockedUnblocked(label)
+                : l10n.searchBlocked(label))
+            : state.errorFor(Ops.blocks) ??
+                (blocked
+                    ? l10n.blockedUnblockFailed(label)
+                    : l10n.searchBlockFailed),
+      ),
       action: ok
           ? SnackBarAction(
               label: l10n.commonUndo,

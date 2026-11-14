@@ -83,7 +83,8 @@ class K0Crypto extends TestOnlyCryptoService
 
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation) async {
+    EnrollmentReservation reservation,
+  ) async {
     enrollments++;
     pendingIdentity = true;
     return super.createEnrollmentCredential(reservation);
@@ -99,7 +100,11 @@ class K0Crypto extends TestOnlyCryptoService
       sealedState: const <int>[4, 4, 4],
       changes: const <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: 1, recordId: <int>[1], generation: 1, sealed: <int>[5]),
+          kind: 1,
+          recordId: <int>[1],
+          generation: 1,
+          sealed: <int>[5],
+        ),
       ],
     );
   }
@@ -127,10 +132,11 @@ class K0Crypto extends TestOnlyCryptoService
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override
@@ -161,7 +167,11 @@ class K0PromotingCrypto extends K0Crypto
       sealedState: const <int>[4, 4, 4],
       changes: const <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: 1, recordId: <int>[], generation: 1, sealed: <int>[5]),
+          kind: 1,
+          recordId: <int>[],
+          generation: 1,
+          sealed: <int>[5],
+        ),
       ],
     );
   }
@@ -173,14 +183,16 @@ class K0PromotingCrypto extends K0Crypto
     required String promotionId,
     HistoryTransferProgress? transfer,
   }) async {
-    final outcome = await store.promotePendingEnrollment(EnrollmentPromotion(
-      kind: kind,
-      session: session,
-      promotionId: promotionId,
-      expectedState: resumed.last,
-      promotedAt: DateTime.now().toUtc(),
-      transfer: transfer,
-    ));
+    final outcome = await store.promotePendingEnrollment(
+      EnrollmentPromotion(
+        kind: kind,
+        session: session,
+        promotionId: promotionId,
+        expectedState: resumed.last,
+        promotedAt: DateTime.now().toUtc(),
+        transfer: transfer,
+      ),
+    );
     promotions.add(outcome);
     pendingIdentity = false;
     return outcome;
@@ -189,8 +201,10 @@ class K0PromotingCrypto extends K0Crypto
 
 /// One account's recovery state on the server side.
 class K0Server {
-  RecoveryKeyStatus status =
-      const RecoveryKeyStatus(available: true, configured: false);
+  RecoveryKeyStatus status = const RecoveryKeyStatus(
+    available: true,
+    configured: false,
+  );
   bool recentAuth = false;
   bool requireRecentAuth = true;
   String reservationAccount = 'acct_me';
@@ -235,10 +249,12 @@ class K0Api extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<RecoveryKeyStatus> putRecoveryKey(String token,
-      {required List<int> rkAuthPub,
-      required List<int> rkId,
-      List<int>? deviceList}) async {
+  Future<RecoveryKeyStatus> putRecoveryKey(
+    String token, {
+    required List<int> rkAuthPub,
+    required List<int> rkId,
+    List<int>? deviceList,
+  }) async {
     if (server.requireRecentAuth && !server.recentAuth) {
       throw k0Error(403, 'recent_auth_required');
     }
@@ -247,13 +263,19 @@ class K0Api extends ApiClient with LegacySyncPageFake {
       'rk_id': List<int>.of(rkId),
     });
     server.status = RecoveryKeyStatus(
-        available: true, configured: true, setAt: DateTime.utc(2026, 11, 1));
+      available: true,
+      configured: true,
+      setAt: DateTime.utc(2026, 11, 1),
+    );
     return server.status;
   }
 
   @override
   Future<String?> reauthenticate(
-      String token, String password, String deviceSecret) async {
+    String token,
+    String password,
+    String deviceSecret,
+  ) async {
     if (password != 'pw') throw k0Error(401, 'invalid_credentials');
     server.recentAuth = true;
     return null;
@@ -297,14 +319,17 @@ class K0Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<AccountRecoveryStatus> accountRecoveryStatus(
-      String requestId, String claimToken) async {
+    String requestId,
+    String claimToken,
+  ) async {
     server.recoveryPolls++;
     final gate = server.statusGate;
     if (gate != null) await gate.future;
     if (server.statusAnswers.isEmpty) {
       return AccountRecoveryStatus(
-          phase: AccountRecoveryPhase.waiting,
-          readyAt: DateTime.utc(2099, 11, 8, 10));
+        phase: AccountRecoveryPhase.waiting,
+        readyAt: DateTime.utc(2099, 11, 8, 10),
+      );
     }
     final next = server.statusAnswers.removeAt(0);
     if (next is AccountRecoveryStatus) return next;
@@ -318,7 +343,9 @@ class K0Api extends ApiClient with LegacySyncPageFake {
     if (failure != null) throw failure;
     server.cancels.add(requestId);
     server.status = RecoveryKeyStatus(
-        available: true, configured: server.status.configured);
+      available: true,
+      configured: server.status.configured,
+    );
   }
 
   @override
@@ -358,16 +385,22 @@ class K0Api extends ApiClient with LegacySyncPageFake {
   }) async {}
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       server.events
           .where((event) => event.id > after)
           .take(limit)
           .toList(growable: false);
 
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <MlsMessage>[];
 
   @override
@@ -404,8 +437,12 @@ class K0QuietSync implements SyncService {
 
 /// An app over [store] talking to [server]; [apis] collects every client
 /// the app made (one per origin it connected to).
-AppState k0App(K0Server server, LocalStore store, CryptoService crypto,
-        {List<K0Api>? apis}) =>
+AppState k0App(
+  K0Server server,
+  LocalStore store,
+  CryptoService crypto, {
+  List<K0Api>? apis,
+}) =>
     AppState(
       apiClientFactory: (url) {
         final api = K0Api(server, url);

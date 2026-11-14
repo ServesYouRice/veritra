@@ -95,12 +95,14 @@ class DeviceLinkSteps extends StatelessWidget {
                             ? const Icon(Icons.check, size: 16)
                             : FittedBox(
                                 fit: BoxFit.scaleDown,
-                                child: Text('${step.index + 1}',
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                            color: step.index <= current.index
-                                                ? scheme.onPrimary
-                                                : scheme.onSurfaceVariant)),
+                                child: Text(
+                                  '${step.index + 1}',
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: step.index <= current.index
+                                        ? scheme.onPrimary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                ),
                               ),
                       ),
                       Expanded(
@@ -282,7 +284,10 @@ class _DeviceLinkScreenState extends State<DeviceLinkScreen> {
 
   /// Step 1: the QR first, large; the typed code behind "Cannot scan?".
   List<Widget> _scanStep(
-      BuildContext context, DeviceLinkV3View link, bool busy) {
+    BuildContext context,
+    DeviceLinkV3View link,
+    bool busy,
+  ) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final code = state.activeDeviceLinkCode;
@@ -292,9 +297,11 @@ class _DeviceLinkScreenState extends State<DeviceLinkScreen> {
       // Expired, cancelled, or a link this device no longer holds the
       // secret for: only a new link can go on.
       return <Widget>[
-        Text(l10n.deviceLinkEndedHere,
-            key: const ValueKey<String>('device-link-ended'),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.deviceLinkEndedHere,
+          key: const ValueKey<String>('device-link-ended'),
+          style: theme.textTheme.bodyMedium,
+        ),
       ];
     }
     return <Widget>[
@@ -327,7 +334,8 @@ class _DeviceLinkScreenState extends State<DeviceLinkScreen> {
                 const SizedBox(height: BoneSpacing.md),
                 Text(
                   l10n.deviceLinkExpiresAt(
-                      formatDateTime(context, link.expiresAt)),
+                    formatDateTime(context, link.expiresAt),
+                  ),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -391,16 +399,21 @@ class _DeviceLinkScreenState extends State<DeviceLinkScreen> {
   /// the boxes, in full. This device never shows the code itself: typing
   /// what the new device shows is the comparison, and native checks it.
   List<Widget> _compareStep(
-      BuildContext context, DeviceLinkV3View link, bool busy) {
+    BuildContext context,
+    DeviceLinkV3View link,
+    bool busy,
+  ) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final ready = link.verificationCode.isNotEmpty;
     return <Widget>[
       if (link.claimedDeviceName case final name?) ...<Widget>[
-        Text(l10n.deviceLinkNewDevice(name),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            )),
+        Text(
+          l10n.deviceLinkNewDevice(name),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: BoneSpacing.md),
       ],
       if (!ready) ...<Widget>[
@@ -451,14 +464,18 @@ class _DeviceLinkScreenState extends State<DeviceLinkScreen> {
     return <Widget>[
       Row(
         children: <Widget>[
-          Icon(Icons.check_circle_outline,
-              color: theme.extension<VeritraStateColors>()?.verified ??
-                  theme.colorScheme.primary),
+          Icon(
+            Icons.check_circle_outline,
+            color: theme.extension<VeritraStateColors>()?.verified ??
+                theme.colorScheme.primary,
+          ),
           const SizedBox(width: BoneSpacing.sm),
           Expanded(
-            child: Text(l10n.deviceLinkDoneTitle,
-                key: const ValueKey<String>('device-link-done'),
-                style: theme.textTheme.titleMedium),
+            child: Text(
+              l10n.deviceLinkDoneTitle,
+              key: const ValueKey<String>('device-link-done'),
+              style: theme.textTheme.titleMedium,
+            ),
           ),
         ],
       ),
@@ -495,14 +512,20 @@ class DeviceLinkWarning extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           ExcludeSemantics(
-            child: Icon(Icons.warning_amber_outlined,
-                size: 20, color: scheme.error),
+            child: Icon(
+              Icons.warning_amber_outlined,
+              size: 20,
+              color: scheme.error,
+            ),
           ),
           const SizedBox(width: BoneSpacing.sm),
           Expanded(
-            child: Text(text,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: scheme.onSurface)),
+            child: Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
           ),
         ],
       ),
@@ -655,9 +678,7 @@ class _LinkValueTile extends StatelessWidget {
               icon: const Icon(Icons.copy_outlined),
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(
+                ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text(context.l10n.settingsCopied(title))),
                 );
               },

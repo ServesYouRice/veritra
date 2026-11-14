@@ -73,11 +73,13 @@ class AccountInviteLink {
     }
     final String origin;
     try {
-      origin = canonicalizeServerOrigin(Uri(
-        scheme: uri.scheme,
-        host: uri.host,
-        port: uri.hasPort ? uri.port : null,
-      ).toString());
+      origin = canonicalizeServerOrigin(
+        Uri(
+          scheme: uri.scheme,
+          host: uri.host,
+          port: uri.hasPort ? uri.port : null,
+        ).toString(),
+      );
     } on FormatException {
       return null;
     }

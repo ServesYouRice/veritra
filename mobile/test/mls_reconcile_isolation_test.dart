@@ -16,11 +16,12 @@ import 'package:private_messenger/sync/sync_service.dart';
 
 const _origin = 'https://example.test';
 const _session = Session(
-    baseUrl: _origin,
-    token: 'token',
-    accountId: 'alice',
-    deviceId: 'dev_alice',
-    deviceSecret: 'secret');
+  baseUrl: _origin,
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'dev_alice',
+  deviceSecret: 'secret',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,23 +31,31 @@ void main() {
     final store = MemoryLocalStore();
     await store.saveSession(_session);
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List.filled(32, 1),
+        sealedState: [1],
+      ),
+      0,
+    );
     final api = _Api();
     final crypto = _Crypto();
     final state = AppState(
-        apiClientFactory: (_) => api,
-        cryptoService: crypto,
-        localStore: store,
-        syncServiceFactory: (_, __) => _QuietSync());
+      apiClientFactory: (_) => api,
+      cryptoService: crypto,
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+    );
     addTearDown(state.dispose);
     state.handleAppLifecycleState(AppLifecycleState.resumed);
     await state.tryRestoreSession();
     await _until(() => api.claims.length >= 3);
     expect(api.claims.take(3), ['conv-a', 'conv-b', 'conv-c']);
-    expect(crypto.staged, ['conv-b', 'conv-c'],
-        reason: 'a refusal for conv-a must not skip the later conversations');
+    expect(
+      crypto.staged,
+      ['conv-b', 'conv-c'],
+      reason: 'a refusal for conv-a must not skip the later conversations',
+    );
 
     // The refused conversation is tried again on the next pass.
     api.refuse = false;
@@ -72,8 +81,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
   @override
   void close() {}
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const [];
   @override
   Future<List<MlsRevocation>> mlsRevocations(String token) async => const [];
@@ -81,14 +93,18 @@ class _Api extends ApiClient with LegacySyncPageFake {
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async => [
         for (final id in ['conv-a', 'conv-b', 'conv-c'])
           MlsPendingChange(
-              conversationId: id,
-              epoch: 3,
-              add: const [(accountId: 'bob', deviceId: 'dev_bob')],
-              remove: const []),
+            conversationId: id,
+            epoch: 3,
+            add: const [(accountId: 'bob', deviceId: 'dev_bob')],
+            remove: const [],
+          ),
       ];
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String conversationId, List<String> deviceIds) async {
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
     claims.add(conversationId);
     if (refuse && conversationId == 'conv-a') {
       // A server listing a device that is already a member now refuses it.
@@ -96,12 +112,13 @@ class _Api extends ApiClient with LegacySyncPageFake {
     }
     return [
       DeviceKeyPackage(
-          id: 'kp-$conversationId',
-          deviceId: 'dev_bob',
-          accountId: 'bob',
-          keyPackage: const [1],
-          ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
-          expiresAt: DateTime.now().toUtc().add(const Duration(days: 1)))
+        id: 'kp-$conversationId',
+        deviceId: 'dev_bob',
+        accountId: 'bob',
+        keyPackage: const [1],
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+      ),
     ];
   }
 
@@ -114,12 +131,15 @@ class _Crypto implements MlsConversationCryptoService {
   final List<String> staged = [];
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 3, pending: false);
   @override
-  Future<void> stageMembershipChange(String conversationId,
-      {List<DeviceKeyPackage> adds = const [],
-      List<MlsDeviceRef> removes = const []}) async {
+  Future<void> stageMembershipChange(
+    String conversationId, {
+    List<DeviceKeyPackage> adds = const [],
+    List<MlsDeviceRef> removes = const [],
+  }) async {
     staged.add(conversationId);
   }
 

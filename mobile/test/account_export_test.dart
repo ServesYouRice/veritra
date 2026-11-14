@@ -91,9 +91,9 @@ void main() {
     final (path, printed, state) = await runExport(api);
 
     expect(path, isNull);
-    final leftovers = tempDir
-        .listSync()
-        .where((entry) => entry.path.contains('veritra-account-export'));
+    final leftovers = tempDir.listSync().where(
+          (entry) => entry.path.contains('veritra-account-export'),
+        );
     expect(leftovers, isEmpty);
     expect(state.error, isNotNull);
     expect(state.error, isNot(contains(_sentinel)));
@@ -123,7 +123,7 @@ class _ExportApi extends ApiClient {
       'messages': <Object?>[
         <String, Object?>{
           'id': 'msg_page_${befores.length}',
-          'ciphertext': _sentinel
+          'ciphertext': _sentinel,
         },
       ],
       if (before == null) 'next_before': 'msg_page_1',

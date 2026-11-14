@@ -50,8 +50,12 @@ extension CommunityInfoActions on AppState {
       store: localStore,
       api: _AppInfoApi(client, current.token, active),
       send: (conversationId, type, body) => active()
-          ? _sendPayload(conversationId, type, body,
-              channelId: _infoChannelFor(conversationId))
+          ? _sendPayload(
+              conversationId,
+              type,
+              body,
+              channelId: _infoChannelFor(conversationId),
+            )
           : Future.value(false),
       // Background info sends report under their own op, never as the
       // composer's send.
@@ -153,8 +157,9 @@ extension CommunityInfoActions on AppState {
   bool mayEditCommunityInfo(String communityId, String kind) {
     final accountId = session?.accountId;
     if (accountId == null) return false;
-    return GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId))
-        .mayEdit(accountId, kind);
+    return GovernanceInfoEditPolicy(
+      verifiedCommunityRoles(communityId),
+    ).mayEdit(accountId, kind);
   }
 
   static InfoSubject _communitySubject(String communityId) =>
@@ -198,10 +203,12 @@ extension CommunityInfoActions on AppState {
   ///
   /// [edit] changes the record built from what the app knows (icon,
   /// categories, channel places) before it is sealed.
-  Future<bool> publishCommunityInfo(String communityId,
-      {String? name,
-      bool mint = false,
-      CommunityInfoRecord Function(CommunityInfoRecord now)? edit}) async {
+  Future<bool> publishCommunityInfo(
+    String communityId, {
+    String? name,
+    bool mint = false,
+    CommunityInfoRecord Function(CommunityInfoRecord now)? edit,
+  }) async {
     final service = _info;
     if (service == null) return false;
     final known = name?.trim() ??
@@ -216,24 +223,31 @@ extension CommunityInfoActions on AppState {
       await service.loadAccepted(_communitySubject(communityId));
       final revision =
           service.shown(infoKindCommunity, communityId)?.revision ?? 0;
-      await service.publish(_communitySubject(communityId), (revision) {
-        final now = _communityRecordNow(communityId, revision);
-        final named = CommunityInfoRecord(
-          kind: now.kind,
-          subjectId: now.subjectId,
-          revision: revision,
-          name: name?.trim() ?? now.name,
-          icon: now.icon,
-          categories: now.categories,
-          channels: now.channels,
-        );
-        return edit == null ? named : edit(named);
-      }, mint: mint, expectedRevision: revision);
+      await service.publish(
+        _communitySubject(communityId),
+        (revision) {
+          final now = _communityRecordNow(communityId, revision);
+          final named = CommunityInfoRecord(
+            kind: now.kind,
+            subjectId: now.subjectId,
+            revision: revision,
+            name: name?.trim() ?? now.name,
+            icon: now.icon,
+            categories: now.categories,
+            channels: now.channels,
+          );
+          return edit == null ? named : edit(named);
+        },
+        mint: mint,
+        expectedRevision: revision,
+      );
       return true;
     } catch (err) {
       // Body-free: no name, key or server text.
-      developer.log('c3_publish_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_publish_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
       return false;
     } finally {
       done.complete();
@@ -252,13 +266,15 @@ extension CommunityInfoActions on AppState {
   /// [moveCategory] says whether to apply it, so null can mean "none".
   /// [rehome] only from a C3 conversion this account just made: the record
   /// moves to the key home the channel has now.
-  Future<bool> publishChannelInfo(Channel channel,
-      {required String name,
-      String topic = '',
-      bool mint = false,
-      bool moveCategory = false,
-      String? categoryId,
-      bool rehome = false}) async {
+  Future<bool> publishChannelInfo(
+    Channel channel, {
+    required String name,
+    String topic = '',
+    bool mint = false,
+    bool moveCategory = false,
+    String? categoryId,
+    bool rehome = false,
+  }) async {
     final service = _info;
     if (service == null) return false;
     final private = channel.kind == 'private';
@@ -273,8 +289,11 @@ extension CommunityInfoActions on AppState {
     final pending = _infoPublishing[channel.communityId];
     if (pending != null) await pending;
     try {
-      final subject =
-          InfoSubject(infoKindChannel, channel.id, channel.communityId);
+      final subject = InfoSubject(
+        infoKindChannel,
+        channel.id,
+        channel.communityId,
+      );
       await service.loadAccepted(subject);
       final current = service.shown(infoKindChannel, channel.id);
       await service.publish(
@@ -291,9 +310,12 @@ extension CommunityInfoActions on AppState {
                   ? InfoPrivatePlace(
                       categoryId: categoryId,
                       position: current?.privatePlace?.position ??
-                          (position < 0 ? 0 : position))
+                          (position < 0 ? 0 : position),
+                    )
                   : current?.privatePlace ??
-                      InfoPrivatePlace(position: position < 0 ? 0 : position)
+                      InfoPrivatePlace(
+                        position: position < 0 ? 0 : position,
+                      )
               : null,
         ),
         mint: mint && private,
@@ -302,8 +324,10 @@ extension CommunityInfoActions on AppState {
       );
       return true;
     } catch (err) {
-      developer.log('c3_publish_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_publish_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
       return false;
     }
   }
@@ -347,22 +371,26 @@ extension CommunityInfoActions on AppState {
 
   /// Sets or clears ([icon] null) the community icon. Owners and admins only.
   Future<bool> setCommunityIcon(String communityId, ProfilePhoto? icon) =>
-      publishCommunityInfo(communityId,
-          edit: (now) => CommunityInfoRecord(
-                kind: now.kind,
-                subjectId: now.subjectId,
-                revision: now.revision,
-                name: now.name,
-                icon: icon,
-                categories: now.categories,
-                channels: now.channels,
-              ));
+      publishCommunityInfo(
+        communityId,
+        edit: (now) => CommunityInfoRecord(
+          kind: now.kind,
+          subjectId: now.subjectId,
+          revision: now.revision,
+          name: now.name,
+          icon: icon,
+          categories: now.categories,
+          channels: now.channels,
+        ),
+      );
 
   /// Makes a category: its own encrypted record (under the community key),
   /// then the community record lists it. Returns its id, or null. Owners and
   /// admins only; the server binds the id to this community on first write.
   Future<String?> createCommunityCategory(
-      String communityId, String name) async {
+    String communityId,
+    String name,
+  ) async {
     final service = _info;
     final trimmed = name.trim();
     if (service == null || trimmed.isEmpty) return null;
@@ -380,8 +408,9 @@ extension CommunityInfoActions on AppState {
     } else {
       final random = Random.secure();
       final hex = List<String>.generate(
-              16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
-          .join();
+        16,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
       id = 'cat_$hex';
     }
     final expected =
@@ -389,19 +418,18 @@ extension CommunityInfoActions on AppState {
     if (!await _publishCategory(communityId, id, trimmed, expected: expected)) {
       return null;
     }
-    final listed = await publishCommunityInfo(communityId,
-        edit: (now) => CommunityInfoRecord(
-              kind: now.kind,
-              subjectId: now.subjectId,
-              revision: now.revision,
-              name: now.name,
-              icon: now.icon,
-              categories: <String>[
-                ...?now.categories?.where((c) => c != id),
-                id,
-              ],
-              channels: now.channels,
-            ));
+    final listed = await publishCommunityInfo(
+      communityId,
+      edit: (now) => CommunityInfoRecord(
+        kind: now.kind,
+        subjectId: now.subjectId,
+        revision: now.revision,
+        name: now.name,
+        icon: now.icon,
+        categories: <String>[...?now.categories?.where((c) => c != id), id],
+        channels: now.channels,
+      ),
+    );
     return listed ? id : null;
   }
 
@@ -412,29 +440,31 @@ extension CommunityInfoActions on AppState {
   /// place keeps the id but shows no category, since the community no
   /// longer lists it. Owners and admins only.
   Future<bool> deleteCommunityCategory(
-      String communityId, String categoryId) async {
+    String communityId,
+    String categoryId,
+  ) async {
     final service = _info;
     if (service == null ||
         !communityCategories(communityId).contains(categoryId)) {
       return false;
     }
-    final unlisted = await publishCommunityInfo(communityId,
-        edit: (now) => CommunityInfoRecord(
-              kind: now.kind,
-              subjectId: now.subjectId,
-              revision: now.revision,
-              name: now.name,
-              icon: now.icon,
-              categories: <String>[
-                ...?now.categories?.where((c) => c != categoryId),
-              ],
-              channels: <InfoChannelPlace>[
-                for (final place in now.channels ?? const <InfoChannelPlace>[])
-                  place.categoryId == categoryId
-                      ? InfoChannelPlace(channelId: place.channelId)
-                      : place,
-              ],
-            ));
+    final unlisted = await publishCommunityInfo(
+      communityId,
+      edit: (now) => CommunityInfoRecord(
+        kind: now.kind,
+        subjectId: now.subjectId,
+        revision: now.revision,
+        name: now.name,
+        icon: now.icon,
+        categories: <String>[...?now.categories?.where((c) => c != categoryId)],
+        channels: <InfoChannelPlace>[
+          for (final place in now.channels ?? const <InfoChannelPlace>[])
+            place.categoryId == categoryId
+                ? InfoChannelPlace(channelId: place.channelId)
+                : place,
+        ],
+      ),
+    );
     if (!unlisted) return false;
     final pending = _infoPublishing[communityId];
     if (pending != null) await pending;
@@ -452,24 +482,36 @@ extension CommunityInfoActions on AppState {
     } catch (err) {
       // The category is already out of the community's list; only its id
       // is not free for reuse yet.
-      developer.log('c3_publish_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_publish_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
     return true;
   }
 
   /// Renames a category. Owners and admins only.
   Future<bool> renameCommunityCategory(
-      String communityId, String categoryId, String name) {
+    String communityId,
+    String categoryId,
+    String name,
+  ) {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return Future.value(false);
-    return _publishCategory(communityId, categoryId, trimmed,
-        expected: _info?.shown(infoKindCategory, categoryId)?.revision ?? 0);
+    return _publishCategory(
+      communityId,
+      categoryId,
+      trimmed,
+      expected: _info?.shown(infoKindCategory, categoryId)?.revision ?? 0,
+    );
   }
 
   Future<bool> _publishCategory(
-      String communityId, String categoryId, String name,
-      {required int expected}) async {
+    String communityId,
+    String categoryId,
+    String name, {
+    required int expected,
+  }) async {
     final service = _info;
     if (service == null) return false;
     final pending = _infoPublishing[communityId];
@@ -487,8 +529,10 @@ extension CommunityInfoActions on AppState {
       );
       return true;
     } catch (err) {
-      developer.log('c3_publish_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_publish_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
       return false;
     }
   }
@@ -505,28 +549,34 @@ extension CommunityInfoActions on AppState {
       final current = _info?.shown(infoKindChannel, channel.id);
       final name = current?.name;
       if (name == null) return false;
-      return publishChannelInfo(channel,
-          name: name,
-          topic: current?.topic ?? '',
-          moveCategory: true,
-          categoryId: categoryId);
+      return publishChannelInfo(
+        channel,
+        name: name,
+        topic: current?.topic ?? '',
+        moveCategory: true,
+        categoryId: categoryId,
+      );
     }
-    return publishCommunityInfo(channel.communityId,
-        edit: (now) => CommunityInfoRecord(
-              kind: now.kind,
-              subjectId: now.subjectId,
-              revision: now.revision,
-              name: now.name,
-              icon: now.icon,
-              categories: now.categories,
-              channels: <InfoChannelPlace>[
-                for (final place in now.channels ?? const <InfoChannelPlace>[])
-                  place.channelId == channel.id
-                      ? InfoChannelPlace(
-                          channelId: place.channelId, categoryId: categoryId)
-                      : place,
-              ],
-            ));
+    return publishCommunityInfo(
+      channel.communityId,
+      edit: (now) => CommunityInfoRecord(
+        kind: now.kind,
+        subjectId: now.subjectId,
+        revision: now.revision,
+        name: now.name,
+        icon: now.icon,
+        categories: now.categories,
+        channels: <InfoChannelPlace>[
+          for (final place in now.channels ?? const <InfoChannelPlace>[])
+            place.channelId == channel.id
+                ? InfoChannelPlace(
+                    channelId: place.channelId,
+                    categoryId: categoryId,
+                  )
+                : place,
+        ],
+      ),
+    );
   }
 
   /// After a member left [conversationId] (removed, kicked or banned): the
@@ -544,8 +594,9 @@ extension CommunityInfoActions on AppState {
           in channelsByCommunity[community.id] ?? const <Channel>[]) {
         if (channel.kind == 'private' &&
             channel.conversationId == conversationId) {
-          final home = service
-              .homeOf(InfoSubject(infoKindChannel, channel.id, community.id));
+          final home = service.homeOf(
+            InfoSubject(infoKindChannel, channel.id, community.id),
+          );
           if (home != null) await service.markRotationDue(home, community.id);
         }
       }
@@ -557,7 +608,10 @@ extension CommunityInfoActions on AppState {
   /// sending a payload queues behind it. Request/answer remains the recovery
   /// path if this best-effort delivery is interrupted or no key is held yet.
   Future<void> _deliverInfoAfterAdd(
-      Session owner, int generation, String conversationId) async {
+    Session owner,
+    int generation,
+    String conversationId,
+  ) async {
     if (!_syncOwnerActive(owner, generation)) return;
     final service = _info;
     if (service == null) return;
@@ -590,8 +644,10 @@ extension CommunityInfoActions on AppState {
         await service.deliverAfterAdd(home, community.id, subjects);
       }
     } catch (err) {
-      developer.log('c3_add_delivery_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_add_delivery_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 
@@ -621,22 +677,24 @@ extension CommunityInfoActions on AppState {
           if (community.sharedConversationId == null) continue;
           await _refreshOneCommunity(service, client, current, community);
         }
-        await service.runRotations((home, communityId) => [
-              if (home.keySubjectKind == infoKindChannel)
-                InfoSubject(infoKindChannel, home.keySubjectId, communityId)
-              else ...[
-                _communitySubject(communityId),
-                for (final c in service
-                        .shown(infoKindCommunity, communityId)
-                        ?.categories ??
-                    const <String>[])
-                  InfoSubject(infoKindCategory, c, communityId),
-                for (final ch
-                    in channelsByCommunity[communityId] ?? const <Channel>[])
-                  if (ch.kind != 'private')
-                    InfoSubject(infoKindChannel, ch.id, communityId),
-              ],
-            ]);
+        await service.runRotations(
+          (home, communityId) => [
+            if (home.keySubjectKind == infoKindChannel)
+              InfoSubject(infoKindChannel, home.keySubjectId, communityId)
+            else ...[
+              _communitySubject(communityId),
+              for (final c in service
+                      .shown(infoKindCommunity, communityId)
+                      ?.categories ??
+                  const <String>[])
+                InfoSubject(infoKindCategory, c, communityId),
+              for (final ch
+                  in channelsByCommunity[communityId] ?? const <Channel>[])
+                if (ch.kind != 'private')
+                  InfoSubject(infoKindChannel, ch.id, communityId),
+            ],
+          ],
+        );
       } while (_infoRefreshAgain && _sameSession(current));
       if (_sameSession(current)) {
         _scheduleInfoRotation(await service.nextDeferredRotation(), current);
@@ -652,8 +710,10 @@ extension CommunityInfoActions on AppState {
         }
       }
     } catch (err) {
-      developer.log('c3_refresh_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_refresh_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     } finally {
       _infoRefreshRunning = false;
     }
@@ -683,18 +743,26 @@ extension CommunityInfoActions on AppState {
     });
   }
 
-  Future<void> _refreshOneCommunity(CommunityInfoService service,
-      ApiClient client, Session current, Community community) async {
+  Future<void> _refreshOneCommunity(
+    CommunityInfoService service,
+    ApiClient client,
+    Session current,
+    Community community,
+  ) async {
     // Refresh availability each pass: roles can change during a session.
     // A failed read leaves the role unknown instead of reusing old authority.
     _infoAdminOf.remove(community.id);
     try {
-      final members =
-          await client.communityMembers(current.token, community.id);
+      final members = await client.communityMembers(
+        current.token,
+        community.id,
+      );
       if (!_sameSession(current)) return;
-      _infoAdminOf[community.id] = members.any((m) =>
-          m.accountId == current.accountId &&
-          (m.role == 'owner' || m.role == 'admin'));
+      _infoAdminOf[community.id] = members.any(
+        (m) =>
+            m.accountId == current.accountId &&
+            (m.role == 'owner' || m.role == 'admin'),
+      );
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) rethrow;
     }
@@ -709,11 +777,13 @@ extension CommunityInfoActions on AppState {
     Map<String, int> versions;
     try {
       versions = {
-        for (final v in await client.infoVersions(current.token,
-            communityIds: [community.id],
-            categoryIds: categories,
-            channelIds: channels.map((c) => c.id).toList()))
-          '${v.kind}|${v.id}': v.version
+        for (final v in await client.infoVersions(
+          current.token,
+          communityIds: [community.id],
+          categoryIds: categories,
+          channelIds: channels.map((c) => c.id).toList(),
+        ))
+          '${v.kind}|${v.id}': v.version,
       };
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) rethrow;
@@ -749,7 +819,8 @@ extension CommunityInfoActions on AppState {
           in channelsByCommunity[community.id] ?? const <Channel>[])
         if (channel.kind == 'private')
           if (service.homeOf(
-                  InfoSubject(infoKindChannel, channel.id, community.id))
+            InfoSubject(infoKindChannel, channel.id, community.id),
+          )
               case final home?)
             home,
     };
@@ -763,13 +834,18 @@ extension CommunityInfoActions on AppState {
   }
 
   Future<void> _refreshSubject(
-      CommunityInfoService service, InfoSubject subject, int? version) async {
+    CommunityInfoService service,
+    InfoSubject subject,
+    int? version,
+  ) async {
     try {
       await service.refresh(subject, knownVersion: version);
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) rethrow;
-      developer.log('c3_subject_refresh_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c3_subject_refresh_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 }
@@ -785,40 +861,49 @@ class _AppInfoApi implements InfoApi {
   }
 
   @override
-  Future<ServedCommunityInfo?> get(
-      {required String kind,
-      required String subjectId,
-      String? communityId}) async {
+  Future<ServedCommunityInfo?> get({
+    required String kind,
+    required String subjectId,
+    String? communityId,
+  }) async {
     checkActive();
-    final got = await client.getInfoRecord(token,
-        kind: kind, subjectId: subjectId, communityId: communityId);
+    final got = await client.getInfoRecord(
+      token,
+      kind: kind,
+      subjectId: subjectId,
+      communityId: communityId,
+    );
     checkActive();
     if (got == null) return null;
     return ServedCommunityInfo(
-        subjectKind: kind,
-        subjectId: subjectId,
-        version: got.version,
-        keyId: got.keyId,
-        blob: got.blob);
+      subjectKind: kind,
+      subjectId: subjectId,
+      version: got.version,
+      keyId: got.keyId,
+      blob: got.blob,
+    );
   }
 
   @override
-  Future<int> put(
-      {required String kind,
-      required String subjectId,
-      String? communityId,
-      required String keyId,
-      required List<int> blob,
-      required int expectedVersion}) async {
+  Future<int> put({
+    required String kind,
+    required String subjectId,
+    String? communityId,
+    required String keyId,
+    required List<int> blob,
+    required int expectedVersion,
+  }) async {
     checkActive();
     try {
-      final version = await client.putInfoRecord(token,
-          kind: kind,
-          subjectId: subjectId,
-          communityId: communityId,
-          keyId: keyId,
-          blob: blob,
-          expectedVersion: expectedVersion);
+      final version = await client.putInfoRecord(
+        token,
+        kind: kind,
+        subjectId: subjectId,
+        communityId: communityId,
+        keyId: keyId,
+        blob: blob,
+        expectedVersion: expectedVersion,
+      );
       checkActive();
       return version;
     } on ApiException catch (err) {

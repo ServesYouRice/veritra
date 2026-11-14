@@ -113,8 +113,9 @@ void main() {
     ('wide (detail pane)', benchWide),
   ]) {
     group('${layout.$1}:', () {
-      testWidgets('unrelated state changes do not rebuild the open chat',
-          (tester) async {
+      testWidgets('unrelated state changes do not rebuild the open chat', (
+        tester,
+      ) async {
         final app = await _signedIn(tester, layout.$2);
         final state = app.state;
 
@@ -124,17 +125,23 @@ void main() {
         expect(bareSent, 1);
         _expectChatUntouched(bare, 'a bare notification');
 
-        final (devices, devicesSent) =
-            await _measure(tester, state, state.refreshDevices);
+        final (devices, devicesSent) = await _measure(
+          tester,
+          state,
+          state.refreshDevices,
+        );
         expect(devicesSent, greaterThan(0));
         _expectChatUntouched(devices, 'refreshing the device list');
 
-        final (connection, connectionSent) =
-            await _measure(tester, state, () async {
-          state.connectionStatus = ConnectionStatus.offline;
-          state.lastSyncedAt = DateTime.utc(2025, 6, 1);
-          state.notifyListeners();
-        });
+        final (connection, connectionSent) = await _measure(
+          tester,
+          state,
+          () async {
+            state.connectionStatus = ConnectionStatus.offline;
+            state.lastSyncedAt = DateTime.utc(2025, 6, 1);
+            state.notifyListeners();
+          },
+        );
         expect(connectionSent, 1);
         _expectChatUntouched(connection, 'going offline');
 
@@ -150,8 +157,9 @@ void main() {
         state.dispose();
       });
 
-      testWidgets('a message in the open conversation still reaches it',
-          (tester) async {
+      testWidgets('a message in the open conversation still reaches it', (
+        tester,
+      ) async {
         final app = await _signedIn(tester, layout.$2);
         final (counter, _) = await _measure(tester, app.state, () async {
           await app.deliver(tester, longConversationId, 40);
@@ -164,8 +172,9 @@ void main() {
     });
   }
 
-  testWidgets('the shell still follows the session lifecycle on its own',
-      (tester) async {
+  testWidgets('the shell still follows the session lifecycle on its own', (
+    tester,
+  ) async {
     // The root no longer rebuilds on state changes, so the shell has to
     // notice a change of lifecycle itself.
     final app = await _signedIn(tester, benchWide);

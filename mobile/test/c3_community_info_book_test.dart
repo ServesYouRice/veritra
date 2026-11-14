@@ -32,18 +32,20 @@ final _roles = GovernanceState(
     'acct_owner': 0,
     'acct_admin': 1,
     'acct_mod': 2,
-    'acct_member': 3
+    'acct_member': 3,
   },
 );
 
 const _communityHome = InfoKeyHome(
-    keySubjectKind: infoKindCommunity,
-    keySubjectId: 'comm_00000000000000000000000000000001',
-    conversationId: _shared);
+  keySubjectKind: infoKindCommunity,
+  keySubjectId: 'comm_00000000000000000000000000000001',
+  conversationId: _shared,
+);
 const _privateHome = InfoKeyHome(
-    keySubjectKind: infoKindChannel,
-    keySubjectId: 'chan_00000000000000000000000000000002',
-    conversationId: _privateConv);
+  keySubjectKind: infoKindChannel,
+  keySubjectId: 'chan_00000000000000000000000000000002',
+  conversationId: _privateConv,
+);
 
 CommunityInfoEvent _keyEvent(InfoKeyHome home, {String? conversation}) =>
     CommunityInfoEvent(
@@ -57,11 +59,14 @@ CommunityInfoEvent _keyEvent(InfoKeyHome home, {String? conversation}) =>
       key: _key,
     );
 
-CommunityInfoEvent _update(String kind, String subject,
-        {String sender = 'acct_admin',
-        String conversation = _shared,
-        int revision = 2,
-        String? digest}) =>
+CommunityInfoEvent _update(
+  String kind,
+  String subject, {
+  String sender = 'acct_admin',
+  String conversation = _shared,
+  int revision = 2,
+  String? digest,
+}) =>
     CommunityInfoEvent(
       kind: CommunityInfoEventKind.update,
       subjectKind: kind,
@@ -76,20 +81,22 @@ CommunityInfoEvent _update(String kind, String subject,
 
 ServedCommunityInfo _served(String kind, String subject, {int version = 2}) =>
     ServedCommunityInfo(
-        subjectKind: kind,
-        subjectId: subject,
-        version: version,
-        keyId: _keyId,
-        blob: _blob);
+      subjectKind: kind,
+      subjectId: subject,
+      version: version,
+      keyId: _keyId,
+      blob: _blob,
+    );
 
 InfoOpener _opener({ProfileRecordFailure? fails}) => (key, served, cached) {
       if (fails != null) throw ProfileRecordException(fails);
       expect(key, _key);
       return CommunityInfoRecord(
-          kind: served.subjectKind,
-          subjectId: served.subjectId,
-          revision: served.version,
-          name: 'Club');
+        kind: served.subjectKind,
+        subjectId: served.subjectId,
+        revision: served.version,
+        name: 'Club',
+      );
     };
 
 void main() {
@@ -116,57 +123,69 @@ void main() {
 
   test('an admin-announced community record with the shared key is shown', () {
     final verdict = judge(
-        served: _served(infoKindCommunity, _community),
-        updates: [_update(infoKindCommunity, _community)],
-        policy: policy);
+      served: _served(infoKindCommunity, _community),
+      updates: [_update(infoKindCommunity, _community)],
+      policy: policy,
+    );
     expect(verdict, isA<InfoAccepted>());
     final accepted = (verdict as InfoAccepted).accepted;
     expect(accepted.revision, 2);
     expect(accepted.blob, _blob);
   });
 
-  test('editors: community and category need an admin; channels any member',
-      () {
-    for (final (kind, subject) in [
-      (infoKindCommunity, _community),
-      (infoKindCategory, _id('cat', 4)),
-    ]) {
-      for (final (sender, shown) in [
-        ('acct_owner', true),
-        ('acct_admin', true),
-        ('acct_mod', false),
-        ('acct_member', false),
+  test(
+    'editors: community and category need an admin; channels any member',
+    () {
+      for (final (kind, subject) in [
+        (infoKindCommunity, _community),
+        (infoKindCategory, _id('cat', 4)),
       ]) {
-        expect(
+        for (final (sender, shown) in [
+          ('acct_owner', true),
+          ('acct_admin', true),
+          ('acct_mod', false),
+          ('acct_member', false),
+        ]) {
+          expect(
             judge(
-                served: _served(kind, subject),
-                updates: [_update(kind, subject, sender: sender)],
-                policy: policy) is InfoAccepted,
+              served: _served(kind, subject),
+              updates: [_update(kind, subject, sender: sender)],
+              policy: policy,
+            ) is InfoAccepted,
             shown,
-            reason: '$kind by $sender');
+            reason: '$kind by $sender',
+          );
+        }
       }
-    }
-    expect(
+      expect(
         judge(
-            served: _served(infoKindChannel, _open),
-            updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
-            policy: policy),
-        isA<InfoAccepted>());
-    // Admins restricting channel info (the seam C4's wiring fills).
-    expect(
+          served: _served(infoKindChannel, _open),
+          updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
+          policy: policy,
+        ),
+        isA<InfoAccepted>(),
+      );
+      // Admins restricting channel info (the seam C4's wiring fills).
+      expect(
         judge(
-            served: _served(infoKindChannel, _open),
-            updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
-            policy:
-                GovernanceInfoEditPolicy(_roles, channelInfoRestricted: true)),
-        isA<InfoKept>());
-    // No verified role record: nothing is trusted (D80).
-    expect(
-        judge(served: _served(infoKindCommunity, _community), updates: [
-          _update(infoKindCommunity, _community, sender: 'acct_owner')
-        ]),
-        isA<InfoKept>());
-  });
+          served: _served(infoKindChannel, _open),
+          updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
+          policy: GovernanceInfoEditPolicy(_roles, channelInfoRestricted: true),
+        ),
+        isA<InfoKept>(),
+      );
+      // No verified role record: nothing is trusted (D80).
+      expect(
+        judge(
+          served: _served(infoKindCommunity, _community),
+          updates: [
+            _update(infoKindCommunity, _community, sender: 'acct_owner'),
+          ],
+        ),
+        isA<InfoKept>(),
+      );
+    },
+  );
 
   test('a record nobody announced, or announced differently, is not shown', () {
     for (final updates in <List<CommunityInfoEvent>>[
@@ -177,9 +196,10 @@ void main() {
       [_update(infoKindCategory, _community)],
     ]) {
       final verdict = judge(
-          served: _served(infoKindCommunity, _community),
-          updates: updates,
-          policy: policy);
+        served: _served(infoKindCommunity, _community),
+        updates: updates,
+        policy: policy,
+      );
       expect(verdict, isA<InfoKept>(), reason: '$updates');
       expect((verdict as InfoKept).reason, InfoKeptReason.notAnnounced);
     }
@@ -189,44 +209,52 @@ void main() {
     // The community key arriving in a private channel's group, and a private
     // channel key arriving in the shared group, are both ignored.
     expect(
-        judge(
-            served: _served(infoKindCommunity, _community),
-            keys: [_keyEvent(_communityHome, conversation: _privateConv)],
-            updates: [_update(infoKindCommunity, _community)],
-            policy: policy),
-        isA<InfoNeedsKey>());
+      judge(
+        served: _served(infoKindCommunity, _community),
+        keys: [_keyEvent(_communityHome, conversation: _privateConv)],
+        updates: [_update(infoKindCommunity, _community)],
+        policy: policy,
+      ),
+      isA<InfoNeedsKey>(),
+    );
     expect(
-        judge(
-            served: _served(infoKindChannel, _private),
-            home: _privateHome,
-            keys: [_keyEvent(_privateHome, conversation: _shared)],
-            updates: [
-              _update(infoKindChannel, _private, conversation: _shared)
-            ],
-            policy: policy),
-        isA<InfoNeedsKey>());
+      judge(
+        served: _served(infoKindChannel, _private),
+        home: _privateHome,
+        keys: [_keyEvent(_privateHome, conversation: _shared)],
+        updates: [_update(infoKindChannel, _private, conversation: _shared)],
+        policy: policy,
+      ),
+      isA<InfoNeedsKey>(),
+    );
     // From its own group, with the announcement there too, it is shown.
     expect(
-        judge(
-            served: _served(infoKindChannel, _private),
-            home: _privateHome,
-            updates: [
-              _update(infoKindChannel, _private,
-                  conversation: _privateConv, sender: 'acct_member')
-            ],
-            policy: policy),
-        isA<InfoAccepted>());
+      judge(
+        served: _served(infoKindChannel, _private),
+        home: _privateHome,
+        updates: [
+          _update(
+            infoKindChannel,
+            _private,
+            conversation: _privateConv,
+            sender: 'acct_member',
+          ),
+        ],
+        policy: policy,
+      ),
+      isA<InfoAccepted>(),
+    );
     // An announcement for a private channel made in the shared group does
     // not count, even with the right key.
     expect(
-        judge(
-            served: _served(infoKindChannel, _private),
-            home: _privateHome,
-            updates: [
-              _update(infoKindChannel, _private, conversation: _shared)
-            ],
-            policy: policy),
-        isA<InfoKept>());
+      judge(
+        served: _served(infoKindChannel, _private),
+        home: _privateHome,
+        updates: [_update(infoKindChannel, _private, conversation: _shared)],
+        policy: policy,
+      ),
+      isA<InfoKept>(),
+    );
     expect(mayDeliverInfoKey(_privateHome, _shared), isFalse);
     expect(mayDeliverInfoKey(_communityHome, _privateConv), isFalse);
     expect(mayDeliverInfoKey(_communityHome, _shared), isTrue);
@@ -234,16 +262,18 @@ void main() {
 
   test('rollback: an older or equal revision keeps the cache', () {
     final cache = AcceptedCommunityInfo(
-        subjectKind: infoKindCommunity,
-        subjectId: _community,
-        revision: 2,
-        keyId: _keyId,
-        blob: _blob);
+      subjectKind: infoKindCommunity,
+      subjectId: _community,
+      revision: 2,
+      keyId: _keyId,
+      blob: _blob,
+    );
     final verdict = judge(
-        served: _served(infoKindCommunity, _community),
-        updates: [_update(infoKindCommunity, _community)],
-        accepted: cache,
-        policy: policy);
+      served: _served(infoKindCommunity, _community),
+      updates: [_update(infoKindCommunity, _community)],
+      accepted: cache,
+      policy: policy,
+    );
     expect((verdict as InfoKept).reason, InfoKeptReason.notNewer);
   });
 
@@ -252,27 +282,34 @@ void main() {
     // under the community key's id and announces them gets a refusal, and
     // nothing tells the caller to drop the key.
     final verdict = judge(
-        served: _served(infoKindChannel, _open),
-        updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
-        policy: policy,
-        open: _opener(fails: ProfileRecordFailure.authFailed));
+      served: _served(infoKindChannel, _open),
+      updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
+      policy: policy,
+      open: _opener(fails: ProfileRecordFailure.authFailed),
+    );
     expect((verdict as InfoKept).reason, InfoKeptReason.refused);
     // The same for a record that opens but breaks the content rules.
     expect(
-        judge(
-            served: _served(infoKindCommunity, _community),
-            updates: [_update(infoKindCommunity, _community)],
-            policy: policy,
-            open: _opener(fails: ProfileRecordFailure.badName)),
-        isA<InfoKept>());
+      judge(
+        served: _served(infoKindCommunity, _community),
+        updates: [_update(infoKindCommunity, _community)],
+        policy: policy,
+        open: _opener(fails: ProfileRecordFailure.badName),
+      ),
+      isA<InfoKept>(),
+    );
   });
 
   test('one key request per subject per hour', () {
     final now = DateTime.utc(2026, 11, 8, 12);
     expect(mayRequestInfoKey(null, now), isTrue);
-    expect(mayRequestInfoKey(now.subtract(const Duration(minutes: 59)), now),
-        isFalse);
     expect(
-        mayRequestInfoKey(now.subtract(const Duration(hours: 1)), now), isTrue);
+      mayRequestInfoKey(now.subtract(const Duration(minutes: 59)), now),
+      isFalse,
+    );
+    expect(
+      mayRequestInfoKey(now.subtract(const Duration(hours: 1)), now),
+      isTrue,
+    );
   });
 }

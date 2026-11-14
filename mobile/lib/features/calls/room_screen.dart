@@ -107,25 +107,31 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               children: <Widget>[
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  child: Text(_status(),
-                      key: const Key('room-status'),
-                      style: Theme.of(context).textTheme.titleMedium),
+                  child: Text(
+                    _status(),
+                    key: const Key('room-status'),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
                 if (engine.phase == RoomPhase.active)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text(l10n.roomPeople(roster.length),
-                          key: const Key('room-count'),
-                          style: Theme.of(context).textTheme.labelMedium),
+                      child: Text(
+                        l10n.roomPeople(roster.length),
+                        key: const Key('room-count'),
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
                     ),
                   ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: Text(l10n.roomEncryptedNote,
-                      key: const Key('room-e2e-note'),
-                      style: Theme.of(context).textTheme.bodySmall),
+                  child: Text(
+                    l10n.roomEncryptedNote,
+                    key: const Key('room-e2e-note'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
                 Expanded(
                   child: ListView(
@@ -134,12 +140,12 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                       for (final member in roster)
                         ListTile(
                           key: Key('room-member-${member.id}'),
-                          leading: CircleAvatar(
-                            child: Text(_initial(member)),
+                          leading: CircleAvatar(child: Text(_initial(member))),
+                          title: Text(
+                            _isSelf(member)
+                                ? l10n.roomYou
+                                : widget.nameFor(member.accountId),
                           ),
-                          title: Text(_isSelf(member)
-                              ? l10n.roomYou
-                              : widget.nameFor(member.accountId)),
                         ),
                     ],
                   ),
@@ -155,30 +161,36 @@ class _RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                         FilledButton.tonalIcon(
                           key: const Key('room-mute'),
                           onPressed: () => unawaited(
-                              controls.setMicMuted(!controls.micMuted)),
+                            controls.setMicMuted(!controls.micMuted),
+                          ),
                           icon: Icon(
-                              controls.micMuted ? Icons.mic_off : Icons.mic),
-                          label: Text(controls.micMuted
-                              ? l10n.roomUnmute
-                              : l10n.roomMute),
+                            controls.micMuted ? Icons.mic_off : Icons.mic,
+                          ),
+                          label: Text(
+                            controls.micMuted ? l10n.roomUnmute : l10n.roomMute,
+                          ),
                         ),
                       if (controls != null && controls.canShareScreen && !ended)
                         FilledButton.tonalIcon(
                           key: const Key('room-share'),
-                          onPressed: () => unawaited(controls
-                              .setSharingScreen(!controls.sharingScreen)),
+                          onPressed: () => unawaited(
+                            controls.setSharingScreen(!controls.sharingScreen),
+                          ),
                           icon: const Icon(Icons.screen_share_outlined),
-                          label: Text(controls.sharingScreen
-                              ? l10n.roomStopSharing
-                              : l10n.roomShareScreen),
+                          label: Text(
+                            controls.sharingScreen
+                                ? l10n.roomStopSharing
+                                : l10n.roomShareScreen,
+                          ),
                         ),
                       FilledButton.icon(
                         key: const Key('room-leave'),
                         style: FilledButton.styleFrom(
-                            backgroundColor:
-                                Theme.of(context).colorScheme.error,
-                            foregroundColor:
-                                Theme.of(context).colorScheme.onError),
+                          backgroundColor: Theme.of(context).colorScheme.error,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onError,
+                        ),
                         onPressed: () async {
                           final navigator = Navigator.of(context);
                           await engine.leave();

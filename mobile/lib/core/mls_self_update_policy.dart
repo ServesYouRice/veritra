@@ -104,10 +104,16 @@ class MlsSelfUpdatePolicy {
   /// [backoff] (plus jitter) before trying again.
   void recordBackoff(String conversationId, DateTime now, Duration backoff) {
     final at = now.toUtc();
-    final record =
-        _records.putIfAbsent(conversationId, () => _Record(last: at));
-    record.notBefore = at.add(backoff).add(_jitter(
-        '$conversationId|backoff|${at.millisecondsSinceEpoch}', backoff ~/ 2));
+    final record = _records.putIfAbsent(
+      conversationId,
+      () => _Record(last: at),
+    );
+    record.notBefore = at.add(backoff).add(
+          _jitter(
+            '$conversationId|backoff|${at.millisecondsSinceEpoch}',
+            backoff ~/ 2,
+          ),
+        );
     dirty = true;
   }
 
@@ -139,7 +145,8 @@ class MlsSelfUpdatePolicy {
       final record = _records[candidate.id];
       if (record == null) {
         _records[candidate.id] = _Record(
-            last: now.subtract(_jitter('${candidate.id}|seed', maxAge)));
+          last: now.subtract(_jitter('${candidate.id}|seed', maxAge)),
+        );
         dirty = true;
         continue;
       }
@@ -151,8 +158,10 @@ class MlsSelfUpdatePolicy {
             candidate.members > 0 ? candidate.members : unknownMembers;
         final spread = joinJitterPerMember * members;
         final wait = joinDelay +
-            _jitter('${candidate.id}|join|${joinedAt.millisecondsSinceEpoch}',
-                spread > joinJitterMax ? joinJitterMax : spread);
+            _jitter(
+              '${candidate.id}|join|${joinedAt.millisecondsSinceEpoch}',
+              spread > joinJitterMax ? joinJitterMax : spread,
+            );
         if (!now.isBefore(joinedAt.add(wait))) joins.add(candidate.id);
         continue;
       }
@@ -164,8 +173,10 @@ class MlsSelfUpdatePolicy {
       final active = record.sent > 0 ||
           (candidate.lastActivity?.toUtc().isAfter(last) ?? false);
       final threshold = maxAge +
-          _jitter('${candidate.id}|age|${last.millisecondsSinceEpoch}',
-              maxAgeJitter);
+          _jitter(
+            '${candidate.id}|age|${last.millisecondsSinceEpoch}',
+            maxAgeJitter,
+          );
       if (active && age >= threshold) aged.add(candidate.id);
     }
     // An empty list means nothing is loaded yet, not that every chat is
@@ -173,10 +184,12 @@ class MlsSelfUpdatePolicy {
     // record stays until it is long past.
     if (listed.isNotEmpty) {
       final before = _records.length;
-      _records.removeWhere((id, record) =>
-          !listed.contains(id) &&
-          (record.last != null ||
-              now.difference(record.joinedAt ?? now) > maxAge));
+      _records.removeWhere(
+        (id, record) =>
+            !listed.contains(id) &&
+            (record.last != null ||
+                now.difference(record.joinedAt ?? now) > maxAge),
+      );
       if (_records.length != before) dirty = true;
     }
     return <String>[...joins, ...counts, ...aged];
@@ -191,7 +204,8 @@ class MlsSelfUpdatePolicy {
       hash = ((hash ^ byte) * 0x01000193) & 0xffffffff;
     }
     return Duration(
-        microseconds: (max.inMicroseconds * (hash / 0x100000000)).floor());
+      microseconds: (max.inMicroseconds * (hash / 0x100000000)).floor(),
+    );
   }
 
   String encode() => jsonEncode(<String, Object?>{
@@ -205,10 +219,15 @@ class MlsSelfUpdatePolicy {
 
   /// The saved state, or a fresh one when [raw] is missing, unreadable or
   /// belongs to another account or device.
-  static MlsSelfUpdatePolicy decode(String? raw,
-      {required String accountId, required String deviceId}) {
-    final policy =
-        MlsSelfUpdatePolicy(accountId: accountId, deviceId: deviceId);
+  static MlsSelfUpdatePolicy decode(
+    String? raw, {
+    required String accountId,
+    required String deviceId,
+  }) {
+    final policy = MlsSelfUpdatePolicy(
+      accountId: accountId,
+      deviceId: deviceId,
+    );
     if (raw == null) return policy;
     try {
       final json = jsonDecode(raw);

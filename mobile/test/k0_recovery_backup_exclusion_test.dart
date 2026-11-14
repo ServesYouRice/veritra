@@ -48,23 +48,29 @@ void main() {
     );
     // A backup needs a signed-in device: here one that still holds a claim
     // record (export reads no settings at all, so any state shows it).
-    await store.saveSession(const Session(
+    await store.saveSession(
+      const Session(
         baseUrl: 'https://chat.example.org',
         token: 'tok',
         accountId: 'acct_me',
         deviceId: 'dev_old',
         username: 'alice',
-        deviceSecret: 'old-secret'));
+        deviceSecret: 'old-secret',
+      ),
+    );
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1,
-            stateKey: List<int>.filled(32, 1),
-            sealedState: utf8.encode('device-state')),
-        0);
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: utf8.encode('device-state'),
+      ),
+      0,
+    );
     await store.saveSnapshot(
-        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
-        const <String, List<ReceivedMessageEnvelope>>{},
-        0);
+      <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+      const <String, List<ReceivedMessageEnvelope>>{},
+      0,
+    );
     final pending = PendingAccountRecovery(
       origin: 'https://chat.example.org',
       username: 'alice',
@@ -76,14 +82,18 @@ void main() {
       deviceSecret: deviceSecret,
       readyAt: DateTime.utc(2099, 11, 8),
       mlsState: StoredCryptoState(
-          counter: 1, stateKey: stateKey, sealedState: sealed),
+        counter: 1,
+        stateKey: stateKey,
+        sealedState: sealed,
+      ),
     );
     await store.savePendingEnrollment(pending.toEnrollment());
     expect(
-        PendingAccountRecovery.fromEnrollment(
-                await store.loadPendingEnrollment())
-            ?.claimToken,
-        claimToken);
+      PendingAccountRecovery.fromEnrollment(
+        await store.loadPendingEnrollment(),
+      )?.claimToken,
+      claimToken,
+    );
 
     final snapshot = utf8.decode(await store.exportHistorySnapshot());
     for (final forbidden in <String>[

@@ -21,8 +21,11 @@ const _session = Session(
   deviceId: 'dev_me',
 );
 
-ReceivedMessageEnvelope _message(String id, int minute,
-        {String conversationId = 'conv'}) =>
+ReceivedMessageEnvelope _message(
+  String id,
+  int minute, {
+  String conversationId = 'conv',
+}) =>
     ReceivedMessageEnvelope.fromJson(<String, Object?>{
       'id': id,
       'conversation_id': conversationId,
@@ -67,7 +70,9 @@ class _Api extends ApiClient {
 
   @override
   Future<List<MemberReceipt>> listReceipts(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     receiptReads.add(conversationId);
     return const <MemberReceipt>[];
   }
@@ -79,7 +84,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markReadPrivate(
-      String token, String conversationId, String id) async {
+    String token,
+    String conversationId,
+    String id,
+  ) async {
     privateReads.add(conversationId);
   }
 }
@@ -114,10 +122,11 @@ AppState _state(
       ..conversations = conversations ??
           <Conversation>[
             Conversation(
-                id: 'conv',
-                kind: 'group',
-                createdBy: 'acct_me',
-                unreadCount: 2),
+              id: 'conv',
+              kind: 'group',
+              createdBy: 'acct_me',
+              unreadCount: 2,
+            ),
             Conversation(id: 'other', kind: 'group', createdBy: 'acct_me'),
           ];
 
@@ -147,9 +156,11 @@ void main() {
   group('C-c20d1ce84e57: an unknown conversation is held back', () {
     test('selecting it fetches nothing and sends no receipt', () async {
       final api = _Api()
-        ..pages[null] = MessagePage(messages: <ReceivedMessageEnvelope>[
-          _message('m1', 1, conversationId: 'unknown')
-        ]);
+        ..pages[null] = MessagePage(
+          messages: <ReceivedMessageEnvelope>[
+            _message('m1', 1, conversationId: 'unknown'),
+          ],
+        );
       final state = _state(api);
       state.selectConversation('unknown');
       await _settle();
@@ -174,8 +185,9 @@ void main() {
 
     test('a known open conversation still loads and is marked read', () async {
       final api = _Api()
-        ..pages[null] =
-            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)]);
+        ..pages[null] = MessagePage(
+          messages: <ReceivedMessageEnvelope>[_message('m1', 1)],
+        );
       final state = _state(api);
       state.selectConversation('conv');
       await _settle();
@@ -199,24 +211,40 @@ void main() {
       ..pages['c5'] = page(<int>[4, 3], 'c3')
       ..pages['c3'] = page(<int>[2, 1], null);
 
-    test('an exhausted history stays exhausted after an overlapping refresh',
-        () async {
-      final api = history();
-      final state = _state(api);
-      await state.loadMessages('conv');
-      await state.loadOlderMessages('conv');
-      await state.loadOlderMessages('conv');
-      expect(api.pageRequests, <String?>[null, 'c5', 'c3']);
+    test(
+      'an exhausted history stays exhausted after an overlapping refresh',
+      () async {
+        final api = history();
+        final state = _state(api);
+        await state.loadMessages('conv');
+        await state.loadOlderMessages('conv');
+        await state.loadOlderMessages('conv');
+        expect(api.pageRequests, <String?>[null, 'c5', 'c3']);
 
-      api.pages[null] = page(<int>[7, 6], 'c6');
-      await state.loadMessages('conv');
-      expect(state.messagesFor('conv').map((m) => m.id),
-          <String>['m7', 'm6', 'm5', 'm4', 'm3', 'm2', 'm1']);
-      await state.loadOlderMessages('conv');
-      expect(api.pageRequests, <String?>[null, 'c5', 'c3', null],
-          reason: 'already-loaded history was fetched again');
-      state.dispose();
-    });
+        api.pages[null] = page(<int>[7, 6], 'c6');
+        await state.loadMessages('conv');
+        expect(state.messagesFor('conv').map((m) => m.id), <String>[
+          'm7',
+          'm6',
+          'm5',
+          'm4',
+          'm3',
+          'm2',
+          'm1',
+        ]);
+        await state.loadOlderMessages('conv');
+        expect(
+            api.pageRequests,
+            <String?>[
+              null,
+              'c5',
+              'c3',
+              null,
+            ],
+            reason: 'already-loaded history was fetched again');
+        state.dispose();
+      },
+    );
 
     test('an overlapping refresh keeps the deeper cursor', () async {
       final api = history();
@@ -228,8 +256,15 @@ void main() {
       await state.loadMessages('conv');
       await state.loadOlderMessages('conv');
       expect(api.pageRequests.last, 'c3');
-      expect(state.messagesFor('conv').map((m) => m.id),
-          <String>['m7', 'm6', 'm5', 'm4', 'm3', 'm2', 'm1']);
+      expect(state.messagesFor('conv').map((m) => m.id), <String>[
+        'm7',
+        'm6',
+        'm5',
+        'm4',
+        'm3',
+        'm2',
+        'm1',
+      ]);
       state.dispose();
     });
 
@@ -253,8 +288,9 @@ void main() {
 
     test('sends no receipt once another conversation is selected', () async {
       final api = _Api()
-        ..pages[null] =
-            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
+        ..pages[null] = MessagePage(
+          messages: <ReceivedMessageEnvelope>[_message('m1', 1)],
+        )
         ..pageGate = Completer<void>();
       final gate = api.pageGate!;
       final state = _state(api);
@@ -267,15 +303,19 @@ void main() {
       expect(api.reads, isNot(contains('conv')));
       expect(api.privateReads, isNot(contains('conv')));
       expect(unread(state), 2);
-      expect(state.messagesFor('conv'), hasLength(1),
-          reason: 'the load itself still lands');
+      expect(
+        state.messagesFor('conv'),
+        hasLength(1),
+        reason: 'the load itself still lands',
+      );
       state.dispose();
     });
 
     test('sends no receipt once the app is in the background', () async {
       final api = _Api()
-        ..pages[null] =
-            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
+        ..pages[null] = MessagePage(
+          messages: <ReceivedMessageEnvelope>[_message('m1', 1)],
+        )
         ..pageGate = Completer<void>();
       final gate = api.pageGate!;
       final state = _state(api);
@@ -290,40 +330,45 @@ void main() {
       state.dispose();
     });
 
-    test('sends no receipt if the app is backgrounded while the choice loads',
-        () async {
-      final store = _GatedPreferenceStore();
-      final api = _Api();
-      final state = _state(api, receiptPreferences: ReceiptPreferences(store))
-        ..messagesByConversation['conv'] = <ReceivedMessageEnvelope>[
-          _message('m1', 1),
-        ];
-      final read = state.markNewestMessageRead('conv');
-      await _settle();
-      state.handleAppLifecycleState(AppLifecycleState.paused);
-      store.gate.complete();
-      await read;
-      expect(api.reads, isEmpty);
-      expect(api.privateReads, isEmpty);
-      expect(unread(state), 2);
-      state.dispose();
-    });
+    test(
+      'sends no receipt if the app is backgrounded while the choice loads',
+      () async {
+        final store = _GatedPreferenceStore();
+        final api = _Api();
+        final state = _state(api, receiptPreferences: ReceiptPreferences(store))
+          ..messagesByConversation['conv'] = <ReceivedMessageEnvelope>[
+            _message('m1', 1),
+          ];
+        final read = state.markNewestMessageRead('conv');
+        await _settle();
+        state.handleAppLifecycleState(AppLifecycleState.paused);
+        store.gate.complete();
+        await read;
+        expect(api.reads, isEmpty);
+        expect(api.privateReads, isEmpty);
+        expect(unread(state), 2);
+        state.dispose();
+      },
+    );
 
-    test('a load for the selected, visible conversation still marks it read',
-        () async {
-      final api = _Api()
-        ..pages[null] =
-            MessagePage(messages: <ReceivedMessageEnvelope>[_message('m1', 1)])
-        ..pageGate = Completer<void>();
-      final gate = api.pageGate!;
-      final state = _state(api);
-      state.selectConversation('conv');
-      await _settle();
-      gate.complete();
-      await _settle();
-      expect(api.reads, <String>['conv']);
-      expect(unread(state), 0);
-      state.dispose();
-    });
+    test(
+      'a load for the selected, visible conversation still marks it read',
+      () async {
+        final api = _Api()
+          ..pages[null] = MessagePage(
+            messages: <ReceivedMessageEnvelope>[_message('m1', 1)],
+          )
+          ..pageGate = Completer<void>();
+        final gate = api.pageGate!;
+        final state = _state(api);
+        state.selectConversation('conv');
+        await _settle();
+        gate.complete();
+        await _settle();
+        expect(api.reads, <String>['conv']);
+        expect(unread(state), 0);
+        state.dispose();
+      },
+    );
   });
 }

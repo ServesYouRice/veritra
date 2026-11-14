@@ -59,13 +59,14 @@ void main() {
   });
 
   test(
-      'default setting is true and screen guard is inactive before entering chat',
-      () async {
-    expect(state.screenGuardChats, isTrue);
-    expect(state.activeChatViewsForTesting, 0);
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await screenGuard.isSecure(), isFalse);
-  });
+    'default setting is true and screen guard is inactive before entering chat',
+    () async {
+      expect(state.screenGuardChats, isTrue);
+      expect(state.activeChatViewsForTesting, 0);
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await screenGuard.isSecure(), isFalse);
+    },
+  );
 
   test('entering and leaving chat views toggles screen guard', () async {
     state.enterChatView();
@@ -96,40 +97,42 @@ void main() {
     expect(state.isScreenGuardActive, isFalse);
   });
 
-  test('disabling the setting turns off screen guard even when in chat',
-      () async {
-    state.enterChatView();
-    expect(state.isScreenGuardActive, isTrue);
-    expect(await screenGuard.isSecure(), isTrue);
+  test(
+    'disabling the setting turns off screen guard even when in chat',
+    () async {
+      state.enterChatView();
+      expect(state.isScreenGuardActive, isTrue);
+      expect(await screenGuard.isSecure(), isTrue);
 
-    var notified = false;
-    state.addListener(() => notified = true);
+      var notified = false;
+      state.addListener(() => notified = true);
 
-    await state.setScreenGuardChats(false);
-    expect(state.screenGuardChats, isFalse);
-    expect(notified, isTrue);
-    expect(await store.loadSetting('screen_guard_chats'), 'false');
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await screenGuard.isSecure(), isFalse);
+      await state.setScreenGuardChats(false);
+      expect(state.screenGuardChats, isFalse);
+      expect(notified, isTrue);
+      expect(await store.loadSetting('screen_guard_chats'), 'false');
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await screenGuard.isSecure(), isFalse);
 
-    // Entering another chat while setting is false does not activate guard
-    state.enterChatView();
-    expect(state.activeChatViewsForTesting, 2);
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await screenGuard.isSecure(), isFalse);
+      // Entering another chat while setting is false does not activate guard
+      state.enterChatView();
+      expect(state.activeChatViewsForTesting, 2);
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await screenGuard.isSecure(), isFalse);
 
-    // Re-enabling setting while in chat activates guard immediately
-    await state.setScreenGuardChats(true);
-    expect(state.screenGuardChats, isTrue);
-    expect(await store.loadSetting('screen_guard_chats'), 'true');
-    expect(state.isScreenGuardActive, isTrue);
-    expect(await screenGuard.isSecure(), isTrue);
+      // Re-enabling setting while in chat activates guard immediately
+      await state.setScreenGuardChats(true);
+      expect(state.screenGuardChats, isTrue);
+      expect(await store.loadSetting('screen_guard_chats'), 'true');
+      expect(state.isScreenGuardActive, isTrue);
+      expect(await screenGuard.isSecure(), isTrue);
 
-    state.leaveChatView();
-    state.leaveChatView();
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await screenGuard.isSecure(), isFalse);
-  });
+      state.leaveChatView();
+      state.leaveChatView();
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await screenGuard.isSecure(), isFalse);
+    },
+  );
 
   test('refreshConversations loads screen guard setting from store', () async {
     await store.saveSetting('screen_guard_chats', 'false');

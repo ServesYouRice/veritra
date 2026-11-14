@@ -83,19 +83,18 @@ extension ReportActions on AppState {
       if (channelMembers == null) return null;
     }
     return ReportModerators(
-      communityId,
-      <String>{
-        for (final account in <String>{
-          if (record.owner != null) record.owner!,
-          ...record.admins.keys,
-          ...record.moderators,
-        })
-          if (record.rankOf(account) >= BuiltInRole.moderator.rank &&
-              (channelMembers == null || channelMembers.contains(account)))
-            account,
-      },
-      recordGroupId: recordGroup,
-    );
+        communityId,
+        <String>{
+          for (final account in <String>{
+            if (record.owner != null) record.owner!,
+            ...record.admins.keys,
+            ...record.moderators,
+          })
+            if (record.rankOf(account) >= BuiltInRole.moderator.rank &&
+                (channelMembers == null || channelMembers.contains(account)))
+              account,
+        },
+        recordGroupId: recordGroup);
   }
 
   /// The channel a C6 report key payload into the shared group [group]
@@ -140,7 +139,8 @@ extension ReportActions on AppState {
     if (seed != null) {
       try {
         key = base64Encode(
-            await (crypto as ReportCryptoService).reportPublicKey(seed));
+          await (crypto as ReportCryptoService).reportPublicKey(seed),
+        );
       } finally {
         seed.fillRange(0, seed.length, 0);
       }
@@ -174,7 +174,10 @@ extension ReportActions on AppState {
     _reportKeyAnnouncing = true;
     try {
       Future<bool> sendIn(
-          String group, AppPayloadType type, Map<String, Object?> body) async {
+        String group,
+        AppPayloadType type,
+        Map<String, Object?> body,
+      ) async {
         final channel = _reportKeyChannelFor(group);
         if (channel == null || !_sameSession(current)) return false;
         return _sendPayload(group, type, body, channelId: channel);
@@ -183,14 +186,21 @@ extension ReportActions on AppState {
       final announcer = ReportKeyAnnouncer(
         store: localStore,
         listedKey: (communityId) async =>
-            (await client.getOwnModeratorReportKey(current.token, communityId))
+            (await client.getOwnModeratorReportKey(
+          current.token,
+          communityId,
+        ))
                 ?.publicKey,
         send: (group, key) => sendIn(
-            group, AppPayloadType.reportKey, <String, Object?>{'key': key}),
+          group,
+          AppPayloadType.reportKey,
+          <String, Object?>{'key': key},
+        ),
         sendRequest: (group, accounts) => sendIn(
-            group,
-            AppPayloadType.reportKeyRequest,
-            <String, Object?>{'accounts': accounts}),
+          group,
+          AppPayloadType.reportKeyRequest,
+          <String, Object?>{'accounts': accounts},
+        ),
       );
       final moderated = <(String, String)>[];
       for (final community in communities) {
@@ -200,8 +210,9 @@ extension ReportActions on AppState {
         final moderators = reportModeratorsFor(shared);
         if (moderators == null) continue;
         await announcer.askMissing(
-            group: moderators.recordGroupId,
-            moderators: moderators.accounts.difference({accountId}));
+          group: moderators.recordGroupId,
+          moderators: moderators.accounts.difference({accountId}),
+        );
         if (moderators.accounts.contains(accountId)) {
           moderated.add((community.id, moderators.recordGroupId));
         }
@@ -216,8 +227,10 @@ extension ReportActions on AppState {
         active: () => _sameSession(current),
       );
     } catch (err) {
-      developer.log('c6_report_key_pass_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c6_report_key_pass_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     } finally {
       _reportKeyAnnouncing = false;
     }

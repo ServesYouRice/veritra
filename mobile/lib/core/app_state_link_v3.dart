@@ -319,9 +319,14 @@ extension DeviceLinkV3Actions on AppState {
         try {
           final locator = await cryptoService.deviceLinkLocator(secret);
           final commitment = await crypto.k2SourceCommitment(
-              canonicalizeServerOrigin(current.baseUrl), sourceRandom);
-          final created =
-              await client.createDeviceLinkV3(current, locator, commitment);
+            canonicalizeServerOrigin(current.baseUrl),
+            sourceRandom,
+          );
+          final created = await client.createDeviceLinkV3(
+            current,
+            locator,
+            commitment,
+          );
           if (created.state != 'pending' ||
               created.accountId != current.accountId ||
               created.sourceDeviceId != current.deviceId) {
@@ -386,8 +391,10 @@ extension DeviceLinkV3Actions on AppState {
         }
       });
 
-  DeviceLinkV3View _linkView(DeviceLinkV3Record link,
-          {String verificationCode = ''}) =>
+  DeviceLinkV3View _linkView(
+    DeviceLinkV3Record link, {
+    String verificationCode = '',
+  }) =>
       DeviceLinkV3View(
         id: link.id,
         state: link.state,
@@ -400,8 +407,11 @@ extension DeviceLinkV3Actions on AppState {
   /// transcript hash and confirmation tag against the link secret before it
   /// releases a code; a claim already accepted (and committed) before is read
   /// back instead of accepted twice.
-  Future<String> _acceptedVerification(K2TransferCryptoService crypto,
-      Session current, DeviceLinkV3Record link) async {
+  Future<String> _acceptedVerification(
+    K2TransferCryptoService crypto,
+    Session current,
+    DeviceLinkV3Record link,
+  ) async {
     final secret = _activeLinkSecret;
     if (secret == null || DateTime.now().isAfter(_linkExpiry(link))) {
       throw StateError('Device-link secret is unavailable');
@@ -456,7 +466,10 @@ extension DeviceLinkV3Actions on AppState {
   /// (an exact repeat is accepted). A link that already holds another random
   /// was not revealed by this device: refused.
   Future<DeviceLinkV3Record> _revealSourceRandom(
-      ApiClient client, Session current, DeviceLinkV3Record link) async {
+    ApiClient client,
+    Session current,
+    DeviceLinkV3Record link,
+  ) async {
     final random = _activeLinkSourceRandom;
     if (random == null) {
       throw StateError('Device-link random is unavailable');
@@ -524,7 +537,9 @@ extension DeviceLinkV3Actions on AppState {
   /// committed confirmation, the approval POST (an exact replay is accepted),
   /// and the native apply (a repeat with the same time is a no-op).
   Future<DeviceLinkV3Record> _finishSourceApproval(
-      HistoryTransferProgress row, Session current) async {
+    HistoryTransferProgress row,
+    Session current,
+  ) async {
     final crypto = _k2;
     final client = _linkClient(row.origin);
     final id = K2TransferId(row.origin, row.linkId);
@@ -557,26 +572,35 @@ extension DeviceLinkV3Actions on AppState {
           throw const K2TransferException('the claim changed');
         }
         final recipientKey = link.bytes('claimed_signing_key');
-        final transcript = deviceLinkV3TranscriptHash(K2LinkContext(
-          id: id,
-          accountId: link.accountId,
-          nonce: link.bytes('link_nonce'),
-          sourceDeviceId: current.deviceId!,
-          sourceSigningKey: link.bytes('existing_signing_key'),
-          recipientDeviceId: recipient,
-          recipientSigningKey: recipientKey,
-          transferPublicKey: link.bytes('transfer_public_key'),
-          sourceCommitment: link.bytes('source_commitment'),
-          recipientRandom: link.bytes('recipient_random'),
-        ));
+        final transcript = deviceLinkV3TranscriptHash(
+          K2LinkContext(
+            id: id,
+            accountId: link.accountId,
+            nonce: link.bytes('link_nonce'),
+            sourceDeviceId: current.deviceId!,
+            sourceSigningKey: link.bytes('existing_signing_key'),
+            recipientDeviceId: recipient,
+            recipientSigningKey: recipientKey,
+            transferPublicKey: link.bytes('transfer_public_key'),
+            sourceCommitment: link.bytes('source_commitment'),
+            recipientRandom: link.bytes('recipient_random'),
+          ),
+        );
         if (!_constantTimeBytesEqual(verified.transcriptHash, transcript) ||
             !_constantTimeBytesEqual(
-                verified.transcriptHash, link.bytes('transcript_hash'))) {
+              verified.transcriptHash,
+              link.bytes('transcript_hash'),
+            )) {
           throw const K2TransferException('the claim changed');
         }
         approved = await _approveLinkWithDeviceList(
-            client, current, link, request.approvalTag,
-            recipientDeviceId: recipient, recipientSigningKey: recipientKey);
+          client,
+          current,
+          link,
+          request.approvalTag,
+          recipientDeviceId: recipient,
+          recipientSigningKey: recipientKey,
+        );
       case 'approved' || 'consumed':
         if (link.fields['approval_tag'] != base64Encode(request.approvalTag)) {
           throw const K2TransferException('another approval is stored');
@@ -585,8 +609,11 @@ extension DeviceLinkV3Actions on AppState {
       default:
         throw const K2TransferException(k2ServerClosedReason);
     }
-    await crypto.k2ApplyApproval(id, request.approvalTag,
-        approvedAt: _linkTimeMs(approved.fields, 'approved_at'));
+    await crypto.k2ApplyApproval(
+      id,
+      request.approvalTag,
+      approvedAt: _linkTimeMs(approved.fields, 'approved_at'),
+    );
     return approved;
   }
 
@@ -606,7 +633,10 @@ extension DeviceLinkV3Actions on AppState {
   /// that must survive a restart (identity, credentials, the exact signed
   /// claim) is stored before the claim is sent; a failed send is retried
   /// byte for byte by [completeDeviceLinkClaim].
-  Future<void> claimDeviceLink(String baseUrl, String code) =>
+  Future<void> claimDeviceLink(
+    String baseUrl,
+    String code,
+  ) =>
       _runDeviceLinkClaim(() async {
         if (session != null) {
           throw UserFacingException(l10n.recoverySignedInAlready);
@@ -645,11 +675,13 @@ extension DeviceLinkV3Actions on AppState {
           final challenge = base64Decode(fields['challenge'] as String);
           enrolling = true;
           final credential = await cryptoService.createEnrollmentCredential(
-              EnrollmentReservation(
-                  id: linkId,
-                  accountId: accountId,
-                  deviceId: deviceId,
-                  challenge: challenge));
+            EnrollmentReservation(
+              id: linkId,
+              accountId: accountId,
+              deviceId: deviceId,
+              challenge: challenge,
+            ),
+          );
           final id = K2TransferId(origin, linkId);
           final expiresAt = _linkTimeMs(fields, 'expires_at');
           final received = await crypto.k2ReceiveBegin(
@@ -658,8 +690,9 @@ extension DeviceLinkV3Actions on AppState {
               accountId: accountId,
               nonce: base64Decode(fields['link_nonce'] as String),
               sourceDeviceId: fields['existing_device_id'] as String,
-              sourceSigningKey:
-                  base64Decode(fields['existing_signing_key'] as String),
+              sourceSigningKey: base64Decode(
+                fields['existing_signing_key'] as String,
+              ),
               recipientDeviceId: deviceId,
               recipientSigningKey: credential.signingKey,
               transferPublicKey: List<int>.filled(32, 0),
@@ -706,8 +739,11 @@ extension DeviceLinkV3Actions on AppState {
           };
           final requestHash = hexOf(proof.requestHash);
           // Validates every field's shape before anything is stored.
-          FrozenDeviceLinkV3Claim.fromJson(claim,
-              requestHash: requestHash, transport: config.transport);
+          FrozenDeviceLinkV3Claim.fromJson(
+            claim,
+            requestHash: requestHash,
+            transport: config.transport,
+          );
           final sealed = await recovery.sealPendingEnrollment();
           final pending = _PendingLinkV3(
             origin: origin,
@@ -726,8 +762,9 @@ extension DeviceLinkV3Actions on AppState {
             verificationCode: '',
             expiresAt: expiresAt,
           );
-          await localStore
-              .savePendingEnrollment(pending.toEnrollment(state: sealed));
+          await localStore.savePendingEnrollment(
+            pending.toEnrollment(state: sealed),
+          );
           enrolling = false;
           _setPendingLink(pending, 'reserved');
           await _submitPendingClaim();
@@ -772,8 +809,9 @@ extension DeviceLinkV3Actions on AppState {
     notifyListeners();
     try {
       await localStore.deletePendingEnrollment(
-          kind: PendingEnrollment.kindDeviceLinkV3,
-          deviceId: pending?.deviceId);
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        deviceId: pending?.deviceId,
+      );
     } catch (_) {}
     if (cryptoService case final RecoveryCryptoService crypto) {
       try {
@@ -820,8 +858,11 @@ extension DeviceLinkV3Actions on AppState {
     if (pending == null) return;
     final client = _linkClient(pending.origin);
     final record = await client.submitDeviceLinkV3Claim(
-      FrozenDeviceLinkV3Claim.fromJson(pending.claim,
-          requestHash: pending.claimRequestHash, transport: config.transport),
+      FrozenDeviceLinkV3Claim.fromJson(
+        pending.claim,
+        requestHash: pending.claimRequestHash,
+        transport: config.transport,
+      ),
       DeviceLinkV3Reservation.fromJson(pending.reservation),
     );
     if (record.recipientDeviceId != pending.deviceId ||
@@ -854,12 +895,16 @@ extension DeviceLinkV3Actions on AppState {
       return;
     }
     final client = _linkClient(pending.origin);
-    final expected = DeviceLinkV3Record.fromJson(pending.record!,
-        transport: config.transport);
+    final expected = DeviceLinkV3Record.fromJson(
+      pending.record!,
+      transport: config.transport,
+    );
     final DeviceLinkV3Record status;
     try {
-      status =
-          await client.deviceLinkV3ClaimStatus(expected, pending.claimToken);
+      status = await client.deviceLinkV3ClaimStatus(
+        expected,
+        pending.claimToken,
+      );
     } on ApiException catch (err) {
       // The real server answers a revoked, expired or unknown link with 400
       // invalid_device_link (it never sends the state 'revoked'); 401, 404
@@ -913,18 +958,23 @@ extension DeviceLinkV3Actions on AppState {
   /// opens the commitment pinned when this device claimed; a reveal that is
   /// missing or does not open it ends the claim with its own message.
   Future<String> _revealedLinkCode(
-      _PendingLinkV3 pending, DeviceLinkV3Record status) async {
+    _PendingLinkV3 pending,
+    DeviceLinkV3Record status,
+  ) async {
     try {
-      return await _k2.k2RevealSas(K2TransferId(pending.origin, pending.linkId),
-          status.bytes('source_random'));
+      return await _k2.k2RevealSas(
+        K2TransferId(pending.origin, pending.linkId),
+        status.bytes('source_random'),
+      );
     } on Object {
       await _abandonDeviceLinkClaimNow();
       // Past the link window native refuses any reveal: that is an ended
       // link, not a mismatch.
       throw UserFacingException(
-          DateTime.now().millisecondsSinceEpoch > pending.expiresAt
-              ? l10n.deviceLinkEnded
-              : l10n.deviceLinkCommitmentMismatch);
+        DateTime.now().millisecondsSinceEpoch > pending.expiresAt
+            ? l10n.deviceLinkEnded
+            : l10n.deviceLinkCommitmentMismatch,
+      );
     }
   }
 
@@ -941,7 +991,9 @@ extension DeviceLinkV3Actions on AppState {
   /// asked to complete (on a scratch copy of the frozen pending state), and
   /// applied again as the first active commit of the transfer.
   Future<void> _finishDeviceLink(
-      _PendingLinkV3 pending, DeviceLinkV3Record status) async {
+    _PendingLinkV3 pending,
+    DeviceLinkV3Record status,
+  ) async {
     if (status.id != pending.linkId ||
         status.accountId != pending.accountId ||
         status.recipientDeviceId != pending.deviceId) {
@@ -964,8 +1016,11 @@ extension DeviceLinkV3Actions on AppState {
     }
     final next = pending.withRecord(status.fields);
     await localStore.savePendingEnrollment(next.toEnrollment());
-    await client.completeDeviceLinkV3(status, pending.claimToken,
-        hexOf(_linkTokenHash(pending.initialSessionToken)));
+    await client.completeDeviceLinkV3(
+      status,
+      pending.claimToken,
+      hexOf(_linkTokenHash(pending.initialSessionToken)),
+    );
     final linked = Session(
       baseUrl: pending.origin,
       token: pending.initialSessionToken,
@@ -989,16 +1044,22 @@ extension DeviceLinkV3Actions on AppState {
         'claim_token': pending.claimToken,
       }),
     );
-    await _journalLinkedDeviceAnchor(client, linked,
-        signingKey: base64Decode(pending.claim['signing_key'] as String),
-        approverDeviceId: pending.reservation['existing_device_id'] as String,
-        approverSigningKey: base64Decode(
-            pending.reservation['existing_signing_key'] as String));
+    await _journalLinkedDeviceAnchor(
+      client,
+      linked,
+      signingKey: base64Decode(pending.claim['signing_key'] as String),
+      approverDeviceId: pending.reservation['existing_device_id'] as String,
+      approverSigningKey: base64Decode(
+        pending.reservation['existing_signing_key'] as String,
+      ),
+    );
     await _oweInitialKeyPackages(linked);
-    await promoter.promotePendingEnrollment(linked,
-        kind: PendingEnrollment.kindDeviceLinkV3,
-        promotionId: pending.claimRequestHash,
-        transfer: transfer);
+    await promoter.promotePendingEnrollment(
+      linked,
+      kind: PendingEnrollment.kindDeviceLinkV3,
+      promotionId: pending.claimRequestHash,
+      transfer: transfer,
+    );
     await _resumeDeviceListAnchor(linked);
     await _clearDeviceListAnchorJournal(linked);
     session = linked;
@@ -1007,7 +1068,9 @@ extension DeviceLinkV3Actions on AppState {
     _pendingLink = null;
     pendingDeviceLinkClaim = null;
     await localStore.deletePendingEnrollment(
-        kind: PendingEnrollment.kindDeviceLinkV3, deviceId: pending.deviceId);
+      kind: PendingEnrollment.kindDeviceLinkV3,
+      deviceId: pending.deviceId,
+    );
     await _finishSignIn(() async {
       await _publishInitialMlsKeyPackages();
       await _refreshConversations(notify: true);
@@ -1042,8 +1105,9 @@ extension DeviceLinkV3Actions on AppState {
     if (pending == null || state == null) {
       try {
         await localStore.deletePendingEnrollment(
-            kind: PendingEnrollment.kindDeviceLinkV3,
-            deviceId: stored.deviceId);
+          kind: PendingEnrollment.kindDeviceLinkV3,
+          deviceId: stored.deviceId,
+        );
       } catch (_) {}
       return false;
     }
@@ -1098,7 +1162,10 @@ extension DeviceLinkV3Actions on AppState {
           HistoryTransferClient(baseUrl: origin, transport: config.transport);
       try {
         final service = HistoryTransferService(
-            crypto: crypto, localStore: localStore, transport: transport);
+          crypto: crypto,
+          localStore: localStore,
+          transport: transport,
+        );
         for (final row in rows) {
           if (_disposed ||
               generation != _sessionGeneration ||
@@ -1109,8 +1176,11 @@ extension DeviceLinkV3Actions on AppState {
           final id = K2TransferId(row.origin, row.linkId);
           try {
             if (row.direction == historyTransferIncoming) {
-              await service.receive(id,
-                  auth: auth, downloadDirectory: '$directory/incoming');
+              await service.receive(
+                id,
+                auth: auth,
+                downloadDirectory: '$directory/incoming',
+              );
             } else {
               if (row.stage == HistoryTransferStage.approving) {
                 await _finishSourceApproval(row, current);
@@ -1119,9 +1189,11 @@ extension DeviceLinkV3Actions on AppState {
                 // saved at some refreshes).
                 await _refreshConversations(notify: false);
               }
-              final next = await service.send(id,
-                  sessionToken: current.token,
-                  cacheDirectory: '$directory/source');
+              final next = await service.send(
+                id,
+                sessionToken: current.token,
+                cacheDirectory: '$directory/source',
+              );
               if (next.stage != HistoryTransferStage.acknowledged) {
                 again = true;
               }
@@ -1158,22 +1230,27 @@ extension DeviceLinkV3Actions on AppState {
           if (row.origin == origin && row.deviceId == current.deviceId) row,
       ];
       if (left.isEmpty) {
-        _transferStatus(ended
-            ? HistoryTransferStatus(
-                incoming: rows.first.direction == historyTransferIncoming,
-                phase: HistoryTransferPhase.ended)
-            : null);
+        _transferStatus(
+          ended
+              ? HistoryTransferStatus(
+                  incoming: rows.first.direction == historyTransferIncoming,
+                  phase: HistoryTransferPhase.ended,
+                )
+              : null,
+        );
       } else {
         final first = left.first;
-        _transferStatus(HistoryTransferStatus(
-          incoming: first.direction == historyTransferIncoming,
-          phase: failed
-              ? HistoryTransferPhase.failed
-              : first.stage == HistoryTransferStage.uploaded ||
-                      first.stage == HistoryTransferStage.awaitingHandoff
-                  ? HistoryTransferPhase.waiting
-                  : HistoryTransferPhase.working,
-        ));
+        _transferStatus(
+          HistoryTransferStatus(
+            incoming: first.direction == historyTransferIncoming,
+            phase: failed
+                ? HistoryTransferPhase.failed
+                : first.stage == HistoryTransferStage.uploaded ||
+                        first.stage == HistoryTransferStage.awaitingHandoff
+                    ? HistoryTransferPhase.waiting
+                    : HistoryTransferPhase.working,
+          ),
+        );
         again = again || first.direction == historyTransferIncoming;
       }
     } catch (_) {
@@ -1183,7 +1260,8 @@ extension DeviceLinkV3Actions on AppState {
     }
     if (again || failed) {
       _scheduleTransferResume(
-          failed ? _transferFailureInterval : _transferRetryInterval);
+        failed ? _transferFailureInterval : _transferRetryInterval,
+      );
     }
   }
 
@@ -1192,8 +1270,10 @@ extension DeviceLinkV3Actions on AppState {
   Future<void> _settleImportedHistory(HistoryTransferProgress row) async {
     if (row.direction != historyTransferIncoming) return;
     try {
-      final after =
-          await localStore.loadHistoryTransfer(row.origin, row.linkId);
+      final after = await localStore.loadHistoryTransfer(
+        row.origin,
+        row.linkId,
+      );
       if (after == null ||
           after.stage == HistoryTransferStage.imported ||
           after.stage == HistoryTransferStage.acknowledged) {

@@ -84,9 +84,11 @@ class RoomCallFactory {
       selfAccountId: selfAccountId,
       selfDeviceId: selfDeviceId,
     );
-    final media =
-        RoomMediaSession(engine: engine, keys: keys, sfu: connectSfu(keys))
-          ..start();
+    final media = RoomMediaSession(
+      engine: engine,
+      keys: keys,
+      sfu: connectSfu(keys),
+    )..start();
 
     // Null (the L1 judgment not loaded yet) reads as its own roster, so the
     // engine refreshes once it loads.

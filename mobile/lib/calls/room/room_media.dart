@@ -99,9 +99,13 @@ abstract interface class SfuConnection {
 
   /// Frame cryptors keyed by [participantId] in [WebRtcFrameKeys.provider].
   Future<RoomFrameCryptor> senderCryptor(
-      SfuLocalTrack track, String participantId);
+    SfuLocalTrack track,
+    String participantId,
+  );
   Future<RoomFrameCryptor> receiverCryptor(
-      SfuRemoteTrack track, String participantId);
+    SfuRemoteTrack track,
+    String participantId,
+  );
 
   /// Reliable data to every participant (here: sealed announcements only).
   Future<void> sendData(Uint8List data);
@@ -245,10 +249,12 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     await sender.track.setEnabled(on);
   }
 
-  void _onSendIndex() => unawaited(_serial(() async {
-        final voice = _voice;
-        if (voice != null) await _applySendIndex(voice);
-      }));
+  void _onSendIndex() => unawaited(
+        _serial(() async {
+          final voice = _voice;
+          if (voice != null) await _applySendIndex(voice);
+        }),
+      );
 
   Future<void> _afterEngineChange() async {
     if (!_connected) return;
@@ -277,13 +283,13 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     if (!force && epoch == _announcedEpoch) return;
     final identity = sfu.localIdentity;
     if (identity == null) return;
-    final payload = utf8.encode(jsonEncode({
-      'v': announcementVersion,
-      'sfu': identity,
-      'tracks': {
-        if (_voice != null) _voice!.track.sid: _voice!.track.slot,
-      },
-    }));
+    final payload = utf8.encode(
+      jsonEncode({
+        'v': announcementVersion,
+        'sfu': identity,
+        'tracks': {if (_voice != null) _voice!.track.sid: _voice!.track.slot},
+      }),
+    );
     final sealed = await engine.sealSignal(Uint8List.fromList(payload));
     if (sealed == null) return;
     _announcedEpoch = epoch;

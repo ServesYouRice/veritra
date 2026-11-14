@@ -46,8 +46,9 @@ void main() {
     await _waitFor(() async => !(await _saved(store)).contains('"sent"'));
     final record = _record(await _saved(store), 'conv_a');
     expect(
-        DateTime.now().toUtc().difference(_at(record['last'])).inMinutes.abs(),
-        lessThan(2));
+      DateTime.now().toUtc().difference(_at(record['last'])).inMinutes.abs(),
+      lessThan(2),
+    );
     state.dispose();
   });
 
@@ -92,37 +93,40 @@ void main() {
     state.dispose();
   });
 
-  test('a lost epoch race drops the update and retries after a back-off',
-      () async {
-    final store = await _storeWith(_countDue('conv_a'));
-    final api = _Api()
-      ..failures.add(ApiException(409, '{"error":"mls_epoch_conflict"}'));
-    final crypto = _Crypto(store);
-    final state = await _start(api, store, crypto);
+  test(
+    'a lost epoch race drops the update and retries after a back-off',
+    () async {
+      final store = await _storeWith(_countDue('conv_a'));
+      final api = _Api()
+        ..failures.add(ApiException(409, '{"error":"mls_epoch_conflict"}'));
+      final crypto = _Crypto(store);
+      final state = await _start(api, store, crypto);
 
-    await _waitFor(() => crypto.abandoned.contains('conv_a'));
-    expect(await store.pendingMlsMessages(), isEmpty);
-    expect(state.mlsConversationFailed('conv_a'), isFalse);
-    await _waitFor(() async => (await _saved(store)).contains('not_before'));
-    final wait = _at(_record(await _saved(store), 'conv_a')['not_before'])
-        .difference(DateTime.now().toUtc());
-    expect(wait, greaterThan(const Duration(minutes: 9)));
-    expect(wait, lessThanOrEqualTo(const Duration(minutes: 15)));
-    // Nothing more within the back-off, however many passes run.
-    state.handleAppLifecycleState(AppLifecycleState.paused);
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await _waitFor(() => api.revocationReads >= 2);
-    await _settle();
-    expect(crypto.staged, ['conv_a']);
-    state.dispose();
+      await _waitFor(() => crypto.abandoned.contains('conv_a'));
+      expect(await store.pendingMlsMessages(), isEmpty);
+      expect(state.mlsConversationFailed('conv_a'), isFalse);
+      await _waitFor(() async => (await _saved(store)).contains('not_before'));
+      final wait = _at(
+        _record(await _saved(store), 'conv_a')['not_before'],
+      ).difference(DateTime.now().toUtc());
+      expect(wait, greaterThan(const Duration(minutes: 9)));
+      expect(wait, lessThanOrEqualTo(const Duration(minutes: 15)));
+      // Nothing more within the back-off, however many passes run.
+      state.handleAppLifecycleState(AppLifecycleState.paused);
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await _waitFor(() => api.revocationReads >= 2);
+      await _settle();
+      expect(crypto.staged, ['conv_a']);
+      state.dispose();
 
-    // Once the back-off has passed, the next run updates and lands.
-    await _rewrite(store, (record) => record.remove('not_before'));
-    final again = _Crypto(store);
-    final restarted = await _start(_Api(), store, again);
-    await _waitFor(() => again.completed.contains('conv_a'));
-    restarted.dispose();
-  });
+      // Once the back-off has passed, the next run updates and lands.
+      await _rewrite(store, (record) => record.remove('not_before'));
+      final again = _Crypto(store);
+      final restarted = await _start(_Api(), store, again);
+      await _waitFor(() => again.completed.contains('conv_a'));
+      restarted.dispose();
+    },
+  );
 
   for (final (name, error, minimum) in <(String, ApiException, Duration)>[
     (
@@ -133,7 +137,10 @@ void main() {
     (
       'a budget set above the default',
       ApiException(
-          429, '{"error":"mls_self_update_limit"}', const Duration(days: 3)),
+        429,
+        '{"error":"mls_self_update_limit"}',
+        const Duration(days: 3),
+      ),
       const Duration(days: 3),
     ),
     (
@@ -142,22 +149,27 @@ void main() {
       MlsSelfUpdatePolicy.refusedBackoff,
     ),
   ]) {
-    test('a refusal by $name drops the update without pausing the chat',
-        () async {
-      final store = await _storeWith(_countDue('conv_a'));
-      final api = _Api()..failures.add(error);
-      final crypto = _Crypto(store);
-      final state = await _start(api, store, crypto);
-      await _waitFor(() => crypto.abandoned.contains('conv_a'));
-      expect(await store.pendingMlsMessages(), isEmpty);
-      expect(state.mlsConversationFailed('conv_a'), isFalse);
-      await _waitFor(() async => (await _saved(store)).contains('not_before'));
-      final wait = _at(_record(await _saved(store), 'conv_a')['not_before'])
-          .difference(DateTime.now().toUtc());
-      expect(wait, greaterThan(minimum - const Duration(minutes: 1)));
-      expect(wait, lessThanOrEqualTo(minimum * 1.5));
-      state.dispose();
-    });
+    test(
+      'a refusal by $name drops the update without pausing the chat',
+      () async {
+        final store = await _storeWith(_countDue('conv_a'));
+        final api = _Api()..failures.add(error);
+        final crypto = _Crypto(store);
+        final state = await _start(api, store, crypto);
+        await _waitFor(() => crypto.abandoned.contains('conv_a'));
+        expect(await store.pendingMlsMessages(), isEmpty);
+        expect(state.mlsConversationFailed('conv_a'), isFalse);
+        await _waitFor(
+          () async => (await _saved(store)).contains('not_before'),
+        );
+        final wait = _at(
+          _record(await _saved(store), 'conv_a')['not_before'],
+        ).difference(DateTime.now().toUtc());
+        expect(wait, greaterThan(minimum - const Duration(minutes: 1)));
+        expect(wait, lessThanOrEqualTo(minimum * 1.5));
+        state.dispose();
+      },
+    );
   }
 
   test('a retry refused before the duplicate check keeps the update', () async {
@@ -173,8 +185,10 @@ void main() {
       ]);
     final crypto = _Crypto(store);
     final state = await _start(api, store, crypto);
-    await _waitFor(() => crypto.completed.contains('conv_a'),
-        timeout: const Duration(seconds: 30));
+    await _waitFor(
+      () => crypto.completed.contains('conv_a'),
+      timeout: const Duration(seconds: 30),
+    );
     expect(crypto.abandoned, isEmpty);
     expect(state.mlsConversationFailed('conv_a'), isFalse);
     // The same bundle each time, so the server can answer the duplicate.
@@ -214,8 +228,9 @@ void main() {
     await _waitFor(() async => !(await _saved(store)).contains('"sent"'));
     final record = _record(await _saved(store), 'conv_a');
     expect(
-        DateTime.now().toUtc().difference(_at(record['last'])).inMinutes.abs(),
-        lessThan(2));
+      DateTime.now().toUtc().difference(_at(record['last'])).inMinutes.abs(),
+      lessThan(2),
+    );
     expect(await store.pendingMlsMessages(), isEmpty);
     expect(crypto.staged, isEmpty);
     state.dispose();
@@ -239,20 +254,23 @@ void main() {
     final crypto = _Crypto(store);
     final state = await _start(api, store, crypto);
     await _waitFor(() => crypto.processed.contains('mls_welcome'));
-    await _waitFor(() async =>
-        (await _saved(store)).contains('"joined"') &&
-        !_record(await _saved(store), 'conv_a').containsKey('last'));
+    await _waitFor(
+      () async =>
+          (await _saved(store)).contains('"joined"') &&
+          !_record(await _saved(store), 'conv_a').containsKey('last'),
+    );
     // Not at once: at least the join delay passes first.
     expect(crypto.staged, isEmpty);
     state.dispose();
 
     // After the delay the next pass updates the newly joined group.
     await _rewrite(
-        store,
-        (record) => record['joined'] = DateTime.now()
-            .toUtc()
-            .subtract(const Duration(hours: 1))
-            .millisecondsSinceEpoch);
+      store,
+      (record) => record['joined'] = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(hours: 1))
+          .millisecondsSinceEpoch,
+    );
     final again = _Crypto(store);
     final restarted = await _start(_Api(), store, again);
     await _waitFor(() => again.completed.contains('conv_a'));
@@ -264,10 +282,11 @@ void main() {
     // A fresh device: a group a stranger created is a request (D48).
     final api = _Api()
       ..convA = () => Conversation(
-          id: 'conv_a',
-          kind: 'group',
-          createdBy: 'acct_stranger',
-          lastMessageAt: DateTime.now().toUtc());
+            id: 'conv_a',
+            kind: 'group',
+            createdBy: 'acct_stranger',
+            lastMessageAt: DateTime.now().toUtc(),
+          );
     final crypto = _Crypto(store);
     final state = await _start(api, store, crypto);
     expect(state.isMessageRequestId('conv_a'), isTrue);
@@ -275,8 +294,10 @@ void main() {
     await _settle();
     expect(crypto.staged, isEmpty);
     // The count is kept for when the request is accepted.
-    expect(_record(await _saved(store), 'conv_a')['sent'],
-        MlsSelfUpdatePolicy.messageThreshold);
+    expect(
+      _record(await _saved(store), 'conv_a')['sent'],
+      MlsSelfUpdatePolicy.messageThreshold,
+    );
     state.dispose();
   });
 
@@ -284,11 +305,12 @@ void main() {
     final store = await _storeWith(_countDue('conv_a'));
     final api = _Api()
       ..convA = () => Conversation(
-          id: 'conv_a',
-          kind: 'dm',
-          createdBy: 'acct_me',
-          peerAccountId: 'acct_peer',
-          lastMessageAt: DateTime.now().toUtc());
+            id: 'conv_a',
+            kind: 'dm',
+            createdBy: 'acct_me',
+            peerAccountId: 'acct_peer',
+            lastMessageAt: DateTime.now().toUtc(),
+          );
     api.blocks = <BlockedAccount>[BlockedAccount(accountId: 'acct_peer')];
     final crypto = _Crypto(store);
     final state = await _start(api, store, crypto);
@@ -325,8 +347,10 @@ void main() {
 /// A saved policy in which [conversationId] reached the count trigger.
 String _countDue(String conversationId) {
   final policy = MlsSelfUpdatePolicy(accountId: 'acct_me', deviceId: 'dev_me')
-    ..recordPathCommit(conversationId,
-        DateTime.now().toUtc().subtract(const Duration(hours: 2)))
+    ..recordPathCommit(
+      conversationId,
+      DateTime.now().toUtc().subtract(const Duration(hours: 2)),
+    )
     ..recordPathCommit('conv_b', DateTime.now().toUtc());
   for (var i = 0; i < MlsSelfUpdatePolicy.messageThreshold; i++) {
     policy.recordSent(conversationId);
@@ -338,9 +362,13 @@ Future<MemoryLocalStore> _storeWith(String? policy) async {
   final store = MemoryLocalStore();
   await store.saveSession(_session);
   await store.saveCryptoState(
-      StoredCryptoState(
-          counter: 1, stateKey: List<int>.filled(32, 1), sealedState: [1]),
-      0);
+    StoredCryptoState(
+      counter: 1,
+      stateKey: List<int>.filled(32, 1),
+      sealedState: [1],
+    ),
+    0,
+  );
   if (policy != null) await store.saveSetting(_setting, policy);
   return store;
 }
@@ -350,14 +378,17 @@ Future<String> _saved(LocalStore store) async =>
 
 Map<String, Object?> _record(String raw, String conversationId) =>
     Map<String, Object?>.from(
-        ((jsonDecode(raw) as Map)['groups'] as Map)[conversationId] as Map);
+      ((jsonDecode(raw) as Map)['groups'] as Map)[conversationId] as Map,
+    );
 
 DateTime _at(Object? millis) =>
     DateTime.fromMillisecondsSinceEpoch(millis! as int, isUtc: true);
 
 /// Edits the saved record of conv_a, as the passing of time would.
 Future<void> _rewrite(
-    LocalStore store, void Function(Map<String, Object?> record) edit) async {
+  LocalStore store,
+  void Function(Map<String, Object?> record) edit,
+) async {
   final json = jsonDecode(await _saved(store)) as Map<String, Object?>;
   final groups = Map<String, Object?>.from(json['groups'] as Map);
   final record = Map<String, Object?>.from(groups['conv_a'] as Map);
@@ -368,7 +399,10 @@ Future<void> _rewrite(
 }
 
 Future<AppState> _start(
-    _Api api, MemoryLocalStore store, _Crypto crypto) async {
+  _Api api,
+  MemoryLocalStore store,
+  _Crypto crypto,
+) async {
   final state = AppState(
     apiClientFactory: (_) => api,
     cryptoService: crypto,
@@ -386,8 +420,10 @@ Future<void> _settle() async {
   }
 }
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 15)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -414,16 +450,16 @@ class _Api extends ApiClient with LegacySyncPageFake {
   /// conv_a as returned by the server; the default has no creator, so it
   /// is never a request.
   Conversation Function() convA = () => Conversation(
-      id: 'conv_a', kind: 'group', lastMessageAt: DateTime.now().toUtc());
+        id: 'conv_a',
+        kind: 'group',
+        lastMessageAt: DateTime.now().toUtc(),
+      );
   List<BlockedAccount> blocks = <BlockedAccount>[];
   int blockReads = 0;
 
   @override
   Future<List<Conversation>> conversations(String token) async =>
-      <Conversation>[
-        convA(),
-        Conversation(id: 'conv_b', kind: 'group'),
-      ];
+      <Conversation>[convA(), Conversation(id: 'conv_b', kind: 'group')];
 
   @override
   Future<List<BlockedAccount>> listBlocks(String token) async {
@@ -433,22 +469,30 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<List<Device>> devices(String token) async => const <Device>[];
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-      {int after = 0, int limit = 100}) async {
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
     final page = events.where((event) => event.id > after).toList();
     return page;
   }
 
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       <MlsMessage>[
         for (final event in events)
           if (event.id > after)
@@ -493,8 +537,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<void> publishDeviceKeyPackages(String token, List<List<int>> packages,
-      {Duration lifetime = const Duration(days: 30)}) async {}
+  Future<void> publishDeviceKeyPackages(
+    String token,
+    List<List<int>> packages, {
+    Duration lifetime = const Duration(days: 30),
+  }) async {}
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async =>
@@ -529,29 +576,33 @@ class _Crypto
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 3, pending: false);
 
   @override
   Future<void> stageSelfUpdate(String conversationId) async {
     staged.add(conversationId);
     final counter = (await store.loadCryptoState())!.counter;
-    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-      expectedCounter: counter,
-      expectedCursor: await store.loadSyncCursor(),
-      state: StoredCryptoState(
+    await store.commitOutgoingMlsTransition(
+      OutgoingMlsStateTransition(
+        expectedCounter: counter,
+        expectedCursor: await store.loadSyncCursor(),
+        state: StoredCryptoState(
           counter: counter + 1,
           stateKey: List<int>.filled(32, 1),
-          sealedState: const <int>[1]),
-      messages: <PendingMlsMessage>[
-        PendingMlsMessage(
-          idempotencyKey: 'update_${staged.length}',
-          conversationId: conversationId,
-          kind: MlsCommitBundle.kind,
-          payload: const MlsCommitBundle(epoch: 3, commit: <int>[9]).encode(),
+          sealedState: const <int>[1],
         ),
-      ],
-    ));
+        messages: <PendingMlsMessage>[
+          PendingMlsMessage(
+            idempotencyKey: 'update_${staged.length}',
+            conversationId: conversationId,
+            kind: MlsCommitBundle.kind,
+            payload: const MlsCommitBundle(epoch: 3, commit: <int>[9]).encode(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -574,19 +625,22 @@ class _Crypto
       completed.add(message.conversationId);
       await store.removePendingMlsMessage(message.idempotencyKey);
     }
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'mls:${message.syncEventId}:${message.id}',
-      conversationId: message.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: message.syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'mls:${message.syncEventId}:${message.id}',
+        conversationId: message.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: message.syncEventId,
+      ),
+    );
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override
@@ -604,7 +658,8 @@ class _PlainCrypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 3, pending: false);
 
   @override

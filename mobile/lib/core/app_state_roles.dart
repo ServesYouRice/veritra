@@ -60,9 +60,11 @@ extension RoleActions on AppState {
   /// sends it. False (with the error under [Ops.members]) when refused.
   Future<bool> _roleCommand(
     String conversationId,
-    GovernanceState Function(GovernanceCommands commands,
-            GovernanceObservations? observed, DateTime now)
-        build, {
+    GovernanceState Function(
+      GovernanceCommands commands,
+      GovernanceObservations? observed,
+      DateTime now,
+    ) build, {
     Future<void> Function(Session current, ApiClient client)? server,
   }) async {
     final group = recordGroupFor(conversationId);
@@ -106,8 +108,13 @@ extension RoleActions on AppState {
   /// group: a group's own member route, or for a community's shared group the
   /// community's member route (the shared conversation's roster is the
   /// community's, and the server refuses role changes on it).
-  Future<void> _serverRole(Session current, ApiClient client,
-      String conversationId, String accountId, String role) {
+  Future<void> _serverRole(
+    Session current,
+    ApiClient client,
+    String conversationId,
+    String accountId,
+    String role,
+  ) {
     final group = recordGroupFor(conversationId)!;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
     final communityId = conversation?.communityId ??
@@ -119,15 +126,26 @@ extension RoleActions on AppState {
         conversation.isCommunityShared &&
         communityId != null) {
       return client.setCommunityMemberRole(
-          current.token, communityId, accountId, role);
+        current.token,
+        communityId,
+        accountId,
+        role,
+      );
     }
-    return client.addConversationMember(current.token, group, accountId,
-        role: role);
+    return client.addConversationMember(
+      current.token,
+      group,
+      accountId,
+      role: role,
+    );
   }
 
   /// Gives [accountId] [role] (never owner: see [transferOwnership]).
   Future<bool> setVerifiedRole(
-          String conversationId, String accountId, BuiltInRole role) =>
+    String conversationId,
+    String accountId,
+    BuiltInRole role,
+  ) =>
       _roleCommand(
         conversationId,
         (commands, _, __) => commands.setRole(accountId, role),
@@ -137,9 +155,14 @@ extension RoleActions on AppState {
 
   /// Marks an admin as one the owner chose (an elector, D81), or not.
   Future<bool> setElector(
-          String conversationId, String accountId, bool enabled) =>
-      _roleCommand(conversationId,
-          (commands, _, __) => commands.setElector(accountId, enabled));
+    String conversationId,
+    String accountId,
+    bool enabled,
+  ) =>
+      _roleCommand(
+        conversationId,
+        (commands, _, __) => commands.setElector(accountId, enabled),
+      );
 
   /// The owner hands the group to a current admin and becomes an admin.
   Future<bool> transferOwnership(String conversationId, String adminId) =>
@@ -151,15 +174,13 @@ extension RoleActions on AppState {
       );
 
   /// Opens an owner election (D81) after 30 days without the owner here.
-  Future<bool> openOwnerElection(String conversationId) => _roleCommand(
-        conversationId,
-        (commands, observed, now) {
-          if (observed == null) {
-            throw const GovernanceCommandException('stale_owner_observation');
-          }
-          return commands.openElection(observed, now);
-        },
-      );
+  Future<bool> openOwnerElection(String conversationId) =>
+      _roleCommand(conversationId, (commands, observed, now) {
+        if (observed == null) {
+          throw const GovernanceCommandException('stale_owner_observation');
+        }
+        return commands.openElection(observed, now);
+      });
 
   /// Votes for [candidate]; the deciding vote makes them owner. The server's
   /// owner row then follows through [reconcileServerOwners].
@@ -170,7 +191,8 @@ extension RoleActions on AppState {
       (commands, observed, now) {
         if (observed == null) {
           throw const GovernanceCommandException(
-              'missing_election_observation');
+            'missing_election_observation',
+          );
         }
         final next = commands.vote(candidate, observed, now);
         if (next.owner case final owner? when owner != commands.state.owner) {
@@ -274,7 +296,9 @@ extension RoleActions on AppState {
 
   /// The owner's cancel, or a snapshot member's close.
   Future<bool> closeOwnerElection(String conversationId) => _roleCommand(
-      conversationId, (commands, _, __) => commands.closeElection());
+        conversationId,
+        (commands, _, __) => commands.closeElection(),
+      );
 
   /// C2 in the record: "only admins post" for a group.
   Future<void> _recordPosting(String conversationId, bool adminsOnly) async {
@@ -283,14 +307,17 @@ extension RoleActions on AppState {
     await _roleCommand(
       conversationId,
       (commands, _, __) => commands.setPosting(
-          adminsOnly: adminsOnly,
-          announcementChannels: commands.state.announcementChannels),
+        adminsOnly: adminsOnly,
+        announcementChannels: commands.state.announcementChannels,
+      ),
     );
   }
 
   /// C2 in the record: an announcement channel of a community.
   Future<void> _recordAnnouncementChannel(
-      String sharedConversationId, String channelId) async {
+    String sharedConversationId,
+    String channelId,
+  ) async {
     final view = await governanceViewFor(sharedConversationId);
     if (view == null || view.record.announcementChannels.contains(channelId)) {
       return;
@@ -298,11 +325,12 @@ extension RoleActions on AppState {
     await _roleCommand(
       sharedConversationId,
       (commands, _, __) => commands.setPosting(
-          adminsOnly: commands.state.adminsOnlyPosting,
-          announcementChannels: {
-            ...commands.state.announcementChannels,
-            channelId
-          }),
+        adminsOnly: commands.state.adminsOnlyPosting,
+        announcementChannels: {
+          ...commands.state.announcementChannels,
+          channelId,
+        },
+      ),
     );
   }
 
@@ -311,7 +339,9 @@ extension RoleActions on AppState {
   /// proof and waits until the server holds it, so the removal commit that
   /// follows is accepted by every member.
   Future<void> _beforeLeavingRecordGroup(
-      Session current, String conversationId) async {
+    Session current,
+    String conversationId,
+  ) async {
     final group = recordGroupFor(conversationId) ?? conversationId;
     final crypto = _roleCrypto;
     if (crypto == null) return;
@@ -326,7 +356,8 @@ extension RoleActions on AppState {
     if (self == null) return;
     if (!view.record.mayLeave(self)) {
       throw const UserFacingException(
-          'Transfer ownership to an admin before you leave.');
+        'Transfer ownership to an admin before you leave.',
+      );
     }
     if (!removalNeedsProof(view.record, self)) return;
     // C4 (review MEDIUM, round 7): members drop this account's leave proof
@@ -338,7 +369,8 @@ extension RoleActions on AppState {
     await _settleMlsOutbox();
     if (await _hasPendingMlsWork(group)) {
       throw const UserFacingException(
-          'Could not tell the group you are leaving. Try again.');
+        'Could not tell the group you are leaving. Try again.',
+      );
     }
     String? channelId;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
@@ -350,22 +382,29 @@ extension RoleActions on AppState {
               ?.id;
       if (channelId == null) {
         throw const UserFacingException(
-            'Could not tell the community you are leaving. Try again.');
+          'Could not tell the community you are leaving. Try again.',
+        );
       }
     }
     final sent = await _sendPayload(
-        group, AppPayloadType.memberLeave, const <String, Object?>{},
-        channelId: channelId);
+      group,
+      AppPayloadType.memberLeave,
+      const <String, Object?>{},
+      channelId: channelId,
+    );
     if (!sent) {
       throw const UserFacingException(
-          'Could not tell the group you are leaving. Try again.');
+        'Could not tell the group you are leaving. Try again.',
+      );
     }
     await _flushOutbox();
-    final waiting = (await localStore.pendingEnvelopeRecords())
-        .any((record) => record.envelope.conversationId == group);
+    final waiting = (await localStore.pendingEnvelopeRecords()).any(
+      (record) => record.envelope.conversationId == group,
+    );
     if (waiting) {
       throw const UserFacingException(
-          'Could not tell the group you are leaving. Try again.');
+        'Could not tell the group you are leaving. Try again.',
+      );
     }
     // C4 leave proof in the commit (ABI 24): the signed statement a
     // committer carries in the removal for members that join after this.
@@ -373,24 +412,34 @@ extension RoleActions on AppState {
     // hold, and the leave goes on without it.
     try {
       if (await _sendPayload(
-          group, AppPayloadType.memberLeaveSigned, const <String, Object?>{},
-          channelId: channelId)) {
+        group,
+        AppPayloadType.memberLeaveSigned,
+        const <String, Object?>{},
+        channelId: channelId,
+      )) {
         await _flushOutbox();
       }
     } catch (err) {
-      developer.log('c4_leave_signed_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c4_leave_signed_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 
   void _voidCancelledLeavesSoon() {
     final current = session;
     if (current == null) return;
-    unawaited(_voidCancelledLeaves(current, _sessionGeneration)
-        .catchError((Object err) {
-      developer.log('c4_leave_void_failed ${err.runtimeType}',
-          name: 'veritra.sync');
-    }));
+    unawaited(
+      _voidCancelledLeaves(current, _sessionGeneration).catchError((
+        Object err,
+      ) {
+        developer.log(
+          'c4_leave_void_failed ${err.runtimeType}',
+          name: 'veritra.sync',
+        );
+      }),
+    );
   }
 
   /// C4 leave proof in the commit: a leave this device signed that did not
@@ -399,7 +448,9 @@ extension RoleActions on AppState {
   /// self-update voids it; until one of this device's self-updates merges
   /// in that group (which clears the marker), every sync pass tries again.
   Future<void> _voidCancelledLeaves(
-      Session current, int ownerGeneration) async {
+    Session current,
+    int ownerGeneration,
+  ) async {
     final service = cryptoService;
     final crypto = service is MlsSelfUpdateCryptoService
         ? service as MlsSelfUpdateCryptoService
@@ -411,8 +462,9 @@ extension RoleActions on AppState {
           _leavingRecordGroups.contains(id)) {
         continue;
       }
-      final marker =
-          await localStore.loadSetting(governanceLeaveSignedOutSetting(id));
+      final marker = await localStore.loadSetting(
+        governanceLeaveSignedOutSetting(id),
+      );
       if (marker == null || marker.isEmpty) continue;
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       // A self-update already queued there settles it once it merges. The
@@ -432,8 +484,10 @@ extension RoleActions on AppState {
         await crypto.stageSelfUpdate(id);
       } catch (err) {
         _leaveVoidNotBefore[id] = now.add(MlsSelfUpdatePolicy.failureBackoff);
-        developer.log('c4_leave_void_failed ${err.runtimeType}',
-            name: 'veritra.sync');
+        developer.log(
+          'c4_leave_void_failed ${err.runtimeType}',
+          name: 'veritra.sync',
+        );
         continue;
       }
       await _flushMlsOutbox();
@@ -447,8 +501,10 @@ extension RoleActions on AppState {
     try {
       await localStore.saveSetting(governanceLeaveSignedOutSetting(group), '');
     } catch (err) {
-      developer.log('c4_leave_marker_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c4_leave_marker_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 
@@ -476,8 +532,10 @@ extension RoleActions on AppState {
         continue;
       }
       final delay = Duration(
-          seconds:
-              _ownerCancelRandom.nextInt(const Duration(hours: 24).inSeconds));
+        seconds: _ownerCancelRandom.nextInt(
+          const Duration(hours: 24).inSeconds,
+        ),
+      );
       final generation = _sessionGeneration;
       _ownerCancelTimers[id] = Timer(delay, () {
         _ownerCancelTimers.remove(id);

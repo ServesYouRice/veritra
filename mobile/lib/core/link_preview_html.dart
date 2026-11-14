@@ -37,9 +37,11 @@ PageMetadata extractPageMetadata(String source, Uri pageUrl) {
 
   final title = first(<String>['og:title', 'twitter:title']) ??
       document.querySelector('title')?.text;
-  final description = first(
-    <String>['og:description', 'twitter:description', 'description'],
-  );
+  final description = first(<String>[
+    'og:description',
+    'twitter:description',
+    'description',
+  ]);
   Uri? imageUrl;
   final rawImage = first(<String>[
     'og:image:secure_url',

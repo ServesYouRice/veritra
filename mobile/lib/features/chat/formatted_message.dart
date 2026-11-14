@@ -4,13 +4,14 @@ import 'package:flutter/material.dart';
 import '../../crypto/message_format.dart';
 
 class FormattedMessage extends StatefulWidget {
-  const FormattedMessage(
-      {required this.text,
-      required this.formatJson,
-      this.style,
-      this.onMention,
-      this.selectable = false,
-      super.key});
+  const FormattedMessage({
+    required this.text,
+    required this.formatJson,
+    this.style,
+    this.onMention,
+    this.selectable = false,
+    super.key,
+  });
   final String text;
   final String? formatJson;
   final TextStyle? style;
@@ -49,8 +50,10 @@ class _FormattedMessageState extends State<FormattedMessage> {
   @override
   Widget build(BuildContext context) {
     _clearRecognizers();
-    final decoration = messageDecoration(
-        {...decodeDecoration(widget.formatJson), 'text': widget.text});
+    final decoration = messageDecoration({
+      ...decodeDecoration(widget.formatJson),
+      'text': widget.text,
+    });
     final entities = (decoration['entities'] as List? ?? const [])
         .cast<Map<String, Object?>>();
     final mentions = (decoration['mentions'] as List? ?? const [])
@@ -79,9 +82,11 @@ class _FormattedMessageState extends State<FormattedMessage> {
         style = style.copyWith(decoration: TextDecoration.lineThrough);
       if (types.contains('code') || types.contains('code_block'))
         style = style.copyWith(
-            fontFamily: 'monospace',
-            backgroundColor:
-                Theme.of(context).colorScheme.surfaceContainerHighest);
+          fontFamily: 'monospace',
+          backgroundColor: Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest,
+        );
       TapGestureRecognizer? recognizer;
       if (types.contains('spoiler') || mention != null) {
         recognizer = TapGestureRecognizer()
@@ -96,14 +101,18 @@ class _FormattedMessageState extends State<FormattedMessage> {
       }
       if (mention != null && !concealed)
         style = style.copyWith(
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.w600);
-      spans.add(TextSpan(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        );
+      spans.add(
+        TextSpan(
           text: concealed
               ? '█' * widget.text.substring(start, end).runes.length
               : widget.text.substring(start, end),
           style: style,
-          recognizer: recognizer));
+          recognizer: recognizer,
+        ),
+      );
     }
     final span = TextSpan(children: spans);
     return widget.selectable ? SelectableText.rich(span) : Text.rich(span);

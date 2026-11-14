@@ -1277,6 +1277,8 @@
   "@recoveryKeyGroupWrong": {"placeholders": {"group": {"type": "int"}}},
   "recoveryKeyGroupsMatched": "{count} of 13 groups match.",
   "@recoveryKeyGroupsMatched": {"placeholders": {"count": {"type": "int"}}},
+  "recoveryKeyCheck": "Check my key",
+  "recoveryKeyCheckOk": "This is your key. Nothing was saved yet.",
   "recoveryKeyTooLong": "This is longer than the key. Check for extra characters.",
   "recoveryKeyShowAgain": "Show the key again",
   "recoveryKeySave": "Save recovery key",

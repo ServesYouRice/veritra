@@ -42,7 +42,7 @@ void main() {
     'partial',
     'duplicate',
     'wrong-account',
-    'ghost'
+    'ghost',
   ]) {
     test('creation discovers signed devices; claim answer $answer', () async {
       final api = _DiscoveryApi(bindings)..answer = answer;
@@ -61,36 +61,45 @@ void main() {
       } else {
         expect(created?.id, 'conv_discovery');
         expect(api.bundles, hasLength(1));
-        expect(api.bundles.single.added.map((ref) => ref.deviceId),
-            answer == 'partial' ? isEmpty : ['dev_phone']);
+        expect(
+          api.bundles.single.added.map((ref) => ref.deviceId),
+          answer == 'partial' ? isEmpty : ['dev_phone'],
+        );
       }
     }, skip: skip);
   }
 
-  test('reconcile discovers an approved device omitted from pending adds',
-      () async {
-    final api = _DiscoveryApi(bindings);
-    final store = MemoryLocalStore();
-    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
-    final state = _state(api, crypto);
-    addTearDown(state.dispose);
-    await state.createOwner(_origin, 'owner', 'password', 'setup');
-    await state.startConversation(kind: 'group');
-    expect(api.claims, isEmpty);
-    await _addSignedPhone(bindings, api, crypto);
-    api.pending = true;
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await _until(() => api.bundles.length == 2);
-    expect(api.claims.single, ['dev_phone']);
-    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
-    expect(api.bundles.last.added.any((ref) => ref.deviceId == 'dev_ghost'),
-        isFalse);
-  }, skip: skip);
+  test(
+    'reconcile discovers an approved device omitted from pending adds',
+    () async {
+      final api = _DiscoveryApi(bindings);
+      final store = MemoryLocalStore();
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      addTearDown(state.dispose);
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      await state.startConversation(kind: 'group');
+      expect(api.claims, isEmpty);
+      await _addSignedPhone(bindings, api, crypto);
+      api.pending = true;
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await _until(() => api.bundles.length == 2);
+      expect(api.claims.single, ['dev_phone']);
+      expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+      expect(
+        api.bundles.last.added.any((ref) => ref.deviceId == 'dev_ghost'),
+        isFalse,
+      );
+    },
+    skip: skip,
+  );
 
   test('failed add discovery still permits a removal commit', () async {
     final api = _DiscoveryApi(bindings);
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
     final state = _state(api, crypto);
     addTearDown(state.dispose);
     await state.createOwner(_origin, 'owner', 'password', 'setup');
@@ -105,57 +114,76 @@ void main() {
     await _until(() => api.bundles.length == 2);
     expect(api.bundles.last.added, isEmpty);
     expect(api.bundles.last.removed.single.deviceId, 'dev_phone');
-    expect(api.claims, hasLength(1),
-        reason: 'no claims during failed discovery');
+    expect(
+      api.claims,
+      hasLength(1),
+      reason: 'no claims during failed discovery',
+    );
   }, skip: skip);
 
   // L2-3, the real-app path that lists a franking key: a device another
   // device added (change 2) has none on its list; its first sealed token
   // pass signs change 7 naming exactly its own key, once.
-  test('a device added without a franking key lists it with change 7, once',
-      () async {
-    final api = _ListApi(bindings);
-    final store = MemoryLocalStore();
-    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
-    final state = _state(api, crypto);
-    addTearDown(state.dispose);
-    const session = Session(
-        baseUrl: _origin, token: 'tok', accountId: _account, deviceId: _own);
-    await crypto.createEnrollmentCredential(const EnrollmentReservation(
-        id: 'enroll_own',
+  test(
+    'a device added without a franking key lists it with change 7, once',
+    () async {
+      final api = _ListApi(bindings);
+      final store = MemoryLocalStore();
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      addTearDown(state.dispose);
+      const session = Session(
+        baseUrl: _origin,
+        token: 'tok',
         accountId: _account,
         deviceId: _own,
-        challenge: <int>[1, 2, 3]));
-    await store.saveSession(session);
-    await crypto.activateSession(session);
-    final tablet = bindings.createDevice(_account, 'dev_tablet');
-    addTearDown(tablet.close);
-    final tabletPair =
-        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey());
-    api.chain.add(tablet.signDeviceList(
-        DeviceListBody(
-          accountId: idBytes(_account),
-          version: 1,
-          prevHash: DeviceListBody.zeroHash,
-          createdAtMs: 1,
-          change: DeviceListChange.genesis,
-          entries: [tabletPair],
+      );
+      await crypto.createEnrollmentCredential(
+        const EnrollmentReservation(
+          id: 'enroll_own',
+          accountId: _account,
+          deviceId: _own,
+          challenge: <int>[1, 2, 3],
         ),
-        idBytes('dev_tablet')));
-    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
-        .pinChain(_account, api.chain, expectedHead: api.chain.last);
-    state
-      ..api = api
-      ..session = session;
+      );
+      await store.saveSession(session);
+      await crypto.activateSession(session);
+      final tablet = bindings.createDevice(_account, 'dev_tablet');
+      addTearDown(tablet.close);
+      final tabletPair = DeviceListPair(
+        idBytes('dev_tablet'),
+        tablet.signingPublicKey(),
+      );
+      api.chain.add(
+        tablet.signDeviceList(
+          DeviceListBody(
+            accountId: idBytes(_account),
+            version: 1,
+            prevHash: DeviceListBody.zeroHash,
+            createdAtMs: 1,
+            change: DeviceListChange.genesis,
+            entries: [tabletPair],
+          ),
+          idBytes('dev_tablet'),
+        ),
+      );
+      await DeviceListPins(
+        store: store,
+        source: _ApiLists(api),
+        verifier: crypto,
+      ).pinChain(_account, api.chain, expectedHead: api.chain.last);
+      state
+        ..api = api
+        ..session = session;
 
-    // Not on the list: no context, nothing signed.
-    expect(await state.debugSealedFrankContext(), isNull);
-    expect(api.chain, hasLength(1));
+      // Not on the list: no context, nothing signed.
+      expect(await state.debugSealedFrankContext(), isNull);
+      expect(api.chain, hasLength(1));
 
-    // The tablet adds this device: its entry has no franking key.
-    final genesis =
-        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    final add = tablet.signDeviceList(
+      // The tablet adds this device: its entry has no franking key.
+      final genesis =
+          bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+      final add = tablet.signDeviceList(
         DeviceListBody(
           accountId: idBytes(_account),
           version: 2,
@@ -167,43 +195,52 @@ void main() {
             tabletPair,
           ],
         ),
-        idBytes('dev_tablet'));
-    await api.publishDeviceList('tok', add);
-    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
-        .refresh(_account, force: true);
-    expect(
+        idBytes('dev_tablet'),
+      );
+      await api.publishDeviceList('tok', add);
+      await DeviceListPins(
+        store: store,
+        source: _ApiLists(api),
+        verifier: crypto,
+      ).refresh(_account, force: true);
+      expect(
         bindings
             .checkDeviceListChain(idBytes(_account), api.chain)
             .head
             .frankKeyOf(idBytes(_own)),
-        isNull);
+        isNull,
+      );
 
-    final own = await crypto.currentFrankKey();
-    final context = await state.debugSealedFrankContext();
-    expect(context, isNotNull);
-    expect(context!.listedKey, own);
-    expect(api.chain, hasLength(3));
-    final head =
-        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    expect(head.change, DeviceListChange.frankKey);
-    expect(head.frankKeyOf(idBytes(_own)), own);
-    expect(head.frankKeys, hasLength(1));
-    expect(head.entries, hasLength(2));
-    // The pin moved with it.
-    expect((await store.loadDeviceListPin(_account))!.version, 3);
+      final own = await crypto.currentFrankKey();
+      final context = await state.debugSealedFrankContext();
+      expect(context, isNotNull);
+      expect(context!.listedKey, own);
+      expect(api.chain, hasLength(3));
+      final head =
+          bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+      expect(head.change, DeviceListChange.frankKey);
+      expect(head.frankKeyOf(idBytes(_own)), own);
+      expect(head.frankKeys, hasLength(1));
+      expect(head.entries, hasLength(2));
+      // The pin moved with it.
+      expect((await store.loadDeviceListPin(_account))!.version, 3);
 
-    // The next pass signs nothing.
-    expect((await state.debugSealedFrankContext())!.listedKey, own);
-    expect(api.chain, hasLength(3));
-  }, skip: skip);
+      // The next pass signs nothing.
+      expect((await state.debugSealedFrankContext())!.listedKey, own);
+      expect(api.chain, hasLength(3));
+    },
+    skip: skip,
+  );
 
   // Condition A: with the server's sealed switch off, every version this
   // device signs alone is L1 format 1, byte for byte the earlier format
   // (main's servers and apps refuse format 2); change 7 adds the key later.
   test('with sealed sending off, the setup genesis is format 1', () async {
     final api = _ListApi(bindings);
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
     final state = _state(api, crypto);
     addTearDown(state.dispose);
     await state.createOwner(_origin, 'owner', 'password', 'setup');
@@ -213,8 +250,10 @@ void main() {
 
   test('setup carries a genesis that names this device with its key', () async {
     final api = _ListApi(bindings)..sealedSwitch = true;
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
     final state = _state(api, crypto);
     addTearDown(state.dispose);
     await state.createOwner(_origin, 'owner', 'password', 'setup');
@@ -223,10 +262,14 @@ void main() {
     expect(chain.head.change, DeviceListChange.genesis);
     expect(chain.head.entries.single.deviceId, idBytes(_own));
     expect(
-        chain.head.entries.single.signingKey, await crypto.currentSigningKey());
+      chain.head.entries.single.signingKey,
+      await crypto.currentSigningKey(),
+    );
     // L2-3: the genesis lists this device's own franking key.
     expect(
-        chain.head.frankKeyOf(idBytes(_own)), await crypto.currentFrankKey());
+      chain.head.frankKeyOf(idBytes(_own)),
+      await crypto.currentFrankKey(),
+    );
     // Review fix: the own genesis is the account's anchor, not something
     // the first refresh takes from the server on trust: a server that shows
     // another chain for the account is not adopted.
@@ -235,19 +278,22 @@ void main() {
     expect(pin?.headStatement, api.chain.single);
   }, skip: skip);
 
-  test('the own genesis is pinned even when the server shows another chain',
-      () async {
-    final api = _ListApi(bindings);
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
-    final state = _state(api, crypto);
-    addTearDown(state.dispose);
-    // The server stores the real genesis but serves a made-up one: a ghost
-    // device that signed a genesis of its own for this account.
-    final ghost = bindings.createDevice(_account, 'dev_ghost');
-    addTearDown(ghost.close);
-    api.served = [
-      ghost.signDeviceList(
+  test(
+    'the own genesis is pinned even when the server shows another chain',
+    () async {
+      final api = _ListApi(bindings);
+      final crypto = NativeCryptoService(
+        bindings: bindings,
+        localStore: MemoryLocalStore(),
+      );
+      final state = _state(api, crypto);
+      addTearDown(state.dispose);
+      // The server stores the real genesis but serves a made-up one: a ghost
+      // device that signed a genesis of its own for this account.
+      final ghost = bindings.createDevice(_account, 'dev_ghost');
+      addTearDown(ghost.close);
+      api.served = [
+        ghost.signDeviceList(
           DeviceListBody(
             accountId: idBytes(_account),
             version: 1,
@@ -255,18 +301,26 @@ void main() {
             createdAtMs: 1,
             change: DeviceListChange.genesis,
             entries: [
-              DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+              DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey()),
             ],
           ),
-          idBytes('dev_ghost')),
-    ];
-    await state.createOwner(_origin, 'owner', 'password', 'setup');
-    final pin = await crypto.localStore.loadDeviceListPin(_account);
-    expect(pin?.headStatement, api.chain.single,
-        reason: 'the own genesis, not the chain the server served');
-    expect(pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
-        PinStanding.unknown);
-  }, skip: skip);
+          idBytes('dev_ghost'),
+        ),
+      ];
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      final pin = await crypto.localStore.loadDeviceListPin(_account);
+      expect(
+        pin?.headStatement,
+        api.chain.single,
+        reason: 'the own genesis, not the chain the server served',
+      );
+      expect(
+        pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
+        PinStanding.unknown,
+      );
+    },
+    skip: skip,
+  );
 
   for (final registration in [false, true]) {
     for (final read in ['empty', 'missing', 'unavailable']) {
@@ -275,20 +329,28 @@ void main() {
           'when list reads are $read', () async {
         final api = _ListApi(bindings)..listRead = read;
         final store = MemoryLocalStore();
-        final crypto =
-            NativeCryptoService(bindings: bindings, localStore: store);
+        final crypto = NativeCryptoService(
+          bindings: bindings,
+          localStore: store,
+        );
         final state = _state(api, crypto);
         addTearDown(state.dispose);
         if (registration) {
           await state.registerWithInvite(
-              _origin, 'invite', 'owner', 'password');
+            _origin,
+            'invite',
+            'owner',
+            'password',
+          );
         } else {
           await state.createOwner(_origin, 'owner', 'password', 'setup');
         }
         expect(api.chain, hasLength(1));
         final original = api.chain.single;
         expect(
-            (await store.loadDeviceListPin(_account))?.headStatement, original);
+          (await store.loadDeviceListPin(_account))?.headStatement,
+          original,
+        );
 
         // Withholding the real list first must not allow a later first-use
         // replacement with a server-controlled identity for this account.
@@ -306,7 +368,9 @@ void main() {
                 change: DeviceListChange.genesis,
                 entries: [
                   DeviceListPair(
-                      idBytes('dev_ghost'), ghost.signingPublicKey()),
+                    idBytes('dev_ghost'),
+                    ghost.signingPublicKey(),
+                  ),
                 ],
               ),
               idBytes('dev_ghost'),
@@ -320,10 +384,14 @@ void main() {
         final pin = await store.loadDeviceListPin(_account);
         expect(pin?.headStatement, original);
         expect(pin?.conflict, isFalse);
-        expect(pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
-            PinStanding.unknown);
-        expect(pin?.standing(idBytes(_own), await crypto.currentSigningKey()),
-            PinStanding.approved);
+        expect(
+          pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
+          PinStanding.unknown,
+        );
+        expect(
+          pin?.standing(idBytes(_own), await crypto.currentSigningKey()),
+          PinStanding.approved,
+        );
       }, skip: skip);
     }
   }
@@ -335,12 +403,18 @@ void main() {
           'storage failure and never restores through TOFU', () async {
         final api = _ListApi(bindings);
         final store = _FailingActivationStore(failure);
-        final crypto =
-            NativeCryptoService(bindings: bindings, localStore: store);
+        final crypto = NativeCryptoService(
+          bindings: bindings,
+          localStore: store,
+        );
         final state = _state(api, crypto);
         if (registration) {
           await state.registerWithInvite(
-              _origin, 'invite', 'owner', 'password');
+            _origin,
+            'invite',
+            'owner',
+            'password',
+          );
         } else {
           await state.createOwner(_origin, 'owner', 'password', 'setup');
         }
@@ -354,22 +428,25 @@ void main() {
         addTearDown(ghost.close);
         api.served = [
           ghost.signDeviceList(
-              DeviceListBody(
-                accountId: idBytes(_account),
-                version: 1,
-                prevHash: DeviceListBody.zeroHash,
-                createdAtMs: 1,
-                change: DeviceListChange.genesis,
-                entries: [
-                  DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
-                ],
-              ),
-              idBytes('dev_ghost'))
+            DeviceListBody(
+              accountId: idBytes(_account),
+              version: 1,
+              prevHash: DeviceListBody.zeroHash,
+              createdAtMs: 1,
+              change: DeviceListChange.genesis,
+              entries: [
+                DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey()),
+              ],
+            ),
+            idBytes('dev_ghost'),
+          ),
         ];
         state.dispose();
         // Real cold start: no in-memory pending identity or pin cache.
         final restart = _state(
-            api, NativeCryptoService(bindings: bindings, localStore: store));
+          api,
+          NativeCryptoService(bindings: bindings, localStore: store),
+        );
         await restart.tryRestoreSession();
         expect(restart.session, isNull);
         expect(api.listFetches, 0);
@@ -381,8 +458,10 @@ void main() {
             store.fail = false;
             await restart.tryRestoreSession();
           }
-          expect((await store.loadDeviceListPin(_account))?.headStatement,
-              genesis);
+          expect(
+            (await store.loadDeviceListPin(_account))?.headStatement,
+            genesis,
+          );
         }
         restart.dispose();
       }, skip: skip);
@@ -391,28 +470,31 @@ void main() {
 
   for (final failure in ['crypto-committed', 'clear']) {
     test(
-        'interruption after $failure restores the original native identity and pin',
-        () async {
-      final api = _ListApi(bindings);
-      final store = _FailingActivationStore(failure);
-      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
-      final state = _state(api, crypto);
-      await state.createOwner(_origin, 'owner', 'password', 'setup');
-      expect(state.session, isNull);
-      expect(state.error, isNotNull);
-      expect(await store.loadCryptoState(), isNotNull);
-      final original = api.chain.single;
-      final key = bindings
-          .checkDeviceListChain(idBytes(_account), [original])
-          .head
-          .entries
-          .single
-          .signingKey;
-      state.dispose();
-      final ghost = bindings.createDevice(_account, 'dev_ghost');
-      addTearDown(ghost.close);
-      api.served = [
-        ghost.signDeviceList(
+      'interruption after $failure restores the original native identity and pin',
+      () async {
+        final api = _ListApi(bindings);
+        final store = _FailingActivationStore(failure);
+        final crypto = NativeCryptoService(
+          bindings: bindings,
+          localStore: store,
+        );
+        final state = _state(api, crypto);
+        await state.createOwner(_origin, 'owner', 'password', 'setup');
+        expect(state.session, isNull);
+        expect(state.error, isNotNull);
+        expect(await store.loadCryptoState(), isNotNull);
+        final original = api.chain.single;
+        final key = bindings
+            .checkDeviceListChain(idBytes(_account), [original])
+            .head
+            .entries
+            .single
+            .signingKey;
+        state.dispose();
+        final ghost = bindings.createDevice(_account, 'dev_ghost');
+        addTearDown(ghost.close);
+        api.served = [
+          ghost.signDeviceList(
             DeviceListBody(
               accountId: idBytes(_account),
               version: 1,
@@ -420,60 +502,76 @@ void main() {
               createdAtMs: 1,
               change: DeviceListChange.genesis,
               entries: [
-                DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+                DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey()),
               ],
             ),
-            idBytes('dev_ghost'))
-      ];
-      store.fail = false;
-      final restoredCrypto =
-          NativeCryptoService(bindings: bindings, localStore: store);
-      final restart = _state(api, restoredCrypto);
-      addTearDown(restart.dispose);
-      await restart.tryRestoreSession();
-      expect(restart.session?.deviceId, _own);
-      expect(await restoredCrypto.currentSigningKey(), key);
-      expect(
-          (await store.loadDeviceListPin(_account))?.headStatement, original);
-    }, skip: skip);
+            idBytes('dev_ghost'),
+          ),
+        ];
+        store.fail = false;
+        final restoredCrypto = NativeCryptoService(
+          bindings: bindings,
+          localStore: store,
+        );
+        final restart = _state(api, restoredCrypto);
+        addTearDown(restart.dispose);
+        await restart.tryRestoreSession();
+        expect(restart.session?.deviceId, _own);
+        expect(await restoredCrypto.currentSigningKey(), key);
+        expect(
+          (await store.loadDeviceListPin(_account))?.headStatement,
+          original,
+        );
+      },
+      skip: skip,
+    );
   }
 
-  test('activation journal survives closing and reopening the database',
-      () async {
-    final dir = Directory.systemTemp.createTempSync('l1-anchor-journal');
-    final file = File('${dir.path}/local.sqlite');
-    final api = _ListApi(bindings);
-    var database = EncryptedLocalDatabase(NativeDatabase(file));
-    var store = _JournalDatabaseStore(database)..failPin = true;
-    var state =
-        _state(api, NativeCryptoService(bindings: bindings, localStore: store));
-    try {
-      await state.createOwner(_origin, 'owner', 'password', 'setup');
-      expect(state.session, isNull);
-      expect(await store.loadSession(), isNotNull);
-      expect(await store.loadDeviceListPin(_account), isNull);
-      state.dispose();
-      await database.close();
-      // No state survives in Dart. Only the on-disk journal/session do.
-      database = EncryptedLocalDatabase(NativeDatabase(file));
-      store = _JournalDatabaseStore(database);
-      state = _state(
-          api, NativeCryptoService(bindings: bindings, localStore: store));
-      api.listRead = 'unavailable';
-      await state.tryRestoreSession();
-      expect((await store.loadDeviceListPin(_account))?.headStatement,
-          api.chain.single);
-      expect(api.listFetches, 0);
-      // A crash before the first MLS save loses that key, requiring explicit
-      // recovery. It must never activate using a replacement server anchor.
-      expect(state.session, isNull);
-      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    } finally {
-      state.dispose();
-      await database.close();
-      dir.deleteSync(recursive: true);
-    }
-  }, skip: skip);
+  test(
+    'activation journal survives closing and reopening the database',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('l1-anchor-journal');
+      final file = File('${dir.path}/local.sqlite');
+      final api = _ListApi(bindings);
+      var database = EncryptedLocalDatabase(NativeDatabase(file));
+      var store = _JournalDatabaseStore(database)..failPin = true;
+      var state = _state(
+        api,
+        NativeCryptoService(bindings: bindings, localStore: store),
+      );
+      try {
+        await state.createOwner(_origin, 'owner', 'password', 'setup');
+        expect(state.session, isNull);
+        expect(await store.loadSession(), isNotNull);
+        expect(await store.loadDeviceListPin(_account), isNull);
+        state.dispose();
+        await database.close();
+        // No state survives in Dart. Only the on-disk journal/session do.
+        database = EncryptedLocalDatabase(NativeDatabase(file));
+        store = _JournalDatabaseStore(database);
+        state = _state(
+          api,
+          NativeCryptoService(bindings: bindings, localStore: store),
+        );
+        api.listRead = 'unavailable';
+        await state.tryRestoreSession();
+        expect(
+          (await store.loadDeviceListPin(_account))?.headStatement,
+          api.chain.single,
+        );
+        expect(api.listFetches, 0);
+        // A crash before the first MLS save loses that key, requiring explicit
+        // recovery. It must never activate using a replacement server anchor.
+        expect(state.session, isNull);
+        expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      } finally {
+        state.dispose();
+        await database.close();
+        dir.deleteSync(recursive: true);
+      }
+    },
+    skip: skip,
+  );
 
   test(
       'an account from before L1 reviews its devices once; removals and the '
@@ -499,35 +597,42 @@ void main() {
     addTearDown(stranger.close);
     api.serverDevices = [
       Device(
-          id: _own,
-          accountId: _account,
-          name: 'This',
-          createdAt: DateTime.utc(2026),
-          signingKey: await crypto.currentSigningKey()),
+        id: _own,
+        accountId: _account,
+        name: 'This',
+        createdAt: DateTime.utc(2026),
+        signingKey: await crypto.currentSigningKey(),
+      ),
       Device(
-          id: 'dev_phone',
-          accountId: _account,
-          name: 'Phone',
-          createdAt: DateTime.utc(2026),
-          signingKey: phone.signingPublicKey()),
+        id: 'dev_phone',
+        accountId: _account,
+        name: 'Phone',
+        createdAt: DateTime.utc(2026),
+        signingKey: phone.signingPublicKey(),
+      ),
       Device(
-          id: 'dev_stranger',
-          accountId: _account,
-          name: '?',
-          createdAt: DateTime.utc(2026),
-          signingKey: stranger.signingPublicKey()),
+        id: 'dev_stranger',
+        accountId: _account,
+        name: '?',
+        createdAt: DateTime.utc(2026),
+        signingKey: stranger.signingPublicKey(),
+      ),
     ];
     await state.refreshDevices();
     await _until(() => state.ownDeviceListMissing);
 
-    expect(await state.createApprovedDeviceList({_own, 'dev_phone'}),
-        RecoveryActionResult.done);
+    expect(
+      await state.createApprovedDeviceList({_own, 'dev_phone'}),
+      RecoveryActionResult.done,
+    );
     var chain = bindings.checkDeviceListChain(idBytes(_account), api.chain);
     expect(chain.head.change, DeviceListChange.migrationGenesis);
     // Condition A: the switch is off, so no franking key and format 1.
     await _expectFormat1(crypto, api.chain);
-    expect(chain.head.entries.map((e) => utf8.decode(e.deviceId)),
-        unorderedEquals([_own, 'dev_phone']));
+    expect(
+      chain.head.entries.map((e) => utf8.decode(e.deviceId)),
+      unorderedEquals([_own, 'dev_phone']),
+    );
     // The unticked device was revoked; it was never listed, so no version.
     expect(api.revoked, {'dev_stranger': null});
     expect(state.ownDeviceListMissing, isFalse);
@@ -561,14 +666,17 @@ void main() {
   /// [devices] are signed onto the owner's list. A first catch-up runs
   /// before they are added, so no earlier pass sees them.
   Future<({_AuditApi api, AppState state, NativeCryptoService crypto})>
-      auditSetup(
-          {int groups = 1,
-          List<String> devices = const ['dev_phone'],
-          Duration? interval,
-          bool tearDown = true}) async {
+      auditSetup({
+    int groups = 1,
+    List<String> devices = const ['dev_phone'],
+    Duration? interval,
+    bool tearDown = true,
+  }) async {
     final api = _AuditApi(bindings);
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
     final state = _state(api, crypto)..reconcileFallback = Duration.zero;
     if (tearDown) addTearDown(state.dispose);
     expect(state.l1JoinAuditInterval, const Duration(minutes: 15));
@@ -576,7 +684,9 @@ void main() {
     await state.createOwner(_origin, 'owner', 'password', 'setup');
     for (var i = 0; i < groups; i++) {
       expect(
-          (await state.startConversation(kind: 'group'))?.id, 'conv_${i + 1}');
+        (await state.startConversation(kind: 'group'))?.id,
+        'conv_${i + 1}',
+      );
     }
     await _catchUp(state);
     expect(api.claims, isEmpty);
@@ -588,9 +698,12 @@ void main() {
   }
 
   /// A new app instance on the same store (a restart).
-  Future<AppState> restart(_AuditApi api, NativeCryptoService crypto,
-      {Duration fallback = Duration.zero,
-      Duration interval = const Duration(minutes: 15)}) async {
+  Future<AppState> restart(
+    _AuditApi api,
+    NativeCryptoService crypto, {
+    Duration fallback = Duration.zero,
+    Duration interval = const Duration(minutes: 15),
+  }) async {
     final state = _state(api, crypto)
       ..reconcileFallback = fallback
       ..l1JoinAuditInterval = interval;
@@ -611,7 +724,7 @@ void main() {
     final created = api.bundles.length;
     await _catchUp(state);
     expect(api.claims, [
-      ['dev_phone']
+      ['dev_phone'],
     ]);
     expect(api.bundles, hasLength(created + 1));
     expect(api.bundles.last.added.map((ref) => ref.deviceId), ['dev_phone']);
@@ -638,38 +751,50 @@ void main() {
     expect((stored['joins'] as Map)['conv_1'], contains(_account));
     expect(state.incompleteJoinAccounts('conv_1'), isEmpty);
     expect(
-        state.incompleteJoinAccounts('conv_1',
-            now: DateTime.now().toUtc().add(const Duration(hours: 1))),
-        {_account});
+      state.incompleteJoinAccounts(
+        'conv_1',
+        now: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      ),
+      {_account},
+    );
   }, skip: skip);
 
-  test('audit: at most 8 groups per pass, each at most every 15 minutes',
-      () async {
-    final (:api, :state, :crypto) = await auditSetup(groups: 9);
-    // Claims answer nothing, so every audited group keeps its gap.
-    api.answer = 'partial';
-    await _catchUp(state);
-    expect(api.claims, hasLength(8));
-    await _catchUp(state);
-    // Only the ninth was left; the first eight wait out their interval.
-    expect(api.claims, hasLength(9));
-    await _catchUp(state);
-    expect(api.claims, hasLength(9));
-    expect(api.bundles.where((bundle) => bundle.added.isNotEmpty), isEmpty);
-  }, skip: skip);
+  test(
+    'audit: at most 8 groups per pass, each at most every 15 minutes',
+    () async {
+      final (:api, :state, :crypto) = await auditSetup(groups: 9);
+      // Claims answer nothing, so every audited group keeps its gap.
+      api.answer = 'partial';
+      await _catchUp(state);
+      expect(api.claims, hasLength(8));
+      await _catchUp(state);
+      // Only the ninth was left; the first eight wait out their interval.
+      expect(api.claims, hasLength(9));
+      await _catchUp(state);
+      expect(api.claims, hasLength(9));
+      expect(api.bundles.where((bundle) => bundle.added.isNotEmpty), isEmpty);
+    },
+    skip: skip,
+  );
 
-  test('audit: one refused device (403) does not keep its siblings out',
-      () async {
-    final (:api, :state, :crypto) =
-        await auditSetup(devices: ['dev_phone', 'dev_tablet']);
-    api.refuse = {'dev_tablet'};
-    await _catchUp(state);
-    expect(api.claims, hasLength(3));
-    expect(api.claims.first, unorderedEquals(['dev_phone', 'dev_tablet']));
-    expect(api.claims.skip(1).map((ids) => ids.single),
-        unorderedEquals(['dev_phone', 'dev_tablet']));
-    expect(api.bundles.last.added.map((ref) => ref.deviceId), ['dev_phone']);
-  }, skip: skip);
+  test(
+    'audit: one refused device (403) does not keep its siblings out',
+    () async {
+      final (:api, :state, :crypto) = await auditSetup(
+        devices: ['dev_phone', 'dev_tablet'],
+      );
+      api.refuse = {'dev_tablet'};
+      await _catchUp(state);
+      expect(api.claims, hasLength(3));
+      expect(api.claims.first, unorderedEquals(['dev_phone', 'dev_tablet']));
+      expect(
+        api.claims.skip(1).map((ids) => ids.single),
+        unorderedEquals(['dev_phone', 'dev_tablet']),
+      );
+      expect(api.bundles.last.added.map((ref) => ref.deviceId), ['dev_phone']);
+    },
+    skip: skip,
+  );
 
   test(
       'audit (review fix): a change listed at a stale epoch still gets '
@@ -679,13 +804,20 @@ void main() {
       ..pending = true // A device_list.updated event asks for reconcile.
       ..pendingList = const [
         MlsPendingChange(
-            conversationId: 'conv_1', epoch: 99, add: [], remove: [])
+          conversationId: 'conv_1',
+          epoch: 99,
+          add: [],
+          remove: [],
+        ),
       ];
     await _catchUp(state);
-    expect(api.staleReadBeforeClaim, isTrue,
-        reason: 'reconcile read the stale change before the audit claimed');
+    expect(
+      api.staleReadBeforeClaim,
+      isTrue,
+      reason: 'reconcile read the stale change before the audit claimed',
+    );
     expect(api.claims, [
-      ['dev_phone']
+      ['dev_phone'],
     ]);
     expect(api.bundles.last.added.single.deviceId, 'dev_phone');
   }, skip: skip);
@@ -697,7 +829,7 @@ void main() {
     api.memberList = const <ConversationMember>[];
     await _catchUp(state);
     expect(api.claims, [
-      ['dev_phone']
+      ['dev_phone'],
     ]);
     expect(api.bundles.last.added.single.deviceId, 'dev_phone');
   }, skip: skip);
@@ -705,8 +837,10 @@ void main() {
   test(
       'notice: a gap older than the grace is shown after a restart; a '
       'refused bundle keeps it, only the tree clears it', () async {
-    final (:api, :state, :crypto) =
-        await auditSetup(devices: const [], tearDown: false);
+    final (:api, :state, :crypto) = await auditSetup(
+      devices: const [],
+      tearDown: false,
+    );
     // Signed while this device is active, added while the app is closed.
     final add = await _signDeviceAdd(bindings, api, crypto, 'dev_phone');
     await stop(state);
@@ -716,13 +850,14 @@ void main() {
         .subtract(const Duration(hours: 2))
         .millisecondsSinceEpoch;
     await crypto.localStore.saveSetting(
-        'l1.missing_joins',
-        jsonEncode({
-          'owner': '$_account\u0000$_own',
-          'joins': {
-            'conv_1': {_account: twoHoursAgo}
-          },
-        }));
+      'l1.missing_joins',
+      jsonEncode({
+        'owner': '$_account\u0000$_own',
+        'joins': {
+          'conv_1': {_account: twoHoursAgo},
+        },
+      }),
+    );
     // The claim answers but the server refuses the commit: the device stays
     // out of the tree, so the clock keeps running (d396c6d).
     api.refuseBundles = true;
@@ -746,22 +881,28 @@ void main() {
   }, skip: skip);
 
   test('notice: clocks stored for another identity are not used', () async {
-    final (:api, :state, :crypto) =
-        await auditSetup(devices: const [], tearDown: false);
+    final (:api, :state, :crypto) = await auditSetup(
+      devices: const [],
+      tearDown: false,
+    );
     // Signed while this device is active, added while the app is closed.
     final add = await _signDeviceAdd(bindings, api, crypto, 'dev_phone');
     await stop(state);
     await _publishDeviceAdd(api, crypto, add);
     await crypto.localStore.saveSetting(
-        'l1.missing_joins',
-        jsonEncode({
-          'owner': '$_account\u0000dev_other',
-          'joins': {
-            'conv_1': {_account: 1}
-          },
-        }));
-    final running =
-        await restart(api, crypto, fallback: const Duration(minutes: 3));
+      'l1.missing_joins',
+      jsonEncode({
+        'owner': '$_account\u0000dev_other',
+        'joins': {
+          'conv_1': {_account: 1},
+        },
+      }),
+    );
+    final running = await restart(
+      api,
+      crypto,
+      fallback: const Duration(minutes: 3),
+    );
     addTearDown(running.dispose);
     await _catchUp(running);
     // A fresh clock: no notice, and no claim before the fallback.
@@ -780,11 +921,13 @@ void main() {
         _ListApi api,
         RecoveryKeyDraft key,
         RecoveryKeyDraft other,
-        Uint8List chained
+        Uint8List chained,
       })> ownerWithRecoveryKey() async {
     final api = _ListApi(bindings);
-    final crypto =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
     final owner = _state(api, crypto);
     await owner.createOwner(_origin, 'owner', 'password', 'setup');
     final key = await owner.createRecoveryKeyDraft();
@@ -797,52 +940,64 @@ void main() {
     expect(head.change, DeviceListChange.recoveryKey);
     final tablet = bindings.createDevice(_account, 'dev_tablet');
     addTearDown(tablet.close);
-    final chained = await crypto.signDeviceList(DeviceListBody(
-      accountId: idBytes(_account),
-      version: head.version + 1,
-      prevHash: head.listHash,
-      createdAtMs: 3,
-      change: DeviceListChange.add,
-      entries: [
-        ...head.entries,
-        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey())
-      ],
-      recoveryKey: head.recoveryKey,
-      // L2-3: devices that stay keep their franking keys.
-      frankKeys: head.frankKeys,
-    ));
+    final chained = await crypto.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes(_account),
+        version: head.version + 1,
+        prevHash: head.listHash,
+        createdAtMs: 3,
+        change: DeviceListChange.add,
+        entries: [
+          ...head.entries,
+          DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey()),
+        ],
+        recoveryKey: head.recoveryKey,
+        // L2-3: devices that stay keep their franking keys.
+        frankKeys: head.frankKeys,
+      ),
+    );
     await stop(owner);
     return (api: api, key: key, other: other, chained: chained);
   }
 
   /// A device recovered into the owner's account (K0-R) whose held seed is
   /// gone: it is not on the list and nothing was posted.
-  Future<({AppState state, NativeCryptoService crypto})> recovered(_ListApi api,
-      {RecoveryKeyDraft? heldKey}) async {
+  Future<({AppState state, NativeCryptoService crypto})> recovered(
+    _ListApi api, {
+    RecoveryKeyDraft? heldKey,
+  }) async {
     final store = MemoryLocalStore();
     final crypto = NativeCryptoService(bindings: bindings, localStore: store);
     final state = _state(api, crypto);
     addTearDown(state.dispose);
     const session = Session(
-        baseUrl: _origin,
-        token: 'tok',
-        accountId: _account,
-        deviceId: 'dev_rec');
-    await crypto.createEnrollmentCredential(const EnrollmentReservation(
+      baseUrl: _origin,
+      token: 'tok',
+      accountId: _account,
+      deviceId: 'dev_rec',
+    );
+    await crypto.createEnrollmentCredential(
+      const EnrollmentReservation(
         id: 'enroll_rec',
         accountId: _account,
         deviceId: 'dev_rec',
-        challenge: <int>[4, 5, 6]));
+        challenge: <int>[4, 5, 6],
+      ),
+    );
     // The seed K0-R holds on the waiting identity, before activation.
     if (heldKey != null) {
       await crypto.holdRecoveryListSeed(
-          await crypto.decodeRecoveryKey(heldKey.display));
+        await crypto.decodeRecoveryKey(heldKey.display),
+      );
     }
     await store.saveSession(session);
     await crypto.activateSession(session);
     await store.saveSetting('k0.recovered_device', '$_account\u0000dev_rec');
-    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
-        .pinChain(_account, api.chain, expectedHead: api.chain.last);
+    await DeviceListPins(
+      store: store,
+      source: _ApiLists(api),
+      verifier: crypto,
+    ).pinChain(_account, api.chain, expectedHead: api.chain.last);
     state
       ..api = api
       ..session = session;
@@ -860,7 +1015,9 @@ void main() {
 
     expect(await state.finishRecoveryWithTypedKey(other.display), isFalse);
     expect(
-        state.errorFor(Ops.recoveryKey), englishL10n.recoveryKeyNotThisAccount);
+      state.errorFor(Ops.recoveryKey),
+      englishL10n.recoveryKeyNotThisAccount,
+    );
     expect(api.chain, hasLength(before));
     expect(state.recoveryListNeedsRetype, isTrue);
 
@@ -874,24 +1031,32 @@ void main() {
     // Condition A: the switch is off, so no franking key and format 1.
     await _expectFormat1(crypto, api.chain);
     expect(state.recoveryListNeedsRetype, isFalse);
-    expect(await crypto.localStore.loadSetting('l1.recovery_list_statement'),
-        isEmpty);
+    expect(
+      await crypto.localStore.loadSetting('l1.recovery_list_statement'),
+      isEmpty,
+    );
   }, skip: skip);
 
-  test('with sealed sending on, the typed-key recovery lists its own key',
-      () async {
-    final (:api, :key, other: _, chained: _) = await ownerWithRecoveryKey();
-    final (:state, :crypto) = await recovered(api);
-    api.sealedSwitch = true;
-    await state.refreshDevices();
-    await _until(() => state.recoveryListNeedsRetype);
-    expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
-    final head =
-        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    expect(head.change, DeviceListChange.recovery);
-    expect(head.frankKeyOf(idBytes('dev_rec')), await crypto.currentFrankKey());
-    expect(api.chain.last[4], 2);
-  }, skip: skip);
+  test(
+    'with sealed sending on, the typed-key recovery lists its own key',
+    () async {
+      final (:api, :key, other: _, chained: _) = await ownerWithRecoveryKey();
+      final (:state, :crypto) = await recovered(api);
+      api.sealedSwitch = true;
+      await state.refreshDevices();
+      await _until(() => state.recoveryListNeedsRetype);
+      expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
+      final head =
+          bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+      expect(head.change, DeviceListChange.recovery);
+      expect(
+        head.frankKeyOf(idBytes('dev_rec')),
+        await crypto.currentFrankKey(),
+      );
+      expect(api.chain.last[4], 2);
+    },
+    skip: skip,
+  );
 
   for (final sealedOn in [false, true]) {
     test(
@@ -908,8 +1073,10 @@ void main() {
       expect(head.change, DeviceListChange.recovery);
       expect(head.entries.single.deviceId, idBytes('dev_rec'));
       if (sealedOn) {
-        expect(head.frankKeyOf(idBytes('dev_rec')),
-            await crypto.currentFrankKey());
+        expect(
+          head.frankKeyOf(idBytes('dev_rec')),
+          await crypto.currentFrankKey(),
+        );
         expect(api.chain.last[4], 2);
       } else {
         await _expectFormat1(crypto, api.chain);
@@ -919,51 +1086,57 @@ void main() {
 
   for (final chains in [false, true]) {
     test(
-        'retype (review fix): after a conflict, a stored version the head '
-        '${chains ? 'still chains on is kept' : 'moved past is dropped'}',
-        () async {
-      final (:api, :key, :other, :chained) = await ownerWithRecoveryKey();
-      final (:state, :crypto) = await recovered(api);
-      // The stale one chains on the genesis, which the head moved past.
-      final stored = chains ? chained : api.chain.first;
-      await crypto.localStore.saveSetting(
+      'retype (review fix): after a conflict, a stored version the head '
+      '${chains ? 'still chains on is kept' : 'moved past is dropped'}',
+      () async {
+        final (:api, :key, :other, :chained) = await ownerWithRecoveryKey();
+        final (:state, :crypto) = await recovered(api);
+        // The stale one chains on the genesis, which the head moved past.
+        final stored = chains ? chained : api.chain.first;
+        await crypto.localStore.saveSetting(
           'l1.recovery_list_statement',
           jsonEncode({
             'account_id': _account,
             'device_id': 'dev_rec',
             'statement': base64Encode(stored),
-          }));
-      final before = api.chain.length;
-      api.conflictsLeft = 1;
-      await state.refreshDevices();
-      await _until(() => api.conflictsLeft == 0);
-      if (chains) {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        expect(
+          }),
+        );
+        final before = api.chain.length;
+        api.conflictsLeft = 1;
+        await state.refreshDevices();
+        await _until(() => api.conflictsLeft == 0);
+        if (chains) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          expect(
             await crypto.localStore.loadSetting('l1.recovery_list_statement'),
-            isNotEmpty);
-        expect(state.recoveryListNeedsRetype, isFalse);
-        expect(api.chain, hasLength(before));
-        return;
-      }
-      String? left = 'unread';
-      for (var i = 0; i < 200 && left != ''; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        left =
-            await crypto.localStore.loadSetting('l1.recovery_list_statement');
-      }
-      expect(left, isEmpty);
-      await _until(() => state.recoveryListNeedsRetype);
-      // The prompt leads to a fresh version on the current head.
-      expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
-      expect(api.chain, hasLength(before + 1));
-      expect(
+            isNotEmpty,
+          );
+          expect(state.recoveryListNeedsRetype, isFalse);
+          expect(api.chain, hasLength(before));
+          return;
+        }
+        String? left = 'unread';
+        for (var i = 0; i < 200 && left != ''; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          left = await crypto.localStore.loadSetting(
+            'l1.recovery_list_statement',
+          );
+        }
+        expect(left, isEmpty);
+        await _until(() => state.recoveryListNeedsRetype);
+        // The prompt leads to a fresh version on the current head.
+        expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
+        expect(api.chain, hasLength(before + 1));
+        expect(
           bindings
               .checkDeviceListChain(idBytes(_account), api.chain)
               .head
               .change,
-          DeviceListChange.recovery);
-    }, skip: skip);
+          DeviceListChange.recovery,
+        );
+      },
+      skip: skip,
+    );
   }
 
   test(
@@ -982,52 +1155,68 @@ void main() {
       ..session = _ListApi._session;
     api.serverDevices = [
       Device(
-          id: _own,
-          accountId: _account,
-          name: 'This',
-          createdAt: DateTime.utc(2026),
-          signingKey: await crypto.currentSigningKey()),
+        id: _own,
+        accountId: _account,
+        name: 'This',
+        createdAt: DateTime.utc(2026),
+        signingKey: await crypto.currentSigningKey(),
+      ),
     ];
     await state.refreshDevices();
     await _until(() => state.ownDeviceListMissing);
-    expect(await state.createApprovedDeviceList({_own}),
-        RecoveryActionResult.done);
     expect(
-        bindings
-            .checkDeviceListChain(idBytes(_account), api.chain)
-            .head
-            .recoveryKey,
-        isNull);
+      await state.createApprovedDeviceList({_own}),
+      RecoveryActionResult.done,
+    );
+    expect(
+      bindings
+          .checkDeviceListChain(idBytes(_account), api.chain)
+          .head
+          .recoveryKey,
+      isNull,
+    );
     // A key set before L1: the server knows its rk_id, the list does not.
     final key = await state.createRecoveryKeyDraft();
     final other = await state.createRecoveryKeyDraft();
     addTearDown(key.dispose);
     addTearDown(other.dispose);
-    final values = await crypto
-        .deriveRecoveryKey(await crypto.decodeRecoveryKey(key.display));
-    api.recoveryStatus =
-        RecoveryKeyStatus(available: true, configured: true, rkId: values.rkId);
+    final values = await crypto.deriveRecoveryKey(
+      await crypto.decodeRecoveryKey(key.display),
+    );
+    api.recoveryStatus = RecoveryKeyStatus(
+      available: true,
+      configured: true,
+      rkId: values.rkId,
+    );
     await state.refreshRecoveryKeyStatus();
     await state.refreshDevices();
     await _until(() => state.recoveryKeyNeedsConfirmation);
     final before = api.chain.length;
 
-    expect(await state.confirmPreL1RecoveryKey(other.display),
-        RecoveryActionResult.failed);
     expect(
-        state.errorFor(Ops.recoveryKey), englishL10n.recoveryKeyNotThisAccount);
+      await state.confirmPreL1RecoveryKey(other.display),
+      RecoveryActionResult.failed,
+    );
+    expect(
+      state.errorFor(Ops.recoveryKey),
+      englishL10n.recoveryKeyNotThisAccount,
+    );
     expect(api.chain, hasLength(before));
     expect(api.putRkIds, isEmpty);
 
     api.recentAuthLeft = 1;
-    expect(await state.confirmPreL1RecoveryKey(key.display),
-        RecoveryActionResult.needsRecentAuth);
+    expect(
+      await state.confirmPreL1RecoveryKey(key.display),
+      RecoveryActionResult.needsRecentAuth,
+    );
     expect(api.putRkIds, isEmpty);
     expect(api.chain, hasLength(before));
     expect(state.recoveryKeyNeedsConfirmation, isTrue);
 
-    expect(await state.confirmPreL1RecoveryKey(key.display),
-        RecoveryActionResult.done);
+    expect(
+      await state.confirmPreL1RecoveryKey(key.display),
+      RecoveryActionResult.done,
+    );
     expect(api.putRkIds.single, values.rkId);
     final head =
         bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
@@ -1038,36 +1227,44 @@ void main() {
   }, skip: skip);
 }
 
-Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
-    NativeCryptoService crypto) async {
+Future<void> _addSignedPhone(
+  NativeCryptoBindings bindings,
+  _DiscoveryApi api,
+  NativeCryptoService crypto,
+) async {
   final phone = bindings.createDevice(_account, 'dev_phone');
   try {
     final head =
         bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    final statement = await crypto.signDeviceList(DeviceListBody(
-      accountId: idBytes(_account),
-      version: head.version + 1,
-      prevHash: head.listHash,
-      createdAtMs: 2,
-      change: DeviceListChange.add,
-      entries: [
-        ...head.entries,
-        DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey())
-      ],
-      // L2-3: devices that stay keep their franking keys.
-      frankKeys: head.frankKeys,
-    ));
+    final statement = await crypto.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes(_account),
+        version: head.version + 1,
+        prevHash: head.listHash,
+        createdAtMs: 2,
+        change: DeviceListChange.add,
+        entries: [
+          ...head.entries,
+          DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey()),
+        ],
+        // L2-3: devices that stay keep their franking keys.
+        frankKeys: head.frankKeys,
+      ),
+    );
     api._take(statement);
     await DeviceListPins(
-            store: crypto.localStore, source: _ApiLists(api), verifier: crypto)
-        .pinOwnStep(_account, statement);
+      store: crypto.localStore,
+      source: _ApiLists(api),
+      verifier: crypto,
+    ).pinOwnStep(_account, statement);
     api.package = DeviceKeyPackage(
-        id: 'kp_phone',
-        accountId: _account,
-        deviceId: 'dev_phone',
-        keyPackage: phone.createKeyPackage(),
-        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
-        expiresAt: DateTime.now().add(const Duration(days: 1)));
+      id: 'kp_phone',
+      accountId: _account,
+      deviceId: 'dev_phone',
+      keyPackage: phone.createKeyPackage(),
+      ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+      expiresAt: DateTime.now().add(const Duration(days: 1)),
+    );
   } finally {
     phone.close();
   }
@@ -1078,7 +1275,9 @@ Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
 /// encoding of the same content: re-signed from its parsed body, Ed25519
 /// gives the same bytes only if the body is the same.
 Future<void> _expectFormat1(
-    NativeCryptoService crypto, List<Uint8List> chain) async {
+  NativeCryptoService crypto,
+  List<Uint8List> chain,
+) async {
   final statement = chain.last;
   expect(utf8.decode(statement.sublist(0, 4)), 'VDL1');
   expect(statement[4], 1, reason: 'L1 format byte');
@@ -1086,15 +1285,17 @@ Future<void> _expectFormat1(
       crypto.bindings.checkDeviceListChain(idBytes(_account), chain).head;
   expect(head.frankKeys, isEmpty);
   if (chain.length != 1) return;
-  final again = await crypto.signDeviceList(DeviceListBody(
-    accountId: idBytes(_account),
-    version: head.version,
-    prevHash: DeviceListBody.zeroHash,
-    createdAtMs: head.createdAtMs,
-    change: head.change,
-    entries: head.entries,
-    recoveryKey: head.recoveryKey,
-  ));
+  final again = await crypto.signDeviceList(
+    DeviceListBody(
+      accountId: idBytes(_account),
+      version: head.version,
+      prevHash: DeviceListBody.zeroHash,
+      createdAtMs: head.createdAtMs,
+      change: head.change,
+      entries: head.entries,
+      recoveryKey: head.recoveryKey,
+    ),
+  );
   expect(again, statement);
 }
 
@@ -1109,16 +1310,20 @@ class _DiscoveryApi extends _ListApi {
   bool membersUnavailable = false;
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       [
         if (pending && after == 0)
           SyncEvent(
-              id: 1,
-              type: 'device_list.updated',
-              accountId: _account,
-              payload: const {'version': 2},
-              createdAt: DateTime.utc(2026, 11, 11)),
+            id: 1,
+            type: 'device_list.updated',
+            accountId: _account,
+            payload: const {'version': 2},
+            createdAt: DateTime.utc(2026, 11, 11),
+          ),
       ];
 
   @override
@@ -1135,19 +1340,26 @@ class _DiscoveryApi extends _ListApi {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-      String token, String id) async {
+    String token,
+    String id,
+  ) async {
     if (membersUnavailable) throw ApiException(503, '');
     return [ConversationMember(accountId: _account, role: 'owner')];
   }
 
   @override
   Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-          String token, String id) =>
+    String token,
+    String id,
+  ) =>
       throw StateError('claim-all must not be used for L1 creation');
 
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String id, List<String> deviceIds) async {
+    String token,
+    String id,
+    List<String> deviceIds,
+  ) async {
     claims.add(deviceIds);
     final item = package!;
     if (answer == 'partial') return [];
@@ -1155,12 +1367,13 @@ class _DiscoveryApi extends _ListApi {
     if (answer == 'valid') return [item];
     return [
       DeviceKeyPackage(
-          id: item.id,
-          accountId: answer == 'wrong-account' ? 'acct_other' : _account,
-          deviceId: answer == 'ghost' ? 'dev_ghost' : item.deviceId,
-          keyPackage: item.keyPackage,
-          ciphersuite: item.ciphersuite,
-          expiresAt: item.expiresAt)
+        id: item.id,
+        accountId: answer == 'wrong-account' ? 'acct_other' : _account,
+        deviceId: answer == 'ghost' ? 'dev_ghost' : item.deviceId,
+        keyPackage: item.keyPackage,
+        ciphersuite: item.ciphersuite,
+        expiresAt: item.expiresAt,
+      ),
     ];
   }
 
@@ -1180,14 +1393,13 @@ class _DiscoveryApi extends _ListApi {
   Future<List<MlsPendingChange>> mlsPendingChanges(String token) async => [
         if (pending)
           MlsPendingChange(
-              conversationId: 'conv_discovery',
-              epoch: removing ? 1 : 0,
-              add: const [
-                (accountId: _account, deviceId: 'dev_ghost')
-              ],
-              remove: [
-                if (removing) (accountId: _account, deviceId: 'dev_phone')
-              ]),
+            conversationId: 'conv_discovery',
+            epoch: removing ? 1 : 0,
+            add: const [(accountId: _account, deviceId: 'dev_ghost')],
+            remove: [
+              if (removing) (accountId: _account, deviceId: 'dev_phone')
+            ],
+          ),
       ];
 }
 
@@ -1224,8 +1436,10 @@ class _ApiLists implements DeviceListSource {
   final _ListApi api;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-          {required int after}) =>
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) =>
       api.fetchDeviceList('tok', accountId, after: after);
 }
 
@@ -1246,8 +1460,9 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   bool sealedSwitch = false;
 
   @override
-  Future<Map<String, Object?>> setupStatus() async =>
-      <String, Object?>{'sealed_sender': sealedSwitch};
+  Future<Map<String, Object?>> setupStatus() async => <String, Object?>{
+        'sealed_sender': sealedSwitch,
+      };
 
   static const _session = Session(
     baseUrl: _origin,
@@ -1264,8 +1479,10 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
       conflictsLeft--;
       // Another device's version landed first (as the server says); the
       // client must refresh, re-sign and send again.
-      throw ApiException(409,
-          '{"error":"device_list_conflict","head_version":${chain.length}}');
+      throw ApiException(
+        409,
+        '{"error":"device_list_conflict","head_version":${chain.length}}',
+      );
     }
     final list = [...chain, Uint8List.fromList(statement)];
     try {
@@ -1277,13 +1494,15 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<EnrollmentReservation> reserveOwnerEnrollment(
-          {String setupToken = ''}) async =>
+  Future<EnrollmentReservation> reserveOwnerEnrollment({
+    String setupToken = '',
+  }) async =>
       const EnrollmentReservation(
-          id: 'enroll_1',
-          accountId: _account,
-          deviceId: _own,
-          challenge: <int>[1, 2, 3]);
+        id: 'enroll_1',
+        accountId: _account,
+        deviceId: _own,
+        challenge: <int>[1, 2, 3],
+      );
 
   @override
   Future<Session> createOwner({
@@ -1307,8 +1526,11 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   List<Uint8List>? served;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String token,
+    String accountId, {
+    required int after,
+  }) async {
     listFetches++;
     if (listRead == 'empty') {
       return const DeviceListPage(headVersion: 0, statements: [], more: false);
@@ -1329,7 +1551,8 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
-          String inviteCode) =>
+    String inviteCode,
+  ) =>
       reserveOwnerEnrollment();
 
   @override
@@ -1353,8 +1576,11 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<void> revokeDevice(String token, String deviceId,
-      {List<int>? deviceList}) async {
+  Future<void> revokeDevice(
+    String token,
+    String deviceId, {
+    List<int>? deviceList,
+  }) async {
     revokeAttempts++;
     _take(deviceList);
     revoked[deviceId] = deviceList;
@@ -1370,10 +1596,12 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   final List<List<int>> putRkIds = <List<int>>[];
 
   @override
-  Future<RecoveryKeyStatus> putRecoveryKey(String token,
-      {required List<int> rkAuthPub,
-      required List<int> rkId,
-      List<int>? deviceList}) async {
+  Future<RecoveryKeyStatus> putRecoveryKey(
+    String token, {
+    required List<int> rkAuthPub,
+    required List<int> rkId,
+    List<int>? deviceList,
+  }) async {
     if (recentAuthLeft > 0) {
       recentAuthLeft--;
       throw ApiException(403, '{"error":"recent_auth_required"}');
@@ -1382,10 +1610,11 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
     putRkIds.add(rkId);
     if (deviceList != null) recoveryKeyLists.add(deviceList);
     return recoveryStatus = RecoveryKeyStatus(
-        available: true,
-        configured: true,
-        setAt: DateTime.utc(2026, 11, 7),
-        rkId: Uint8List.fromList(rkId));
+      available: true,
+      configured: true,
+      setAt: DateTime.utc(2026, 11, 7),
+      rkId: Uint8List.fromList(rkId),
+    );
   }
 
   @override
@@ -1396,12 +1625,18 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
       const <Conversation>[];
 
   @override
-  Future<void> publishDeviceKeyPackages(String token, List<List<int>> packages,
-      {Duration lifetime = const Duration(days: 14)}) async {}
+  Future<void> publishDeviceKeyPackages(
+    String token,
+    List<List<int>> packages, {
+    Duration lifetime = const Duration(days: 14),
+  }) async {}
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
@@ -1452,8 +1687,10 @@ class _FailingActivationStore extends MemoryLocalStore {
   }
 
   @override
-  Future<bool> saveDeviceListPin(DeviceListPin pin,
-      {required int? expectedVersion}) async {
+  Future<bool> saveDeviceListPin(
+    DeviceListPin pin, {
+    required int? expectedVersion,
+  }) async {
     if (fail && stage == 'pin') throw StateError('pin write failed');
     return super.saveDeviceListPin(pin, expectedVersion: expectedVersion);
   }
@@ -1484,13 +1721,14 @@ class _JournalDatabaseStore extends MemoryLocalStore {
       database.readMetadata('setting:$name');
 
   @override
-  Future<void> saveSession(Session session) =>
-      database.writeSessionJson(jsonEncode({
-        'base_url': session.baseUrl,
-        'token': session.token,
-        'account_id': session.accountId,
-        'device_id': session.deviceId,
-      }));
+  Future<void> saveSession(Session session) => database.writeSessionJson(
+        jsonEncode({
+          'base_url': session.baseUrl,
+          'token': session.token,
+          'account_id': session.accountId,
+          'device_id': session.deviceId,
+        }),
+      );
 
   @override
   Future<Session?> loadSession() async {
@@ -1498,10 +1736,11 @@ class _JournalDatabaseStore extends MemoryLocalStore {
     if (raw == null) return null;
     final value = jsonDecode(raw) as Map<String, dynamic>;
     return Session(
-        baseUrl: value['base_url'] as String,
-        token: value['token'] as String,
-        accountId: value['account_id'] as String,
-        deviceId: value['device_id'] as String);
+      baseUrl: value['base_url'] as String,
+      token: value['token'] as String,
+      accountId: value['account_id'] as String,
+      deviceId: value['device_id'] as String,
+    );
   }
 
   @override
@@ -1509,8 +1748,10 @@ class _JournalDatabaseStore extends MemoryLocalStore {
       database.readDeviceListPin(accountId);
 
   @override
-  Future<bool> saveDeviceListPin(DeviceListPin pin,
-      {required int? expectedVersion}) async {
+  Future<bool> saveDeviceListPin(
+    DeviceListPin pin, {
+    required int? expectedVersion,
+  }) async {
     if (failPin) throw StateError('pin write failed');
     return database.writeDeviceListPin(pin, expectedVersion: expectedVersion);
   }
@@ -1525,40 +1766,54 @@ Future<void> _catchUp(AppState state) async {
 }
 
 /// Signs [deviceId] onto the owner's list (an add) and offers its package.
-Future<void> _addSignedDevice(NativeCryptoBindings bindings, _AuditApi api,
-    NativeCryptoService crypto, String deviceId) async {
+Future<void> _addSignedDevice(
+  NativeCryptoBindings bindings,
+  _AuditApi api,
+  NativeCryptoService crypto,
+  String deviceId,
+) async {
   await _publishDeviceAdd(
-      api, crypto, await _signDeviceAdd(bindings, api, crypto, deviceId));
+    api,
+    crypto,
+    await _signDeviceAdd(bindings, api, crypto, deviceId),
+  );
 }
 
 /// The owner's next list version adding [deviceId] (signed, not sent), and
 /// the device's key package offered by [api].
-Future<Uint8List> _signDeviceAdd(NativeCryptoBindings bindings, _AuditApi api,
-    NativeCryptoService crypto, String deviceId) async {
+Future<Uint8List> _signDeviceAdd(
+  NativeCryptoBindings bindings,
+  _AuditApi api,
+  NativeCryptoService crypto,
+  String deviceId,
+) async {
   final device = bindings.createDevice(_account, deviceId);
   try {
     api.packages[deviceId] = DeviceKeyPackage(
-        id: 'kp_$deviceId',
-        accountId: _account,
-        deviceId: deviceId,
-        keyPackage: device.createKeyPackage(),
-        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
-        expiresAt: DateTime.now().add(const Duration(days: 1)));
+      id: 'kp_$deviceId',
+      accountId: _account,
+      deviceId: deviceId,
+      keyPackage: device.createKeyPackage(),
+      ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+      expiresAt: DateTime.now().add(const Duration(days: 1)),
+    );
     final head =
         bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    return await crypto.signDeviceList(DeviceListBody(
-      accountId: idBytes(_account),
-      version: head.version + 1,
-      prevHash: head.listHash,
-      createdAtMs: 2,
-      change: DeviceListChange.add,
-      entries: [
-        ...head.entries,
-        DeviceListPair(idBytes(deviceId), device.signingPublicKey())
-      ],
-      // L2-3: devices that stay keep their franking keys.
-      frankKeys: head.frankKeys,
-    ));
+    return await crypto.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes(_account),
+        version: head.version + 1,
+        prevHash: head.listHash,
+        createdAtMs: 2,
+        change: DeviceListChange.add,
+        entries: [
+          ...head.entries,
+          DeviceListPair(idBytes(deviceId), device.signingPublicKey()),
+        ],
+        // L2-3: devices that stay keep their franking keys.
+        frankKeys: head.frankKeys,
+      ),
+    );
   } finally {
     device.close();
   }
@@ -1566,11 +1821,16 @@ Future<Uint8List> _signDeviceAdd(NativeCryptoBindings bindings, _AuditApi api,
 
 /// The server takes [statement] and the owner's pin advances to it.
 Future<void> _publishDeviceAdd(
-    _AuditApi api, NativeCryptoService crypto, Uint8List statement) async {
+  _AuditApi api,
+  NativeCryptoService crypto,
+  Uint8List statement,
+) async {
   api._take(statement);
   await DeviceListPins(
-          store: crypto.localStore, source: _ApiLists(api), verifier: crypto)
-      .pinOwnStep(_account, statement);
+    store: crypto.localStore,
+    source: _ApiLists(api),
+    verifier: crypto,
+  ).pinOwnStep(_account, statement);
 }
 
 /// A server for the audit: numbered groups it lists, a pending-change list
@@ -1602,7 +1862,10 @@ class _AuditApi extends _DiscoveryApi {
     int? retentionSeconds,
   }) async {
     final created = Conversation(
-        id: 'conv_${groups.length + 1}', kind: kind, createdBy: _account);
+      id: 'conv_${groups.length + 1}',
+      kind: kind,
+      createdBy: _account,
+    );
     groups.add(created);
     return created;
   }
@@ -1613,12 +1876,17 @@ class _AuditApi extends _DiscoveryApi {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String id) async =>
+    String token,
+    String id,
+  ) async =>
       memberList ?? [ConversationMember(accountId: _account, role: 'owner')];
 
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String id, List<String> deviceIds) async {
+    String token,
+    String id,
+    List<String> deviceIds,
+  ) async {
     claims.add(deviceIds);
     staleReadBeforeClaim ??= _servedStale;
     if (deviceIds.any(refuse.contains)) {
@@ -1642,8 +1910,12 @@ class _AuditApi extends _DiscoveryApi {
       refusedBundles++;
       throw ApiException(409, '{"error":"mls_epoch_conflict"}');
     }
-    return super.sendMlsCommitBundle(token, id,
-        idempotencyKey: idempotencyKey, bundle: bundle);
+    return super.sendMlsCommitBundle(
+      token,
+      id,
+      idempotencyKey: idempotencyKey,
+      bundle: bundle,
+    );
   }
 
   @override

@@ -185,8 +185,10 @@ class RoomEngine extends ChangeNotifier {
       await _recover(RoomFailure.other);
       return;
     }
-    _welcomeTimer =
-        scheduler.after(welcomeWait, () => _enqueue(_welcomeTimedOut));
+    _welcomeTimer = scheduler.after(
+      welcomeWait,
+      () => _enqueue(_welcomeTimedOut),
+    );
     notifyListeners();
   }
 
@@ -276,7 +278,10 @@ class RoomEngine extends ChangeNotifier {
   /// Processes one commit by another device. False means it was refused and
   /// the call is being repaired.
   Future<bool> _apply(
-      RoomCommitRecord record, Uint8List group, String id) async {
+    RoomCommitRecord record,
+    Uint8List group,
+    String id,
+  ) async {
     if (record.epoch != crypto.currentEpoch(group) + 1) return true;
     // Its Adds cannot be checked while the parent's L1 judgment is not
     // loaded: stop here and apply it on the next refresh.
@@ -316,8 +321,12 @@ class RoomEngine extends ChangeNotifier {
 
   String _offerKey(Uint8List keyPackage) => keyPackage.join(',');
 
-  bool _offerValid(Uint8List group, CallMember member, RoomSeat seat,
-      {required bool committing}) {
+  bool _offerValid(
+    Uint8List group,
+    CallMember member,
+    RoomSeat seat, {
+    required bool committing,
+  }) {
     final nonce = seat.offerNonce;
     final expires = seat.offerExpiresAt;
     final kp = seat.offerKeyPackage;
@@ -370,7 +379,8 @@ class RoomEngine extends ChangeNotifier {
   /// member the envelope names. Null for anything that does not open (an
   /// old epoch, a forgery, a call that is not active).
   Future<({CallMember sender, Uint8List plaintext})?> openSignal(
-          Uint8List envelope) =>
+    Uint8List envelope,
+  ) =>
       _run(() async {
         final group = _groupId;
         if (phase != RoomPhase.active || group == null) return null;
@@ -379,7 +389,10 @@ class RoomEngine extends ChangeNotifier {
           if (envelope[i] != signalMagic[i]) return null;
         }
         final header = ByteData.sublistView(
-            envelope, signalMagic.length, signalMagic.length + 10);
+          envelope,
+          signalMagic.length,
+          signalMagic.length + 10,
+        );
         if (header.getUint64(0) != crypto.currentEpoch(group)) return null;
         final members = crypto.members(group);
         final position = header.getUint16(8);
@@ -388,7 +401,10 @@ class RoomEngine extends ChangeNotifier {
         if (sender.id == selfId) return null;
         try {
           final plaintext = crypto.decryptApplication(
-              group, envelope.sublist(signalMagic.length + 10), sender);
+            group,
+            envelope.sublist(signalMagic.length + 10),
+            sender,
+          );
           return (sender: sender, plaintext: plaintext);
         } catch (_) {
           return null;
@@ -425,8 +441,9 @@ class RoomEngine extends ChangeNotifier {
     _commitTimer = null;
     if (plan == null) return;
     final members = crypto.members(group);
-    final rank =
-        members.indexWhere((m) => m.id == '$selfAccountId/$selfDeviceId');
+    final rank = members.indexWhere(
+      (m) => m.id == '$selfAccountId/$selfDeviceId',
+    );
     if (rank < 0) return;
     final delay = rank == 0
         ? firstCommitterDelay
@@ -438,7 +455,7 @@ class RoomEngine extends ChangeNotifier {
       ({
         List<({Uint8List keyPackage, CallMember member})> adds,
         List<CallMember> removes,
-        List<String> addedDeviceIds
+        List<String> addedDeviceIds,
       })?> _plan(Uint8List group, String id) async {
     final RoomState state;
     try {
@@ -465,8 +482,11 @@ class RoomEngine extends ChangeNotifier {
       if (inCall.contains(seat.id) && seat.inGroup) continue;
       final known = parentMembers[seat.id];
       if (known == null) continue; // never a stranger
-      final member =
-          CallMember(seat.accountId, seat.deviceId, known.signingKey);
+      final member = CallMember(
+        seat.accountId,
+        seat.deviceId,
+        known.signingKey,
+      );
       if (!parent.hasMember(conversationId!, member)) continue;
       if (!_offerValid(group, member, seat, committing: true)) continue;
       if (_seenOffers.contains(_offerKey(seat.offerKeyPackage!))) continue;
@@ -496,10 +516,13 @@ class RoomEngine extends ChangeNotifier {
     if (phase != RoomPhase.active || group == null || id == null) return;
     final plan = await _plan(group, id);
     if (plan == null) return;
-    await _stageAndSend(group, id,
-        adds: plan.adds,
-        removes: plan.removes,
-        addedDeviceIds: plan.addedDeviceIds);
+    await _stageAndSend(
+      group,
+      id,
+      adds: plan.adds,
+      removes: plan.removes,
+      addedDeviceIds: plan.addedDeviceIds,
+    );
   }
 
   Future<void> _stageAndSend(
@@ -566,7 +589,10 @@ class RoomEngine extends ChangeNotifier {
       for (var slot = 0; slot < streamSlots; slot++) {
         final participant = '${member.id}:$slot';
         keys.setKey(
-            participant, index, crypto.mediaKey(group, id, member, slot));
+          participant,
+          index,
+          crypto.mediaKey(group, id, member, slot),
+        );
         participants.add(participant);
       }
     }
@@ -580,11 +606,13 @@ class RoomEngine extends ChangeNotifier {
       final oldParticipants = _installed.remove(old)!;
       final oldIndex = old % keys.settings.keyRingSize;
       if (oldIndex == index) continue; // the ring slot was just overwritten
-      _removals.add(scheduler.after(oldKeyLifetime, () {
-        for (final participant in oldParticipants) {
-          keys.removeKey(participant, oldIndex);
-        }
-      }));
+      _removals.add(
+        scheduler.after(oldKeyLifetime, () {
+          for (final participant in oldParticipants) {
+            keys.removeKey(participant, oldIndex);
+          }
+        }),
+      );
     }
   }
 

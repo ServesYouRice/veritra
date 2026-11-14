@@ -915,6 +915,8 @@
   "recoveryKeyMismatch": "To nije prikazani ključ. Proverite papir i pokušajte ponovo.",
   "recoveryKeyGroupWrong": "Grupa {group} se ne poklapa. Proverite je na svom zapisu.",
   "recoveryKeyGroupsMatched": "Poklapa se {count} od 13 grupa.",
+  "recoveryKeyCheck": "Proveri moj ključ",
+  "recoveryKeyCheckOk": "Ovo je vaš ključ. Ništa još nije sačuvano.",
   "recoveryKeyTooLong": "Ovo je duže od ključa. Proverite da li ima viška znakova.",
   "recoveryKeyShowAgain": "Prikaži ključ ponovo",
   "recoveryKeySave": "Sačuvaj ključ za oporavak",

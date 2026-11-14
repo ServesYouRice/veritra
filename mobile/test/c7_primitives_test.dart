@@ -33,9 +33,7 @@ void main() {
   }
 
   List<int> fields(List<String> keys) {
-    return [
-      for (final key in keys) ...lp(inputs[key] as String),
-    ];
+    return [for (final key in keys) ...lp(inputs[key] as String)];
   }
 
   group('native ABI 13, C7 primitives', () {
@@ -134,9 +132,13 @@ void main() {
           sealed: hex(outputs['sealed_body_hex']),
         )!;
         expect(
-            opened.signature, hex(inputs['body_plaintext_hex']).sublist(0, 64));
+          opened.signature,
+          hex(inputs['body_plaintext_hex']).sublist(0, 64),
+        );
         expect(
-            opened.paddedVap1, hex(inputs['body_plaintext_hex']).sublist(64));
+          opened.paddedVap1,
+          hex(inputs['body_plaintext_hex']).sublist(64),
+        );
         // Another key is "not this one", never an error.
         expect(
           keys.openBody(
@@ -149,7 +151,10 @@ void main() {
         // A group-level message has an empty channel in its aad.
         expect(
           C7Keys.bodyAad(
-              conversationId: 'c', senderDeviceId: 'd', actionId: 'a'),
+            conversationId: 'c',
+            senderDeviceId: 'd',
+            actionId: 'a',
+          ),
           [0, 1, 0x63, 0, 0, 0, 1, 0x64, 0, 1, 0x61],
         );
       },
@@ -168,10 +173,7 @@ void main() {
           plaintext: plaintext,
         );
         expect(sealed, hasLength(plaintext.length + 60));
-        expect(
-          bindings.c7Open(key: key, aad: aad, sealed: sealed),
-          plaintext,
-        );
+        expect(bindings.c7Open(key: key, aad: aad, sealed: sealed), plaintext);
         final tampered = Uint8List.fromList(sealed)..[sealed.length - 1] ^= 1;
         expect(
           () => bindings.c7Open(key: key, aad: aad, sealed: tampered),

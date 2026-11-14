@@ -19,8 +19,10 @@ void main() {
 
   tearDown(() => dir.delete(recursive: true));
 
-  Future<File> seed(String name,
-      {Duration age = const Duration(hours: 5)}) async {
+  Future<File> seed(
+    String name, {
+    Duration age = const Duration(hours: 5),
+  }) async {
     final file = File('${dir.path}/$name');
     await file.writeAsBytes(<int>[1, 2, 3]);
     await file.setLastModified(DateTime.now().subtract(age));
@@ -62,8 +64,10 @@ void main() {
   test('recovery, backup, database and key files are never touched', () async {
     final protected = <File>[
       await seed('.veritra-recovery.partial', age: const Duration(days: 30)),
-      await seed('.abcdef0123456789abcdef01.backup-ciphertext',
-          age: const Duration(days: 30)),
+      await seed(
+        '.abcdef0123456789abcdef01.backup-ciphertext',
+        age: const Duration(days: 30),
+      ),
       await seed('veritra.sqlite', age: const Duration(days: 30)),
       await seed('veritra.sqlite-wal', age: const Duration(days: 30)),
       await seed('key.bin', age: const Duration(days: 30)),
@@ -71,10 +75,14 @@ void main() {
       await seed('.attachment-$_id32.txt', age: const Duration(days: 30)),
       await seed('.attachment-xyz.ciphertext', age: const Duration(days: 30)),
       await seed('attachment-$_id32.ciphertext', age: const Duration(days: 30)),
-      await seed('.veritra-attachment-$_id32.plaintext.part.bak',
-          age: const Duration(days: 30)),
-      await seed('.veritra-attachment-.ciphertext',
-          age: const Duration(days: 30)),
+      await seed(
+        '.veritra-attachment-$_id32.plaintext.part.bak',
+        age: const Duration(days: 30),
+      ),
+      await seed(
+        '.veritra-attachment-.ciphertext',
+        age: const Duration(days: 30),
+      ),
       await seed('.veritra-attachment-$_id32', age: const Duration(days: 30)),
     ];
     await cleanupAttachmentOrphans(dir);
@@ -84,8 +92,9 @@ void main() {
   });
 
   test('a directory with an orphan-like name is not removed', () async {
-    final directory =
-        Directory('${dir.path}/.veritra-attachment-$_id32.plaintext');
+    final directory = Directory(
+      '${dir.path}/.veritra-attachment-$_id32.plaintext',
+    );
     await directory.create();
     await File('${directory.path}/inner').writeAsBytes(<int>[1]);
     await cleanupAttachmentOrphans(dir);
@@ -122,12 +131,17 @@ void main() {
       await ticks(1);
       // A crash of an earlier run of this process's work, found later.
       final late = await seed('.veritra-attachment-$_id32.plaintext.part');
-      final young = await seed('.veritra-attachment-$_id16.plaintext',
-          age: const Duration(minutes: 5));
+      final young = await seed(
+        '.veritra-attachment-$_id16.plaintext',
+        age: const Duration(minutes: 5),
+      );
       await gone(late);
       expect(await late.exists(), isFalse);
-      expect(await young.exists(), isTrue,
-          reason: 'an operation that may still run keeps its file');
+      expect(
+        await young.exists(),
+        isTrue,
+        reason: 'an operation that may still run keeps its file',
+      );
     });
 
     test('nothing is swept after stop', () async {

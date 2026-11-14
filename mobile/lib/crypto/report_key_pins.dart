@@ -72,9 +72,11 @@ class ReportKeyCheck {
   /// its MLS announcement, and there is at least one.
   bool get allPinned =>
       recipients.isNotEmpty &&
-      recipients.every((r) =>
-          r.status == ReportKeyStatus.pinned ||
-          r.status == ReportKeyStatus.authenticated);
+      recipients.every(
+        (r) =>
+            r.status == ReportKeyStatus.pinned ||
+            r.status == ReportKeyStatus.authenticated,
+      );
 }
 
 /// Thrown when a report would be sealed to a key that is not pinned.
@@ -97,7 +99,7 @@ String reportKeyFingerprint(List<int> publicKey) {
   final text = hex.toString().toUpperCase();
   return [
     for (var start = 0; start < text.length; start += 4)
-      text.substring(start, start + 4 > text.length ? text.length : start + 4)
+      text.substring(start, start + 4 > text.length ? text.length : start + 4),
   ].join('-');
 }
 
@@ -129,44 +131,46 @@ class ReportKeyPins {
   /// are trusted over MLS, `report_key_announcement.dart`); a moderator pin
   /// left from the first community design (keyed `<community>:<account>`)
   /// is never in the default scope, so it is never reported missing.
-  Future<ReportKeyCheck> check(List<ReportRecipientKey> recipients,
-      {bool Function(String inboxId)? scope}) async {
+  Future<ReportKeyCheck> check(
+    List<ReportRecipientKey> recipients, {
+    bool Function(String inboxId)? scope,
+  }) async {
     final inScope = scope ?? (String id) => !id.contains(':');
     final pins = {
       for (final pin in await store.loadReportKeyPins(origin))
-        pin.ownerAccountId: pin
+        pin.ownerAccountId: pin,
     };
     final listed = <String>{};
     final assessments = <ReportKeyAssessment>[];
     for (final recipient in recipients) {
       listed.add(recipient.inboxId);
       final pin = pins[recipient.inboxId];
-      assessments.add(ReportKeyAssessment(
-        recipient,
-        pin == null
-            ? ReportKeyStatus.unpinned
-            : _sameKey(pin.publicKey, recipient.publicKey)
-                ? ReportKeyStatus.pinned
-                : ReportKeyStatus.changed,
-        pin,
-      ));
+      assessments.add(
+        ReportKeyAssessment(
+          recipient,
+          pin == null
+              ? ReportKeyStatus.unpinned
+              : _sameKey(pin.publicKey, recipient.publicKey)
+                  ? ReportKeyStatus.pinned
+                  : ReportKeyStatus.changed,
+          pin,
+        ),
+      );
     }
-    return ReportKeyCheck(
-      assessments,
-      [
-        for (final pin in pins.values)
-          if (inScope(pin.ownerAccountId) &&
-              !listed.contains(pin.ownerAccountId))
-            pin
-      ],
-    );
+    return ReportKeyCheck(assessments, [
+      for (final pin in pins.values)
+        if (inScope(pin.ownerAccountId) && !listed.contains(pin.ownerAccountId))
+          pin,
+    ]);
   }
 
   /// Checks [recipients] and returns the check when every key is pinned.
   /// Throws [ReportKeyNotPinned] otherwise, so no copy is sealed to an
   /// unconfirmed key.
-  Future<ReportKeyCheck> requirePinned(List<ReportRecipientKey> recipients,
-      {bool Function(String inboxId)? scope}) async {
+  Future<ReportKeyCheck> requirePinned(
+    List<ReportRecipientKey> recipients, {
+    bool Function(String inboxId)? scope,
+  }) async {
     final result = await check(recipients, scope: scope);
     if (!result.allPinned) throw ReportKeyNotPinned(result);
     return result;
@@ -175,14 +179,15 @@ class ReportKeyPins {
   /// Pins [recipient]'s key, replacing an earlier pin of the same owner. The
   /// one deliberate act that accepts a key, including a changed one: call it
   /// only after the person confirmed the fingerprint.
-  Future<void> pin(ReportRecipientKey recipient) =>
-      store.saveReportKeyPin(ReportKeyPin(
-        origin: origin,
-        ownerAccountId: recipient.inboxId,
-        publicKey: recipient.publicKey,
-        keyRev: recipient.keyRev,
-        pinnedAt: _clock().toUtc().millisecondsSinceEpoch,
-      ));
+  Future<void> pin(ReportRecipientKey recipient) => store.saveReportKeyPin(
+        ReportKeyPin(
+          origin: origin,
+          ownerAccountId: recipient.inboxId,
+          publicKey: recipient.publicKey,
+          keyRev: recipient.keyRev,
+          pinnedAt: _clock().toUtc().millisecondsSinceEpoch,
+        ),
+      );
 
   /// Drops the pin of an owner who is gone.
   Future<void> forget(String ownerAccountId) =>

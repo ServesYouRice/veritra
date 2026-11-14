@@ -14,15 +14,19 @@ import 'test_crypto_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<(AppState, _PushApi, _FakePush)> start(Map<String, Object?> config,
-      {PushEndpointEvent? pending}) async {
+  Future<(AppState, _PushApi, _FakePush)> start(
+    Map<String, Object?> config, {
+    PushEndpointEvent? pending,
+  }) async {
     final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-    ));
+    await store.saveSession(
+      const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'token',
+        accountId: 'acct_1',
+        deviceId: 'dev_1',
+      ),
+    );
     final api = _PushApi(config);
     final push = _FakePush()..pending = pending;
     final state = AppState(
@@ -33,9 +37,11 @@ void main() {
       pushService: push,
     );
     await state.tryRestoreSession();
-    await _until(() =>
-        push.registrations.isNotEmpty ||
-        state.pushState == PushState.serverDisabled);
+    await _until(
+      () =>
+          push.registrations.isNotEmpty ||
+          state.pushState == PushState.serverDisabled,
+    );
     return (state, api, push);
   }
 
@@ -48,13 +54,15 @@ void main() {
     expect(push.registrations.single.vapid, '');
     expect(state.pushState, PushState.registering);
 
-    push.emit(const PushEndpointEvent(
-      instance: 'acct_1:dev_1',
-      provider: 'fcm',
-      endpoint: 'fcm-token-0123456789-0123456789-0123',
-      publicKey: '',
-      authSecret: '',
-    ));
+    push.emit(
+      const PushEndpointEvent(
+        instance: 'acct_1:dev_1',
+        provider: 'fcm',
+        endpoint: 'fcm-token-0123456789-0123456789-0123',
+        publicKey: '',
+        authSecret: '',
+      ),
+    );
     await _until(() => state.pushState == PushState.registered);
     expect(state.pushProvider, 'fcm');
     expect(api.nativeRegistrations, <String>['fcm']);
@@ -68,10 +76,12 @@ void main() {
       'vapid_public_key': 'vapid',
     });
     push.emit(
-        const PushRegistrationFailedEvent('acct_1:dev_1', provider: 'webpush'));
+      const PushRegistrationFailedEvent('acct_1:dev_1', provider: 'webpush'),
+    );
     await _until(() => state.pushState == PushState.noDistributor);
     push.emit(
-        const PushRegistrationFailedEvent('acct_1:dev_1', provider: 'fcm'));
+      const PushRegistrationFailedEvent('acct_1:dev_1', provider: 'fcm'),
+    );
     await _until(() => state.pushState == PushState.registrationFailed);
     // Another instance's events are ignored.
     push.emit(const PushRegistrationFailedEvent('other', provider: 'webpush'));
@@ -80,18 +90,24 @@ void main() {
     state.dispose();
   });
 
-  test('a unifiedpush distributor missing or refusing sets noDistributor',
-      () async {
-    final (state, _, push) = await start(<String, Object?>{
-      'enabled': true,
-      'providers': <String>['unifiedpush'],
-      'vapid_public_key': 'vapid',
-    });
-    push.emit(const PushRegistrationFailedEvent('acct_1:dev_1',
-        provider: 'unifiedpush'));
-    await _until(() => state.pushState == PushState.noDistributor);
-    state.dispose();
-  });
+  test(
+    'a unifiedpush distributor missing or refusing sets noDistributor',
+    () async {
+      final (state, _, push) = await start(<String, Object?>{
+        'enabled': true,
+        'providers': <String>['unifiedpush'],
+        'vapid_public_key': 'vapid',
+      });
+      push.emit(
+        const PushRegistrationFailedEvent(
+          'acct_1:dev_1',
+          provider: 'unifiedpush',
+        ),
+      );
+      await _until(() => state.pushState == PushState.noDistributor);
+      state.dispose();
+    },
+  );
 
   test('a UnifiedPush endpoint registers with provider unifiedpush', () async {
     final (state, api, push) = await start(<String, Object?>{
@@ -102,31 +118,36 @@ void main() {
     expect(push.registrations.single.providers, <String>['unifiedpush']);
     expect(push.registrations.single.vapid, 'vapid');
 
-    push.emit(const PushEndpointEvent(
-      instance: 'acct_1:dev_1',
-      provider: 'unifiedpush',
-      endpoint: 'https://up.example.com/endpoint/abc',
-      publicKey: 'pubkey123',
-      authSecret: 'auth123',
-    ));
+    push.emit(
+      const PushEndpointEvent(
+        instance: 'acct_1:dev_1',
+        provider: 'unifiedpush',
+        endpoint: 'https://up.example.com/endpoint/abc',
+        publicKey: 'pubkey123',
+        authSecret: 'auth123',
+      ),
+    );
     await _until(() => state.pushState == PushState.registered);
     expect(state.pushProvider, 'unifiedpush');
     expect(api.webPushRegistrations.single.provider, 'unifiedpush');
-    expect(api.webPushRegistrations.single.endpoint,
-        'https://up.example.com/endpoint/abc');
+    expect(
+      api.webPushRegistrations.single.endpoint,
+      'https://up.example.com/endpoint/abc',
+    );
     expect(api.webPushRegistrations.single.publicKey, 'pubkey123');
     expect(api.webPushRegistrations.single.authSecret, 'auth123');
     state.dispose();
   });
 
   test(
-      'cold UnifiedPush rotations register without VAPID before acknowledgement',
-      () async {
-    for (final encrypted in <bool>[false, true]) {
-      final (state, api, push) = await start(<String, Object?>{
-        'enabled': true,
-        'providers': <String>['unifiedpush'],
-      },
+    'cold UnifiedPush rotations register without VAPID before acknowledgement',
+    () async {
+      for (final encrypted in <bool>[false, true]) {
+        final (state, api, push) = await start(
+          <String, Object?>{
+            'enabled': true,
+            'providers': <String>['unifiedpush'],
+          },
           pending: PushEndpointEvent(
             instance: 'acct_1:dev_1',
             provider: 'unifiedpush',
@@ -134,23 +155,31 @@ void main() {
             publicKey: encrypted ? 'public-key' : '',
             authSecret: encrypted ? 'auth-secret' : '',
             generation: 9,
-          ));
-      await _until(() => push.acknowledgedEndpoints.isNotEmpty);
-      expect(push.registrations.single.vapid, '');
-      expect(api.webPushRegistrations.single.provider, 'unifiedpush');
-      expect(api.webPushRegistrations.single.publicKey,
-          encrypted ? 'public-key' : '');
-      expect(api.webPushRegistrations.single.authSecret,
-          encrypted ? 'auth-secret' : '');
-      expect(push.acknowledgedEndpoints, <int>[9]);
-      expect(state.pushState, PushState.registered);
-      state.dispose();
-    }
-  });
+          ),
+        );
+        await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+        expect(push.registrations.single.vapid, '');
+        expect(api.webPushRegistrations.single.provider, 'unifiedpush');
+        expect(
+          api.webPushRegistrations.single.publicKey,
+          encrypted ? 'public-key' : '',
+        );
+        expect(
+          api.webPushRegistrations.single.authSecret,
+          encrypted ? 'auth-secret' : '',
+        );
+        expect(push.acknowledgedEndpoints, <int>[9]);
+        expect(state.pushState, PushState.registered);
+        state.dispose();
+      }
+    },
+  );
 
   test('a server without push says so and registers nothing', () async {
-    final (state, _, push) =
-        await start(<String, Object?>{'enabled': false, 'providers': []});
+    final (state, _, push) = await start(<String, Object?>{
+      'enabled': false,
+      'providers': [],
+    });
     expect(state.pushState, PushState.serverDisabled);
     expect(push.registrations, isEmpty);
     state.dispose();
@@ -173,13 +202,15 @@ void main() {
       'enabled': true,
       'providers': <String>['fcm'],
     });
-    push.emit(const PushEndpointEvent(
-      instance: 'acct_1:dev_1',
-      provider: 'fcm',
-      endpoint: 'fcm-token-0123456789-0123456789-0123',
-      publicKey: '',
-      authSecret: '',
-    ));
+    push.emit(
+      const PushEndpointEvent(
+        instance: 'acct_1:dev_1',
+        provider: 'fcm',
+        endpoint: 'fcm-token-0123456789-0123456789-0123',
+        publicKey: '',
+        authSecret: '',
+      ),
+    );
     await _until(() => state.pushState == PushState.registered);
 
     api.testResults = <String>['delivered'];
@@ -206,12 +237,14 @@ void main() {
       'a rotation stored before the subscriber exists is registered, then '
       'acknowledged only after the server accepted it', () async {
     final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-    ));
+    await store.saveSession(
+      const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'token',
+        accountId: 'acct_1',
+        deviceId: 'dev_1',
+      ),
+    );
     final api = _PushApi(<String, Object?>{
       'enabled': true,
       'providers': <String>['fcm'],
@@ -235,15 +268,19 @@ void main() {
     state.dispose();
   });
 
-  Future<(AppState, _PushApi, _FakePush)> startWith(
-      {Future<bool> Function()? installer, PushEndpointEvent? pending}) async {
+  Future<(AppState, _PushApi, _FakePush)> startWith({
+    Future<bool> Function()? installer,
+    PushEndpointEvent? pending,
+  }) async {
     final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-    ));
+    await store.saveSession(
+      const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'token',
+        accountId: 'acct_1',
+        deviceId: 'dev_1',
+      ),
+    );
     final api = _PushApi(<String, Object?>{
       'enabled': true,
       'providers': <String>['fcm'],
@@ -261,116 +298,133 @@ void main() {
     return (state, api, push);
   }
 
-  test('phone notices are off by default: no notification mode is sent',
-      () async {
-    final (state, api, push) = await startWith(pending: rotated);
-    await _until(() => push.acknowledgedEndpoints.isNotEmpty);
-    push.emit(rotated);
-    await _until(() => api.registeredModes.length == 2);
-    expect(api.registeredModes, <String?>[null, null]);
-    expect(state.phoneNoticesAllowed, isFalse);
-    state.dispose();
-  });
+  test(
+    'phone notices are off by default: no notification mode is sent',
+    () async {
+      final (state, api, push) = await startWith(pending: rotated);
+      await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+      push.emit(rotated);
+      await _until(() => api.registeredModes.length == 2);
+      expect(api.registeredModes, <String?>[null, null]);
+      expect(state.phoneNoticesAllowed, isFalse);
+      state.dispose();
+    },
+  );
 
   test(
       'a worker that native allowed registers local_decrypt_v1 on a pending '
       'record and again on every later rotation', () async {
     var installs = 0;
     final (state, api, push) = await startWith(
-        pending: rotated,
-        installer: () async {
-          installs++;
-          return true;
-        });
+      pending: rotated,
+      installer: () async {
+        installs++;
+        return true;
+      },
+    );
     await _until(() => push.acknowledgedEndpoints.isNotEmpty);
     push.emit(rotated);
     await _until(() => api.registeredModes.length == 2);
     expect(installs, 1);
-    expect(
-        api.registeredModes, <String?>['local_decrypt_v1', 'local_decrypt_v1']);
+    expect(api.registeredModes, <String?>[
+      'local_decrypt_v1',
+      'local_decrypt_v1',
+    ]);
     state.dispose();
   });
 
-  test('a refused or failing install never requests local_decrypt_v1',
-      () async {
-    for (final installer in <Future<bool> Function()>[
-      () async => false,
-      () async => throw StateError('no worker'),
-    ]) {
-      final (state, api, push) =
-          await startWith(pending: rotated, installer: installer);
-      await _until(() => push.acknowledgedEndpoints.isNotEmpty);
-      expect(api.registeredModes, <String?>[null]);
-      expect(state.phoneNoticesAllowed, isFalse);
-      state.dispose();
-    }
-  });
+  test(
+    'a refused or failing install never requests local_decrypt_v1',
+    () async {
+      for (final installer in <Future<bool> Function()>[
+        () async => false,
+        () async => throw StateError('no worker'),
+      ]) {
+        final (state, api, push) = await startWith(
+          pending: rotated,
+          installer: installer,
+        );
+        await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+        expect(api.registeredModes, <String?>[null]);
+        expect(state.phoneNoticesAllowed, isFalse);
+        state.dispose();
+      }
+    },
+  );
 
-  test('a failed server registration leaves the record unacknowledged',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-    ));
-    final api = _PushApi(<String, Object?>{
-      'enabled': true,
-      'providers': <String>['fcm'],
-    })
-      ..registerError = ApiException(503, '{"error":"unavailable"}');
-    final push = _FakePush()..pending = rotated;
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: store,
-      syncServiceFactory: (_, __) => _QuietSync(),
-      pushService: push,
-    );
-    await state.tryRestoreSession();
-    await _until(() => push.registrations.isNotEmpty);
-    expect(push.acknowledgedEndpoints, isEmpty);
-    expect(push.pending, same(rotated));
-    expect(state.pushState, PushState.registrationFailed);
-    state.dispose();
-  });
-
-  test('a record for another instance is dropped without being uploaded',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-    ));
-    final api = _PushApi(<String, Object?>{
-      'enabled': true,
-      'providers': <String>['fcm'],
-    });
-    final push = _FakePush()
-      ..pending = const PushEndpointEvent(
-        instance: 'acct_old:dev_old',
-        provider: 'fcm',
-        endpoint: 'stale-token-0123456789-0123456789-01',
-        publicKey: '',
-        authSecret: '',
-        generation: 3,
+  test(
+    'a failed server registration leaves the record unacknowledged',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_1',
+          deviceId: 'dev_1',
+        ),
       );
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: store,
-      syncServiceFactory: (_, __) => _QuietSync(),
-      pushService: push,
-    );
-    await state.tryRestoreSession();
-    await _until(() => push.registrations.isNotEmpty);
-    expect(api.registeredTokens, isEmpty);
-    expect(push.acknowledgedEndpoints, <int>[3]);
-    state.dispose();
-  });
+      final api = _PushApi(<String, Object?>{
+        'enabled': true,
+        'providers': <String>['fcm'],
+      })
+        ..registerError = ApiException(503, '{"error":"unavailable"}');
+      final push = _FakePush()..pending = rotated;
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        pushService: push,
+      );
+      await state.tryRestoreSession();
+      await _until(() => push.registrations.isNotEmpty);
+      expect(push.acknowledgedEndpoints, isEmpty);
+      expect(push.pending, same(rotated));
+      expect(state.pushState, PushState.registrationFailed);
+      state.dispose();
+    },
+  );
+
+  test(
+    'a record for another instance is dropped without being uploaded',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_1',
+          deviceId: 'dev_1',
+        ),
+      );
+      final api = _PushApi(<String, Object?>{
+        'enabled': true,
+        'providers': <String>['fcm'],
+      });
+      final push = _FakePush()
+        ..pending = const PushEndpointEvent(
+          instance: 'acct_old:dev_old',
+          provider: 'fcm',
+          endpoint: 'stale-token-0123456789-0123456789-01',
+          publicKey: '',
+          authSecret: '',
+          generation: 3,
+        );
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        pushService: push,
+      );
+      await state.tryRestoreSession();
+      await _until(() => push.registrations.isNotEmpty);
+      expect(api.registeredTokens, isEmpty);
+      expect(push.acknowledgedEndpoints, <int>[3]);
+      state.dispose();
+    },
+  );
 
   test(
       'a live endpoint event is acknowledged with its generation, and an '
@@ -422,7 +476,7 @@ class _PushApi extends ApiClient with LegacySyncPageFake {
         String publicKey,
         String authSecret,
         String? mode,
-        String provider
+        String provider,
       })> webPushRegistrations = <({
     String endpoint,
     String publicKey,
@@ -442,15 +496,20 @@ class _PushApi extends ApiClient with LegacySyncPageFake {
   Future<List<Device>> devices(String token) async => const <Device>[];
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
-  Future<String> registerNativePush(String token,
-      {required String provider,
-      required String deviceToken,
-      String? notificationMode}) async {
+  Future<String> registerNativePush(
+    String token, {
+    required String provider,
+    required String deviceToken,
+    String? notificationMode,
+  }) async {
     registeredModes.add(notificationMode);
     onRegister?.call();
     final error = registerError;

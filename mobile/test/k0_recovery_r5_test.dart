@@ -46,7 +46,8 @@ void main() {
 
   Future<PendingAccountRecovery?> persisted() async =>
       PendingAccountRecovery.fromEnrollment(
-          await store.loadPendingEnrollment());
+        await store.loadPendingEnrollment(),
+      );
 
   Future<void> until(bool Function() done) async {
     for (var i = 0; i < 200 && !done(); i++) {
@@ -99,11 +100,13 @@ void main() {
     test('a poll that finds the answer lost keeps the device secret', () async {
       await claim();
       server.statusGate = Completer<void>();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completedWithoutToken,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-      ));
+      server.statusAnswers.add(
+        const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completedWithoutToken,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ),
+      );
       final poll = state.checkAccountRecovery();
       await until(() => server.recoveryPolls == 1);
       // Stop was confirmed while the poll was out; same request id.
@@ -114,24 +117,32 @@ void main() {
       expect(crypto.abandons, 0);
       expect(state.pendingAccountRecovery?.needsLogin, isTrue);
       expect((await persisted())?.deviceSecret, 'secret_new');
-      expect(await state.finishAccountRecoveryWithPassword('pw'), isTrue,
-          reason: state.errorFor(Ops.accountRecovery));
+      expect(
+        await state.finishAccountRecoveryWithPassword('pw'),
+        isTrue,
+        reason: state.errorFor(Ops.accountRecovery),
+      );
       expect(server.logins.last['device_secret'], 'secret_new');
       expect(state.session?.deviceId, 'dev_new');
     });
 
     testWidgets('no Stop is offered once a login is needed', (tester) async {
       await tester.runAsync(claim);
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completedWithoutToken,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-      ));
+      server.statusAnswers.add(
+        const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completedWithoutToken,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ),
+      );
       await tester.runAsync(state.checkAccountRecovery);
       expect(state.pendingAccountRecovery?.needsLogin, isTrue);
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(
+        MaterialApp(
           theme: veritraLightTheme(),
-          home: AccountRecoveryWaitingScreen(state: state)));
+          home: AccountRecoveryWaitingScreen(state: state),
+        ),
+      );
       await tester.pump();
       expect(find.text(l10n.recoveryAbandon), findsNothing);
     });
@@ -174,7 +185,9 @@ void main() {
 
     test('another account\'s or an unscoped warning is not shown', () async {
       await store.saveSetting(
-          'k0.password_leak_day', '$k0Origin\u0000acct_other\u0000$today');
+        'k0.password_leak_day',
+        '$k0Origin\u0000acct_other\u0000$today',
+      );
       await signIn();
       await state.refreshRecoveryNotices();
       expect(state.passwordLeakWarningDay, isNull);
@@ -184,25 +197,32 @@ void main() {
       expect(state.passwordLeakWarningDay, isNull);
 
       await store.saveSetting(
-          'k0.password_leak_day', '$k0Origin\u0000acct_me\u0000$today');
+        'k0.password_leak_day',
+        '$k0Origin\u0000acct_me\u0000$today',
+      );
       await state.refreshRecoveryNotices();
       expect(state.passwordLeakWarningDay, today);
     });
 
     test('a sync event is stored for the signed-in account', () async {
-      server.events.add(SyncEvent(
+      server.events.add(
+        SyncEvent(
           id: 1,
           type: 'account.password_leak_suspected',
           payload: <String, Object?>{'day': today},
-          createdAt: DateTime.now().toUtc()));
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
       await signIn();
       for (var i = 0;
           i < 200 && await store.loadSetting('k0.password_leak_day') == null;
           i++) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
-      expect(await store.loadSetting('k0.password_leak_day'),
-          '$k0Origin\u0000acct_me\u0000$today');
+      expect(
+        await store.loadSetting('k0.password_leak_day'),
+        '$k0Origin\u0000acct_me\u0000$today',
+      );
     });
   });
 
@@ -211,24 +231,34 @@ void main() {
     await state.tryRestoreSession();
     server.recentAuth = true;
     server.cancelFailure = k0Error(410, 'recovery_cancelled');
-    expect(await state.cancelAccountRecoveryRequest('arr_9'),
-        RecoveryActionResult.alreadyEnded);
+    expect(
+      await state.cancelAccountRecoveryRequest('arr_9'),
+      RecoveryActionResult.alreadyEnded,
+    );
     server.cancelFailure = ApiException(404, 'proxy says no');
-    expect(await state.cancelAccountRecoveryRequest('arr_9'),
-        RecoveryActionResult.failed);
+    expect(
+      await state.cancelAccountRecoveryRequest('arr_9'),
+      RecoveryActionResult.failed,
+    );
   });
 
   group('N7 Cyrillic look-alikes', () {
     test('become their Latin letters', () {
       // А В С Е Н К М О Р Т Х У Ѕ Ј І, upper and lower case.
       expect(
-          normalizeRecoveryKeyInput('АВСЕ-НКМО '
-              'РТХУЅЈІ'),
-          'ABCEHKMOPTXYSJI');
+        normalizeRecoveryKeyInput(
+          'АВСЕ-НКМО '
+          'РТХУЅЈІ',
+        ),
+        'ABCEHKMOPTXYSJI',
+      );
       expect(
-          normalizeRecoveryKeyInput('авсенк'
-              'мортхуѕјі'),
-          'ABCEHKMOPTXYSJI');
+        normalizeRecoveryKeyInput(
+          'авсенк'
+          'мортхуѕјі',
+        ),
+        'ABCEHKMOPTXYSJI',
+      );
     });
 
     test('letters that read as digits or nothing Latin stay and fail', () {
@@ -254,12 +284,13 @@ void main() {
 
     AppState signedIn(String baseUrl) => k0App(server, store, crypto)
       ..session = Session(
-          baseUrl: baseUrl,
-          token: 'tok_old',
-          accountId: 'acct_me',
-          deviceId: 'dev_old',
-          username: 'alice',
-          deviceSecret: 'secret_old')
+        baseUrl: baseUrl,
+        token: 'tok_old',
+        accountId: 'acct_me',
+        deviceId: 'dev_old',
+        username: 'alice',
+        deviceSecret: 'secret_old',
+      )
       ..api = K0Api(server, baseUrl);
 
     test('the status reads public_origin', () {
@@ -271,34 +302,47 @@ void main() {
       expect(status.publicOrigin, 'https://chat.example.org');
     });
 
-    testWidgets('shown with the key, with no warning when it matches',
-        (tester) async {
+    testWidgets('shown with the key, with no warning when it matches', (
+      tester,
+    ) async {
       server.status = const RecoveryKeyStatus(
-          available: true, configured: false, publicOrigin: k0Origin);
+        available: true,
+        configured: false,
+        publicOrigin: k0Origin,
+      );
       final screen = signedIn(k0Origin);
       await tester.pumpWidget(app(RecoveryKeyScreen(state: screen)));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey<String>('recovery-origin-mismatch')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('recovery-origin-mismatch')),
+        findsNothing,
+      );
       await tester.tap(find.text('Create a recovery key'));
       await tester.pumpAndSettle();
       final address = tester.widget<SelectableText>(
-          find.byKey(const ValueKey<String>('recovery-server-address')));
+        find.byKey(const ValueKey<String>('recovery-server-address')),
+      );
       expect(address.data, k0Origin);
       screen.dispose();
     });
 
-    testWidgets('another address warns and names the server\'s own',
-        (tester) async {
+    testWidgets('another address warns and names the server\'s own', (
+      tester,
+    ) async {
       server.status = const RecoveryKeyStatus(
-          available: true, configured: false, publicOrigin: k0Origin);
+        available: true,
+        configured: false,
+        publicOrigin: k0Origin,
+      );
       final screen = signedIn('https://10.0.0.2:8443');
       await tester.pumpWidget(app(RecoveryKeyScreen(state: screen)));
       await tester.pumpAndSettle();
       expect(
-          find.text(l10n.recoveryKeyOriginMismatch(
-              'https://10.0.0.2:8443', k0Origin)),
-          findsOneWidget);
+        find.text(
+          l10n.recoveryKeyOriginMismatch('https://10.0.0.2:8443', k0Origin),
+        ),
+        findsOneWidget,
+      );
       screen.dispose();
     });
   });

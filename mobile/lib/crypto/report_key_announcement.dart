@@ -129,8 +129,9 @@ bool reportKeyRequestDue({
   if (missing.isEmpty) return false;
   if (asked == null) return true;
   if (asked.accounts.length != missing.length ||
-      !Iterable<int>.generate(missing.length)
-          .every((i) => asked.accounts[i] == missing[i])) {
+      !Iterable<int>.generate(
+        missing.length,
+      ).every((i) => asked.accounts[i] == missing[i])) {
     return true;
   }
   final elapsed = now.toUtc().millisecondsSinceEpoch - asked.atMs;
@@ -163,7 +164,10 @@ class ReportKeySent {
       final key = map['key'], at = map['at'], answered = map['answered'];
       if (key is! String || at is! int) return null;
       return ReportKeySent(
-          key: key, atMs: at, answered: answered is String ? answered : null);
+        key: key,
+        atMs: at,
+        answered: answered is String ? answered : null,
+      );
     } catch (_) {
       return null;
     }

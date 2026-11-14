@@ -44,10 +44,14 @@ void main() {
         stripTracking('https://a.example/p?id=7&utm_medium=m&fbclid=z#top'),
         'https://a.example/p?id=7',
       );
-      expect(stripTracking('https://a.example/p?UTM_x=1&gclid=2'),
-          'https://a.example/p');
-      expect(stripTracking('https://a.example/p?a=1&&b'),
-          'https://a.example/p?a=1&b');
+      expect(
+        stripTracking('https://a.example/p?UTM_x=1&gclid=2'),
+        'https://a.example/p',
+      );
+      expect(
+        stripTracking('https://a.example/p?a=1&&b'),
+        'https://a.example/p?a=1&b',
+      );
     });
 
     test('links are found in order and lose trailing punctuation', () {
@@ -103,8 +107,10 @@ void main() {
       expect(preview.url, url);
       expect(preview.title, 'Veritra');
       expect(preview.host, 'github.com');
-      expect(LinkPreview.fromWire(preview.toWire(), text: text)!.toWire(),
-          preview.toWire());
+      expect(
+        LinkPreview.fromWire(preview.toWire(), text: text)!.toWire(),
+        preview.toWire(),
+      );
     });
 
     test('a preview that does not name a link of the message is dropped', () {
@@ -124,12 +130,17 @@ void main() {
         'https://github.com/a#frag',
         'https://github.com:444/a',
       ]) {
-        expect(LinkPreview.fromWire(wire(link: link), text: plain), isNull,
-            reason: link);
+        expect(
+          LinkPreview.fromWire(wire(link: link), text: plain),
+          isNull,
+          reason: link,
+        );
       }
       expect(LinkPreview.fromWire('x', text: text), isNull);
-      expect(LinkPreview.fromWire(<String, Object?>{'url': 5}, text: text),
-          isNull);
+      expect(
+        LinkPreview.fromWire(<String, Object?>{'url': 5}, text: text),
+        isNull,
+      );
       expect(
         LinkPreview.fromWire(<String, Object?>{'url': url}, text: text),
         isNull,
@@ -138,14 +149,11 @@ void main() {
     });
 
     test('long fields are cut to their limits', () {
-      final preview = LinkPreview.fromWire(
-        <String, Object?>{
-          'url': url,
-          'title': 't' * 1000,
-          'description': 'd' * 5000,
-        },
-        text: text,
-      )!;
+      final preview = LinkPreview.fromWire(<String, Object?>{
+        'url': url,
+        'title': 't' * 1000,
+        'description': 'd' * 5000,
+      }, text: text)!;
       expect(preview.title!.length, linkPreviewMaxTitleUnits);
       expect(preview.description!.length, linkPreviewMaxDescriptionUnits);
     });
@@ -158,9 +166,10 @@ void main() {
             'height': h ?? 48,
             'data': base64.encode(png),
           };
-      LinkPreview? parse(Object? raw) =>
-          LinkPreview.fromWire(<String, Object?>{...wire(), 'thumb': raw},
-              text: text);
+      LinkPreview? parse(Object? raw) => LinkPreview.fromWire(<String, Object?>{
+            ...wire(),
+            'thumb': raw,
+          }, text: text);
       expect(parse(thumb(fakePng(64, 48)))!.thumbnail!.width, 64);
       for (final bad in <Object?>[
         thumb(fakePng(64, 48), w: 65),
@@ -188,8 +197,10 @@ void main() {
         ),
       );
       final small = <String, Object?>{'text': text};
-      expect(bodyWithLinkPreview(small, preview)['link_preview'],
-          preview.toWire());
+      expect(
+        bodyWithLinkPreview(small, preview)['link_preview'],
+        preview.toWire(),
+      );
 
       final big = <String, Object?>{'text': 'x' * (40 * 1024)};
       final noThumb = bodyWithLinkPreview(big, preview)['link_preview'] as Map;
@@ -232,10 +243,9 @@ void main() {
 
     test('a link_preview body is written as v2 and survives classify', () {
       final preview = LinkPreview(url: url, title: 'Veritra');
-      final body = bodyWithLinkPreview(
-        <String, Object?>{'text': text},
-        preview,
-      );
+      final body = bodyWithLinkPreview(<String, Object?>{
+        'text': text,
+      }, preview);
       final padded = encode(AppPayloadType.text, body);
       expect(innerJson(padded)['v'], 2);
       final payload = roundTrip(padded);
@@ -245,20 +255,18 @@ void main() {
     });
 
     test('a plain text payload stays v1 and carries no preview', () {
-      final padded = encode(
-        AppPayloadType.text,
-        <String, Object?>{'text': text},
-      );
+      final padded = encode(AppPayloadType.text, <String, Object?>{
+        'text': text,
+      });
       expect(innerJson(padded)['v'], 1);
       expect(messageDecoration(roundTrip(padded).body), isEmpty);
     });
 
     test('a reply can carry a preview too', () {
       final body = <String, Object?>{
-        ...bodyWithLinkPreview(
-          <String, Object?>{'text': text},
-          LinkPreview(url: url, description: 'A messenger'),
-        ),
+        ...bodyWithLinkPreview(<String, Object?>{
+          'text': text,
+        }, LinkPreview(url: url, description: 'A messenger')),
         'reply_to_id': 'msg_1',
       };
       final payload = roundTrip(encode(AppPayloadType.reply, body));
@@ -358,8 +366,9 @@ void main() {
     });
 
     test('a row that held only a preview exports without format_json', () {
-      final stored =
-          jsonEncode(<String, Object?>{'link_preview': preview.toWire()});
+      final stored = jsonEncode(<String, Object?>{
+        'link_preview': preview.toWire(),
+      });
       final copy = HistorySnapshot.decode(snapshot(row(stored)).encode());
       expect(copy.messages.single.formatJson, isNull);
       expect(copy.messages.single.body, text);
@@ -368,8 +377,10 @@ void main() {
     test('formatJsonWithoutPreview keeps everything else', () {
       expect(formatJsonWithoutPreview(null), isNull);
       expect(formatJsonWithoutPreview('{"entities":[]}'), '{"entities":[]}');
-      expect(formatJsonWithoutPreview('not json "link_preview"'),
-          'not json "link_preview"');
+      expect(
+        formatJsonWithoutPreview('not json "link_preview"'),
+        'not json "link_preview"',
+      );
       const onlyPreview = '{"link_preview":{}}';
       expect(formatJsonWithoutPreview(onlyPreview), isNull);
       const mixed = '{"mentions":[],"link_preview":{"url":"x"}}';

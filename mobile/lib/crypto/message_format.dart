@@ -23,7 +23,7 @@ const formatTypes = {
   'strikethrough',
   'code',
   'code_block',
-  'spoiler'
+  'spoiler',
 };
 
 bool _validRange(String text, int offset, int length) {
@@ -40,8 +40,10 @@ bool _validRange(String text, int offset, int length) {
 
 /// Formatting, mentions and a link preview (B2) are optional decoration. Bad
 /// entries alone disappear.
-Map<String, Object?> messageDecoration(Map<String, Object?> body,
-    {Set<String>? members}) {
+Map<String, Object?> messageDecoration(
+  Map<String, Object?> body, {
+  Set<String>? members,
+}) {
   final text = body['text'] as String? ?? '';
   final entities = <Map<String, Object?>>[];
   final raw = body['entities'];
@@ -54,14 +56,16 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
       final offset = item['offset'] as int, length = item['length'] as int;
       if (!_validRange(text, offset, length)) continue;
       final type = item['type'] as String;
-      if (entities.any((e) =>
-          offset < (e['offset'] as int) + (e['length'] as int) &&
-          (e['offset'] as int) < offset + length &&
-          (e['type'] == type ||
-              type == 'code' ||
-              type == 'code_block' ||
-              e['type'] == 'code' ||
-              e['type'] == 'code_block'))) continue;
+      if (entities.any(
+        (e) =>
+            offset < (e['offset'] as int) + (e['length'] as int) &&
+            (e['offset'] as int) < offset + length &&
+            (e['type'] == type ||
+                type == 'code' ||
+                type == 'code_block' ||
+                e['type'] == 'code' ||
+                e['type'] == 'code_block'),
+      )) continue;
       entities.add({'type': type, 'offset': offset, 'length': length});
     }
   }
@@ -80,7 +84,7 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
       mentions.add({
         'account_id': item['account_id'],
         'offset': offset,
-        'length': length
+        'length': length,
       });
     }
   }
@@ -88,7 +92,7 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
   return {
     if (entities.isNotEmpty) 'entities': entities,
     if (mentions.isNotEmpty) 'mentions': mentions,
-    if (preview != null) 'link_preview': preview.toWire()
+    if (preview != null) 'link_preview': preview.toWire(),
   };
 }
 
@@ -116,18 +120,22 @@ String? formatJsonWithoutPreview(String? formatJson) {
 }
 
 /// Marker parsing happens only on the sender. Received text is never parsed.
-Map<String, Object?> composeMessage(String input,
-    {Map<String, String> accountsByUsername = const {}}) {
+Map<String, Object?> composeMessage(
+  String input, {
+  Map<String, String> accountsByUsername = const {},
+}) {
   const markers = {
     '```': 'code_block',
     '||': 'spoiler',
     '*': 'bold',
     '_': 'italic',
     '~': 'strikethrough',
-    '`': 'code'
+    '`': 'code',
   };
   ({String text, List<Map<String, Object?>> entities}) parse(
-      String source, int depth) {
+    String source,
+    int depth,
+  ) {
     final out = StringBuffer(), entities = <Map<String, Object?>>[];
     var at = 0;
     while (at < source.length) {
@@ -145,10 +153,13 @@ Map<String, Object?> composeMessage(String input,
           entities.add({
             'type': entry.value,
             'offset': offset,
-            'length': nested.text.length
+            'length': nested.text.length,
           });
-          entities.addAll(nested.entities
-              .map((e) => {...e, 'offset': offset + (e['offset'] as int)}));
+          entities.addAll(
+            nested.entities.map(
+              (e) => {...e, 'offset': offset + (e['offset'] as int)},
+            ),
+          );
           out.write(nested.text);
           at = end + entry.key.length;
           matched = true;
@@ -161,8 +172,10 @@ Map<String, Object?> composeMessage(String input,
   }
 
   final parsed = parse(input, 0), text = parsed.text;
-  final entities = messageDecoration(
-      {'text': text, 'entities': parsed.entities})['entities'];
+  final entities = messageDecoration({
+    'text': text,
+    'entities': parsed.entities,
+  })['entities'];
   final mentions = <Map<String, Object?>>[];
   for (final match in RegExp(r'@[A-Za-z0-9_]+').allMatches(text)) {
     final account = accountsByUsername[match.group(0)!.substring(1)];
@@ -170,13 +183,13 @@ Map<String, Object?> composeMessage(String input,
       mentions.add({
         'account_id': account,
         'offset': match.start,
-        'length': match.end - match.start
+        'length': match.end - match.start,
       });
   }
   return {
     'text': text,
     if (entities != null) 'entities': entities,
-    if (mentions.isNotEmpty) 'mentions': mentions
+    if (mentions.isNotEmpty) 'mentions': mentions,
   };
 }
 

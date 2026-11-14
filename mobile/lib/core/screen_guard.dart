@@ -27,10 +27,9 @@ class PlatformScreenGuard implements ScreenGuard {
   Future<void> setSecure(bool secure) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     try {
-      await _channel.invokeMethod<void>(
-        'setSecure',
-        <String, Object?>{'secure': secure},
-      );
+      await _channel.invokeMethod<void>('setSecure', <String, Object?>{
+        'secure': secure,
+      });
     } on PlatformException catch (_) {
       // Platform does not support it or UI is unavailable.
     } on MissingPluginException catch (_) {

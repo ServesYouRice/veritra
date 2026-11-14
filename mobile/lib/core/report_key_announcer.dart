@@ -49,25 +49,31 @@ class ReportKeyAnnouncer {
     final missing = <String>[];
     for (final account in moderators.toList()..sort()) {
       if (missing.length == maxReportKeyRequestAccounts) break;
-      if (await store
-              .loadSetting(reportKeyAnnouncementSetting(group, account)) ==
+      if (await store.loadSetting(
+            reportKeyAnnouncementSetting(group, account),
+          ) ==
           null) {
         missing.add(account);
       }
     }
     final now = _clock().toUtc();
     if (!reportKeyRequestDue(
-        missing: missing,
-        asked: ReportKeyAsked.decode(
-            await store.loadSetting(reportKeyAskedSetting(group))),
-        now: now)) {
+      missing: missing,
+      asked: ReportKeyAsked.decode(
+        await store.loadSetting(reportKeyAskedSetting(group)),
+      ),
+      now: now,
+    )) {
       return false;
     }
     if (!await request(group, missing)) return false;
     await store.saveSetting(
-        reportKeyAskedSetting(group),
-        ReportKeyAsked(accounts: missing, atMs: now.millisecondsSinceEpoch)
-            .encode());
+      reportKeyAskedSetting(group),
+      ReportKeyAsked(
+        accounts: missing,
+        atMs: now.millisecondsSinceEpoch,
+      ).encode(),
+    );
     return true;
   }
 
@@ -88,11 +94,16 @@ class ReportKeyAnnouncer {
       if (active != null && !active()) break;
       if (unlisted[group] == key) continue;
       final sent = ReportKeySent.decode(
-          await store.loadSetting(reportKeySentSetting(group)));
+        await store.loadSetting(reportKeySentSetting(group)),
+      );
       final request = await store.loadSetting(reportKeyRequestSetting(group));
       final now = _clock().toUtc();
       if (!reportKeyAnnouncementDue(
-          key: key, sent: sent, request: request, now: now)) {
+        key: key,
+        sent: sent,
+        request: request,
+        now: now,
+      )) {
         continue;
       }
       final listed = await listedKey(communityId);
@@ -104,10 +115,13 @@ class ReportKeyAnnouncer {
       if (!await send(group, key)) continue;
       queued++;
       await store.saveSetting(
-          reportKeySentSetting(group),
-          ReportKeySent(
-                  key: key, atMs: now.millisecondsSinceEpoch, answered: request)
-              .encode());
+        reportKeySentSetting(group),
+        ReportKeySent(
+          key: key,
+          atMs: now.millisecondsSinceEpoch,
+          answered: request,
+        ).encode(),
+      );
     }
     return queued;
   }

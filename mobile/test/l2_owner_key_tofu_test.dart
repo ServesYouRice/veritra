@@ -57,21 +57,31 @@ void main() {
     );
     addTearDown(state.dispose);
     const session = Session(
-        baseUrl: _origin, token: 'tok', accountId: _account, deviceId: _own);
-    await crypto.createEnrollmentCredential(const EnrollmentReservation(
+      baseUrl: _origin,
+      token: 'tok',
+      accountId: _account,
+      deviceId: _own,
+    );
+    await crypto.createEnrollmentCredential(
+      const EnrollmentReservation(
         id: 'enroll_own',
         accountId: _account,
         deviceId: _own,
-        challenge: <int>[1, 2, 3]));
+        challenge: <int>[1, 2, 3],
+      ),
+    );
     await store.saveSession(session);
     await crypto.activateSession(session);
     // A tablet starts the list and adds this device; this device lists its
     // franking key with change 7 on its first pass.
     final tablet = bindings.createDevice(_account, 'dev_tablet');
     addTearDown(tablet.close);
-    final tabletPair =
-        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey());
-    api.chain.add(tablet.signDeviceList(
+    final tabletPair = DeviceListPair(
+      idBytes('dev_tablet'),
+      tablet.signingPublicKey(),
+    );
+    api.chain.add(
+      tablet.signDeviceList(
         DeviceListBody(
           accountId: idBytes(_account),
           version: 1,
@@ -80,10 +90,13 @@ void main() {
           change: DeviceListChange.genesis,
           entries: [tabletPair],
         ),
-        idBytes('dev_tablet')));
+        idBytes('dev_tablet'),
+      ),
+    );
     final genesis =
         bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
-    api.chain.add(tablet.signDeviceList(
+    api.chain.add(
+      tablet.signDeviceList(
         DeviceListBody(
           accountId: idBytes(_account),
           version: 2,
@@ -95,9 +108,14 @@ void main() {
             tabletPair,
           ],
         ),
-        idBytes('dev_tablet')));
-    await DeviceListPins(store: store, source: _Lists(api), verifier: crypto)
-        .pinChain(_account, api.chain, expectedHead: api.chain.last);
+        idBytes('dev_tablet'),
+      ),
+    );
+    await DeviceListPins(
+      store: store,
+      source: _Lists(api),
+      verifier: crypto,
+    ).pinChain(_account, api.chain, expectedHead: api.chain.last);
     state
       ..api = api
       ..session = session
@@ -105,8 +123,11 @@ void main() {
         Conversation(id: 'conv_comm', kind: 'group', communityId: 'c1'),
         Conversation(id: 'conv_dm', kind: 'dm'),
       ];
-    state.sealedSender =
-        SealedSender(origin: _origin, localStore: store, crypto: crypto);
+    state.sealedSender = SealedSender(
+      origin: _origin,
+      localStore: store,
+      crypto: crypto,
+    );
     return (state: state, api: api, store: store);
   }
 
@@ -116,13 +137,13 @@ void main() {
   /// The proof recipients as stored, owner to key.
   Future<Map<String, List<int>>> proofPins(LocalStore store) async => {
         for (final pin in await OwnerProofPins(store, _origin).effective())
-          pin.ownerAccountId: pin.publicKey
+          pin.ownerAccountId: pin.publicKey,
       };
 
   /// The D95 report pins, owner to key.
   Future<Map<String, List<int>>> reportPins(LocalStore store) async => {
         for (final pin in await store.loadReportKeyPins(_origin))
-          pin.ownerAccountId: pin.publicKey
+          pin.ownerAccountId: pin.publicKey,
       };
 
   test('first sight pins the owner keys and the tags go to them', () async {
@@ -145,21 +166,24 @@ void main() {
     expect(state.ownerKeyReview, isEmpty);
   }, skip: skip);
 
-  test('no owner key yet pins nothing, and the first listing later does',
-      () async {
-    final (:state, :api, :store) = await start();
-    api.unavailable = true;
-    expect(await tags(state), isEmpty);
-    // Any other error records nothing and keeps the tags.
-    api
-      ..unavailable = false
-      ..failing = true;
-    expect(await tags(state), isEmpty);
-    api
-      ..failing = false
-      ..owners = [owner('acct_a', keys[0])];
-    expect(await tags(state), [keys[0]]);
-  }, skip: skip);
+  test(
+    'no owner key yet pins nothing, and the first listing later does',
+    () async {
+      final (:state, :api, :store) = await start();
+      api.unavailable = true;
+      expect(await tags(state), isEmpty);
+      // Any other error records nothing and keeps the tags.
+      api
+        ..unavailable = false
+        ..failing = true;
+      expect(await tags(state), isEmpty);
+      api
+        ..failing = false
+        ..owners = [owner('acct_a', keys[0])];
+      expect(await tags(state), [keys[0]]);
+    },
+    skip: skip,
+  );
 
   test('a changed key is not tagged until it is accepted', () async {
     final (:state, :api, :store) = await start();
@@ -213,72 +237,81 @@ void main() {
     expect(await tags(state), [keys[0], keys[1]]);
   }, skip: skip);
 
-  test('a gone owner stays tagged until the person accepts that it is gone',
-      () async {
-    final (:state, :api, :store) = await start();
-    api.owners = [owner('acct_a', keys[0]), owner('acct_b', keys[1])];
-    expect(await tags(state), [keys[0], keys[1]]);
+  test(
+    'a gone owner stays tagged until the person accepts that it is gone',
+    () async {
+      final (:state, :api, :store) = await start();
+      api.owners = [owner('acct_a', keys[0]), owner('acct_b', keys[1])];
+      expect(await tags(state), [keys[0], keys[1]]);
 
-    api.owners = [owner('acct_b', keys[1])];
-    expect(await tags(state), [keys[0], keys[1]]);
-    final gone = state.ownerKeyReview.single;
-    expect(gone.change, OwnerKeyChange.missing);
-    expect(gone.inboxId, 'acct_a');
+      api.owners = [owner('acct_b', keys[1])];
+      expect(await tags(state), [keys[0], keys[1]]);
+      final gone = state.ownerKeyReview.single;
+      expect(gone.change, OwnerKeyChange.missing);
+      expect(gone.inboxId, 'acct_a');
 
-    expect(await state.acceptOwnerKey(gone), isTrue);
-    expect(await tags(state), [keys[1]]);
-    expect(state.ownerKeyReview, isEmpty);
-  }, skip: skip);
+      expect(await state.acceptOwnerKey(gone), isTrue);
+      expect(await tags(state), [keys[1]]);
+      expect(state.ownerKeyReview, isEmpty);
+    },
+    skip: skip,
+  );
 
-  test('a key the server lists after the first pin is never tagged silently',
-      () async {
-    final (:state, :api, :store) = await start();
-    api.owners = [owner('acct_a', keys[0])];
-    expect(await tags(state), [keys[0]]);
+  test(
+    'a key the server lists after the first pin is never tagged silently',
+    () async {
+      final (:state, :api, :store) = await start();
+      api.owners = [owner('acct_a', keys[0])];
+      expect(await tags(state), [keys[0]]);
 
-    // The server drops the owner and the person accepts it: no pin is
-    // left. A key listed after that is still not pinned on first use.
-    api.owners = [];
-    api.unavailable = true;
-    expect(await tags(state), [keys[0]]);
-    expect(await state.acceptOwnerKey(state.ownerKeyReview.single), isTrue);
-    expect(await tags(state), isEmpty);
-    expect(await proofPins(store), isEmpty);
-    expect(await store.loadReportKeyPins(_origin), isEmpty);
-
-    api
-      ..unavailable = false
-      ..owners = [owner('acct_x', keys[3])];
-    for (var pass = 0; pass < 3; pass++) {
+      // The server drops the owner and the person accepts it: no pin is
+      // left. A key listed after that is still not pinned on first use.
+      api.owners = [];
+      api.unavailable = true;
+      expect(await tags(state), [keys[0]]);
+      expect(await state.acceptOwnerKey(state.ownerKeyReview.single), isTrue);
       expect(await tags(state), isEmpty);
-    }
-    expect(await proofPins(store), isEmpty);
-    expect(await store.loadReportKeyPins(_origin), isEmpty);
-    expect(state.ownerKeyReview.single.change, OwnerKeyChange.added);
+      expect(await proofPins(store), isEmpty);
+      expect(await store.loadReportKeyPins(_origin), isEmpty);
 
-    // Nor when the person had pinned while reporting before any pass: a
-    // pin made by a person counts as the first pin.
-    final second = await start();
-    await ReportKeyPinsShim.pin(second.store, owner('acct_a', keys[0]));
-    second.api.owners = [owner('acct_a', keys[0]), owner('acct_x', keys[3])];
-    expect(await tags(second.state), [keys[0]]);
-    expect(second.state.ownerKeyReview.single.inboxId, 'acct_x');
-  }, skip: skip);
+      api
+        ..unavailable = false
+        ..owners = [owner('acct_x', keys[3])];
+      for (var pass = 0; pass < 3; pass++) {
+        expect(await tags(state), isEmpty);
+      }
+      expect(await proofPins(store), isEmpty);
+      expect(await store.loadReportKeyPins(_origin), isEmpty);
+      expect(state.ownerKeyReview.single.change, OwnerKeyChange.added);
 
-  test('Settings and the sealed key screen read the review without a request',
-      () async {
-    final (:state, :api, :store) = await start();
-    api.owners = [owner('acct_a', keys[0])];
-    await tags(state);
-    api.owners = [owner('acct_a', keys[1])];
-    await tags(state);
-    final reads = api.inboxReads.length;
-    state.ownerKeyReview = const <OwnerKeyReviewItem>[];
-    expect(await state.loadOwnerKeyReview(), hasLength(1));
-    expect(state.ownerKeyReview, hasLength(1));
-    expect(await state.sealedProvableOwnerCount(), 1);
-    expect(api.inboxReads, hasLength(reads));
-  }, skip: skip);
+      // Nor when the person had pinned while reporting before any pass: a
+      // pin made by a person counts as the first pin.
+      final second = await start();
+      await ReportKeyPinsShim.pin(second.store, owner('acct_a', keys[0]));
+      second.api.owners = [owner('acct_a', keys[0]), owner('acct_x', keys[3])];
+      expect(await tags(second.state), [keys[0]]);
+      expect(second.state.ownerKeyReview.single.inboxId, 'acct_x');
+    },
+    skip: skip,
+  );
+
+  test(
+    'Settings and the sealed key screen read the review without a request',
+    () async {
+      final (:state, :api, :store) = await start();
+      api.owners = [owner('acct_a', keys[0])];
+      await tags(state);
+      api.owners = [owner('acct_a', keys[1])];
+      await tags(state);
+      final reads = api.inboxReads.length;
+      state.ownerKeyReview = const <OwnerKeyReviewItem>[];
+      expect(await state.loadOwnerKeyReview(), hasLength(1));
+      expect(state.ownerKeyReview, hasLength(1));
+      expect(await state.sealedProvableOwnerCount(), 1);
+      expect(api.inboxReads, hasLength(reads));
+    },
+    skip: skip,
+  );
 
   // Owner decision 2026-11-12, "Keep reports manual": the tags go to the
   // proof recipients, which are the D95 pins a person made plus what was
@@ -322,13 +355,15 @@ void main() {
 /// Pins the way a report screen does after the person compared codes.
 class ReportKeyPinsShim {
   static Future<void> pin(LocalStore store, ReportInboxRecipient recipient) =>
-      store.saveReportKeyPin(ReportKeyPin(
-        origin: _origin,
-        ownerAccountId: recipient.inboxId,
-        publicKey: recipient.publicKey,
-        keyRev: recipient.keyRev,
-        pinnedAt: 1,
-      ));
+      store.saveReportKeyPin(
+        ReportKeyPin(
+          origin: _origin,
+          ownerAccountId: recipient.inboxId,
+          publicKey: recipient.publicKey,
+          keyRev: recipient.keyRev,
+          pinnedAt: 1,
+        ),
+      );
 }
 
 class _QuietSync implements SyncService {
@@ -346,8 +381,10 @@ class _Lists implements DeviceListSource {
   final _Api api;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-          {required int after}) =>
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) =>
       api.fetchDeviceList('tok', accountId, after: after);
 }
 
@@ -362,8 +399,11 @@ class _Api extends ApiClient {
   final List<String> inboxReads = <String>[];
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String token,
+    String accountId, {
+    required int after,
+  }) async {
     if (accountId != _account) return null;
     final rest = chain.skip(after).toList();
     return DeviceListPage(
@@ -390,7 +430,9 @@ class _Api extends ApiClient {
 
   @override
   Future<ReportInbox> getReportInbox(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     inboxReads.add(conversationId);
     if (failing) throw ApiException(503, '{"error":"unavailable"}');
     if (unavailable) {

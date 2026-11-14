@@ -352,8 +352,12 @@ DeviceListSummary _readSummary(_SummaryReader reader) {
 /// ([removedVersion] is 0 while it is listed), and the franking key the
 /// chain gave the device, if any (L2-3; fixed once set).
 class DeviceListListedPair {
-  const DeviceListListedPair(this.pair, this.addedVersion, this.removedVersion,
-      [this.frankKey]);
+  const DeviceListListedPair(
+    this.pair,
+    this.addedVersion,
+    this.removedVersion, [
+    this.frankKey,
+  ]);
   final DeviceListPair pair;
   final int addedVersion;
   final int removedVersion;
@@ -390,8 +394,11 @@ class LeafPair {
       _sameBytes(other.signingKey, signingKey);
 
   @override
-  int get hashCode => Object.hash(Object.hashAll(accountId),
-      Object.hashAll(deviceId), Object.hashAll(signingKey));
+  int get hashCode => Object.hash(
+        Object.hashAll(accountId),
+        Object.hashAll(deviceId),
+        Object.hashAll(signingKey),
+      );
 
   @override
   String toString() => 'LeafPair(${_hexOf(accountId)}, ${_hexOf(deviceId)})';
@@ -490,7 +497,7 @@ List<int> encodeKeyedMembershipChanges({
             List<int> keyPackage,
             List<int> accountId,
             List<int> deviceId,
-            List<int> signingKey
+            List<int> signingKey,
           })>
       adds,
   required List<({List<int> accountId, List<int> deviceId})> removes,
@@ -568,12 +575,12 @@ extension DeviceListBindings on NativeCryptoBindings {
         expectedAccountId,
         prev ?? const <int>[],
         statement,
-        history.isEmpty ? const <int>[] : _historyBytes(history)
+        history.isEmpty ? const <int>[] : _historyBytes(history),
       ],
       (slices) => _output(
-          (out) =>
-              _l1CheckStep(slices[0], slices[1], slices[2], slices[3], out),
-          maximum: 8192),
+        (out) => _l1CheckStep(slices[0], slices[1], slices[2], slices[3], out),
+        maximum: 8192,
+      ),
     );
     final reader = _SummaryReader(summary);
     final parsed = _readSummary(reader);
@@ -604,10 +611,12 @@ extension DeviceListBindings on NativeCryptoBindings {
         ..add(statement);
     }
     final result = _withByteLists(
-        <List<int>>[expectedAccountId, out.toBytes()],
-        (slices) => _output(
-            (buffer) => _l1CheckChain(slices[0], slices[1], buffer),
-            maximum: 4 * 1024 * 1024));
+      <List<int>>[expectedAccountId, out.toBytes()],
+      (slices) => _output(
+        (buffer) => _l1CheckChain(slices[0], slices[1], buffer),
+        maximum: 4 * 1024 * 1024,
+      ),
+    );
     final reader = _SummaryReader(result);
     final head = _readSummary(reader);
     final listId = reader.take(32);
@@ -622,7 +631,8 @@ extension DeviceListBindings on NativeCryptoBindings {
             0 => null,
             1 => reader.take(32),
             _ => throw const NativeCryptoException(
-                NativeCryptoError.invalidOutput),
+                NativeCryptoError.invalidOutput,
+              ),
           },
         ),
     ];
@@ -635,7 +645,9 @@ extension DeviceListBindings on NativeCryptoBindings {
   /// [NativeCryptoBindings._withByteLists] that lets a slice be empty (an
   /// absent optional input is a zero-length slice).
   T _withDeviceListSlices<T>(
-      List<List<int>> values, T Function(List<_PmByteSlice>) operation) {
+    List<List<int>> values,
+    T Function(List<_PmByteSlice>) operation,
+  ) {
     T visit(int index, List<_PmByteSlice> slices) {
       if (index == values.length) return operation(slices);
       final value = values[index];
@@ -650,8 +662,10 @@ extension DeviceListBindings on NativeCryptoBindings {
           calloc.free(empty);
         }
       }
-      return _withSlice(Uint8List.fromList(value),
-          (slice) => visit(index + 1, [...slices, slice]));
+      return _withSlice(
+        Uint8List.fromList(value),
+        (slice) => visit(index + 1, [...slices, slice]),
+      );
     }
 
     return visit(0, const []);
@@ -668,10 +682,12 @@ extension DeviceListDevice on NativeCryptoDevice {
   Uint8List signDeviceList(DeviceListBody body, List<int> ownDeviceId) {
     final bytes = body.encode();
     final signature = _bindings._withByteLists(
-        <List<int>>[utf8.encode(deviceListSignLabel), bytes],
-        (slices) => _bindings._output(
-            (out) => _bindings._c7Sign(_liveHandle, slices[0], slices[1], out),
-            maximum: 64));
+      <List<int>>[utf8.encode(deviceListSignLabel), bytes],
+      (slices) => _bindings._output(
+        (out) => _bindings._c7Sign(_liveHandle, slices[0], slices[1], out),
+        maximum: 64,
+      ),
+    );
     return assembleDeviceListStatement(
       body: bytes,
       signerKind: deviceListSignerDevice,
@@ -685,10 +701,15 @@ extension DeviceListDevice on NativeCryptoDevice {
   /// recovery delay, D94). Only the seed is kept; it never leaves Rust. Seal
   /// afterwards. An older library refuses a record that holds one.
   void holdRecoveryListSeed(List<int> entropy) {
-    _bindings._bounded(entropy, NativeCryptoBindings.recoveryKeyEntropyBytes,
-        exact: true);
-    _bindings._withSlice(Uint8List.fromList(entropy),
-        (slice) => _bindings._check(_bindings._l1Hold(_liveHandle, slice)));
+    _bindings._bounded(
+      entropy,
+      NativeCryptoBindings.recoveryKeyEntropyBytes,
+      exact: true,
+    );
+    _bindings._withSlice(
+      Uint8List.fromList(entropy),
+      (slice) => _bindings._check(_bindings._l1Hold(_liveHandle, slice)),
+    );
   }
 
   /// The public key of the held seed, or null when none is held.
@@ -740,20 +761,31 @@ extension DeviceListDevice on NativeCryptoDevice {
   }) {
     _bindings._bounded(prev, 4096);
     if (entropy != null) {
-      _bindings._bounded(entropy, NativeCryptoBindings.recoveryKeyEntropyBytes,
-          exact: true);
+      _bindings._bounded(
+        entropy,
+        NativeCryptoBindings.recoveryKeyEntropyBytes,
+        exact: true,
+      );
     }
     final statement = _bindings._withDeviceListSlices(
-        <List<int>>[
-          prev,
-          history.isEmpty ? const <int>[] : _historyBytes(history),
-          body.encode(),
-          entropy ?? const <int>[],
-        ],
-        (slices) => _bindings._output(
-            (out) => _bindings._l1SignRecovery(
-                _liveHandle, slices[0], slices[1], slices[2], slices[3], out),
-            maximum: 4096));
+      <List<int>>[
+        prev,
+        history.isEmpty ? const <int>[] : _historyBytes(history),
+        body.encode(),
+        entropy ?? const <int>[],
+      ],
+      (slices) => _bindings._output(
+        (out) => _bindings._l1SignRecovery(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          slices[2],
+          slices[3],
+          out,
+        ),
+        maximum: 4096,
+      ),
+    );
     return Uint8List.fromList(statement);
   }
 
@@ -763,10 +795,12 @@ extension DeviceListDevice on NativeCryptoDevice {
   List<LeafPair> _groupMembersImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     final bytes = _bindings._withSlice(
-        Uint8List.fromList(groupId.codeUnits),
-        (group) => _bindings._output(
-            (out) => _bindings._groupMembers(_liveHandle, group, out),
-            maximum: 4 * 1024 * 1024));
+      Uint8List.fromList(groupId.codeUnits),
+      (group) => _bindings._output(
+        (out) => _bindings._groupMembers(_liveHandle, group, out),
+        maximum: 4 * 1024 * 1024,
+      ),
+    );
     return _readLeafPairs(bytes);
   }
 
@@ -778,10 +812,20 @@ extension DeviceListDevice on NativeCryptoDevice {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
     return _bindings._withByteLists(
-        <List<int>>[groupId.codeUnits, commit],
-        (slices) => _commitPairs((flags, epoch, root, added, committer) =>
-            _bindings._groupL1Process(_liveHandle, slices[0], slices[1], flags,
-                epoch, root, added, committer)));
+      <List<int>>[groupId.codeUnits, commit],
+      (slices) => _commitPairs(
+        (flags, epoch, root, added, committer) => _bindings._groupL1Process(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          flags,
+          epoch,
+          root,
+          added,
+          committer,
+        ),
+      ),
+    );
   }
 
   /// [mergePendingCommit] that also reports what this device's own commit
@@ -789,16 +833,30 @@ extension DeviceListDevice on NativeCryptoDevice {
   CommitPairs mergePendingCommitWithPairs(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     return _bindings._withSlice(
-        Uint8List.fromList(groupId.codeUnits),
-        (group) => _commitPairs((flags, epoch, root, added, committer) =>
-            _bindings._groupL1Merge(
-                _liveHandle, group, flags, epoch, root, added, committer)));
+      Uint8List.fromList(groupId.codeUnits),
+      (group) => _commitPairs(
+        (flags, epoch, root, added, committer) => _bindings._groupL1Merge(
+          _liveHandle,
+          group,
+          flags,
+          epoch,
+          root,
+          added,
+          committer,
+        ),
+      ),
+    );
   }
 
   CommitPairs _commitPairs(
-      int Function(Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>,
-              Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>)
-          call) {
+    int Function(
+      Pointer<Uint8>,
+      Pointer<Uint64>,
+      Pointer<_PmOwnedBuffer>,
+      Pointer<_PmOwnedBuffer>,
+      Pointer<_PmOwnedBuffer>,
+    ) call,
+  ) {
     final flags = calloc<Uint8>();
     final epoch = calloc<Uint64>();
     final root = calloc<_PmOwnedBuffer>();
@@ -809,8 +867,11 @@ extension DeviceListDevice on NativeCryptoDevice {
       // From here the commit is merged (D94): nothing below may throw. A
       // buffer that cannot be read becomes `unreadable`, never an exception.
       var unreadable = false;
-      List<int>? read(_PmOwnedBuffer buffer, int maximum,
-          {bool optional = false}) {
+      List<int>? read(
+        _PmOwnedBuffer buffer,
+        int maximum, {
+        bool optional = false,
+      }) {
         if (optional && buffer.data == nullptr) return null;
         try {
           final bytes = _bindings._take(buffer, maximum: maximum);
@@ -862,7 +923,7 @@ extension DeviceListDevice on NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],

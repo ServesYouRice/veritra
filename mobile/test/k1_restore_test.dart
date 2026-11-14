@@ -27,32 +27,34 @@ const _src = 'dev_src';
 const _backupId = 'backup_00112233445566778899aabbccddeeff';
 
 LocalMessage _msg(String action) => LocalMessage(
-    key: '$_src:$action',
-    conversationId: 'conv',
-    senderAccountId: 'bob',
-    senderDeviceId: _src,
-    kind: 'text',
-    body: action,
-    createdAt: 1700000000000,
-    state: 'received',
-    senderHidden: false);
+      key: '$_src:$action',
+      conversationId: 'conv',
+      senderAccountId: 'bob',
+      senderDeviceId: _src,
+      kind: 'text',
+      body: action,
+      createdAt: 1700000000000,
+      state: 'received',
+      senderHidden: false,
+    );
 
 Uint8List _snapshotBytes({String account = 'acct_me', String device = _src}) =>
-    Uint8List.fromList(HistorySnapshot(
+    Uint8List.fromList(
+      HistorySnapshot(
         accountId: account,
         sourceDeviceId: device,
         counter: 7,
         createdAt: 1731000000000,
         conversations: const [
-          HistoryConversation('conv', 'dm', title: 'old chat')
+          HistoryConversation('conv', 'dm', title: 'old chat'),
         ],
-        messages: [
-          _msg('hello')
-        ],
+        messages: [_msg('hello')],
         reactions: const [],
         pins: const [],
         starred: const {},
-        preferences: const []).encode());
+        preferences: const [],
+      ).encode(),
+    );
 
 class _RestoreCrypto extends K0Crypto implements BackupOpenCryptoService {
   Uint8List rkId = _rkId;
@@ -70,17 +72,21 @@ class _RestoreCrypto extends K0Crypto implements BackupOpenCryptoService {
     entropies.add(value);
     final base = await super.deriveRecoveryKey(value);
     return RecoveryKeyValues(
-        rkPub: base.rkPub, rkId: rkId, rkAuthPub: base.rkAuthPub);
+      rkPub: base.rkPub,
+      rkId: rkId,
+      rkAuthPub: base.rkAuthPub,
+    );
   }
 
   BackupHeaderInfo _header() => BackupHeaderInfo(
-      accountId: headerAccount,
-      sourceDeviceId: headerDevice,
-      createdAtMs: 1731000000000,
-      counter: headerCounter,
-      rkId: _rkId,
-      plaintextVersion: 1,
-      paddedSize: 1 << 20);
+        accountId: headerAccount,
+        sourceDeviceId: headerDevice,
+        createdAtMs: 1731000000000,
+        counter: headerCounter,
+        rkId: _rkId,
+        plaintextVersion: 1,
+        paddedSize: 1 << 20,
+      );
 
   @override
   BackupHeaderInfo peekK1Backup(Uint8List prefix) => _header();
@@ -109,13 +115,19 @@ class _RestoreApi extends K0Api {
   Object? downloadFailure;
 
   @override
-  Future<List<Map<String, Object?>>> listBackups(String token,
-          {int limit = 100}) async =>
+  Future<List<Map<String, Object?>>> listBackups(
+    String token, {
+    int limit = 100,
+  }) async =>
       rows;
 
   @override
-  Future<Stream<List<int>>> downloadBackup(String token, String id,
-      {int? start, int? end}) async {
+  Future<Stream<List<int>>> downloadBackup(
+    String token,
+    String id, {
+    int? start,
+    int? end,
+  }) async {
     if (downloadFailure != null) throw downloadFailure!;
     ranges.add('$start-$end');
     final bytes = start == null
@@ -125,13 +137,15 @@ class _RestoreApi extends K0Api {
   }
 }
 
-Map<String, Object?> _row(Uint8List container,
-        {String id = _backupId,
-        String device = _src,
-        int kind = 1,
-        bool superseded = false,
-        Uint8List? rk,
-        String? sha}) =>
+Map<String, Object?> _row(
+  Uint8List container, {
+  String id = _backupId,
+  String device = _src,
+  int kind = 1,
+  bool superseded = false,
+  Uint8List? rk,
+  String? sha,
+}) =>
     <String, Object?>{
       'id': id,
       'device_id': device,
@@ -162,8 +176,9 @@ void main() {
     server = K0Server()..requireRecentAuth = false;
     store = MemoryLocalStore();
     crypto = _RestoreCrypto();
-    container =
-        Uint8List.fromList(List<int>.generate(2000, (i) => (i * 7 + 3) & 0xff));
+    container = Uint8List.fromList(
+      List<int>.generate(2000, (i) => (i * 7 + 3) & 0xff),
+    );
     api = _RestoreApi(server, container, [_row(container)]);
     state = AppState(
       apiClientFactory: (_) => api,
@@ -172,8 +187,11 @@ void main() {
       syncServiceFactory: (_, __) => K0QuietSync(),
     );
     state.k1DesktopTimerEnabled = false;
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _rkId);
+    server.status = RecoveryKeyStatus(
+      available: true,
+      configured: true,
+      rkId: _rkId,
+    );
     await store.saveSession(k0SignedIn);
     await state.tryRestoreSession();
   });
@@ -183,64 +201,74 @@ void main() {
   Future<List<String>> bodies() async =>
       (await store.exportHistorySnapshot()).isEmpty
           ? <String>[]
-          : HistorySnapshot.decode(await store.exportHistorySnapshot())
-              .messages
-              .map((m) => m.body ?? '')
-              .toList();
+          : HistorySnapshot.decode(
+              await store.exportHistorySnapshot(),
+            ).messages.map((m) => m.body ?? '').toList();
 
-  test('an old-format (VBK2) copy is never listed and the screen says so',
-      () async {
-    api.rows = [
-      <String, Object?>{'id': 'backup_old', 'kind': 0, 'size_bytes': 10},
-      <String, Object?>{'id': 'backup_older', 'size_bytes': 10},
-    ];
-    final list = (await state.loadK1RestoreList())!;
-    expect(list, isEmpty);
-    expect(state.k1LegacyBackupsRefused, isTrue);
-    api.rows = [_row(container)];
-    expect(await state.loadK1RestoreList(), hasLength(1));
-    expect(state.k1LegacyBackupsRefused, isFalse);
-  });
+  test(
+    'an old-format (VBK2) copy is never listed and the screen says so',
+    () async {
+      api.rows = [
+        <String, Object?>{'id': 'backup_old', 'kind': 0, 'size_bytes': 10},
+        <String, Object?>{'id': 'backup_older', 'size_bytes': 10},
+      ];
+      final list = (await state.loadK1RestoreList())!;
+      expect(list, isEmpty);
+      expect(state.k1LegacyBackupsRefused, isTrue);
+      api.rows = [_row(container)];
+      expect(await state.loadK1RestoreList(), hasLength(1));
+      expect(state.k1LegacyBackupsRefused, isFalse);
+    },
+  );
 
-  test('restores into an enrolled device, keeps the key, wipes buffers',
-      () async {
-    final list = (await state.loadK1RestoreList())!;
-    expect(list, hasLength(1));
-    final result = await state.restoreFromK1Backup(list.single, k0Display);
-    expect(result, K1RestoreResult.done);
-    expect(await bodies(), contains('hello'));
-    // The header was peeked with a ranged request, then the whole file.
-    expect(api.ranges, <String>['0-415', 'null-null']);
-    // Rust was told which device the row names.
-    expect(crypto.pinned, <String?>[_src]);
-    expect(crypto.plaintexts.single, everyElement(0));
-    expect(crypto.entropies.single, everyElement(0));
-    // The typed key (also the account's current key) turns backups on here.
-    final saved = state.k1BackupState!;
-    expect(saved.rkId, _rkId);
-    expect(saved.rkPub, isNotNull);
-    expect(saved.lastSuccessAt, isNull);
-    // Restoring again changes nothing (ledger).
-    expect(await state.restoreFromK1Backup(list.single, k0Display),
-        K1RestoreResult.done);
-    expect((await bodies()).where((b) => b == 'hello'), hasLength(1));
-  });
+  test(
+    'restores into an enrolled device, keeps the key, wipes buffers',
+    () async {
+      final list = (await state.loadK1RestoreList())!;
+      expect(list, hasLength(1));
+      final result = await state.restoreFromK1Backup(list.single, k0Display);
+      expect(result, K1RestoreResult.done);
+      expect(await bodies(), contains('hello'));
+      // The header was peeked with a ranged request, then the whole file.
+      expect(api.ranges, <String>['0-415', 'null-null']);
+      // Rust was told which device the row names.
+      expect(crypto.pinned, <String?>[_src]);
+      expect(crypto.plaintexts.single, everyElement(0));
+      expect(crypto.entropies.single, everyElement(0));
+      // The typed key (also the account's current key) turns backups on here.
+      final saved = state.k1BackupState!;
+      expect(saved.rkId, _rkId);
+      expect(saved.rkPub, isNotNull);
+      expect(saved.lastSuccessAt, isNull);
+      // Restoring again changes nothing (ledger).
+      expect(
+        await state.restoreFromK1Backup(list.single, k0Display),
+        K1RestoreResult.done,
+      );
+      expect((await bodies()).where((b) => b == 'hello'), hasLength(1));
+    },
+  );
 
-  test('another key than the copy is sealed to fails before any download',
-      () async {
-    crypto.rkId = _otherRkId;
-    final entry = (await state.loadK1RestoreList())!.single;
-    expect(await state.restoreFromK1Backup(entry, k0Display),
-        K1RestoreResult.otherKey);
-    expect(api.ranges, isEmpty);
-    expect(crypto.entropies.single, everyElement(0));
-  });
+  test(
+    'another key than the copy is sealed to fails before any download',
+    () async {
+      crypto.rkId = _otherRkId;
+      final entry = (await state.loadK1RestoreList())!.single;
+      expect(
+        await state.restoreFromK1Backup(entry, k0Display),
+        K1RestoreResult.otherKey,
+      );
+      expect(api.ranges, isEmpty);
+      expect(crypto.entropies.single, everyElement(0));
+    },
+  );
 
   test('a wrong header, digest or snapshot imports nothing', () async {
     final entry = (await state.loadK1RestoreList())!.single;
     Future<void> corrupt() async => expect(
-        await state.restoreFromK1Backup(entry, k0Display),
-        K1RestoreResult.corrupt);
+          await state.restoreFromK1Backup(entry, k0Display),
+          K1RestoreResult.corrupt,
+        );
     crypto.headerAccount = 'acct_other';
     await corrupt();
     crypto.headerAccount = 'acct_me';
@@ -270,8 +298,10 @@ void main() {
   test('a network failure is retryable and changes nothing', () async {
     final entry = (await state.loadK1RestoreList())!.single;
     api.downloadFailure = ApiException(503, '');
-    expect(await state.restoreFromK1Backup(entry, k0Display),
-        K1RestoreResult.network);
+    expect(
+      await state.restoreFromK1Backup(entry, k0Display),
+      K1RestoreResult.network,
+    );
     expect(await bodies(), isNot(contains('hello')));
   });
 
@@ -284,14 +314,19 @@ void main() {
       _row(container, id: 'backup_junk', sha: 'zz'),
     ];
     final candidates = k1RestoreCandidates(
-        rows.map(K1BackupEntry.tryParse).whereType<K1BackupEntry>(), 'dev_old');
+      rows.map(K1BackupEntry.tryParse).whereType<K1BackupEntry>(),
+      'dev_old',
+    );
     expect(candidates.map((e) => e.id), <String>['backup_cur', 'backup_prev']);
   });
 
   test('a restore on the copy-source device itself is refused', () async {
     final entry = K1BackupEntry.tryParse(
-        _row(container, id: 'backup_own', device: 'dev_old'))!;
-    expect(await state.restoreFromK1Backup(entry, k0Display),
-        K1RestoreResult.unavailable);
+      _row(container, id: 'backup_own', device: 'dev_old'),
+    )!;
+    expect(
+      await state.restoreFromK1Backup(entry, k0Display),
+      K1RestoreResult.unavailable,
+    );
   });
 }

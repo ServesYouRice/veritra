@@ -36,9 +36,12 @@ class GovernanceObservationChange {
   /// add a leaf under the owner's account id (ABI 20 review note).
   final bool senderApproved;
 
-  GovernanceObservations reduce(GovernanceObservations? previous) => previous ==
-          null
-      ? GovernanceObservations.firstSeen(state, receivedAt.toUtc())
-      : previous.accepted(state, receivedAt.toUtc(),
-          ownerActive: senderApproved && authenticatedSender == state.owner);
+  GovernanceObservations reduce(GovernanceObservations? previous) =>
+      previous == null
+          ? GovernanceObservations.firstSeen(state, receivedAt.toUtc())
+          : previous.accepted(
+              state,
+              receivedAt.toUtc(),
+              ownerActive: senderApproved && authenticatedSender == state.owner,
+            );
 }

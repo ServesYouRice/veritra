@@ -77,7 +77,9 @@ class K1BackupEntry {
 /// current copy of each device first, newest first. Superseded copies come
 /// last, so the screen can show them as "the one before".
 List<K1BackupEntry> k1RestoreCandidates(
-    Iterable<K1BackupEntry> entries, String ownDeviceId) {
+  Iterable<K1BackupEntry> entries,
+  String ownDeviceId,
+) {
   final list = entries.where((e) => e.deviceId != ownDeviceId).toList()
     ..sort((a, b) {
       if (a.superseded != b.superseded) return a.superseded ? 1 : -1;

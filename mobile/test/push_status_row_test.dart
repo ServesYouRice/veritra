@@ -49,12 +49,14 @@ Future<void> _show(
     ..pushState = push
     ..notificationPermission = permission;
   addTearDown(state.dispose);
-  await tester.pumpWidget(MaterialApp(
-    theme: veritraLightTheme(),
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(body: SettingsScreen(state: state)),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: veritraLightTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: SettingsScreen(state: state)),
+    ),
+  );
   // Settings keeps a spinner running while it loads, so settle by hand.
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 200));
@@ -75,12 +77,15 @@ void main() {
     );
     expect(find.text(l10n.settingsPushActiveTitle), findsOneWidget);
     expect(
-        tintOf(tester, Icons.notifications_active_outlined), states.verified);
+      tintOf(tester, Icons.notifications_active_outlined),
+      states.verified,
+    );
     expect(find.text(l10n.settingsTurnOn), findsNothing);
   });
 
-  testWidgets('permission not asked yet is not shown as active',
-      (tester) async {
+  testWidgets('permission not asked yet is not shown as active', (
+    tester,
+  ) async {
     await _show(
       tester,
       push: PushState.registered,
@@ -106,8 +111,9 @@ void main() {
     expect(tintOf(tester, Icons.notifications_off_outlined), states.warning);
   });
 
-  testWidgets('a permission the device cannot confirm is not shown as active',
-      (tester) async {
+  testWidgets('a permission the device cannot confirm is not shown as active', (
+    tester,
+  ) async {
     await _show(
       tester,
       push: PushState.registered,
@@ -116,11 +122,14 @@ void main() {
     expect(find.text(l10n.settingsPushActiveTitle), findsNothing);
     expect(find.text(l10n.settingsPushUnconfirmedTitle), findsOneWidget);
     expect(
-        tintOf(tester, Icons.notification_important_outlined), states.warning);
+      tintOf(tester, Icons.notification_important_outlined),
+      states.warning,
+    );
   });
 
-  testWidgets('other push states are unchanged by the permission',
-      (tester) async {
+  testWidgets('other push states are unchanged by the permission', (
+    tester,
+  ) async {
     await _show(
       tester,
       push: PushState.noDistributor,

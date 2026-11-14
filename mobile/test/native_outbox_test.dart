@@ -118,9 +118,10 @@ void main() {
       // The server saw ciphertext only, and the same metadata shape for every
       // payload type (D22).
       final shapes = harness.server.envelopes
-          .map((json) => ((json['crypto_metadata']! as Map).keys.toList()
-                ..sort())
-              .join(','))
+          .map(
+            (json) => ((json['crypto_metadata']! as Map).keys.toList()..sort())
+                .join(','),
+          )
           .toSet();
       expect(shapes, hasLength(1));
       for (final json in harness.server.envelopes) {
@@ -155,7 +156,7 @@ void main() {
       (AppPayloadType.groupProfileKey, body),
       (
         AppPayloadType.text,
-        {'text': 'shared', 'profile_key': body, 'group_profile_key': body}
+        {'text': 'shared', 'profile_key': body, 'group_profile_key': body},
       ),
       (
         AppPayloadType.reply,
@@ -163,8 +164,8 @@ void main() {
           'text': 'reply',
           'reply_to_id': 'dev_alice:target',
           'profile_key': body,
-          'group_profile_key': body
-        }
+          'group_profile_key': body,
+        },
       ),
       (
         AppPayloadType.attachmentManifest,
@@ -180,11 +181,11 @@ void main() {
               'ciphertext_size': 17,
               'file_name': 'photo.png',
               'media_type': 'image/png',
-            }
+            },
           ],
           'profile_key': body,
-          'group_profile_key': body
-        }
+          'group_profile_key': body,
+        },
       ),
       (
         AppPayloadType.poll,
@@ -193,108 +194,129 @@ void main() {
           'options': ['Here', 'There'],
           'multiple_choice': false,
           'profile_key': body,
-          'group_profile_key': body
-        }
+          'group_profile_key': body,
+        },
       ),
     ];
     for (final (type, payload) in cases) {
       // Each case must deliver its own keys; an earlier key message must not
       // make a broken sidecar path pass.
       await harness.bob.store.deleteProfileSubject('account', 'acct_alice');
-      await harness.bob.store
-          .deleteProfileSubject('conversation', _conversation);
-      final envelope = await harness.aliceCrypto
-          .encryptPayload(_conversation, type, payload);
+      await harness.bob.store.deleteProfileSubject(
+        'conversation',
+        _conversation,
+      );
+      final envelope = await harness.aliceCrypto.encryptPayload(
+        _conversation,
+        type,
+        payload,
+      );
       await harness.alice.retryEnvelope(envelope.idempotencyKey);
       await harness.deliverToBob(await harness.nextEnvelope());
       if (type != AppPayloadType.groupProfileKey) {
         expect(
-            (await harness.bob.store.loadProfileKeys('account', 'acct_alice'))
-                .single
-                .key,
-            key,
-            reason: type.name);
+          (await harness.bob.store.loadProfileKeys(
+            'account',
+            'acct_alice',
+          ))
+              .single
+              .key,
+          key,
+          reason: type.name,
+        );
       }
       if (type != AppPayloadType.profileKey) {
         expect(
-            (await harness.bob.store
-                    .loadProfileKeys('conversation', _conversation))
-                .single
-                .key,
-            key,
-            reason: type.name);
+          (await harness.bob.store.loadProfileKeys(
+            'conversation',
+            _conversation,
+          ))
+              .single
+              .key,
+          key,
+          reason: type.name,
+        );
       }
     }
-    final accountKeys =
-        await harness.bob.store.loadProfileKeys('account', 'acct_alice');
-    final groupKeys =
-        await harness.bob.store.loadProfileKeys('conversation', _conversation);
+    final accountKeys = await harness.bob.store.loadProfileKeys(
+      'account',
+      'acct_alice',
+    );
+    final groupKeys = await harness.bob.store.loadProfileKeys(
+      'conversation',
+      _conversation,
+    );
     expect(accountKeys.single.key, key);
     expect(groupKeys.single.key, key);
     expect(
-        (await harness.bob.store.loadProfile('account', 'acct_alice'))!
-            .versionFloor,
-        7);
+      (await harness.bob.store.loadProfile(
+        'account',
+        'acct_alice',
+      ))!
+          .versionFloor,
+      7,
+    );
     final rows = await harness.bobHistory();
     expect(
-        rows.where((row) => row.kind == LocalMessageKind.action), hasLength(2));
+      rows.where((row) => row.kind == LocalMessageKind.action),
+      hasLength(2),
+    );
     expect(rows.where((row) => row.body == 'shared'), hasLength(1));
   }, skip: skip);
 
   test(
-    'C2 a restricted post from a non-admin is dropped; an admin and an '
-    'unrestricted group are not',
-    () async {
-      final harness = await _Harness.start(library());
-      addTearDown(harness.dispose);
-      final alice = harness.alice;
-      await alice.loadConversationMembers(_conversation);
-      final source = _RoleSource();
-      harness.bob.service.conversationAuthority = source;
+      'C2 a restricted post from a non-admin is dropped; an admin and an '
+      'unrestricted group are not', () async {
+    final harness = await _Harness.start(library());
+    addTearDown(harness.dispose);
+    final alice = harness.alice;
+    await alice.loadConversationMembers(_conversation);
+    final source = _RoleSource();
+    harness.bob.service.conversationAuthority = source;
 
-      // No record: nothing is dropped, even where the server restricts.
-      source.serverRestricts = true;
-      expect(await alice.sendMessageTo(_conversation, 'no record'), isTrue);
-      await harness.deliverToBob(await harness.nextEnvelope());
-      expect((await harness.bobHistory()).single.body, 'no record');
+    // No record: nothing is dropped, even where the server restricts.
+    source.serverRestricts = true;
+    expect(await alice.sendMessageTo(_conversation, 'no record'), isTrue);
+    await harness.deliverToBob(await harness.nextEnvelope());
+    expect((await harness.bobHistory()).single.body, 'no record');
 
-      // A record that restricts posting, alice a plain member: dropped. The
-      // timeline shows nothing for it, and bob's cursor still moved.
-      source.serverRestricts = false;
-      source.record = GovernanceState(
-        rev: 1,
-        owner: 'acct_bob',
-        ownerRev: 0,
-        adminsOnlyPosting: true,
-        joined: {'acct_bob': 0, 'acct_alice': 1},
-      );
-      expect(await alice.sendMessageTo(_conversation, 'dropped'), isTrue);
-      await harness.deliverToBob(await harness.nextEnvelope());
-      final visible = await harness.bobHistory();
-      // The drop leaves only a hidden action row (no body) in bob's store.
-      expect(visible.where((m) => m.body != null).map((m) => m.body),
-          ['no record']);
-      expect(visible.length, 2);
+    // A record that restricts posting, alice a plain member: dropped. The
+    // timeline shows nothing for it, and bob's cursor still moved.
+    source.serverRestricts = false;
+    source.record = GovernanceState(
+      rev: 1,
+      owner: 'acct_bob',
+      ownerRev: 0,
+      adminsOnlyPosting: true,
+      joined: {'acct_bob': 0, 'acct_alice': 1},
+    );
+    expect(await alice.sendMessageTo(_conversation, 'dropped'), isTrue);
+    await harness.deliverToBob(await harness.nextEnvelope());
+    final visible = await harness.bobHistory();
+    // The drop leaves only a hidden action row (no body) in bob's store.
+    expect(visible.where((m) => m.body != null).map((m) => m.body), [
+      'no record',
+    ]);
+    expect(visible.length, 2);
 
-      // The same sender once the record makes it an admin: kept.
-      source.record = GovernanceState(
-        rev: 2,
-        owner: 'acct_bob',
-        ownerRev: 0,
-        admins: {'acct_alice': 2},
-        adminsOnlyPosting: true,
-        joined: {'acct_bob': 0, 'acct_alice': 1},
-      );
-      expect(await alice.sendMessageTo(_conversation, 'kept'), isTrue);
-      await harness.deliverToBob(await harness.nextEnvelope());
-      expect(
-          (await harness.bobHistory())
-              .where((m) => m.body != null)
-              .map((m) => m.body),
-          ['no record', 'kept']);
-    },
-    skip: skip,
-  );
+    // The same sender once the record makes it an admin: kept.
+    source.record = GovernanceState(
+      rev: 2,
+      owner: 'acct_bob',
+      ownerRev: 0,
+      admins: {'acct_alice': 2},
+      adminsOnlyPosting: true,
+      joined: {'acct_bob': 0, 'acct_alice': 1},
+    );
+    expect(await alice.sendMessageTo(_conversation, 'kept'), isTrue);
+    await harness.deliverToBob(await harness.nextEnvelope());
+    expect(
+      (await harness.bobHistory())
+          .where((m) => m.body != null)
+          .map((m) => m.body),
+      ['no record', 'kept'],
+    );
+  }, skip: skip);
 
   test(
     'W8 formatted text, mentions, pins and forwards cross the native outbox',
@@ -310,33 +332,50 @@ void main() {
       final formattedEnvelope = await harness.nextEnvelope();
       await harness.deliverToBob(formattedEnvelope);
       final key = messageKey(
-          'dev_alice', formattedEnvelope['idempotency_key'] as String);
+        'dev_alice',
+        formattedEnvelope['idempotency_key'] as String,
+      );
       final formatted = (await harness.bobHistory()).single;
       expect(formatted.body, 'hello @bob');
       final decoration = jsonDecode(formatted.formatJson!) as Map;
-      expect((decoration['entities'] as List).single,
-          {'type': 'bold', 'offset': 0, 'length': 5});
-      expect(((decoration['mentions'] as List).single as Map)['account_id'],
-          'acct_bob');
+      expect((decoration['entities'] as List).single, {
+        'type': 'bold',
+        'offset': 0,
+        'length': 5,
+      });
+      expect(
+        ((decoration['mentions'] as List).single as Map)['account_id'],
+        'acct_bob',
+      );
 
       expect(
-          await alice.pinMessage(_conversation, key,
-              pinned: true, durationSeconds: 86400),
-          isTrue);
+        await alice.pinMessage(
+          _conversation,
+          key,
+          pinned: true,
+          durationSeconds: 86400,
+        ),
+        isTrue,
+      );
       final pinEnvelope = await harness.nextEnvelope();
       await harness.deliverToBob(pinEnvelope);
-      expect((await harness.bob.store.loadPins(_conversation)).single.targetKey,
-          key);
+      expect(
+        (await harness.bob.store.loadPins(_conversation)).single.targetKey,
+        key,
+      );
 
       final source = alice.historyFor(_conversation).forKey(key)!;
       await harness.aliceStore.saveDraft(_conversation, 'hello @bob');
       expect(await alice.forwardMessage(source, [_conversation]), isTrue);
-      expect((await harness.aliceStore.loadDrafts())[_conversation]?.text,
-          'hello @bob');
+      expect(
+        (await harness.aliceStore.loadDrafts())[_conversation]?.text,
+        'hello @bob',
+      );
       final forwardEnvelope = await harness.nextEnvelope();
       await harness.deliverToBob(forwardEnvelope);
-      final forward =
-          (await harness.bobHistory()).firstWhere((m) => m.forwardHops != null);
+      final forward = (await harness.bobHistory()).firstWhere(
+        (m) => m.forwardHops != null,
+      );
       expect(forward.key, isNot(key));
       expect(forward.replyTo, isNull);
       expect(forward.forwardHops, 1);
@@ -345,14 +384,19 @@ void main() {
       expect(forwardDecoration.containsKey('mentions'), false);
       for (final json in [formattedEnvelope, pinEnvelope, forwardEnvelope]) {
         expect((json['crypto_metadata'] as Map)['payload_version'], 1);
-        expect((json['crypto_metadata'] as Map).keys.toSet(),
-            (formattedEnvelope['crypto_metadata'] as Map).keys.toSet());
+        expect(
+          (json['crypto_metadata'] as Map).keys.toSet(),
+          (formattedEnvelope['crypto_metadata'] as Map).keys.toSet(),
+        );
       }
-      final many = await harness.aliceCrypto
-          .encryptPayload(_conversation, AppPayloadType.text, {
-        'text': 'many',
-        'forwarded': {'hops': 5}
-      });
+      final many = await harness.aliceCrypto.encryptPayload(
+        _conversation,
+        AppPayloadType.text,
+        {
+          'text': 'many',
+          'forwarded': {'hops': 5},
+        },
+      );
       await alice.refreshHistory(_conversation);
       await alice.retryEnvelope(many.idempotencyKey);
       await harness.deliverToBob(await harness.nextEnvelope());
@@ -362,17 +406,25 @@ void main() {
       alice.conversations = [
         ...alice.conversations,
         for (var i = 1; i <= 5; i++)
-          Conversation(id: 'other$i', kind: 'dm', createdBy: 'acct_alice')
+          Conversation(id: 'other$i', kind: 'dm', createdBy: 'acct_alice'),
       ];
       final before = harness.aliceCrypto.encryptCalls;
-      expect(await alice.forwardMessage(manySource, [_conversation, 'other1']),
-          false);
       expect(
-          await alice.forwardMessage(
-              source, [_conversation, for (var i = 1; i <= 5; i++) 'other$i']),
-          false);
-      expect(harness.aliceCrypto.encryptCalls, before,
-          reason: 'a refused multi-chat forward must not partly send');
+        await alice.forwardMessage(manySource, [_conversation, 'other1']),
+        false,
+      );
+      expect(
+        await alice.forwardMessage(source, [
+          _conversation,
+          for (var i = 1; i <= 5; i++) 'other$i',
+        ]),
+        false,
+      );
+      expect(
+        harness.aliceCrypto.encryptCalls,
+        before,
+        reason: 'a refused multi-chat forward must not partly send',
+      );
     },
     skip: skip,
   );
@@ -385,8 +437,10 @@ void main() {
       final alice = harness.alice;
       expect(await alice.sendMessageTo(_conversation, 'target'), true);
       final first = await harness.nextEnvelope();
-      final target =
-          messageKey('dev_alice', first['idempotency_key'] as String);
+      final target = messageKey(
+        'dev_alice',
+        first['idempotency_key'] as String,
+      );
       // A community conversation still needs a moderator role to pin; a
       // plain group lets any member pin (owner decision 2026-10-31).
       final authority = _ChangingAuthority()..kind = 'community_channel';
@@ -395,28 +449,35 @@ void main() {
       final json = await harness.nextEnvelope();
       authority.role = 'member';
       final echo = ReceivedMessageEnvelope(
-          id: 'own-pin',
-          conversationId: _conversation,
-          senderAccountId: 'acct_alice',
-          senderDeviceId: 'dev_alice',
-          idempotencyKey: json['idempotency_key'] as String,
-          ciphertext: base64Decode(json['ciphertext'] as String),
-          cryptoProtocol: 'mls10-openmls-v1',
-          cryptoMetadata: json['crypto_metadata'],
-          frankCommit:
-              ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
-          createdAt: DateTime.now());
+        id: 'own-pin',
+        conversationId: _conversation,
+        senderAccountId: 'acct_alice',
+        senderDeviceId: 'dev_alice',
+        idempotencyKey: json['idempotency_key'] as String,
+        ciphertext: base64Decode(json['ciphertext'] as String),
+        cryptoProtocol: 'mls10-openmls-v1',
+        cryptoMetadata: json['crypto_metadata'],
+        frankCommit: ReceivedMessageEnvelope.frankCommitFromJson(
+          json['frank_commit'],
+        ),
+        createdAt: DateTime.now(),
+      );
       await harness.aliceCrypto.processApplicationMessage(
-          echo, (await harness.aliceStore.loadSyncCursor()) + 1);
+        echo,
+        (await harness.aliceStore.loadSyncCursor()) + 1,
+      );
       expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
       expect(
-          (jsonDecode(
-                  utf8.decode(await harness.aliceStore.exportHistorySnapshot()))
-              as Map)['pending_pins'],
-          isNull);
+        (jsonDecode(
+          utf8.decode(await harness.aliceStore.exportHistorySnapshot()),
+        ) as Map)['pending_pins'],
+        isNull,
+      );
       authority.role = 'admin';
       await harness.aliceCrypto.processApplicationMessage(
-          echo, (await harness.aliceStore.loadSyncCursor()) + 1);
+        echo,
+        (await harness.aliceStore.loadSyncCursor()) + 1,
+      );
       expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
     },
     skip: skip,
@@ -621,8 +682,9 @@ class _Harness {
           ciphertext: base64Decode(json['ciphertext']! as String),
           cryptoProtocol: json['crypto_protocol']! as String,
           cryptoMetadata: json['crypto_metadata'],
-          frankCommit:
-              ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
+          frankCommit: ReceivedMessageEnvelope.frankCommitFromJson(
+            json['frank_commit'],
+          ),
           createdAt: DateTime.now().toUtc(),
         ),
       );
@@ -679,8 +741,10 @@ class _Member {
     String deviceId,
   ) async {
     final store = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: store);
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: store,
+    );
     await service.createEnrollmentCredential(
       EnrollmentReservation(
         id: 'res_$deviceId',
@@ -803,10 +867,15 @@ class _StandInApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       [
         ConversationMember(
-            accountId: 'acct_alice', username: 'alice', role: 'member'),
+          accountId: 'acct_alice',
+          username: 'alice',
+          role: 'member',
+        ),
         ConversationMember(
             accountId: 'acct_bob', username: 'bob', role: 'member'),
       ];
@@ -858,8 +927,10 @@ class _RoleSource implements ConversationAuthority, VerifiedRoleSource {
   @override
   String? conversationChannel(String conversationId) => null;
   @override
-  Set<String> memberAccounts(String conversationId) =>
-      {'acct_alice', 'acct_bob'};
+  Set<String> memberAccounts(String conversationId) => {
+        'acct_alice',
+        'acct_bob',
+      };
   @override
   String? roleOf(String conversationId, String accountId) => 'member';
 }
@@ -872,8 +943,10 @@ class _ChangingAuthority implements ConversationAuthority {
   @override
   String? conversationChannel(String conversationId) => null;
   @override
-  Set<String> memberAccounts(String conversationId) =>
-      {'acct_alice', 'acct_bob'};
+  Set<String> memberAccounts(String conversationId) => {
+        'acct_alice',
+        'acct_bob',
+      };
   @override
   String? roleOf(String conversationId, String accountId) => role;
 }

@@ -129,24 +129,27 @@ void main() {
 
   group('UpdateService', () {
     final now = DateTime.utc(2026, 11, 10, 15);
-    final updatePayload = utf8.encode(jsonEncode(<String, Object?>{
-      'version': '0.2.0',
-      'build': 2,
-      'platform': 'windows',
-      'arch': 'x64',
-      'issued_at': '2026-11-10T12:00:00Z',
-      'expires_at': '2026-11-20T12:00:00Z',
-      'url':
-          'https://github.com/ServesYouRice/veritra/releases/download/v0.2.0/Veritra-Setup-0.2.0-x64.exe',
-      'sha256': 'b' * 64,
-      'notes': 'Version 0.2.0 notes',
-    }));
+    final updatePayload = utf8.encode(
+      jsonEncode(<String, Object?>{
+        'version': '0.2.0',
+        'build': 2,
+        'platform': 'windows',
+        'arch': 'x64',
+        'issued_at': '2026-11-10T12:00:00Z',
+        'expires_at': '2026-11-20T12:00:00Z',
+        'url':
+            'https://github.com/ServesYouRice/veritra/releases/download/v0.2.0/Veritra-Setup-0.2.0-x64.exe',
+        'sha256': 'b' * 64,
+        'notes': 'Version 0.2.0 notes',
+      }),
+    );
 
     test('skips checking when auto-check is disabled unless forced', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(false));
       await settings.load();
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -165,8 +168,9 @@ void main() {
 
     test('detects available update when build is newer', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -182,8 +186,9 @@ void main() {
 
     test('reports upToDate when running current or newer build', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -197,8 +202,9 @@ void main() {
 
     test('rejects expired update metadata', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -213,8 +219,9 @@ void main() {
 
     test('rejects platform mismatch', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -230,8 +237,9 @@ void main() {
 
     test('rejects architecture mismatch', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -245,38 +253,44 @@ void main() {
       expect(status.errorMessage, contains('architecture'));
     });
 
-    test('startup check awaits settings load and respects disabled setting',
-        () async {
-      final completer = Completer<bool?>();
-      final slowStore = _SlowSettingsStore(completer.future);
-      final settings = UpdateSettings(slowStore);
-      unawaited(settings.load());
+    test(
+      'startup check awaits settings load and respects disabled setting',
+      () async {
+        final completer = Completer<bool?>();
+        final slowStore = _SlowSettingsStore(completer.future);
+        final settings = UpdateSettings(slowStore);
+        unawaited(settings.load());
 
-      var fetchCalled = false;
-      final client = _TrackingUpdateClient(
-        onFetch: () => fetchCalled = true,
-        responseBytes: Uint8List.fromList(updatePayload),
-      );
-      final service = UpdateService(
-        settings: settings,
-        client: client,
-        currentBuild: 1,
-        now: () => now,
-      );
+        var fetchCalled = false;
+        final client = _TrackingUpdateClient(
+          onFetch: () => fetchCalled = true,
+          responseBytes: Uint8List.fromList(updatePayload),
+        );
+        final service = UpdateService(
+          settings: settings,
+          client: client,
+          currentBuild: 1,
+          now: () => now,
+        );
 
-      final checkFuture = service.checkForUpdatesIfEnabled();
-      completer.complete(false);
-      final status = await checkFuture;
+        final checkFuture = service.checkForUpdatesIfEnabled();
+        completer.complete(false);
+        final status = await checkFuture;
 
-      expect(status.kind, UpdateStatusKind.disabled);
-      expect(fetchCalled, isFalse,
-          reason: 'Must not contact network when setting is disabled');
-    });
+        expect(status.kind, UpdateStatusKind.disabled);
+        expect(
+          fetchCalled,
+          isFalse,
+          reason: 'Must not contact network when setting is disabled',
+        );
+      },
+    );
 
     test('rejects invalid signature', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final client = MemoryUpdateClient(
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -293,7 +307,8 @@ void main() {
     test('handles malformed json payload', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
       final client = MemoryUpdateClient(
-          responseBytes: Uint8List.fromList(utf8.encode('not-a-json')));
+        responseBytes: Uint8List.fromList(utf8.encode('not-a-json')),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -307,8 +322,9 @@ void main() {
 
     test('handles network error', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
-      final client =
-          MemoryUpdateClient(error: const HttpException('Failed to connect'));
+      final client = MemoryUpdateClient(
+        error: const HttpException('Failed to connect'),
+      );
       final service = UpdateService(
         settings: settings,
         client: client,
@@ -377,7 +393,8 @@ class _TrackingUpdateClient implements UpdateClient {
 
   @override
   Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
-      Uri feedUri) async {
+    Uri feedUri,
+  ) async {
     onFetch();
     return (jsonBytes: responseBytes, signatureBytes: null);
   }
@@ -385,7 +402,9 @@ class _TrackingUpdateClient implements UpdateClient {
 
 class _AlwaysRejectVerifier implements UpdateSignatureVerifier {
   @override
-  Future<bool> verify(
-          {required List<int> data, required List<int>? signature}) async =>
+  Future<bool> verify({
+    required List<int> data,
+    required List<int>? signature,
+  }) async =>
       false;
 }

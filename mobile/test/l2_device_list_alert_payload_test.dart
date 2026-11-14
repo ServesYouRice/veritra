@@ -25,21 +25,25 @@ void main() {
     'list_id': 'ab' * 32,
   };
 
-  AppPayloadOutcome classify(Map<String, Object?> body,
-          {int v = 2, bool hidden = true}) =>
+  AppPayloadOutcome classify(
+    Map<String, Object?> body, {
+    int v = 2,
+    bool hidden = true,
+  }) =>
       codec.classify(
-          _frame({
-            'v': v,
-            'type': 'device_list_alert',
-            'conversation_id': 'conv',
-            'sender_device_id': 'dev',
-            'action_id': 'action',
-            if (hidden) 'hidden': true,
-            'body': body,
-          }),
-          conversationId: 'conv',
-          senderDeviceId: 'dev',
-          actionId: 'action');
+        _frame({
+          'v': v,
+          'type': 'device_list_alert',
+          'conversation_id': 'conv',
+          'sender_device_id': 'dev',
+          'action_id': 'action',
+          if (hidden) 'hidden': true,
+          'body': body,
+        }),
+        conversationId: 'conv',
+        senderDeviceId: 'dev',
+        actionId: 'action',
+      );
 
   test('device_list_alert is v2, hidden, unfranked and snake_case', () {
     const type = AppPayloadType.deviceListAlert;
@@ -47,12 +51,13 @@ void main() {
     expect(type.sendsHidden, isTrue);
     expect(FrankingPolicy.unfrankedPayloadTypes, contains(type.name));
     final framed = codec.encode(
-        type: type,
-        conversationId: 'conv',
-        senderDeviceId: 'dev',
-        actionId: 'action',
-        body: body,
-        hidden: true);
+      type: type,
+      conversationId: 'conv',
+      senderDeviceId: 'dev',
+      actionId: 'action',
+      body: body,
+      hidden: true,
+    );
     final length = ByteData.sublistView(framed).getUint32(4);
     final wire = jsonDecode(utf8.decode(framed.sublist(8, 8 + length))) as Map;
     expect(wire['v'], 2);
@@ -61,8 +66,9 @@ void main() {
     final outcome = classify(body);
     expect(outcome, isA<DecodedAppPayload>());
     expect(
-        const FrankingPolicy(acceptUnfranked: false).acceptsUnfranked(outcome),
-        isTrue);
+      const FrankingPolicy(acceptUnfranked: false).acceptsUnfranked(outcome),
+      isTrue,
+    );
   });
 
   test('an old (v1) framing or a malformed body is refused', () {
@@ -90,8 +96,10 @@ void main() {
     final now = DateTime.utc(2026, 11, 11);
     expect(senderExpiryFor(AppPayloadType.deviceListAlert, 60, now), isNull);
     expect(senderExpiryFor(AppPayloadType.deviceListAlert, null, now), isNull);
-    expect(senderExpiryFor(AppPayloadType.text, 60, now),
-        now.add(const Duration(seconds: 60)));
+    expect(
+      senderExpiryFor(AppPayloadType.text, 60, now),
+      now.add(const Duration(seconds: 60)),
+    );
     expect(senderExpiryFor(AppPayloadType.text, 0, now), isNull);
     expect(senderExpiryFor(AppPayloadType.infoKey, 60, now), isNull);
     expect(senderExpiryFor(AppPayloadType.reportKey, 60, now), isNull);

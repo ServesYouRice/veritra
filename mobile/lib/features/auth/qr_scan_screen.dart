@@ -64,8 +64,9 @@ String? parseDeviceLinkOrigin(
 
 /// The Runner channel that opens this app's page in the system settings,
 /// where the camera can be allowed again (Android and iOS).
-const appSettingsChannel =
-    MethodChannel('org.veritra.private_messenger/app_settings');
+const appSettingsChannel = MethodChannel(
+  'org.veritra.private_messenger/app_settings',
+);
 
 /// Opens this app's page in the system settings. False when nothing opened
 /// (a platform without the channel, or the system refused).
@@ -246,15 +247,19 @@ class QrScannerError extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  const Icon(Icons.no_photography_outlined,
-                      size: 48, color: Colors.white70),
+                  const Icon(
+                    Icons.no_photography_outlined,
+                    size: 48,
+                    color: Colors.white70,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     message,
                     key: const ValueKey<String>('qr-error-message'),
                     textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: Colors.white),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   if (denied) ...<Widget>[

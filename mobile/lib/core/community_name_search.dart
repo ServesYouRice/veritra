@@ -61,8 +61,13 @@ List<MetadataSearchResult> searchCommunityNames(
   for (final community in communities) {
     final name = names[community.id] = communityName(community);
     if (matches(name)) {
-      hits.add(MetadataSearchResult(
-          type: 'community', id: community.id, label: name!.trim()));
+      hits.add(
+        MetadataSearchResult(
+          type: 'community',
+          id: community.id,
+          label: name!.trim(),
+        ),
+      );
       if (hits.length >= limit) return hits;
     }
   }
@@ -76,14 +81,16 @@ List<MetadataSearchResult> searchCommunityNames(
       final name = channelName(channel);
       if (!matches(name)) continue;
       final communityLabel = names[community.id]?.trim();
-      hits.add(MetadataSearchResult(
-        type: 'channel',
-        id: channel.id,
-        label: name!.trim(),
-        detail: communityLabel == null || communityLabel.isEmpty
-            ? null
-            : communityLabel,
-      ));
+      hits.add(
+        MetadataSearchResult(
+          type: 'channel',
+          id: channel.id,
+          label: name!.trim(),
+          detail: communityLabel == null || communityLabel.isEmpty
+              ? null
+              : communityLabel,
+        ),
+      );
       if (hits.length >= limit) return hits;
     }
   }
@@ -94,10 +101,14 @@ List<MetadataSearchResult> searchCommunityNames(
 /// routed channel names its group; a legacy channel has a conversation of
 /// its own that names the channel.
 String? channelConversationId(
-        Channel channel, List<Conversation> conversations) =>
+  Channel channel,
+  List<Conversation> conversations,
+) =>
     conversations
-        .where((conversation) => channel.isRouted
-            ? conversation.id == channel.conversationId
-            : conversation.channelId == channel.id)
+        .where(
+          (conversation) => channel.isRouted
+              ? conversation.id == channel.conversationId
+              : conversation.channelId == channel.id,
+        )
         .firstOrNull
         ?.id;

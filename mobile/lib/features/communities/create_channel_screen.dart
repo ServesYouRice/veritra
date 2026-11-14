@@ -15,15 +15,21 @@ import 'channel_history_warning.dart';
 /// list is taller than a phone, and the error must sit next to Create, where
 /// the person is looking, not at the end of a scrolled form.
 class CreateChannelScreen extends StatefulWidget {
-  const CreateChannelScreen(
-      {required this.state, required this.community, super.key});
+  const CreateChannelScreen({
+    required this.state,
+    required this.community,
+    super.key,
+  });
 
   final AppState state;
   final Community community;
 
   /// Opens the page; true once the channel is made and its members added.
   static Future<bool?> open(
-          BuildContext context, AppState state, Community community) =>
+    BuildContext context,
+    AppState state,
+    Community community,
+  ) =>
       Navigator.of(context).push<bool>(
         MaterialPageRoute<bool>(
           fullscreenDialog: true,
@@ -61,8 +67,9 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final members =
-        await widget.state.loadCommunityMembers(widget.community.id);
+    final members = await widget.state.loadCommunityMembers(
+      widget.community.id,
+    );
     if (!mounted) return;
     setState(() {
       _members = identical(widget.state.session, _owner) ? members : null;
@@ -81,9 +88,11 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
         return;
       }
       _created ??= await widget.state.createChannel(
-          widget.community.id, _name.text.trim(),
-          kind: _private ? 'private' : 'open',
-          fullHistory: _fullHistory && !_private);
+        widget.community.id,
+        _name.text.trim(),
+        kind: _private ? 'private' : 'open',
+        fullHistory: _fullHistory && !_private,
+      );
       final channel = _created;
       if (channel == null || !identical(widget.state.session, _owner)) {
         if (mounted) setState(() => _failed = true);
@@ -97,8 +106,10 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
         }
         for (final account in List.of(_selected)) {
           if (!identical(widget.state.session, _owner)) break;
-          final added = await widget.state
-              .addConversationMember(conversationId!, account);
+          final added = await widget.state.addConversationMember(
+            conversationId!,
+            account,
+          );
           if (added) _selected.remove(account);
         }
       }
@@ -126,8 +137,10 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final self = widget.state.session?.accountId;
-    final admin = _members?.any((m) =>
-            m.accountId == self && (m.role == 'owner' || m.role == 'admin')) ??
+    final admin = _members?.any(
+          (m) =>
+              m.accountId == self && (m.role == 'owner' || m.role == 'admin'),
+        ) ??
         false;
     final fixed = _saving || _created != null;
     final failure = !_failed
@@ -178,9 +191,11 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                               ? null
                               : (value) => setState(() => _private = value),
                     ),
-                    Text(_private
-                        ? l10n.channelPrivateDisclosure
-                        : l10n.channelOpenDisclosure),
+                    Text(
+                      _private
+                          ? l10n.channelPrivateDisclosure
+                          : l10n.channelOpenDisclosure,
+                    ),
                     if (widget.state.channelHistoryAvailable && !_private)
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -191,8 +206,10 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                             ? null
                             : (value) async {
                                 if (value &&
-                                    !await confirmChannelHistory(context,
-                                        full: true)) {
+                                    !await confirmChannelHistory(
+                                      context,
+                                      full: true,
+                                    )) {
                                   return;
                                 }
                                 if (mounted) {
@@ -205,7 +222,9 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                     else if (_members == null) ...[
                       Text(l10n.detailsMembersUnavailable),
                       TextButton(
-                          onPressed: _load, child: Text(l10n.commonRetry)),
+                        onPressed: _load,
+                        child: Text(l10n.commonRetry),
+                      ),
                     ] else if (!admin)
                       Text(l10n.channelAdminOnly)
                     else if (_private) ...[
@@ -263,9 +282,11 @@ class _CreateChannelScreenState extends State<CreateChannelScreen> {
                       const SizedBox(width: BoneSpacing.md),
                       FilledButton(
                         onPressed: canCreate ? _save : null,
-                        child: Text(_created == null
-                            ? l10n.commonCreate
-                            : l10n.commonRetry),
+                        child: Text(
+                          _created == null
+                              ? l10n.commonCreate
+                              : l10n.commonRetry,
+                        ),
                       ),
                     ],
                   ),

@@ -82,11 +82,15 @@ class PluginDesktopShell
             : 'assets/tray/veritra.png',
       );
       if (!Platform.isLinux) await trayManager.setToolTip(tooltip);
-      await trayManager.setContextMenu(Menu(items: <MenuItem>[
-        MenuItem(key: _openKey, label: openLabel),
-        MenuItem.separator(),
-        MenuItem(key: _quitKey, label: quitLabel),
-      ]));
+      await trayManager.setContextMenu(
+        Menu(
+          items: <MenuItem>[
+            MenuItem(key: _openKey, label: openLabel),
+            MenuItem.separator(),
+            MenuItem(key: _quitKey, label: quitLabel),
+          ],
+        ),
+      );
       trayManager.addListener(this);
       windowManager.addListener(this);
       await windowManager.setPreventClose(true);

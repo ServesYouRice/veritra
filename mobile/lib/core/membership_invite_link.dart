@@ -60,8 +60,9 @@ class MembershipInviteLink {
   /// Longest text [tryParse] looks at.
   static const int maxLinkLength = 512;
 
-  static final RegExp _fragmentPattern =
-      RegExp(r'^v2\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22})$');
+  static final RegExp _fragmentPattern = RegExp(
+    r'^v2\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22})$',
+  );
 
   /// A new link with a random secret for the server at [origin], committed
   /// to the creating device's [inviterSigningKey] (32 bytes). [random]
@@ -89,10 +90,11 @@ class MembershipInviteLink {
   /// The first [keyCommitmentLength] bytes of SHA-256 of a fixed label and
   /// the inviting device's signing key.
   static Uint8List _commit(List<int> signingKey) => Uint8List.fromList(
-          sha256(<int>[...utf8.encode(_keyCommitLabel), ...signingKey]).sublist(
-        0,
-        keyCommitmentLength,
-      ));
+        sha256(<int>[
+          ...utf8.encode(_keyCommitLabel),
+          ...signingKey,
+        ]).sublist(0, keyCommitmentLength),
+      );
 
   /// Reads a pasted or scanned link. Returns null for anything that is not a
   /// well-formed link of the server at [expectedOrigin]: wrong shape, another
@@ -125,11 +127,13 @@ class MembershipInviteLink {
     }
     final String linkOrigin;
     try {
-      linkOrigin = canonicalizeServerOrigin(Uri(
-        scheme: uri.scheme,
-        host: uri.host,
-        port: uri.hasPort ? uri.port : null,
-      ).toString());
+      linkOrigin = canonicalizeServerOrigin(
+        Uri(
+          scheme: uri.scheme,
+          host: uri.host,
+          port: uri.hasPort ? uri.port : null,
+        ).toString(),
+      );
     } on FormatException {
       return null;
     }
@@ -141,10 +145,12 @@ class MembershipInviteLink {
     final Uint8List secret;
     final Uint8List commitment;
     try {
-      secret =
-          Uint8List.fromList(base64Url.decode(base64Url.normalize(encoded)));
+      secret = Uint8List.fromList(
+        base64Url.decode(base64Url.normalize(encoded)),
+      );
       commitment = Uint8List.fromList(
-          base64Url.decode(base64Url.normalize(encodedCommitment)));
+        base64Url.decode(base64Url.normalize(encodedCommitment)),
+      );
     } on FormatException {
       return null;
     }
@@ -184,12 +190,14 @@ class MembershipInviteLink {
     required List<int> inviterSigningKey,
   }) {
     final message = BytesBuilder(copy: false)..add(utf8.encode(_bindingLabel));
-    _addFields(message,
-        kind: kind,
-        targetId: targetId,
-        inviterAccountId: inviterAccountId,
-        inviterDeviceId: inviterDeviceId,
-        inviterSigningKey: inviterSigningKey);
+    _addFields(
+      message,
+      kind: kind,
+      targetId: targetId,
+      inviterAccountId: inviterAccountId,
+      inviterDeviceId: inviterDeviceId,
+      inviterSigningKey: inviterSigningKey,
+    );
     final key = sha256(<int>[...utf8.encode(_bindingKeyLabel), ..._secret]);
     return hexOf(hmacSha256(key, message.takeBytes()));
   }
@@ -235,12 +243,14 @@ class MembershipInviteLink {
     required List<int> inviterSigningKey,
   }) {
     final message = BytesBuilder(copy: false);
-    _addFields(message,
-        kind: kind,
-        targetId: targetId,
-        inviterAccountId: inviterAccountId,
-        inviterDeviceId: inviterDeviceId,
-        inviterSigningKey: inviterSigningKey);
+    _addFields(
+      message,
+      kind: kind,
+      targetId: targetId,
+      inviterAccountId: inviterAccountId,
+      inviterDeviceId: inviterDeviceId,
+      inviterSigningKey: inviterSigningKey,
+    );
     _addField(message, utf8.encode(locator));
     return message.takeBytes();
   }

@@ -12,24 +12,30 @@ import 'package:private_messenger/ui/theme.dart';
 import 'test_crypto_service.dart';
 
 void main() {
-  testWidgets('on a fresh instance "Create owner" submits the owner form',
-      (tester) async {
+  testWidgets('on a fresh instance "Create owner" submits the owner form', (
+    tester,
+  ) async {
     // The form is a lazy ListView; lay all of it out.
     tester.view.physicalSize = const Size(1200, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _FreshInstanceState();
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      home: ConnectScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        home: ConnectScreen(state: state),
+      ),
+    );
     await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey<String>('welcome-set-up-server')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('welcome-set-up-server')),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byType(TextFormField).first, 'https://chat.example.org');
+      find.byType(TextFormField).first,
+      'https://chat.example.org',
+    );
     await tester.pumpAndSettle();
     expect(find.text('Create owner'), findsWidgets);
     expect(state.owners, isEmpty);
@@ -62,10 +68,12 @@ void main() {
       addTearDown(tester.view.reset);
       state = _FormState();
       addTearDown(state.dispose);
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: ConnectScreen(state: state),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: ConnectScreen(state: state),
+        ),
+      );
       await openRoute(tester, 'welcome-signed-in-before');
       await tester.enterText(find.byType(TextFormField).first, one);
       await tester.pump(const Duration(milliseconds: 700));
@@ -78,8 +86,9 @@ void main() {
 
     Finder submitButton() => find.byType(FilledButton).last;
 
-    testWidgets('editing the URL during the pre-flight sends nothing',
-        (tester) async {
+    testWidgets('editing the URL during the pre-flight sends nothing', (
+      tester,
+    ) async {
       await openSignIn(tester);
       final gate = Completer<void>();
       state.probeGates[one] = gate;
@@ -94,29 +103,35 @@ void main() {
       gate.complete();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(state.logins, isEmpty,
-          reason: 'nothing may reach the server the form no longer shows');
+      expect(
+        state.logins,
+        isEmpty,
+        reason: 'nothing may reach the server the form no longer shows',
+      );
     });
 
-    testWidgets('editing the URL during the stored-device lookup sends nothing',
-        (tester) async {
-      await openSignIn(tester);
-      final gate = Completer<void>();
-      state.identityGates[one] = gate;
-      await tester.tap(submitButton());
-      await tester.pump();
+    testWidgets(
+      'editing the URL during the stored-device lookup sends nothing',
+      (tester) async {
+        await openSignIn(tester);
+        final gate = Completer<void>();
+        state.identityGates[one] = gate;
+        await tester.tap(submitButton());
+        await tester.pump();
 
-      await tester.enterText(find.byType(TextFormField).first, two);
-      await tester.enterText(find.byType(TextFormField).at(2), 'pw-other');
-      await tester.pump();
-      gate.complete();
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.enterText(find.byType(TextFormField).first, two);
+        await tester.enterText(find.byType(TextFormField).at(2), 'pw-other');
+        await tester.pump();
+        gate.complete();
+        await tester.pump(const Duration(milliseconds: 100));
 
-      expect(state.logins, isEmpty);
-    });
+        expect(state.logins, isEmpty);
+      },
+    );
 
-    testWidgets('the credentials sent are the ones present at the tap',
-        (tester) async {
+    testWidgets('the credentials sent are the ones present at the tap', (
+      tester,
+    ) async {
       await openSignIn(tester);
       final gate = Completer<void>();
       state.probeGates[one] = gate;
@@ -132,8 +147,9 @@ void main() {
       expect(state.logins, <String>['$one|alice|pw-original']);
     });
 
-    testWidgets('a second tap during the pre-flight starts nothing',
-        (tester) async {
+    testWidgets('a second tap during the pre-flight starts nothing', (
+      tester,
+    ) async {
       await openSignIn(tester);
       final gate = Completer<void>();
       state.probeGates[one] = gate;
@@ -142,8 +158,11 @@ void main() {
       await tester.tap(submitButton());
       await tester.pump();
 
-      expect(tester.widget<FilledButton>(submitButton()).onPressed, isNull,
-          reason: 'the button reads as disabled while submitting');
+      expect(
+        tester.widget<FilledButton>(submitButton()).onPressed,
+        isNull,
+        reason: 'the button reads as disabled while submitting',
+      );
       await tester.tap(submitButton(), warnIfMissed: false);
       await tester.pump();
       gate.complete();
@@ -156,71 +175,98 @@ void main() {
   });
 
   group('URL listener', () {
-    testWidgets('a caret move does not clear the chosen mode or re-probe',
-        (tester) async {
+    testWidgets('a caret move does not clear the chosen mode or re-probe', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1200, 3000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
       final state = _FormState();
       addTearDown(state.dispose);
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: ConnectScreen(state: state),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: ConnectScreen(state: state),
+        ),
+      );
       // The person picks joining, although this device is linked there.
       await openRoute(tester, 'welcome-invite');
       expect(find.text('JOIN WITH AN INVITE'), findsOneWidget);
       // U21: the server address field is behind "type it instead".
-      await tester
-          .tap(find.byKey(const ValueKey<String>('connect-invite-manual')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('connect-invite-manual')),
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
-          find.byType(TextFormField).first, 'https://one.example.org');
+        find.byType(TextFormField).first,
+        'https://one.example.org',
+      );
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
       expect(state.probes, <String>['https://one.example.org']);
-      expect(find.text('JOIN WITH AN INVITE'), findsOneWidget,
-          reason: 'the probe does not override the chosen path');
+      expect(
+        find.text('JOIN WITH AN INVITE'),
+        findsOneWidget,
+        reason: 'the probe does not override the chosen path',
+      );
 
       // Clicking into the field, or selecting its text, changes only the
       // selection.
       final field = tester.widget<TextField>(find.byType(TextField).first);
       field.controller!.selection = const TextSelection.collapsed(offset: 3);
       await tester.pump();
-      field.controller!.selection =
-          const TextSelection(baseOffset: 0, extentOffset: 5);
+      field.controller!.selection = const TextSelection(
+        baseOffset: 0,
+        extentOffset: 5,
+      );
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
 
-      expect(state.probes, <String>['https://one.example.org'],
+      expect(
+          state.probes,
+          <String>[
+            'https://one.example.org',
+          ],
           reason: 'no new probe for an unchanged URL');
-      expect(find.text('JOIN WITH AN INVITE'), findsOneWidget,
-          reason: 'the chosen mode stays');
+      expect(
+        find.text('JOIN WITH AN INVITE'),
+        findsOneWidget,
+        reason: 'the chosen mode stays',
+      );
       expect(find.text('Checking the server…'), findsNothing);
     });
 
-    testWidgets('a real change of the URL text still probes again',
-        (tester) async {
+    testWidgets('a real change of the URL text still probes again', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1200, 3000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
       final state = _FormState();
       addTearDown(state.dispose);
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: ConnectScreen(state: state),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: ConnectScreen(state: state),
+        ),
+      );
       await openRoute(tester, 'welcome-signed-in-before');
       await tester.enterText(
-          find.byType(TextFormField).first, 'https://one.example.org');
+        find.byType(TextFormField).first,
+        'https://one.example.org',
+      );
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
       await tester.enterText(
-          find.byType(TextFormField).first, 'https://two.example.org');
+        find.byType(TextFormField).first,
+        'https://two.example.org',
+      );
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump();
-      expect(state.probes,
-          <String>['https://one.example.org', 'https://two.example.org']);
+      expect(state.probes, <String>[
+        'https://one.example.org',
+        'https://two.example.org',
+      ]);
     });
   });
 }
@@ -253,14 +299,20 @@ class _FreshInstanceState extends AppState {
   @override
   Future<SetupProbeResult> probeSetup(String baseUrl) async =>
       const SetupProbeResult(
-          state: SetupProbeState.reachable, setupRequired: true);
+        state: SetupProbeState.reachable,
+        setupRequired: true,
+      );
 
   @override
   Future<bool> hasStoredDeviceIdentityForOrigin(String baseUrl) async => false;
 
   @override
-  Future<void> createOwner(String baseUrl, String username, String password,
-      String setupToken) async {
+  Future<void> createOwner(
+    String baseUrl,
+    String username,
+    String password,
+    String setupToken,
+  ) async {
     owners.add('$username/$setupToken');
   }
 }
@@ -289,7 +341,9 @@ class _FormState extends AppState {
     probes.add(baseUrl);
     await probeGates[baseUrl]?.future;
     return const SetupProbeResult(
-        state: SetupProbeState.reachable, setupRequired: false);
+      state: SetupProbeState.reachable,
+      setupRequired: false,
+    );
   }
 
   @override

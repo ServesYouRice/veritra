@@ -9,9 +9,9 @@ import 'package:private_messenger/crypto/c7_history.dart';
 /// the 128-byte wrap of a C7 move and the compact move record carrying it.
 /// Rust and Go check the same file. A missing vector fails; it never skips.
 void main() {
-  final vector = jsonDecode(
-    File('../testing/vectors/c7-move-v1.json').readAsStringSync(),
-  ) as Map<String, dynamic>;
+  final vector =
+      jsonDecode(File('../testing/vectors/c7-move-v1.json').readAsStringSync())
+          as Map<String, dynamic>;
 
   Uint8List hex(Object? value) {
     final text = value as String;
@@ -40,42 +40,53 @@ void main() {
 
   test('random bytes and malformed wraps are no wrap', () {
     for (final c in cases('invalid_wraps')) {
-      expect(() => C7MoveWrap.decode(hex(c['wrap_hex'])), throwsFormatException,
-          reason: c['name'] as String);
+      expect(
+        () => C7MoveWrap.decode(hex(c['wrap_hex'])),
+        throwsFormatException,
+        reason: c['name'] as String,
+      );
     }
   });
 
-  test('a move record takes only a wrap naming its own old group and epoch',
-      () {
-    final record = vector['record'] as Map<String, dynamic>;
-    final compact = hex(record['compact_hex']);
-    expect(compact.length, record['compact_length']);
-    final decoded = C7CompactRecord.decode(compact);
-    expect(decoded.reason, c7ReasonMove);
-    expect(toHex(decoded.encode()), record['compact_hex']);
-    expect(utf8.decode(decoded.closeGroupId!), record['close_group_id']);
-    final wrap = C7MoveWrap.decodeFor(decoded);
-    expect(wrap, isNotNull);
-    expect(toHex(wrap!.encode()), record['wrap_hex']);
+  test(
+    'a move record takes only a wrap naming its own old group and epoch',
+    () {
+      final record = vector['record'] as Map<String, dynamic>;
+      final compact = hex(record['compact_hex']);
+      expect(compact.length, record['compact_length']);
+      final decoded = C7CompactRecord.decode(compact);
+      expect(decoded.reason, c7ReasonMove);
+      expect(toHex(decoded.encode()), record['compact_hex']);
+      expect(utf8.decode(decoded.closeGroupId!), record['close_group_id']);
+      final wrap = C7MoveWrap.decodeFor(decoded);
+      expect(wrap, isNotNull);
+      expect(toHex(wrap!.encode()), record['wrap_hex']);
 
-    C7CompactRecord withWrap(List<int> bytes) => C7CompactRecord(
-          seq: decoded.seq,
-          prev: decoded.prev,
-          mode: decoded.mode,
-          reason: decoded.reason,
-          closeEpoch: decoded.closeEpoch,
-          key: decoded.key,
-          sig: decoded.sig,
-          closeGroupId: decoded.closeGroupId,
-          wrap: bytes,
+      C7CompactRecord withWrap(List<int> bytes) => C7CompactRecord(
+            seq: decoded.seq,
+            prev: decoded.prev,
+            mode: decoded.mode,
+            reason: decoded.reason,
+            closeEpoch: decoded.closeEpoch,
+            key: decoded.key,
+            sig: decoded.sig,
+            closeGroupId: decoded.closeGroupId,
+            wrap: bytes,
+          );
+      for (final c in [
+        ...cases('mismatched_wraps'),
+        ...cases('invalid_wraps'),
+      ]) {
+        final bytes = hex(c['wrap_hex']);
+        if (bytes.length != c7MoveWrapBytes) continue;
+        expect(
+          C7MoveWrap.decodeFor(withWrap(bytes)),
+          isNull,
+          reason: c['name'] as String,
         );
-    for (final c in [...cases('mismatched_wraps'), ...cases('invalid_wraps')]) {
-      final bytes = hex(c['wrap_hex']);
-      if (bytes.length != c7MoveWrapBytes) continue;
-      expect(C7MoveWrap.decodeFor(withWrap(bytes)), isNull,
-          reason: c['name'] as String);
-    }
-  });
+      }
+    },
+  );
 
   test('encoding refuses what decoding refuses', () {
     C7MoveWrap make({int prevEpoch = 10, List<int>? key, List<int>? group}) =>

@@ -23,7 +23,9 @@ import 'l1_test_lists.dart';
 /// instead.
 void main() {
   final vector = jsonDecode(
-    File('../testing/vectors/invite-binding-v2.json').readAsStringSync(),
+    File(
+      '../testing/vectors/invite-binding-v2.json',
+    ).readAsStringSync(),
   ) as Map<String, dynamic>;
   final inputs = vector['inputs'] as Map<String, dynamic>;
   final outputs = vector['outputs'] as Map<String, dynamic>;
@@ -38,214 +40,249 @@ void main() {
 
   late NativeCryptoBindings bindings;
   setUp(
-      () => bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+    () => bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+  );
 
-  test('the vector signature verifies in the invitation domain only', () {
-    final key = hex(outputs['signing_public_key_hex']);
-    final message = hex(outputs['signed_message_hex']);
-    final signature = hex(outputs['signature_hex']);
-    expect(
-      bindings.c7Verify(
-        domain: inviteBindingSigningDomain,
-        publicKey: key,
-        message: message,
-        signature: signature,
-      ),
-      isTrue,
-    );
-    for (final other in <String>[
-      'veritra-c7-post-sig-v1',
-      'veritra-c7-history-v1',
-    ]) {
+  test(
+    'the vector signature verifies in the invitation domain only',
+    () {
+      final key = hex(outputs['signing_public_key_hex']);
+      final message = hex(outputs['signed_message_hex']);
+      final signature = hex(outputs['signature_hex']);
       expect(
         bindings.c7Verify(
-          domain: other,
+          domain: inviteBindingSigningDomain,
           publicKey: key,
           message: message,
           signature: signature,
         ),
-        isFalse,
-        reason: other,
+        isTrue,
       );
-    }
-    final altered = Uint8List.fromList(message)..[10] ^= 1;
-    expect(
-      bindings.c7Verify(
-        domain: inviteBindingSigningDomain,
-        publicKey: key,
-        message: altered,
-        signature: signature,
-      ),
-      isFalse,
-    );
-    expect(
-      () => bindings.c7Verify(
-        domain: 'veritra-invite-binding-v1',
-        publicKey: key,
-        message: message,
-        signature: signature,
-      ),
-      throwsA(isA<NativeCryptoException>()),
-    );
-  }, skip: nativeCryptoSkip());
+      for (final other in <String>[
+        'veritra-c7-post-sig-v1',
+        'veritra-c7-history-v1',
+      ]) {
+        expect(
+          bindings.c7Verify(
+            domain: other,
+            publicKey: key,
+            message: message,
+            signature: signature,
+          ),
+          isFalse,
+          reason: other,
+        );
+      }
+      final altered = Uint8List.fromList(message)..[10] ^= 1;
+      expect(
+        bindings.c7Verify(
+          domain: inviteBindingSigningDomain,
+          publicKey: key,
+          message: altered,
+          signature: signature,
+        ),
+        isFalse,
+      );
+      expect(
+        () => bindings.c7Verify(
+          domain: 'veritra-invite-binding-v1',
+          publicKey: key,
+          message: message,
+          signature: signature,
+        ),
+        throwsA(isA<NativeCryptoException>()),
+      );
+    },
+    skip: nativeCryptoSkip(),
+  );
 
   for (final failure in ['none', 'key', 'missing inviter', 'target']) {
-    test('Welcome checks the persisted invitation anchor ($failure)', () async {
-      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-      final key = await alice.service.deviceSigningPublicKey(
-          accountId: alice.accountId, deviceId: alice.deviceId);
-      final pinned = Uint8List.fromList(key);
-      if (failure == 'key') pinned[0] ^= 1;
-      await bob.store.saveInviteAnchor(InviteAnchor(
-          conversationId: 'conv_1',
+    test(
+      'Welcome checks the persisted invitation anchor ($failure)',
+      () async {
+        final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+        final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+        final key = await alice.service.deviceSigningPublicKey(
           accountId: alice.accountId,
-          deviceId: failure == 'missing inviter' ? 'absent' : alice.deviceId,
-          signingKey: pinned));
-      final package = await bob.keyPackage();
-      // Restart the receiver before the Welcome: the anchor is store state.
-      final restarted =
-          TestNativeCryptoService(bindings: bindings, localStore: bob.store);
-      await restarted.activateSession(_session(bob.accountId, bob.deviceId));
-      final receiver =
-          _Client(restarted, bob.store, bob.accountId, bob.deviceId);
-      final before = (await bob.store.loadCryptoState())!.counter;
-      if (failure != 'none') {
-        await expectLater(
-            _startConversation(alice, receiver,
-                package: package,
-                envelopeConversationId:
-                    failure == 'target' ? 'conv_other' : 'conv_1'),
-            throwsA(anyOf(isA<StateError>(), isA<NativeCryptoException>())));
-        expect((await bob.store.loadCryptoState())!.counter, before);
-        expect(await bob.store.loadSyncCursor(), 0);
-        expect(
+          deviceId: alice.deviceId,
+        );
+        final pinned = Uint8List.fromList(key);
+        if (failure == 'key') pinned[0] ^= 1;
+        await bob.store.saveInviteAnchor(
+          InviteAnchor(
+            conversationId: 'conv_1',
+            accountId: alice.accountId,
+            deviceId: failure == 'missing inviter' ? 'absent' : alice.deviceId,
+            signingKey: pinned,
+          ),
+        );
+        final package = await bob.keyPackage();
+        // Restart the receiver before the Welcome: the anchor is store state.
+        final restarted = TestNativeCryptoService(
+          bindings: bindings,
+          localStore: bob.store,
+        );
+        await restarted.activateSession(_session(bob.accountId, bob.deviceId));
+        final receiver = _Client(
+          restarted,
+          bob.store,
+          bob.accountId,
+          bob.deviceId,
+        );
+        final before = (await bob.store.loadCryptoState())!.counter;
+        if (failure != 'none') {
+          await expectLater(
+            _startConversation(
+              alice,
+              receiver,
+              package: package,
+              envelopeConversationId:
+                  failure == 'target' ? 'conv_other' : 'conv_1',
+            ),
+            throwsA(anyOf(isA<StateError>(), isA<NativeCryptoException>())),
+          );
+          expect((await bob.store.loadCryptoState())!.counter, before);
+          expect(await bob.store.loadSyncCursor(), 0);
+          expect(
             await restarted.memberSigningKey(
-                conversationId: 'conv_1',
-                accountId: alice.accountId,
-                deviceId: alice.deviceId),
-            isNull);
-      } else {
-        await _startConversation(alice, receiver, package: package);
-        expect(
+              conversationId: 'conv_1',
+              accountId: alice.accountId,
+              deviceId: alice.deviceId,
+            ),
+            isNull,
+          );
+        } else {
+          await _startConversation(alice, receiver, package: package);
+          expect(
             await restarted.memberSigningKey(
-                conversationId: 'conv_1',
-                accountId: alice.accountId,
-                deviceId: alice.deviceId),
-            key);
-        expect(await bob.store.loadSyncCursor(), 1);
-      }
-    }, skip: nativeCryptoSkip());
+              conversationId: 'conv_1',
+              accountId: alice.accountId,
+              deviceId: alice.deviceId,
+            ),
+            key,
+          );
+          expect(await bob.store.loadSyncCursor(), 1);
+        }
+      },
+      skip: nativeCryptoSkip(),
+    );
   }
 
-  test('a device signs a link binding and another device verifies it',
-      () async {
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
-    final aliceKey = await alice.service.deviceSigningPublicKey(
-      accountId: 'acct_alice',
-      deviceId: 'dev_alice',
-    );
+  test(
+    'a device signs a link binding and another device verifies it',
+    () async {
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final aliceKey = await alice.service.deviceSigningPublicKey(
+        accountId: 'acct_alice',
+        deviceId: 'dev_alice',
+      );
 
-    final link = MembershipInviteLink.generate(
-      origin: inputs['origin'] as String,
-      inviterSigningKey: aliceKey,
-    );
-    Uint8List messageFor(String targetId) => link.bindingMessage(
-          kind: InviteTargetKind.group,
-          targetId: targetId,
-          inviterAccountId: 'acct_alice',
-          inviterDeviceId: 'dev_alice',
-          inviterSigningKey: aliceKey,
-        );
-    final message = messageFor('conv_1');
-    final signature = await alice.service.signInviteBinding(
-      accountId: 'acct_alice',
-      deviceId: 'dev_alice',
-      message: message,
-    );
-    expect(signature, hasLength(64));
+      final link = MembershipInviteLink.generate(
+        origin: inputs['origin'] as String,
+        inviterSigningKey: aliceKey,
+      );
+      Uint8List messageFor(String targetId) => link.bindingMessage(
+            kind: InviteTargetKind.group,
+            targetId: targetId,
+            inviterAccountId: 'acct_alice',
+            inviterDeviceId: 'dev_alice',
+            inviterSigningKey: aliceKey,
+          );
+      final message = messageFor('conv_1');
+      final signature = await alice.service.signInviteBinding(
+        accountId: 'acct_alice',
+        deviceId: 'dev_alice',
+        message: message,
+      );
+      expect(signature, hasLength(64));
 
-    // Bob checks it with no secret and no state of Alice's.
-    Future<bool> bobVerifies(List<int> key, List<int> m, List<int> sig) =>
-        bob.service.verifyInviteBinding(
-          signingKey: key,
-          message: m,
-          signature: sig,
-        );
-    expect(await bobVerifies(aliceKey, message, signature), isTrue);
-    // A swapped target, another key, and a flipped bit are all refused.
-    expect(
-        await bobVerifies(aliceKey, messageFor('conv_2'), signature), isFalse);
-    expect(
-      await bobVerifies(
-        await bob.service
-            .deviceSigningPublicKey(accountId: 'acct_bob', deviceId: 'dev_bob'),
-        message,
-        signature,
-      ),
-      isFalse,
-    );
-    final flipped = Uint8List.fromList(signature)..[5] ^= 1;
-    expect(await bobVerifies(aliceKey, message, flipped), isFalse);
-    expect(await bobVerifies(aliceKey, message, signature.sublist(1)), isFalse);
+      // Bob checks it with no secret and no state of Alice's.
+      Future<bool> bobVerifies(List<int> key, List<int> m, List<int> sig) =>
+          bob.service
+              .verifyInviteBinding(signingKey: key, message: m, signature: sig);
+      expect(await bobVerifies(aliceKey, message, signature), isTrue);
+      // A swapped target, another key, and a flipped bit are all refused.
+      expect(
+        await bobVerifies(aliceKey, messageFor('conv_2'), signature),
+        isFalse,
+      );
+      expect(
+        await bobVerifies(
+          await bob.service.deviceSigningPublicKey(
+            accountId: 'acct_bob',
+            deviceId: 'dev_bob',
+          ),
+          message,
+          signature,
+        ),
+        isFalse,
+      );
+      final flipped = Uint8List.fromList(signature)..[5] ^= 1;
+      expect(await bobVerifies(aliceKey, message, flipped), isFalse);
+      expect(
+        await bobVerifies(aliceKey, message, signature.sublist(1)),
+        isFalse,
+      );
 
-    // The link matches a binding built from it (commitment, tag, lengths).
-    final binding = InviteBinding(
-      kind: InviteTargetKind.group,
-      targetId: 'conv_1',
-      inviterAccountId: 'acct_alice',
-      inviterDeviceId: 'dev_alice',
-      inviterSigningKey: aliceKey,
-      tag: link.bindingTag(
+      // The link matches a binding built from it (commitment, tag, lengths).
+      final binding = InviteBinding(
         kind: InviteTargetKind.group,
         targetId: 'conv_1',
         inviterAccountId: 'acct_alice',
         inviterDeviceId: 'dev_alice',
         inviterSigningKey: aliceKey,
-      ),
-      signature: signature,
-    );
-    expect(link.matches(binding), isTrue);
+        tag: link.bindingTag(
+          kind: InviteTargetKind.group,
+          targetId: 'conv_1',
+          inviterAccountId: 'acct_alice',
+          inviterDeviceId: 'dev_alice',
+          inviterSigningKey: aliceKey,
+        ),
+        signature: signature,
+      );
+      expect(link.matches(binding), isTrue);
 
-    // Bob holds a group with Alice: its roster names the same key. A stranger
-    // and an unknown conversation read as nothing.
-    expect(
-      await bob.service.memberSigningKey(
-        conversationId: 'conv_1',
-        accountId: 'acct_alice',
-        deviceId: 'dev_alice',
-      ),
-      aliceKey,
-    );
-    expect(
-      await bob.service.memberSigningKey(
-        conversationId: 'conv_1',
-        accountId: 'acct_mallory',
-        deviceId: 'dev_alice',
-      ),
-      isNull,
-    );
-    expect(
-      await bob.service.memberSigningKey(
-        conversationId: 'conv_unknown',
-        accountId: 'acct_alice',
-        deviceId: 'dev_alice',
-      ),
-      isNull,
-    );
+      // Bob holds a group with Alice: its roster names the same key. A stranger
+      // and an unknown conversation read as nothing.
+      expect(
+        await bob.service.memberSigningKey(
+          conversationId: 'conv_1',
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+        ),
+        aliceKey,
+      );
+      expect(
+        await bob.service.memberSigningKey(
+          conversationId: 'conv_1',
+          accountId: 'acct_mallory',
+          deviceId: 'dev_alice',
+        ),
+        isNull,
+      );
+      expect(
+        await bob.service.memberSigningKey(
+          conversationId: 'conv_unknown',
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+        ),
+        isNull,
+      );
 
-    // A device signs only as itself.
-    await expectLater(
-      bob.service.signInviteBinding(
-        accountId: 'acct_alice',
-        deviceId: 'dev_alice',
-        message: message,
-      ),
-      throwsStateError,
-    );
-  }, skip: nativeCryptoSkip());
+      // A device signs only as itself.
+      await expectLater(
+        bob.service.signInviteBinding(
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+          message: message,
+        ),
+        throwsStateError,
+      );
+    },
+    skip: nativeCryptoSkip(),
+  );
 }
 
 Session _session(String accountId, String deviceId) => Session(
@@ -267,16 +304,23 @@ class _Client {
   int events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final store = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: store);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: store,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
     await service.activateSession(_session(accountId, deviceId));
     return _Client(service, store, accountId, deviceId);
   }
@@ -292,23 +336,29 @@ class _Client {
       );
 }
 
-Future<void> _startConversation(_Client alice, _Client bob,
-    {DeviceKeyPackage? package,
-    String envelopeConversationId = 'conv_1'}) async {
-  await alice.service.initializeConversation(
-      'conv_1', <DeviceKeyPackage>[package ?? await bob.keyPackage()]);
+Future<void> _startConversation(
+  _Client alice,
+  _Client bob, {
+  DeviceKeyPackage? package,
+  String envelopeConversationId = 'conv_1',
+}) async {
+  await alice.service.initializeConversation('conv_1', <DeviceKeyPackage>[
+    package ?? await bob.keyPackage(),
+  ]);
   final item = (await alice.store.pendingMlsMessages()).single;
   await alice.service.completeCommitBundle(item);
-  await bob.service.processMlsMessage(MlsMessage(
-    id: 'mls_${++_serverIds}',
-    conversationId: envelopeConversationId,
-    senderAccountId: alice.accountId,
-    senderDeviceId: alice.deviceId,
-    kind: 'welcome',
-    payload: MlsCommitBundle.decode(item.payload).welcome,
-    idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
-    syncEventId: ++bob.events,
-    createdAt: DateTime.now().toUtc(),
-    recipientDeviceId: bob.deviceId,
-  ));
+  await bob.service.processMlsMessage(
+    MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: envelopeConversationId,
+      senderAccountId: alice.accountId,
+      senderDeviceId: alice.deviceId,
+      kind: 'welcome',
+      payload: MlsCommitBundle.decode(item.payload).welcome,
+      idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
+      syncEventId: ++bob.events,
+      createdAt: DateTime.now().toUtc(),
+      recipientDeviceId: bob.deviceId,
+    ),
+  );
 }

@@ -81,9 +81,15 @@ void main() {
       ]
       ..conversations = <Conversation>[
         Conversation(
-            id: _shared, kind: 'community_shared', communityId: _community),
+          id: _shared,
+          kind: 'community_shared',
+          communityId: _community,
+        ),
         Conversation(
-            id: _private, kind: 'community_channel', communityId: _community),
+          id: _private,
+          kind: 'community_channel',
+          communityId: _community,
+        ),
       ]
       // AppState judges a channel by its shared group's record.
       ..governanceOverrideForTesting =
@@ -95,10 +101,17 @@ void main() {
     final moderators = state.reportModeratorsFor(_shared)!;
     expect(moderators.communityId, _community);
     expect(moderators.recordGroupId, _shared);
-    expect(moderators.accounts,
-        {'acct_owner', 'acct_admin', 'acct_mod', 'acct_mod2'});
-    expect(crypto.asked, isEmpty,
-        reason: 'the record group is not narrowed by any roster');
+    expect(moderators.accounts, {
+      'acct_owner',
+      'acct_admin',
+      'acct_mod',
+      'acct_mod2',
+    });
+    expect(
+      crypto.asked,
+      isEmpty,
+      reason: 'the record group is not narrowed by any roster',
+    );
   });
 
   test('a private channel reports only to the moderators in its MLS group', () {
@@ -107,8 +120,11 @@ void main() {
     crypto.rosters[_private] = {'acct_owner', 'acct_mod', 'acct_member'};
     final moderators = state.reportModeratorsFor(_private)!;
     expect(moderators.accounts, {'acct_owner', 'acct_mod'});
-    expect(moderators.recordGroupId, _shared,
-        reason: 'keys are still trusted from the shared group');
+    expect(
+      moderators.recordGroupId,
+      _shared,
+      reason: 'keys are still trusted from the shared group',
+    );
     expect(crypto.asked, [_private]);
   });
 

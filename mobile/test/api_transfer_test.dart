@@ -139,24 +139,26 @@ void main() {
       expect(body.pulled, 10);
     });
 
-    test('a steady backup upload longer than the idle bound succeeds',
-        () async {
-      final server = await _httpServer((request) async {
-        await request.drain<void>();
-        request.response.write('{}');
-        await request.response.close();
-      });
-      final client = _client(Uri.parse('http://127.0.0.1:${server.port}'));
-      final body = _Body(10, gap: const Duration(milliseconds: 150));
-      await client.uploadEncryptedBackup(
-        'token',
-        body.stream,
-        ciphertextLength: body.length,
-        recoveryToken: _token,
-        cryptoMetadata: const <String, Object?>{},
-      );
-      expect(body.pulled, 10);
-    });
+    test(
+      'a steady backup upload longer than the idle bound succeeds',
+      () async {
+        final server = await _httpServer((request) async {
+          await request.drain<void>();
+          request.response.write('{}');
+          await request.response.close();
+        });
+        final client = _client(Uri.parse('http://127.0.0.1:${server.port}'));
+        final body = _Body(10, gap: const Duration(milliseconds: 150));
+        await client.uploadEncryptedBackup(
+          'token',
+          body.stream,
+          ciphertextLength: body.length,
+          recoveryToken: _token,
+          cryptoMetadata: const <String, Object?>{},
+        );
+        expect(body.pulled, 10);
+      },
+    );
 
     test('an upload whose server stops reading is aborted', () async {
       // The server never reads the body, so the kernel buffers fill and the
@@ -240,8 +242,12 @@ void main() {
     /// Answers with headers and 1 KiB of a [total]-byte body, then stalls.
     Future<_RawServer> stallingServer({int total = 1024 * 1024}) {
       return _RawServer.start((socket, input) {
-        socket.add(ascii.encode('HTTP/1.1 200 OK\r\n'
-            'content-length: $total\r\n\r\n'));
+        socket.add(
+          ascii.encode(
+            'HTTP/1.1 200 OK\r\n'
+            'content-length: $total\r\n\r\n',
+          ),
+        );
         socket.add(Uint8List(1024));
       });
     }
@@ -265,8 +271,12 @@ void main() {
     test('a slow body that keeps moving is not cut', () async {
       // 8 KiB in eight pieces, 150 ms apart: 1.2 s against a 0.4 s bound.
       final server = await _RawServer.start((socket, input) async {
-        socket.add(ascii.encode('HTTP/1.1 200 OK\r\n'
-            'content-length: 8192\r\n\r\n'));
+        socket.add(
+          ascii.encode(
+            'HTTP/1.1 200 OK\r\n'
+            'content-length: 8192\r\n\r\n',
+          ),
+        );
         for (var i = 0; i < 8; i++) {
           socket.add(Uint8List(1024));
           await socket.flush();
@@ -282,31 +292,36 @@ void main() {
       expect(received, 8 * 1024);
     });
 
-    test('a consumer that pauses longer than the bound is not timed out',
-        () async {
-      final payload = Uint8List(256 * 1024);
-      final server = await _httpServer((request) async {
-        request.response.add(payload);
-        await request.response.close();
-      });
-      final client = _client(Uri.parse('http://127.0.0.1:${server.port}'));
-      final stream = await client.downloadEncryptedAttachment('token', 'att_1');
-      var received = 0;
-      final done = Completer<void>();
-      late StreamSubscription<List<int>> subscription;
-      subscription = stream.listen(
-        (chunk) {
-          received += chunk.length;
-          if (!subscription.isPaused && received == chunk.length) {
-            // Pause after the first chunk for three times the bound.
-            subscription.pause(Future<void>.delayed(_idle * 3));
-          }
-        },
-        onError: done.completeError,
-        onDone: done.complete,
-      );
-      await done.future;
-      expect(received, payload.length);
-    });
+    test(
+      'a consumer that pauses longer than the bound is not timed out',
+      () async {
+        final payload = Uint8List(256 * 1024);
+        final server = await _httpServer((request) async {
+          request.response.add(payload);
+          await request.response.close();
+        });
+        final client = _client(Uri.parse('http://127.0.0.1:${server.port}'));
+        final stream = await client.downloadEncryptedAttachment(
+          'token',
+          'att_1',
+        );
+        var received = 0;
+        final done = Completer<void>();
+        late StreamSubscription<List<int>> subscription;
+        subscription = stream.listen(
+          (chunk) {
+            received += chunk.length;
+            if (!subscription.isPaused && received == chunk.length) {
+              // Pause after the first chunk for three times the bound.
+              subscription.pause(Future<void>.delayed(_idle * 3));
+            }
+          },
+          onError: done.completeError,
+          onDone: done.complete,
+        );
+        await done.future;
+        expect(received, payload.length);
+      },
+    );
   });
 }

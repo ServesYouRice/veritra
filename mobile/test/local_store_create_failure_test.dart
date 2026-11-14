@@ -62,25 +62,33 @@ void main() {
     } catch (_) {}
   });
 
-  test('a create that fails again is an upgrade failure, not a wrong key',
-      () async {
-    _seedPoisonedFile(file, _keyA);
-    const legacy = '{"legacy":"record"}';
-    FlutterSecureStorage.setMockInitialValues({
-      'veritra.database_key.v1': _keyA,
-      'veritra.account_state.v2': legacy,
-    });
-    const storage = FlutterSecureStorage();
-    final store = SecureLocalStore(
-      storage: storage,
-      directoryProvider: () async => directory,
-    );
-    await expectLater(
+  test(
+    'a create that fails again is an upgrade failure, not a wrong key',
+    () async {
+      _seedPoisonedFile(file, _keyA);
+      const legacy = '{"legacy":"record"}';
+      FlutterSecureStorage.setMockInitialValues({
+        'veritra.database_key.v1': _keyA,
+        'veritra.account_state.v2': legacy,
+      });
+      const storage = FlutterSecureStorage();
+      final store = SecureLocalStore(
+        storage: storage,
+        directoryProvider: () async => directory,
+      );
+      await expectLater(
         store.loadSession(),
-        throwsA(isA<LocalStoreUnavailableException>().having(
-            (e) => e.kind, 'kind', LocalStoreFailureKind.upgradeFailed)));
-    expect(await storage.read(key: 'veritra.account_state.v2'), legacy);
-    expect(await storage.read(key: 'veritra.database_key.v1'), _keyA);
-    expect(file.existsSync(), isTrue);
-  });
+        throwsA(
+          isA<LocalStoreUnavailableException>().having(
+            (e) => e.kind,
+            'kind',
+            LocalStoreFailureKind.upgradeFailed,
+          ),
+        ),
+      );
+      expect(await storage.read(key: 'veritra.account_state.v2'), legacy);
+      expect(await storage.read(key: 'veritra.database_key.v1'), _keyA);
+      expect(file.existsSync(), isTrue);
+    },
+  );
 }

@@ -23,8 +23,9 @@ const _link = 'https://github.com/ServesYouRice/veritra';
 const _text = 'read $_link now';
 
 void main() {
-  testWidgets('the card shows the real host, the title and the description',
-      (tester) async {
+  testWidgets('the card shows the real host, the title and the description', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
@@ -44,32 +45,35 @@ void main() {
     expect(find.byType(Image), findsNothing);
   });
 
-  testWidgets('a thumbnail that cannot be decoded leaves a blank, not a crash',
-      (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: LinkPreviewCard(
-            preview: LinkPreview(
-              url: _link,
-              title: 'Veritra',
-              thumbnail: LinkPreviewThumbnail(
-                png: Uint8List.fromList(List<int>.filled(60, 3)),
-                width: 8,
-                height: 8,
+  testWidgets(
+    'a thumbnail that cannot be decoded leaves a blank, not a crash',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: LinkPreviewCard(
+              preview: LinkPreview(
+                url: _link,
+                title: 'Veritra',
+                thumbnail: LinkPreviewThumbnail(
+                  png: Uint8List.fromList(List<int>.filled(60, 3)),
+                  width: 8,
+                  height: 8,
+                ),
               ),
             ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
-    expect(find.text('Veritra'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      );
+      await tester.pump();
+      expect(find.text('Veritra'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('a bubble draws a valid preview, not a mismatched one',
-      (tester) async {
+  testWidgets('a bubble draws a valid preview, not a mismatched one', (
+    tester,
+  ) async {
     final store = MemoryLocalStore();
     final state = _state()..localStoreOverride = store;
     await _seed(store, <String, Object?>{
@@ -77,7 +81,9 @@ void main() {
     });
     await state.refreshHistory('conv');
     await tester.pumpWidget(
-      MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')),
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv'),
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.byType(LinkPreviewCard), findsOneWidget);
@@ -95,7 +101,9 @@ void main() {
     });
     await second.refreshHistory('conv');
     await tester.pumpWidget(
-      MaterialApp(home: ChatScreen(state: second, conversationId: 'conv')),
+      MaterialApp(
+        home: ChatScreen(state: second, conversationId: 'conv'),
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.byType(LinkPreviewCard), findsNothing);

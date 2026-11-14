@@ -52,8 +52,11 @@ class AccountsScreen extends StatelessWidget {
                           const Icon(Icons.info_outline, size: 18),
                           const SizedBox(width: BoneSpacing.sm),
                           Expanded(
-                              child: Text(l10n.accountsSameServer,
-                                  key: const ValueKey('same-server'))),
+                            child: Text(
+                              l10n.accountsSameServer,
+                              key: const ValueKey('same-server'),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -69,8 +72,10 @@ class AccountsScreen extends StatelessWidget {
                     if (!host.canAdd)
                       Padding(
                         padding: const EdgeInsets.only(top: BoneSpacing.sm),
-                        child: Text(l10n.accountsFull('$maxAccountSlots'),
-                            key: const ValueKey('cap-note')),
+                        child: Text(
+                          l10n.accountsFull('$maxAccountSlots'),
+                          key: const ValueKey('cap-note'),
+                        ),
                       ),
                   ],
                 ),
@@ -126,8 +131,9 @@ class AccountsShortcut extends StatelessWidget {
     final host = AccountHostScope.maybeOf(context);
     if (host == null) return const SizedBox.shrink();
     final active = host.registry.active;
-    final hasOthers = host.registry.slots
-        .any((s) => s.namespace != active && s.state != SlotState.removing);
+    final hasOthers = host.registry.slots.any(
+      (s) => s.namespace != active && s.state != SlotState.removing,
+    );
     if (!hasOthers) return const SizedBox.shrink();
     return Align(
       alignment: AlignmentDirectional.centerStart,
@@ -135,9 +141,10 @@ class AccountsShortcut extends StatelessWidget {
         key: const ValueKey<String>('accounts-shortcut'),
         onPressed: host.switching
             ? null
-            : () => Navigator.of(context).push(
-                  sharedAxisRoute<void>((_) => AccountsScreen(host: host)),
-                ),
+            : () => Navigator.of(
+                  context,
+                ).push(
+                    sharedAxisRoute<void>((_) => AccountsScreen(host: host))),
         icon: const Icon(Icons.switch_account_outlined),
         label: Text(context.l10n.settingsAccounts),
       ),
@@ -201,9 +208,11 @@ class _SlotTile extends StatelessWidget {
       contentPadding: EdgeInsets.zero,
       // U37: the account that is open carries a tick.
       leading: isOpen
-          ? Icon(Icons.check_circle,
+          ? Icon(
+              Icons.check_circle,
               key: const ValueKey<String>('account-active-tick'),
-              color: Theme.of(context).colorScheme.primary)
+              color: Theme.of(context).colorScheme.primary,
+            )
           : const Icon(Icons.account_circle_outlined),
       title: Text(_label(context, slot)),
       subtitle: status == null ? null : Text(status),
@@ -213,7 +222,9 @@ class _SlotTile extends StatelessWidget {
         onSelected: (_) => _remove(context),
         itemBuilder: (_) => <PopupMenuEntry<String>>[
           PopupMenuItem<String>(
-              value: 'remove', child: Text(l10n.accountsRemove)),
+            value: 'remove',
+            child: Text(l10n.accountsRemove),
+          ),
         ],
       ),
     );
@@ -273,7 +284,9 @@ class _Notice extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: BoneSpacing.md),
-        child: Text(message,
-            style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        child: Text(
+          message,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
       );
 }

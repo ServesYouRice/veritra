@@ -25,8 +25,10 @@ void main() {
   });
 
   Future<bool> tableExists(EncryptedLocalDatabase db) async => (await db
-          .customSelect("SELECT name FROM sqlite_master "
-              "WHERE name = 'local_filed_reports'")
+          .customSelect(
+            "SELECT name FROM sqlite_master "
+            "WHERE name = 'local_filed_reports'",
+          )
           .get())
       .isNotEmpty;
 
@@ -44,22 +46,29 @@ void main() {
     expect(await db.readReportFiled(_origin, 'acct_a', 'dev:1'), isTrue);
     // Per account, per server and per message.
     expect(await db.readReportFiled(_origin, 'acct_b', 'dev:1'), isFalse);
-    expect(await db.readReportFiled('https://other.example', 'acct_a', 'dev:1'),
-        isFalse);
+    expect(
+      await db.readReportFiled('https://other.example', 'acct_a', 'dev:1'),
+      isFalse,
+    );
     expect(await db.readReportFiled(_origin, 'acct_a', 'dev:2'), isFalse);
-    expect(() => db.writeReportFiled(_origin, '', 'dev:1', 1),
-        throwsFormatException);
+    expect(
+      () => db.writeReportFiled(_origin, '', 'dev:1', 1),
+      throwsFormatException,
+    );
   });
 
   test('upgrading from schema 26 adds the table and keeps the data', () async {
     final file = File('${directory.path}/old.db');
     var db = EncryptedLocalDatabase(NativeDatabase(file));
-    await db.writeReportKeyPin(ReportKeyPin(
+    await db.writeReportKeyPin(
+      ReportKeyPin(
         origin: _origin,
         ownerAccountId: 'acct_owner',
         publicKey: List<int>.filled(32, 1),
         keyRev: 1,
-        pinnedAt: 5));
+        pinnedAt: 5,
+      ),
+    );
     await db.customStatement('DROP TABLE local_filed_reports');
     await db.customStatement('PRAGMA user_version = 26');
     expect(await tableExists(db), isFalse);
@@ -72,7 +81,9 @@ void main() {
     expect(db.upgradeStarted, isTrue);
     expect(version, EncryptedLocalDatabase.currentSchemaVersion);
     expect(
-        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(27));
+      EncryptedLocalDatabase.currentSchemaVersion,
+      greaterThanOrEqualTo(27),
+    );
     expect(await tableExists(db), isTrue);
     expect(await db.readReportKeyPins(_origin), hasLength(1));
     await db.writeReportFiled(_origin, 'acct_a', 'dev:1', 1);

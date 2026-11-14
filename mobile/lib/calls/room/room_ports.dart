@@ -208,11 +208,18 @@ abstract interface class CallGroupCrypto {
   /// Opens an application message that claims to come from [sender]; throws
   /// when it does not decrypt or its MLS sender is someone else.
   Uint8List decryptApplication(
-      Uint8List groupId, Uint8List ciphertext, CallMember sender);
+    Uint8List groupId,
+    Uint8List ciphertext,
+    CallMember sender,
+  );
 
   /// `K(s,t)` of the current epoch for [sender]'s stream slot.
   Uint8List mediaKey(
-      Uint8List groupId, String callId, CallMember sender, int stream);
+    Uint8List groupId,
+    String callId,
+    CallMember sender,
+    int stream,
+  );
 
   /// Forgets the group.
   void drop(Uint8List groupId);

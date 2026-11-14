@@ -35,12 +35,16 @@ class _FakeApi extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: false);
 
   @override
@@ -91,7 +95,10 @@ class _FakeApi extends ApiClient {
 
   @override
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {}
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {}
 }
 
 class _FakeSync implements SyncService {
@@ -122,7 +129,7 @@ void main() {
           'acct_owner': 0,
           'acct_admin': 1,
           'acct_mod': 2,
-          'acct_member': 3,
+          'acct_member': 3
         },
       );
 
@@ -151,42 +158,49 @@ void main() {
 
   group('C2: AppState VerifiedRoleSource & Permissions', () {
     test(
-        'serverRestrictsPosting correctly detects restricted conversations and channels',
-        () {
-      final api = _FakeApi();
-      final state = createAppState(api: api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'c_open', kind: 'group', postingRestricted: false),
-          Conversation(
-              id: 'c_restricted', kind: 'group', postingRestricted: true),
-          Conversation(
+      'serverRestrictsPosting correctly detects restricted conversations and channels',
+      () {
+        final api = _FakeApi();
+        final state = createAppState(api: api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'c_open', kind: 'group', postingRestricted: false),
+            Conversation(
+              id: 'c_restricted',
+              kind: 'group',
+              postingRestricted: true,
+            ),
+            Conversation(
               id: 'c_legacy_ann',
               kind: 'community_channel',
-              channelId: 'ch_ann'),
-        ]
-        ..channelsByCommunity = {
-          'comm_1': [
-            Channel(
+              channelId: 'ch_ann',
+            ),
+          ]
+          ..channelsByCommunity = {
+            'comm_1': [
+              Channel(
                 id: 'ch_open',
                 communityId: 'comm_1',
                 name: 'general',
-                kind: 'open'),
-            Channel(
+                kind: 'open',
+              ),
+              Channel(
                 id: 'ch_ann',
                 communityId: 'comm_1',
                 name: 'news',
-                kind: 'announcement'),
-          ],
-        };
+                kind: 'announcement',
+              ),
+            ],
+          };
 
-      expect(state.serverRestrictsPosting('c_open', null), isFalse);
-      expect(state.serverRestrictsPosting('c_restricted', null), isTrue);
-      // Channel route restriction
-      expect(state.serverRestrictsPosting('c_open', 'ch_ann'), isTrue);
-      expect(state.serverRestrictsPosting('c_open', 'ch_open'), isFalse);
-      // Legacy channel conversation where channel is announcement
-      expect(state.serverRestrictsPosting('c_legacy_ann', null), isTrue);
-    });
+        expect(state.serverRestrictsPosting('c_open', null), isFalse);
+        expect(state.serverRestrictsPosting('c_restricted', null), isTrue);
+        // Channel route restriction
+        expect(state.serverRestrictsPosting('c_open', 'ch_ann'), isTrue);
+        expect(state.serverRestrictsPosting('c_open', 'ch_open'), isFalse);
+        // Legacy channel conversation where channel is announcement
+        expect(state.serverRestrictsPosting('c_legacy_ann', null), isTrue);
+      },
+    );
 
     test('mayPost enforces roles using governance record or server role', () {
       final api = _FakeApi();
@@ -199,8 +213,11 @@ void main() {
       state.governanceOverrideForTesting =
           (_) => testGovernanceRecord(adminsOnly: true);
 
-      expect(state.mayPost('c_group'), isFalse,
-          reason: 'member cannot post when adminsOnly');
+      expect(
+        state.mayPost('c_group'),
+        isFalse,
+        reason: 'member cannot post when adminsOnly',
+      );
 
       // Admin and owner may post
       state.session = const Session(
@@ -233,98 +250,101 @@ void main() {
       );
       state.conversations = [
         Conversation(
-            id: 'c_group',
-            kind: 'group',
-            postingRestricted: true,
-            currentRole: 'member'),
+          id: 'c_group',
+          kind: 'group',
+          postingRestricted: true,
+          currentRole: 'member',
+        ),
       ];
       expect(state.mayPost('c_group'), isFalse);
 
       state.conversations = [
         Conversation(
-            id: 'c_group',
-            kind: 'group',
-            postingRestricted: true,
-            currentRole: 'moderator'),
+          id: 'c_group',
+          kind: 'group',
+          postingRestricted: true,
+          currentRole: 'moderator',
+        ),
       ];
       expect(state.mayPost('c_group'), isFalse);
 
       state.conversations = [
         Conversation(
-            id: 'c_group',
-            kind: 'group',
-            postingRestricted: true,
-            currentRole: 'admin'),
+          id: 'c_group',
+          kind: 'group',
+          postingRestricted: true,
+          currentRole: 'admin',
+        ),
       ];
       expect(state.mayPost('c_group'), isTrue);
 
       state.conversations = [
         Conversation(
-            id: 'c_group',
-            kind: 'group',
-            postingRestricted: true,
-            currentRole: 'owner'),
+          id: 'c_group',
+          kind: 'group',
+          postingRestricted: true,
+          currentRole: 'owner',
+        ),
       ];
       expect(state.mayPost('c_group'), isTrue);
     });
 
     test(
-        'roleOf does not leak session currentRole to other accounts and resolves creator',
-        () {
-      final api = _FakeApi();
-      final state = createAppState(api: api, accountId: 'acct_alice')
-        ..conversations = [
-          Conversation(
-            id: 'c_group',
-            kind: 'group',
-            postingRestricted: true,
-            createdBy: 'acct_bob',
-            currentRole: 'admin',
-          ),
-          Conversation(
-            id: 'c_chan',
-            kind: 'community_channel',
-            communityId: 'comm_1',
-            channelId: 'ch_1',
-            currentRole: 'member',
-          ),
-        ]
-        ..communities = [
-          Community(
-            id: 'comm_1',
-            name: 'Comm 1',
-            createdBy: 'acct_founder',
-          ),
-        ];
+      'roleOf does not leak session currentRole to other accounts and resolves creator',
+      () {
+        final api = _FakeApi();
+        final state = createAppState(api: api, accountId: 'acct_alice')
+          ..conversations = [
+            Conversation(
+              id: 'c_group',
+              kind: 'group',
+              postingRestricted: true,
+              createdBy: 'acct_bob',
+              currentRole: 'admin',
+            ),
+            Conversation(
+              id: 'c_chan',
+              kind: 'community_channel',
+              communityId: 'comm_1',
+              channelId: 'ch_1',
+              currentRole: 'member',
+            ),
+          ]
+          ..communities = [
+            Community(id: 'comm_1', name: 'Comm 1', createdBy: 'acct_founder'),
+          ];
 
-      // Local user Alice gets her currentRole 'admin'
-      expect(state.roleOf('c_group', 'acct_alice'), 'admin');
+        // Local user Alice gets her currentRole 'admin'
+        expect(state.roleOf('c_group', 'acct_alice'), 'admin');
 
-      // Conversation creator Bob gets 'owner' even though Alice is admin
-      expect(state.roleOf('c_group', 'acct_bob'), 'owner');
+        // Conversation creator Bob gets 'owner' even though Alice is admin
+        expect(state.roleOf('c_group', 'acct_bob'), 'owner');
 
-      // Community creator Founder gets 'owner' for channels in the community
-      expect(state.roleOf('c_chan', 'acct_founder'), 'owner');
+        // Community creator Founder gets 'owner' for channels in the community
+        expect(state.roleOf('c_chan', 'acct_founder'), 'owner');
 
-      // Third party Carol has no record -> null, NOT Alice's 'admin'
-      expect(state.roleOf('c_group', 'acct_carol'), isNull);
-    });
+        // Third party Carol has no record -> null, NOT Alice's 'admin'
+        expect(state.roleOf('c_group', 'acct_carol'), isNull);
+      },
+    );
 
     test('canCreateChannel allows only admins and owners', () {
       final api = _FakeApi();
       final state = createAppState(api: api, accountId: 'acct_member')
         ..communities = [
           Community(
-              id: 'comm_1',
-              name: 'My Community',
-              sharedConversationId: 'c_shared'),
+            id: 'comm_1',
+            name: 'My Community',
+            sharedConversationId: 'c_shared',
+          ),
         ]
         ..conversations = [
           Conversation(
-              id: 'c_shared',
-              kind: 'community_shared',
-              communityId: 'comm_1',
-              currentRole: 'member'),
+            id: 'c_shared',
+            kind: 'community_shared',
+            communityId: 'comm_1',
+            currentRole: 'member',
+          ),
         ];
 
       expect(state.canCreateChannel('comm_1'), isFalse);
@@ -332,29 +352,32 @@ void main() {
       // Moderator cannot create channels (owner decision)
       state.conversations = [
         Conversation(
-            id: 'c_shared',
-            kind: 'community_shared',
-            communityId: 'comm_1',
-            currentRole: 'moderator'),
+          id: 'c_shared',
+          kind: 'community_shared',
+          communityId: 'comm_1',
+          currentRole: 'moderator',
+        ),
       ];
       expect(state.canCreateChannel('comm_1'), isFalse);
 
       // Admin and owner can create channels
       state.conversations = [
         Conversation(
-            id: 'c_shared',
-            kind: 'community_shared',
-            communityId: 'comm_1',
-            currentRole: 'admin'),
+          id: 'c_shared',
+          kind: 'community_shared',
+          communityId: 'comm_1',
+          currentRole: 'admin',
+        ),
       ];
       expect(state.canCreateChannel('comm_1'), isTrue);
 
       state.conversations = [
         Conversation(
-            id: 'c_shared',
-            kind: 'community_shared',
-            communityId: 'comm_1',
-            currentRole: 'owner'),
+          id: 'c_shared',
+          kind: 'community_shared',
+          communityId: 'comm_1',
+          currentRole: 'owner',
+        ),
       ];
       expect(state.canCreateChannel('comm_1'), isTrue);
 
@@ -394,16 +417,18 @@ void main() {
       final state = createAppState(api: api, accountId: 'acct_member')
         ..communities = [
           Community(
-              id: 'comm_1',
-              name: 'Community',
-              sharedConversationId: 'c_shared'),
+            id: 'comm_1',
+            name: 'Community',
+            sharedConversationId: 'c_shared',
+          ),
         ]
         ..conversations = [
           Conversation(
-              id: 'c_shared',
-              kind: 'community_shared',
-              communityId: 'comm_1',
-              currentRole: 'member'),
+            id: 'c_shared',
+            kind: 'community_shared',
+            communityId: 'comm_1',
+            currentRole: 'member',
+          ),
         ];
 
       await state.createChannel('comm_1', 'new-channel');
@@ -413,10 +438,11 @@ void main() {
       // Now as admin
       state.conversations = [
         Conversation(
-            id: 'c_shared',
-            kind: 'community_shared',
-            communityId: 'comm_1',
-            currentRole: 'admin'),
+          id: 'c_shared',
+          kind: 'community_shared',
+          communityId: 'comm_1',
+          currentRole: 'admin',
+        ),
       ];
       await state.createChannel('comm_1', 'admin-channel');
       expect(api.channelCreations, 1);
@@ -427,10 +453,11 @@ void main() {
       final state = createAppState(api: api, accountId: 'acct_member')
         ..conversations = [
           Conversation(
-              id: 'c_restricted',
-              kind: 'group',
-              postingRestricted: true,
-              currentRole: 'member'),
+            id: 'c_restricted',
+            kind: 'group',
+            postingRestricted: true,
+            currentRole: 'member',
+          ),
         ];
 
       final sent = await state.sendMessageTo('c_restricted', 'hello');
@@ -439,276 +466,315 @@ void main() {
       expect(api.sends, 0);
     });
 
-    test('setPostingPolicy updates conversation state and preserves metadata',
-        () async {
-      final api = _FakeApi();
-      final state = createAppState(api: api, accountId: 'acct_owner')
-        ..conversations = [
-          Conversation(
+    test(
+      'setPostingPolicy updates conversation state and preserves metadata',
+      () async {
+        final api = _FakeApi();
+        final state = createAppState(api: api, accountId: 'acct_owner')
+          ..conversations = [
+            Conversation(
               id: 'c_group',
               kind: 'group',
               postingRestricted: false,
               unreadCount: 5,
-              currentRole: 'owner'),
-        ];
+              currentRole: 'owner',
+            ),
+          ];
 
-      await state.setPostingPolicy('c_group', 'admins');
-      expect(state.conversations.first.postingRestricted, isTrue);
-      expect(state.conversations.first.currentRole, 'owner');
-      expect(state.conversations.first.unreadCount, 5);
-    });
+        await state.setPostingPolicy('c_group', 'admins');
+        expect(state.conversations.first.postingRestricted, isTrue);
+        expect(state.conversations.first.currentRole, 'owner');
+        expect(state.conversations.first.unreadCount, 5);
+      },
+    );
 
     test(
-        'shouldDropRestrictedPost with AppState drops posts from non-admins in restricted conversations',
-        () {
-      final api = _FakeApi();
-      final state = createAppState(api: api)
-        ..conversations = <Conversation>[
-          Conversation(
-              id: 'c_restricted', kind: 'group', postingRestricted: true),
-        ];
-      state.governanceOverrideForTesting =
-          (_) => testGovernanceRecord(adminsOnly: true);
+      'shouldDropRestrictedPost with AppState drops posts from non-admins in restricted conversations',
+      () {
+        final api = _FakeApi();
+        final state = createAppState(api: api)
+          ..conversations = <Conversation>[
+            Conversation(
+              id: 'c_restricted',
+              kind: 'group',
+              postingRestricted: true,
+            ),
+          ];
+        state.governanceOverrideForTesting =
+            (_) => testGovernanceRecord(adminsOnly: true);
 
-      // acct_member is below admin -> dropped
-      expect(
-        shouldDropRestrictedPost(
-          record: state.governanceOf('c_restricted'),
-          sender: 'acct_member',
-          channelId: null,
-          serverRestricts: state.serverRestrictsPosting('c_restricted', null),
-        ),
-        isTrue,
-      );
+        // acct_member is below admin -> dropped
+        expect(
+          shouldDropRestrictedPost(
+            record: state.governanceOf('c_restricted'),
+            sender: 'acct_member',
+            channelId: null,
+            serverRestricts: state.serverRestrictsPosting('c_restricted', null),
+          ),
+          isTrue,
+        );
 
-      // acct_mod is moderator (below admin) -> dropped
-      expect(
-        shouldDropRestrictedPost(
-          record: state.governanceOf('c_restricted'),
-          sender: 'acct_mod',
-          channelId: null,
-          serverRestricts: state.serverRestrictsPosting('c_restricted', null),
-        ),
-        isTrue,
-      );
+        // acct_mod is moderator (below admin) -> dropped
+        expect(
+          shouldDropRestrictedPost(
+            record: state.governanceOf('c_restricted'),
+            sender: 'acct_mod',
+            channelId: null,
+            serverRestricts: state.serverRestrictsPosting('c_restricted', null),
+          ),
+          isTrue,
+        );
 
-      // acct_admin -> kept
-      expect(
-        shouldDropRestrictedPost(
-          record: state.governanceOf('c_restricted'),
-          sender: 'acct_admin',
-          channelId: null,
-          serverRestricts: state.serverRestrictsPosting('c_restricted', null),
-        ),
-        isFalse,
-      );
+        // acct_admin -> kept
+        expect(
+          shouldDropRestrictedPost(
+            record: state.governanceOf('c_restricted'),
+            sender: 'acct_admin',
+            channelId: null,
+            serverRestricts: state.serverRestrictsPosting('c_restricted', null),
+          ),
+          isFalse,
+        );
 
-      // acct_owner -> kept
-      expect(
-        shouldDropRestrictedPost(
-          record: state.governanceOf('c_restricted'),
-          sender: 'acct_owner',
-          channelId: null,
-          serverRestricts: state.serverRestrictsPosting('c_restricted', null),
-        ),
-        isFalse,
-      );
+        // acct_owner -> kept
+        expect(
+          shouldDropRestrictedPost(
+            record: state.governanceOf('c_restricted'),
+            sender: 'acct_owner',
+            channelId: null,
+            serverRestricts: state.serverRestrictsPosting('c_restricted', null),
+          ),
+          isFalse,
+        );
 
-      // No governance record -> shouldDropRestrictedPost returns false (no drop without verified record)
-      state.governanceOverrideForTesting = null;
-      expect(
-        shouldDropRestrictedPost(
-          record: state.governanceOf('c_restricted'),
-          sender: 'acct_member',
-          channelId: null,
-          serverRestricts: state.serverRestrictsPosting('c_restricted', null),
-        ),
-        isFalse,
-      );
+        // No governance record -> shouldDropRestrictedPost returns false (no drop without verified record)
+        state.governanceOverrideForTesting = null;
+        expect(
+          shouldDropRestrictedPost(
+            record: state.governanceOf('c_restricted'),
+            sender: 'acct_member',
+            channelId: null,
+            serverRestricts: state.serverRestrictsPosting('c_restricted', null),
+          ),
+          isFalse,
+        );
 
-      // Announcement channel in open group
-      final channelState = createAppState(api: api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'c_open', kind: 'group', postingRestricted: false),
-        ]
-        ..channelsByCommunity = {
-          'comm_1': [
-            Channel(
+        // Announcement channel in open group
+        final channelState = createAppState(api: api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'c_open', kind: 'group', postingRestricted: false),
+          ]
+          ..channelsByCommunity = {
+            'comm_1': [
+              Channel(
                 id: 'ch_ann',
                 communityId: 'comm_1',
                 name: 'news',
-                kind: 'announcement'),
-          ],
-        };
-      channelState.governanceOverrideForTesting =
-          (_) => testGovernanceRecord(announcements: {'ch_ann'});
+                kind: 'announcement',
+              ),
+            ],
+          };
+        channelState.governanceOverrideForTesting =
+            (_) => testGovernanceRecord(announcements: {'ch_ann'});
 
-      expect(
-        shouldDropRestrictedPost(
-          record: channelState.governanceOf('c_open'),
-          sender: 'acct_member',
-          channelId: 'ch_ann',
-          serverRestricts:
-              channelState.serverRestrictsPosting('c_open', 'ch_ann'),
-        ),
-        isTrue,
-      );
-    });
+        expect(
+          shouldDropRestrictedPost(
+            record: channelState.governanceOf('c_open'),
+            sender: 'acct_member',
+            channelId: 'ch_ann',
+            serverRestricts: channelState.serverRestrictsPosting(
+              'c_open',
+              'ch_ann',
+            ),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('C2: UI restrictions in ChatScreen Composer & CommunityScreen', () {
     testWidgets(
-        'ChatScreen composer shows restriction and disables input for restricted members',
-        (tester) async {
-      final api = _FakeApi();
-      final state = createAppState(api: api, accountId: 'acct_member')
-        ..conversations = [
-          Conversation(
+      'ChatScreen composer shows restriction and disables input for restricted members',
+      (tester) async {
+        final api = _FakeApi();
+        final state = createAppState(api: api, accountId: 'acct_member')
+          ..conversations = [
+            Conversation(
               id: 'c_restricted',
               kind: 'group',
               postingRestricted: true,
-              currentRole: 'member'),
-        ];
+              currentRole: 'member',
+            ),
+          ];
 
-      await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatScreen(state: state, conversationId: 'c_restricted'),
-      ));
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ChatScreen(state: state, conversationId: 'c_restricted'),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      // Check for lock icon in TextField and restricted hint
-      expect(
-        find.descendant(
+        // Check for lock icon in TextField and restricted hint
+        expect(
+          find.descendant(
             of: find.byType(TextField),
-            matching: find.byIcon(Icons.lock_outline)),
-        findsOneWidget,
-      );
-      expect(
-          find.text(AppLocalizationsEn().chatPostingRestricted), findsWidgets);
+            matching: find.byIcon(Icons.lock_outline),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text(AppLocalizationsEn().chatPostingRestricted),
+          findsWidgets,
+        );
 
-      // Verify TextField is disabled
-      final textField = tester.widget<TextField>(find.byType(TextField));
-      expect(textField.enabled, isFalse);
+        // Verify TextField is disabled
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.enabled, isFalse);
 
-      // Verify send button is disabled (IconButton with Icons.send has onPressed: null)
-      final sendFinder = find.widgetWithIcon(IconButton, Icons.send);
-      expect(sendFinder, findsOneWidget);
-      final sendButton = tester.widget<IconButton>(sendFinder);
-      expect(sendButton.onPressed, isNull);
+        // Verify send button is disabled (IconButton with Icons.send has onPressed: null)
+        final sendFinder = find.widgetWithIcon(IconButton, Icons.send);
+        expect(sendFinder, findsOneWidget);
+        final sendButton = tester.widget<IconButton>(sendFinder);
+        expect(sendButton.onPressed, isNull);
 
-      // Verify the + (files and polls) is disabled
-      final attachFinder = find.widgetWithIcon(IconButton, Icons.add);
-      expect(attachFinder, findsOneWidget);
-      final attachButton = tester.widget<IconButton>(attachFinder);
-      expect(attachButton.onPressed, isNull);
+        // Verify the + (files and polls) is disabled
+        final attachFinder = find.widgetWithIcon(IconButton, Icons.add);
+        expect(attachFinder, findsOneWidget);
+        final attachButton = tester.widget<IconButton>(attachFinder);
+        expect(attachButton.onPressed, isNull);
 
-      // Clean up timer
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(seconds: 5));
-    });
+        // Clean up timer
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
 
     testWidgets(
-        'ChatScreen composer remains enabled for admins in restricted conversations',
-        (tester) async {
-      final api = _FakeApi();
-      final state = createAppState(api: api, accountId: 'acct_admin')
-        ..conversations = [
-          Conversation(
+      'ChatScreen composer remains enabled for admins in restricted conversations',
+      (tester) async {
+        final api = _FakeApi();
+        final state = createAppState(api: api, accountId: 'acct_admin')
+          ..conversations = [
+            Conversation(
               id: 'c_restricted',
               kind: 'group',
               postingRestricted: true,
-              currentRole: 'admin'),
-        ];
+              currentRole: 'admin',
+            ),
+          ];
 
-      await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatScreen(state: state, conversationId: 'c_restricted'),
-      ));
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ChatScreen(state: state, conversationId: 'c_restricted'),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      // Lock icon in composer is NOT present
-      expect(
-        find.descendant(
+        // Lock icon in composer is NOT present
+        expect(
+          find.descendant(
             of: find.byType(TextField),
-            matching: find.byIcon(Icons.lock_outline)),
-        findsNothing,
-      );
-      expect(find.text(AppLocalizationsEn().chatComposerHint), findsOneWidget);
+            matching: find.byIcon(Icons.lock_outline),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.text(AppLocalizationsEn().chatComposerHint),
+          findsOneWidget,
+        );
 
-      // Verify TextField is enabled
-      final textField = tester.widget<TextField>(find.byType(TextField));
-      expect(textField.enabled, isTrue);
+        // Verify TextField is enabled
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(textField.enabled, isTrue);
 
-      // Clean up timer
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(seconds: 5));
-    });
+        // Clean up timer
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
 
     testWidgets(
-        'CommunityCard shows create channel button only for admins/owners',
-        (tester) async {
-      final api = _FakeApi();
-      // 1. As Member
-      final memberState = createAppState(api: api, accountId: 'acct_member')
-        ..communities = [
-          Community(
+      'CommunityCard shows create channel button only for admins/owners',
+      (tester) async {
+        final api = _FakeApi();
+        // 1. As Member
+        final memberState = createAppState(api: api, accountId: 'acct_member')
+          ..communities = [
+            Community(
               id: 'comm_1',
               name: 'Community One',
-              sharedConversationId: 'c_shared'),
-        ]
-        ..conversations = [
-          Conversation(
+              sharedConversationId: 'c_shared',
+            ),
+          ]
+          ..conversations = [
+            Conversation(
               id: 'c_shared',
               kind: 'community_shared',
               communityId: 'comm_1',
-              currentRole: 'member'),
-        ];
+              currentRole: 'member',
+            ),
+          ];
 
-      await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: CommunityScreen(state: memberState),
-      ));
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: CommunityScreen(state: memberState),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      // U1: one actions menu holds them; a member's has no "New channel".
-      await tester.tap(find.byType(PopupMenuButton<String>));
-      await tester.pumpAndSettle();
-      expect(find.text(AppLocalizationsEn().communityNewChannel), findsNothing);
-      await tester.tapAt(const Offset(2, 2));
-      await tester.pumpAndSettle();
+        // U1: one actions menu holds them; a member's has no "New channel".
+        await tester.tap(find.byType(PopupMenuButton<String>));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(AppLocalizationsEn().communityNewChannel),
+          findsNothing,
+        );
+        await tester.tapAt(const Offset(2, 2));
+        await tester.pumpAndSettle();
 
-      // 2. As Admin
-      final adminState = createAppState(api: api, accountId: 'acct_admin')
-        ..communities = [
-          Community(
+        // 2. As Admin
+        final adminState = createAppState(api: api, accountId: 'acct_admin')
+          ..communities = [
+            Community(
               id: 'comm_1',
               name: 'Community One',
-              sharedConversationId: 'c_shared'),
-        ]
-        ..conversations = [
-          Conversation(
+              sharedConversationId: 'c_shared',
+            ),
+          ]
+          ..conversations = [
+            Conversation(
               id: 'c_shared',
               kind: 'community_shared',
               communityId: 'comm_1',
-              currentRole: 'admin'),
-        ];
+              currentRole: 'admin',
+            ),
+          ];
 
-      await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: CommunityScreen(state: adminState),
-      ));
-      await tester.pumpAndSettle();
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: CommunityScreen(state: adminState),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      // "New channel" is in the admin's actions menu.
-      await tester.tap(find.byType(PopupMenuButton<String>));
-      await tester.pumpAndSettle();
-      expect(
-          find.text(AppLocalizationsEn().communityNewChannel), findsOneWidget);
-    });
+        // "New channel" is in the admin's actions menu.
+        await tester.tap(find.byType(PopupMenuButton<String>));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(AppLocalizationsEn().communityNewChannel),
+          findsOneWidget,
+        );
+      },
+    );
   });
 
   group('C2: CryptoService governanceOf safe defaults', () {
@@ -721,15 +787,18 @@ void main() {
     });
 
     test(
-        'NativeCryptoService.governanceOf returns null without active device or record',
-        () {
-      if (nativeCryptoSkip() != false) return;
-      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      final service = NativeCryptoService(
-        bindings: bindings,
-        localStore: MemoryLocalStore(),
-      );
-      expect(service.governanceOf('conv_unknown'), isNull);
-    });
+      'NativeCryptoService.governanceOf returns null without active device or record',
+      () {
+        if (nativeCryptoSkip() != false) return;
+        final bindings = NativeCryptoBindings.open(
+          requireNativeCryptoLibrary(),
+        );
+        final service = NativeCryptoService(
+          bindings: bindings,
+          localStore: MemoryLocalStore(),
+        );
+        expect(service.governanceOf('conv_unknown'), isNull);
+      },
+    );
   });
 }

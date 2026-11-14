@@ -36,8 +36,9 @@ void main() {
 
   group('the server answer shapes', () {
     test('setup status names the passkey settings', () {
-      final info =
-          PasskeyServerInfo.fromStatus(pkMap(pkFixture()['setup_status']))!;
+      final info = PasskeyServerInfo.fromStatus(
+        pkMap(pkFixture()['setup_status']),
+      )!;
       expect(info.rpId, 'chat.example.com');
       expect(info.android, isTrue);
       expect(info.apple, isTrue);
@@ -51,12 +52,14 @@ void main() {
         <String, Object?>{
           'rp_id': 'a.example',
           'android': 'yes',
-          'apple': true
+          'apple': true,
         },
         <String, Object?>{'rp_id': 'a.example'},
       ]) {
-        expect(PasskeyServerInfo.fromStatus(<String, Object?>{'passkeys': bad}),
-            isNull);
+        expect(
+          PasskeyServerInfo.fromStatus(<String, Object?>{'passkeys': bad}),
+          isNull,
+        );
       }
     });
 
@@ -115,12 +118,15 @@ void main() {
         }
         await request.response.close();
       });
-      final client =
-          ApiClient(baseUrl: 'http://${server.address.address}:${server.port}');
+      final client = ApiClient(
+        baseUrl: 'http://${server.address.address}:${server.port}',
+      );
       addTearDown(client.close);
 
       final options = await client.passkeyLoginOptions(
-          deviceId: 'dev_1', deviceSecret: 'secret');
+        deviceId: 'dev_1',
+        deviceSecret: 'secret',
+      );
       expect(options.id, isNotEmpty);
       expect(options.publicKey['rpId'], 'chat.example.com');
       final session = await client.passkeyLogin(
@@ -137,9 +143,14 @@ void main() {
       final reg = await client.passkeyRegisterOptions('tok');
       expect(reg.publicKey['rp'], isA<Map>());
       expect(
-          await client.passkeyRegister('tok',
-              ceremonyId: reg.id, name: 'P', credential: <String, Object?>{}),
-          startsWith('pk_'));
+        await client.passkeyRegister(
+          'tok',
+          ceremonyId: reg.id,
+          name: 'P',
+          credential: <String, Object?>{},
+        ),
+        startsWith('pk_'),
+      );
       await client.renamePasskey('tok', 'pk_a/b', 'New');
       await client.deletePasskey('tok', 'pk_a');
       expect(requests, <String>[
@@ -153,18 +164,28 @@ void main() {
       ]);
       // No username goes to the sign-in routes.
       expect((bodies[0] as Map).keys, <String>['device_id', 'device_secret']);
-      expect((bodies[1] as Map).keys,
-          <String>['ceremony_id', 'device_id', 'device_secret', 'credential']);
+      expect((bodies[1] as Map).keys, <String>[
+        'ceremony_id',
+        'device_id',
+        'device_secret',
+        'credential',
+      ]);
     });
   });
 
   group('where the button shows', () {
-    bool offered(PasskeyPlatform p,
-            {PasskeyServerInfo? info = pkInfo,
-            String host = 'chat.example.com',
-            List<String> domains = const <String>[]}) =>
+    bool offered(
+      PasskeyPlatform p, {
+      PasskeyServerInfo? info = pkInfo,
+      String host = 'chat.example.com',
+      List<String> domains = const <String>[],
+    }) =>
         passkeysOffered(
-            platform: p, info: info, serverHost: host, appleDomains: domains);
+          platform: p,
+          info: info,
+          serverHost: host,
+          appleDomains: domains,
+        );
 
     test('Linux and other platforms never', () {
       expect(offered(PasskeyPlatform.linux), isFalse);
@@ -174,36 +195,56 @@ void main() {
     test('a server without passkeys, or for another host, never', () {
       expect(offered(PasskeyPlatform.android, info: null), isFalse);
       expect(
-          offered(PasskeyPlatform.android, host: 'other.example.com'), isFalse);
+        offered(PasskeyPlatform.android, host: 'other.example.com'),
+        isFalse,
+      );
     });
 
     test('Android needs the operator\'s Android list', () {
       expect(offered(PasskeyPlatform.android), isTrue);
       expect(
-          offered(PasskeyPlatform.android,
-              info: const PasskeyServerInfo(
-                  rpId: 'chat.example.com', android: false, apple: true)),
-          isFalse);
+        offered(
+          PasskeyPlatform.android,
+          info: const PasskeyServerInfo(
+            rpId: 'chat.example.com',
+            android: false,
+            apple: true,
+          ),
+        ),
+        isFalse,
+      );
     });
 
-    test('Apple platforms need the operator\'s list and a compiled-in host',
-        () {
-      expect(offered(PasskeyPlatform.ios), isFalse);
-      expect(offered(PasskeyPlatform.ios, domains: <String>['a.example']),
-          isFalse);
-      expect(
+    test(
+      'Apple platforms need the operator\'s list and a compiled-in host',
+      () {
+        expect(offered(PasskeyPlatform.ios), isFalse);
+        expect(
+          offered(PasskeyPlatform.ios, domains: <String>['a.example']),
+          isFalse,
+        );
+        expect(
           offered(PasskeyPlatform.ios, domains: <String>['chat.example.com']),
-          isTrue);
-      expect(
+          isTrue,
+        );
+        expect(
           offered(PasskeyPlatform.macos, domains: <String>['chat.example.com']),
-          isTrue);
-      expect(
-          offered(PasskeyPlatform.ios,
-              info: const PasskeyServerInfo(
-                  rpId: 'chat.example.com', android: true, apple: false),
-              domains: <String>['chat.example.com']),
-          isFalse);
-    });
+          isTrue,
+        );
+        expect(
+          offered(
+            PasskeyPlatform.ios,
+            info: const PasskeyServerInfo(
+              rpId: 'chat.example.com',
+              android: true,
+              apple: false,
+            ),
+            domains: <String>['chat.example.com'],
+          ),
+          isFalse,
+        );
+      },
+    );
 
     test('Windows needs nothing more', () {
       expect(offered(PasskeyPlatform.windows), isTrue);
@@ -211,14 +252,18 @@ void main() {
 
     test('domain list parsing', () {
       expect(parsePasskeyDomains(''), isEmpty);
-      expect(parsePasskeyDomains(' A.example , ,b.example'),
-          <String>['a.example', 'b.example']);
+      expect(parsePasskeyDomains(' A.example , ,b.example'), <String>[
+        'a.example',
+        'b.example',
+      ]);
     });
 
     test('the target platform maps one to one', () {
       expect(passkeyPlatformOf(TargetPlatform.linux), PasskeyPlatform.linux);
       expect(
-          passkeyPlatformOf(TargetPlatform.windows), PasskeyPlatform.windows);
+        passkeyPlatformOf(TargetPlatform.windows),
+        PasskeyPlatform.windows,
+      );
       expect(passkeyPlatformOf(TargetPlatform.iOS), PasskeyPlatform.ios);
     });
 
@@ -226,11 +271,15 @@ void main() {
       final client = PlatformPasskeyClient(platform: PasskeyPlatform.linux);
       expect(client.platformSupported, isFalse);
       await expectLater(
-          client.get(<String, Object?>{}), throwsA(isA<PasskeyUnavailable>()));
+        client.get(<String, Object?>{}),
+        throwsA(isA<PasskeyUnavailable>()),
+      );
       expect(
-          PlatformPasskeyClient(platform: PasskeyPlatform.windows)
-              .platformSupported,
-          isTrue);
+        PlatformPasskeyClient(
+          platform: PasskeyPlatform.windows,
+        ).platformSupported,
+        isTrue,
+      );
     });
 
     test('the probe feeds the button decision', () async {
@@ -240,18 +289,22 @@ void main() {
       expect(probe.passkeys?.rpId, 'chat.example.com');
       expect(h.state.passkeysOfferedFor(probe), isTrue);
       h.api.status = <String, Object?>{'setup_required': false};
-      expect(h.state.passkeysOfferedFor(await h.state.probeSetup(pkOrigin)),
-          isFalse);
+      expect(
+        h.state.passkeysOfferedFor(await h.state.probeSetup(pkOrigin)),
+        isFalse,
+      );
       final linux = PkHarness(supported: false);
       addTearDown(linux.dispose);
       expect(
-          linux.state
-              .passkeysOfferedFor(await linux.state.probeSetup(pkOrigin)),
-          isFalse);
+        linux.state.passkeysOfferedFor(await linux.state.probeSetup(pkOrigin)),
+        isFalse,
+      );
       final ios = PkHarness(platform: PasskeyPlatform.ios);
       addTearDown(ios.dispose);
-      expect(ios.state.passkeysOfferedFor(await ios.state.probeSetup(pkOrigin)),
-          isTrue);
+      expect(
+        ios.state.passkeysOfferedFor(await ios.state.probeSetup(pkOrigin)),
+        isTrue,
+      );
     });
   });
 
@@ -276,58 +329,70 @@ void main() {
         'rp': <String, Object?>{'id': 'evil.example', 'name': 'x'},
       };
       expect(
-          () => pinPasskeyRp(
-              publicKey: reg,
-              registration: true,
-              serverHost: 'chat.example.com',
-              info: pkInfo),
-          throwsA(isA<PasskeyPinException>()));
+        () => pinPasskeyRp(
+          publicKey: reg,
+          registration: true,
+          serverHost: 'chat.example.com',
+          info: pkInfo,
+        ),
+        throwsA(isA<PasskeyPinException>()),
+      );
       expect(
-          () => pinPasskeyRp(
-              publicKey: <String, Object?>{'rpId': 'chat.example.com'},
-              registration: false,
-              serverHost: 'chat.example.com',
-              info: const PasskeyServerInfo(
-                  rpId: 'other.example.com', android: true, apple: true)),
-          throwsA(isA<PasskeyPinException>()));
+        () => pinPasskeyRp(
+          publicKey: <String, Object?>{'rpId': 'chat.example.com'},
+          registration: false,
+          serverHost: 'chat.example.com',
+          info: const PasskeyServerInfo(
+            rpId: 'other.example.com',
+            android: true,
+            apple: true,
+          ),
+        ),
+        throwsA(isA<PasskeyPinException>()),
+      );
       for (final missing in <Map<String, Object?>>[
         <String, Object?>{},
         <String, Object?>{'rp': 'chat.example.com'},
         <String, Object?>{'rpId': 7},
       ]) {
         expect(
-            () => pinPasskeyRp(
-                publicKey: missing,
-                registration: missing.containsKey('rp'),
-                serverHost: 'chat.example.com',
-                info: pkInfo),
-            throwsA(isA<PasskeyPinException>()));
+          () => pinPasskeyRp(
+            publicKey: missing,
+            registration: missing.containsKey('rp'),
+            serverHost: 'chat.example.com',
+            info: pkInfo,
+          ),
+          throwsA(isA<PasskeyPinException>()),
+        );
       }
     });
   });
 
   group('passkey sign-in', () {
-    test('signs in like login and keeps the cursor of the same device',
-        () async {
-      final h = PkHarness();
-      addTearDown(h.dispose);
-      await h.enrolled(cursor: 9);
+    test(
+      'signs in like login and keeps the cursor of the same device',
+      () async {
+        final h = PkHarness();
+        addTearDown(h.dispose);
+        await h.enrolled(cursor: 9);
 
-      await h.state.signInWithPasskey(pkOrigin);
+        await h.state.signInWithPasskey(pkOrigin);
 
-      expect(h.state.error, isNull);
-      expect(h.state.session?.token, 'token-passkey');
-      expect(h.state.session?.username, 'owner');
-      expect((await h.store.loadSession())?.token, 'token-passkey');
-      expect(await h.store.loadSyncCursor(), 9);
-      expect(h.passkeys.asked, hasLength(1));
-      expect(
+        expect(h.state.error, isNull);
+        expect(h.state.session?.token, 'token-passkey');
+        expect(h.state.session?.username, 'owner');
+        expect((await h.store.loadSession())?.token, 'token-passkey');
+        expect(await h.store.loadSyncCursor(), 9);
+        expect(h.passkeys.asked, hasLength(1));
+        expect(
           h.api.trace,
           containsAllInOrder(<String>[
             'login-options:dev_owner:device-secret',
             'login:cer_login:dev_owner',
-          ]));
-    });
+          ]),
+        );
+      },
+    );
 
     test('without MLS state the cursor restarts, as login does', () async {
       final h = PkHarness();
@@ -363,8 +428,11 @@ void main() {
 
       await h.state.signInWithPasskey(pkOrigin);
 
-      expect(h.passkeys.asked, isEmpty,
-          reason: 'the platform must not be asked');
+      expect(
+        h.passkeys.asked,
+        isEmpty,
+        reason: 'the platform must not be asked',
+      );
       expect(h.state.session, isNull);
       expect(h.state.error, isNotNull);
     });
@@ -405,18 +473,26 @@ void main() {
       expect(h.passkeys.asked, isEmpty);
     });
 
-    test('a server refusal gives the plain message and keeps the device',
-        () async {
-      final h = PkHarness();
-      addTearDown(h.dispose);
-      await h.enrolled();
-      h.api.loginFailure = ApiException(401, '{"error":"invalid_credentials"}');
-      await h.state.signInWithPasskey(pkOrigin);
-      expect(h.state.session, isNull);
-      expect(h.state.error, isNotNull);
-      expect(await h.store.loadSession(), isNotNull,
-          reason: 'the device identity stays for a retry');
-    });
+    test(
+      'a server refusal gives the plain message and keeps the device',
+      () async {
+        final h = PkHarness();
+        addTearDown(h.dispose);
+        await h.enrolled();
+        h.api.loginFailure = ApiException(
+          401,
+          '{"error":"invalid_credentials"}',
+        );
+        await h.state.signInWithPasskey(pkOrigin);
+        expect(h.state.session, isNull);
+        expect(h.state.error, isNotNull);
+        expect(
+          await h.store.loadSession(),
+          isNotNull,
+          reason: 'the device identity stays for a retry',
+        );
+      },
+    );
   });
 
   group('managing passkeys', () {
@@ -468,19 +544,27 @@ void main() {
       expect(await h.state.renamePasskey('pk_new', 'Laptop'), isTrue);
       expect(await h.state.removePasskey('pk_new'), isTrue);
       expect(h.state.passkeyList, isEmpty);
-      expect(h.api.trace,
-          containsAll(<String>['rename:pk_new:Laptop', 'delete:pk_new']));
+      expect(
+        h.api.trace,
+        containsAll(<String>['rename:pk_new:Laptop', 'delete:pk_new']),
+      );
     });
 
     test('names are suggested, never a device model', () {
       expect(
-          suggestPasskeyName('Passkey', const <PasskeyRecord>[]), 'Passkey 1');
+        suggestPasskeyName('Passkey', const <PasskeyRecord>[]),
+        'Passkey 1',
+      );
       expect(
-          suggestPasskeyName('Passkey', <PasskeyRecord>[
-            PasskeyRecord(
-                id: 'a', name: 'Passkey 1', createdAt: DateTime.utc(2026)),
-          ]),
-          'Passkey 2');
+        suggestPasskeyName('Passkey', <PasskeyRecord>[
+          PasskeyRecord(
+            id: 'a',
+            name: 'Passkey 1',
+            createdAt: DateTime.utc(2026),
+          ),
+        ]),
+        'Passkey 2',
+      );
     });
   });
 
@@ -492,32 +576,36 @@ void main() {
           payload: <String, Object?>{'passkey_id': passkeyId},
         );
 
-    test('another device adds and removes a passkey: a notice each time',
-        () async {
-      final h = PkHarness();
-      addTearDown(h.dispose);
-      await h.enrolled();
-      h.api.events.add(event(1, 'account.passkey_added', 'pk_other'));
-      await h.state.signInWithPasskey(pkOrigin);
-      await _waitFor(() => h.state.passkeyNotice == PasskeyNotice.added);
-      expect(await h.store.loadSyncCursor(), greaterThanOrEqualTo(0));
+    test(
+      'another device adds and removes a passkey: a notice each time',
+      () async {
+        final h = PkHarness();
+        addTearDown(h.dispose);
+        await h.enrolled();
+        h.api.events.add(event(1, 'account.passkey_added', 'pk_other'));
+        await h.state.signInWithPasskey(pkOrigin);
+        await _waitFor(() => h.state.passkeyNotice == PasskeyNotice.added);
+        expect(await h.store.loadSyncCursor(), greaterThanOrEqualTo(0));
 
-      h.state.dismissPasskeyNotice();
-      expect(h.state.passkeyNotice, isNull);
-    });
+        h.state.dismissPasskeyNotice();
+        expect(h.state.passkeyNotice, isNull);
+      },
+    );
 
-    test('an unknown account event is skipped and the cursor moves on',
-        () async {
-      final h = PkHarness();
-      addTearDown(h.dispose);
-      await h.enrolled();
-      h.api.events.add(event(1, 'account.something_new', 'x'));
-      h.api.events.add(event(2, 'account.passkey_removed', 'pk_other'));
-      await h.state.signInWithPasskey(pkOrigin);
-      await _waitFor(() => h.state.passkeyNotice == PasskeyNotice.removed);
-      await _waitFor(() => h.state.error == null);
-      expect(h.state.session, isNotNull);
-    });
+    test(
+      'an unknown account event is skipped and the cursor moves on',
+      () async {
+        final h = PkHarness();
+        addTearDown(h.dispose);
+        await h.enrolled();
+        h.api.events.add(event(1, 'account.something_new', 'x'));
+        h.api.events.add(event(2, 'account.passkey_removed', 'pk_other'));
+        await h.state.signInWithPasskey(pkOrigin);
+        await _waitFor(() => h.state.passkeyNotice == PasskeyNotice.removed);
+        await _waitFor(() => h.state.error == null);
+        expect(h.state.session, isNotNull);
+      },
+    );
 
     test('this device\'s own change raises no notice', () async {
       final h = PkHarness();
@@ -550,8 +638,11 @@ void androidBuildTests() {
   test('the debug-mode doctor is never turned on', () {
     for (final file in Directory('lib').listSync(recursive: true)) {
       if (file is! File || !file.path.endsWith('.dart')) continue;
-      expect(file.readAsStringSync(), isNot(contains('debugMode: true')),
-          reason: file.path);
+      expect(
+        file.readAsStringSync(),
+        isNot(contains('debugMode: true')),
+        reason: file.path,
+      );
     }
   });
 }

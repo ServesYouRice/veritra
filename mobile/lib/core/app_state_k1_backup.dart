@@ -81,8 +81,9 @@ extension K1BackupActions on AppState {
     }
     final Uint8List entropy;
     try {
-      entropy =
-          await crypto.decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      entropy = await crypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typed),
+      );
     } catch (_) {
       return false;
     }
@@ -121,8 +122,9 @@ extension K1BackupActions on AppState {
     final crypto = _recoveryCrypto;
     Uint8List? entropy;
     try {
-      entropy =
-          await crypto.decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      entropy = await crypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typed),
+      );
       final values = await crypto.deriveRecoveryKey(entropy);
       try {
         if (!identical(_k1StateForSession(), state) ||
@@ -231,15 +233,17 @@ extension K1BackupActions on AppState {
         return K1SecondCopyExport.noCopy;
       }
       final body = await _k1ReadBytes(
-          await client.downloadBackup(current.token, entry.id),
-          k1MaxBackupCiphertextBytes);
+        await client.downloadBackup(current.token, entry.id),
+        k1MaxBackupCiphertextBytes,
+      );
       if (body.length != entry.sizeBytes ||
           body.length < k1BackupPeekBytes ||
           _hexOf(sha256(body)) != entry.sha256Hex) {
         return K1SecondCopyExport.failed;
       }
-      final peek =
-          open.peekK1Backup(Uint8List.sublistView(body, 0, k1BackupPeekBytes));
+      final peek = open.peekK1Backup(
+        Uint8List.sublistView(body, 0, k1BackupPeekBytes),
+      );
       if (peek.accountId != current.accountId ||
           peek.sourceDeviceId != current.deviceId ||
           peek.counter != counter ||
@@ -248,7 +252,9 @@ extension K1BackupActions on AppState {
       }
       if (!identical(session, current)) return K1SecondCopyExport.failed;
       final saved = await k1SecondCopyChannel.export(
-          k1SecondCopyFileName(current.accountId!, current.deviceId!), body);
+        k1SecondCopyFileName(current.accountId!, current.deviceId!),
+        body,
+      );
       if (!saved) return K1SecondCopyExport.cancelled;
       if (identical(_k1StateForSession(), state)) {
         state.secondCopyAt = k1Clock();
@@ -288,7 +294,9 @@ extension K1BackupActions on AppState {
     // The run works on copies of the key: a key typed or replaced while it
     // is under way never mixes into this run's seal or metadata.
     final key = _K1RunKey(
-        Uint8List.fromList(state.rkPub!), Uint8List.fromList(state.rkId!));
+      Uint8List.fromList(state.rkPub!),
+      Uint8List.fromList(state.rkId!),
+    );
     K1BackupError? error;
     try {
       error = await _k1BackupOnce(current, client, state, key);
@@ -331,8 +339,12 @@ extension K1BackupActions on AppState {
 
   /// One run (design, "What one run does"). Returns the error kind, or null
   /// on success.
-  Future<K1BackupError?> _k1BackupOnce(Session current, ApiClient client,
-      K1BackupState state, _K1RunKey key) async {
+  Future<K1BackupError?> _k1BackupOnce(
+    Session current,
+    ApiClient client,
+    K1BackupState state,
+    _K1RunKey key,
+  ) async {
     final seal = cryptoService as BackupSealCryptoService;
     // 1. Check the key: a changed key pauses until it is typed here.
     final RecoveryKeyStatus status;
@@ -361,7 +373,8 @@ extension K1BackupActions on AppState {
     if (conversationsLoaded) await _persistSnapshot();
     if (!identical(session, current)) return K1BackupError.failed;
     final plaintext = _k1Bytes(
-        await localStore.exportHistorySnapshot(omitDisappearing: true));
+      await localStore.exportHistorySnapshot(omitDisappearing: true),
+    );
     Uint8List? ciphertext;
     try {
       if (plaintext.length > seal.k1BackupMaxPlaintextBytes) {
@@ -386,8 +399,13 @@ extension K1BackupActions on AppState {
     // and tries once more.
     try {
       for (var attempt = 0;; attempt++) {
-        final error =
-            await _k1Upload(client, current, key, state.counter, ciphertext!);
+        final error = await _k1Upload(
+          client,
+          current,
+          key,
+          state.counter,
+          ciphertext!,
+        );
         if (error == null) {
           await _k1WriteSecondCopy(state, current, ciphertext);
         }
@@ -396,11 +414,14 @@ extension K1BackupActions on AppState {
         // This device's counter fell behind the server's high-water mark
         // (its local state was lost or restored). Jump past it: the clock
         // in milliseconds is above any counter a device reaches by days.
-        state.counter =
-            max(state.counter + 1, k1Clock().millisecondsSinceEpoch);
+        state.counter = max(
+          state.counter + 1,
+          k1Clock().millisecondsSinceEpoch,
+        );
         await _saveK1State(state);
         final plain = _k1Bytes(
-            await localStore.exportHistorySnapshot(omitDisappearing: true));
+          await localStore.exportHistorySnapshot(omitDisappearing: true),
+        );
         try {
           ciphertext = await seal.sealK1Backup(
             accountId: current.accountId!,
@@ -423,11 +444,20 @@ extension K1BackupActions on AppState {
 
   /// Uploads [ciphertext]; returns null on success, [_k1CounterStale] for a
   /// stale counter, or the error kind.
-  Future<Object?> _k1Upload(ApiClient client, Session current, _K1RunKey key,
-      int counter, Uint8List ciphertext) async {
+  Future<Object?> _k1Upload(
+    ApiClient client,
+    Session current,
+    _K1RunKey key,
+    int counter,
+    Uint8List ciphertext,
+  ) async {
     try {
-      await client.uploadK1Backup(current.token, ciphertext,
-          rkId: key.rkId, counter: counter);
+      await client.uploadK1Backup(
+        current.token,
+        ciphertext,
+        rkId: key.rkId,
+        counter: counter,
+      );
       return null;
     } on ApiException catch (err) {
       switch (err.serverCode) {
@@ -454,16 +484,20 @@ extension K1BackupActions on AppState {
   /// Step 5 of a run: the same ciphertext into the folder the user picked.
   /// Never throws and never fails the backup.
   Future<void> _k1WriteSecondCopy(
-      K1BackupState state, Session current, Uint8List ciphertext) async {
+    K1BackupState state,
+    Session current,
+    Uint8List ciphertext,
+  ) async {
     final folder = state.secondCopyPath;
     if (folder == null) return;
     var failed = false;
     try {
       await k1SecondCopyWriter.write(
-          folder: folder,
-          accountId: current.accountId!,
-          deviceId: current.deviceId!,
-          ciphertext: ciphertext);
+        folder: folder,
+        accountId: current.accountId!,
+        deviceId: current.deviceId!,
+        ciphertext: ciphertext,
+      );
       state.secondCopyAt = k1Clock();
     } catch (_) {
       failed = true;
@@ -479,7 +513,10 @@ extension K1BackupActions on AppState {
         current.accountId == null ||
         current.deviceId == null ||
         !state.belongsTo(
-            current.baseUrl, current.accountId!, current.deviceId!)) {
+          current.baseUrl,
+          current.accountId!,
+          current.deviceId!,
+        )) {
       return null;
     }
     return state;
@@ -514,12 +551,21 @@ extension K1BackupActions on AppState {
     }
     K1BackupState? read;
     try {
-      read = K1BackupState.decode(await localStore.loadSetting(
+      read = K1BackupState.decode(
+        await localStore.loadSetting(
           k1BackupSettingName(
-              current.baseUrl, current.accountId!, current.deviceId!)));
+            current.baseUrl,
+            current.accountId!,
+            current.deviceId!,
+          ),
+        ),
+      );
       if (read != null &&
           !read.belongsTo(
-              current.baseUrl, current.accountId!, current.deviceId!)) {
+            current.baseUrl,
+            current.accountId!,
+            current.deviceId!,
+          )) {
         read = null;
       }
     } catch (_) {
@@ -539,8 +585,9 @@ extension K1BackupActions on AppState {
       throw StateError('K1 state no longer belongs to the session');
     }
     await localStore.saveSetting(
-        k1BackupSettingName(state.baseUrl, state.accountId, state.deviceId),
-        state.encode());
+      k1BackupSettingName(state.baseUrl, state.accountId, state.deviceId),
+      state.encode(),
+    );
   }
 
   /// Stores the key's public half after the user typed it on this device

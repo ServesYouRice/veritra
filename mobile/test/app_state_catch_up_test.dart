@@ -22,26 +22,28 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('bounded scan position (TASK-209)', () {
-    test('pages across empty budget-limited pages and persists the cursor',
-        () async {
-      final api = _ScriptedApi()
-        ..accountScanBudget = 3
-        ..events = <SyncEvent>[
-          for (var id = 1; id <= 6; id++) _envelopeEvent(id, 'msg_h$id'),
-          _envelopeEvent(7, 'msg_visible'),
-        ]
-        ..hiddenFromAccount.addAll(<int>{1, 2, 3, 4, 5, 6});
-      final store = MemoryLocalStore();
-      await _keepIdentity(store);
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'pages across empty budget-limited pages and persists the cursor',
+      () async {
+        final api = _ScriptedApi()
+          ..accountScanBudget = 3
+          ..events = <SyncEvent>[
+            for (var id = 1; id <= 6; id++) _envelopeEvent(id, 'msg_h$id'),
+            _envelopeEvent(7, 'msg_visible'),
+          ]
+          ..hiddenFromAccount.addAll(<int>{1, 2, 3, 4, 5, 6});
+        final store = MemoryLocalStore();
+        await _keepIdentity(store);
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      // Two empty truncated pages, then the visible one, in one run.
-      expect(api.pageAfters, <int>[0, 3, 6]);
-      expect(harness.crypto.applied, <String>['msg_visible']);
-      harness.dispose();
-    });
+        await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        // Two empty truncated pages, then the visible one, in one run.
+        expect(api.pageAfters, <int>[0, 3, 6]);
+        expect(harness.crypto.applied, <String>['msg_visible']);
+        harness.dispose();
+      },
+    );
 
     test('a hidden tail after the last event is crossed once', () async {
       final api = _ScriptedApi()
@@ -66,103 +68,119 @@ void main() {
       harness.dispose();
     });
 
-    test('the cursor is not moved past an event that was not applied',
-        () async {
-      // Showing the page fails after the events committed; the server's
-      // scan position is further, but the page was not fully applied.
-      final api = _ScriptedApi()
-        ..accountScanBudget = 10
-        ..scanReportOverride = 9
-        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
-      final store = _FlakyStore()..historyFailures = 1;
-      await _keepIdentity(store);
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'the cursor is not moved past an event that was not applied',
+      () async {
+        // Showing the page fails after the events committed; the server's
+        // scan position is further, but the page was not fully applied.
+        final api = _ScriptedApi()
+          ..accountScanBudget = 10
+          ..scanReportOverride = 9
+          ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+        final store = _FlakyStore()..historyFailures = 1;
+        await _keepIdentity(store);
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() => harness.state.syncError != null);
-      expect(await store.loadSyncCursor(), 4);
-      harness.dispose();
-    });
+        await harness.waitFor(() => harness.state.syncError != null);
+        expect(await store.loadSyncCursor(), 4);
+        harness.dispose();
+      },
+    );
 
-    test('a server without the scan fields ends on a short page as before',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          _envelopeEvent(4, 'msg_one'),
-          _envelopeEvent(5, 'msg_two'),
-        ];
-      final store = MemoryLocalStore();
-      await _keepIdentity(store);
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'a server without the scan fields ends on a short page as before',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _envelopeEvent(4, 'msg_one'),
+            _envelopeEvent(5, 'msg_two'),
+          ];
+        final store = MemoryLocalStore();
+        await _keepIdentity(store);
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      expect(api.syncCalls, 1);
-      harness.dispose();
-    });
+        await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        expect(api.syncCalls, 1);
+        harness.dispose();
+      },
+    );
   });
 
   group('received messages whose publication failed (TASK-031)', () {
-    test('are shown once by the next catch-up, even with no new events',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          _envelopeEvent(4, 'msg_one'),
-          _envelopeEvent(5, 'msg_two'),
-        ];
-      // Reading history to show the page fails once.
-      final store = _FlakyStore()..historyFailures = 1;
-      final published = <String>[];
-      final harness = await _Harness.start(api,
-          store: store, configure: _recordPublished(published));
+    test(
+      'are shown once by the next catch-up, even with no new events',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _envelopeEvent(4, 'msg_one'),
+            _envelopeEvent(5, 'msg_two'),
+          ];
+        // Reading history to show the page fails once.
+        final store = _FlakyStore()..historyFailures = 1;
+        final published = <String>[];
+        final harness = await _Harness.start(
+          api,
+          store: store,
+          configure: _recordPublished(published),
+        );
 
-      await harness.waitFor(() => harness.state.syncError != null);
-      expect(await store.loadSyncCursor(), 5);
-      expect(store.historyFailures, 0);
-      expect(harness.state.messagesFor('conv_1'), isEmpty);
-      expect(published, isEmpty);
+        await harness.waitFor(() => harness.state.syncError != null);
+        expect(await store.loadSyncCursor(), 5);
+        expect(store.historyFailures, 0);
+        expect(harness.state.messagesFor('conv_1'), isEmpty);
+        expect(published, isEmpty);
 
-      // Nothing new on the server.
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.waitFor(() => published.isNotEmpty);
-      expect(published, <String>['msg_one', 'msg_two']);
-      expect(harness.state.messagesFor('conv_1').map((item) => item.id),
-          unorderedEquals(<String>['msg_one', 'msg_two']));
-      await harness.waitFor(() => harness.state.syncError == null);
+        // Nothing new on the server.
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(() => published.isNotEmpty);
+        expect(published, <String>['msg_one', 'msg_two']);
+        expect(
+          harness.state.messagesFor('conv_1').map((item) => item.id),
+          unorderedEquals(<String>['msg_one', 'msg_two']),
+        );
+        await harness.waitFor(() => harness.state.syncError == null);
 
-      // Shown exactly once.
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.settle();
-      await harness.waitFor(() => harness.state.syncError == null);
-      expect(published, <String>['msg_one', 'msg_two']);
-      expect(api.syncCalls, greaterThanOrEqualTo(3));
-      harness.dispose();
-    });
+        // Shown exactly once.
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.settle();
+        await harness.waitFor(() => harness.state.syncError == null);
+        expect(published, <String>['msg_one', 'msg_two']);
+        expect(api.syncCalls, greaterThanOrEqualTo(3));
+        harness.dispose();
+      },
+    );
 
-    test('a failed batch and its retry are both kept for the next catch-up',
-        () async {
-      // The 50th envelope fills a batch; showing it fails, and so does the
-      // retry after the failure.
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          for (var id = 1; id <= 51; id++) _envelopeEvent(id, 'msg_$id'),
-        ];
-      final store = _FlakyStore()..historyFailures = 2;
-      final published = <String>[];
-      final harness = await _Harness.start(api,
-          store: store, configure: _recordPublished(published));
+    test(
+      'a failed batch and its retry are both kept for the next catch-up',
+      () async {
+        // The 50th envelope fills a batch; showing it fails, and so does the
+        // retry after the failure.
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            for (var id = 1; id <= 51; id++) _envelopeEvent(id, 'msg_$id'),
+          ];
+        final store = _FlakyStore()..historyFailures = 2;
+        final published = <String>[];
+        final harness = await _Harness.start(
+          api,
+          store: store,
+          configure: _recordPublished(published),
+        );
 
-      await harness.waitFor(() => harness.state.syncError != null);
-      expect(await store.loadSyncCursor(), 50);
-      expect(store.historyFailures, 0);
-      expect(published, isEmpty);
+        await harness.waitFor(() => harness.state.syncError != null);
+        expect(await store.loadSyncCursor(), 50);
+        expect(store.historyFailures, 0);
+        expect(published, isEmpty);
 
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.waitFor(() => published.length >= 51);
-      await harness.waitFor(() => harness.state.syncError == null);
-      expect(published, <String>[for (var id = 1; id <= 51; id++) 'msg_$id']);
-      expect(harness.state.messagesFor('conv_1'), hasLength(51));
-      harness.dispose();
-    });
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(() => published.length >= 51);
+        await harness.waitFor(() => harness.state.syncError == null);
+        expect(published, <String>[for (var id = 1; id <= 51; id++) 'msg_$id']);
+        expect(harness.state.messagesFor('conv_1'), hasLength(51));
+        harness.dispose();
+      },
+    );
 
     test('are dropped when the session changes', () async {
       final api = _ScriptedApi()
@@ -170,8 +188,11 @@ void main() {
       final store = _FlakyStore()..historyFailures = 1;
       await _keepIdentity(store);
       final published = <String>[];
-      final harness = await _Harness.start(api,
-          store: store, configure: _recordPublished(published));
+      final harness = await _Harness.start(
+        api,
+        store: store,
+        configure: _recordPublished(published),
+      );
       await harness.waitFor(() => harness.state.syncError != null);
       expect(await store.loadSyncCursor(), 4);
 
@@ -189,31 +210,33 @@ void main() {
   });
 
   group('a peer message that can never be decrypted (D54, TASK-032)', () {
-    test('gets a placeholder and sync goes on for other conversations',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-        ];
-      final store = MemoryLocalStore();
-      await _keepIdentity(store);
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'gets a placeholder and sync goes on for other conversations',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          ];
+        final store = MemoryLocalStore();
+        await _keepIdentity(store);
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      expect(harness.state.syncRecovery, isNull);
-      expect(await store.loadSyncRecovery(), isNull);
-      expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
-      expect(harness.state.messagesFor('conv_2').single.id, 'msg_ok');
-      // The locked one is shown as its placeholder, with no content.
-      final locked = harness.state.messagesFor('conv_1').single;
-      final row = harness.state.historyFor('conv_1').forEnvelope(locked)!;
-      expect(row.key, 'undecryptable:4:msg_locked');
-      expect(row.kind, LocalMessageKind.invalid);
-      expect(row.body, isNull);
-      harness.dispose();
-    });
+        await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        expect(harness.state.syncRecovery, isNull);
+        expect(await store.loadSyncRecovery(), isNull);
+        expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
+        expect(harness.state.messagesFor('conv_2').single.id, 'msg_ok');
+        // The locked one is shown as its placeholder, with no content.
+        final locked = harness.state.messagesFor('conv_1').single;
+        final row = harness.state.historyFor('conv_1').forEnvelope(locked)!;
+        expect(row.key, 'undecryptable:4:msg_locked');
+        expect(row.kind, LocalMessageKind.invalid);
+        expect(row.body, isNull);
+        harness.dispose();
+      },
+    );
 
     test('a failed MLS control message still stops all sync (I33)', () async {
       final api = _ScriptedApi()
@@ -233,57 +256,65 @@ void main() {
       harness.dispose();
     });
 
-    test('a stop recorded for it before D54 is cleared once and applied',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
-          _envelopeEvent(5, 'msg_ok'),
-        ];
-      final store = MemoryLocalStore();
-      await _keepIdentity(store);
-      await store.saveSyncRecovery(SyncRecovery(
-        kind: SyncFailureKind.applicationUndecryptable,
-        recordedAt: DateTime.utc(2026, 10, 1),
-        eventId: 4,
-        eventType: 'message.envelope.created',
-        conversationId: 'conv_1',
-      ));
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'a stop recorded for it before D54 is cleared once and applied',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _envelopeEvent(4, 'msg_locked', ciphertext: _neverDecrypts),
+            _envelopeEvent(5, 'msg_ok'),
+          ];
+        final store = MemoryLocalStore();
+        await _keepIdentity(store);
+        await store.saveSyncRecovery(
+          SyncRecovery(
+            kind: SyncFailureKind.applicationUndecryptable,
+            recordedAt: DateTime.utc(2026, 10, 1),
+            eventId: 4,
+            eventType: 'message.envelope.created',
+            conversationId: 'conv_1',
+          ),
+        );
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      expect(harness.state.syncRecovery, isNull);
-      expect(harness.state.deviceRecoveryRequired, isFalse);
-      expect(await store.loadSyncRecovery(), isNull);
-      expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        expect(harness.state.syncRecovery, isNull);
+        expect(harness.state.deviceRecoveryRequired, isFalse);
+        expect(await store.loadSyncRecovery(), isNull);
+        expect(harness.crypto.applied, <String>['msg_locked', 'msg_ok']);
 
-      // Only once: a later stop of this kind (a failure the crypto service
-      // still refuses) stays until the person picks a recovery choice.
-      final calls = api.syncCalls;
-      await store.saveSyncRecovery(SyncRecovery(
-        kind: SyncFailureKind.applicationUndecryptable,
-        recordedAt: DateTime.utc(2026, 11, 1),
-        eventId: 6,
-      ));
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.waitFor(() => harness.state.syncRecovery != null);
-      await harness.settle();
-      expect(harness.state.syncRecovery!.eventId, 6);
-      expect(await store.loadSyncRecovery(), isNotNull);
-      expect(api.syncCalls, calls);
-      harness.dispose();
-    });
+        // Only once: a later stop of this kind (a failure the crypto service
+        // still refuses) stays until the person picks a recovery choice.
+        final calls = api.syncCalls;
+        await store.saveSyncRecovery(
+          SyncRecovery(
+            kind: SyncFailureKind.applicationUndecryptable,
+            recordedAt: DateTime.utc(2026, 11, 1),
+            eventId: 6,
+          ),
+        );
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+        await harness.settle();
+        expect(harness.state.syncRecovery!.eventId, 6);
+        expect(await store.loadSyncRecovery(), isNotNull);
+        expect(api.syncCalls, calls);
+        harness.dispose();
+      },
+    );
 
     test('other stored stops are not cleared', () async {
       final api = _ScriptedApi()
         ..events = <SyncEvent>[_envelopeEvent(4, 'msg_ok')];
       final store = MemoryLocalStore();
-      await store.saveSyncRecovery(SyncRecovery(
-        kind: SyncFailureKind.mlsState,
-        recordedAt: DateTime.utc(2026, 10, 1),
-        eventId: 3,
-      ));
+      await store.saveSyncRecovery(
+        SyncRecovery(
+          kind: SyncFailureKind.mlsState,
+          recordedAt: DateTime.utc(2026, 10, 1),
+          eventId: 3,
+        ),
+      );
       final harness = await _Harness.start(api, store: store);
       await harness.waitFor(() => harness.state.syncRecovery != null);
       await harness.settle();
@@ -295,143 +326,166 @@ void main() {
   });
 
   group("one conversation's MLS failure pauses only it (C1 P1)", () {
-    test('a failed control message pauses its conversation, not the device',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-          _envelopeEvent(6, 'msg_held'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
+    test(
+      'a failed control message pauses its conversation, not the device',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+            _envelopeEvent(6, 'msg_held'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
 
-      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      expect(harness.state.syncRecovery, isNull);
-      expect(harness.state.deviceRecoveryRequired, isFalse);
-      expect(await store.loadSyncRecovery(), isNull);
-      final pause = (await store.loadConversationPause('conv_1'))!;
-      expect(pause.kind, SyncFailureKind.mlsState);
-      expect(pause.failedEventId, 4);
-      expect(pause.resumeAfter, 3);
-      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
-      expect(harness.state.conversationSyncPaused('conv_2'), isFalse);
-      // The other conversation went on. The paused one's later event was
-      // passed by the cursor alone: no marker, nothing applied.
-      expect(harness.crypto.order, <String>['msg_ok']);
-      expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isFalse);
-      final held = await store.hasProcessedMlsMessage('application:6:msg_held');
-      expect(held, isFalse);
-      harness.dispose();
-    });
+        await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        expect(harness.state.syncRecovery, isNull);
+        expect(harness.state.deviceRecoveryRequired, isFalse);
+        expect(await store.loadSyncRecovery(), isNull);
+        final pause = (await store.loadConversationPause('conv_1'))!;
+        expect(pause.kind, SyncFailureKind.mlsState);
+        expect(pause.failedEventId, 4);
+        expect(pause.resumeAfter, 3);
+        expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+        expect(harness.state.conversationSyncPaused('conv_2'), isFalse);
+        // The other conversation went on. The paused one's later event was
+        // passed by the cursor alone: no marker, nothing applied.
+        expect(harness.crypto.order, <String>['msg_ok']);
+        expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isFalse);
+        final held = await store.hasProcessedMlsMessage(
+          'application:6:msg_held',
+        );
+        expect(held, isFalse);
+        harness.dispose();
+      },
+    );
 
-    test('a retry applies the held events in order and lifts the pause',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-          _envelopeEvent(6, 'msg_held'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+    test(
+      'a retry applies the held events in order and lifts the pause',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+            _envelopeEvent(6, 'msg_held'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
 
-      // The cause is gone, and a newer event of the conversation arrived.
-      harness.crypto.rejectedMls.clear();
-      api.events = <SyncEvent>[...api.events, _envelopeEvent(7, 'msg_new')];
-      await harness.state.retryConversationPause('conv_1');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
-      await harness
-          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+        // The cause is gone, and a newer event of the conversation arrived.
+        harness.crypto.rejectedMls.clear();
+        api.events = <SyncEvent>[...api.events, _envelopeEvent(7, 'msg_new')];
+        await harness.state.retryConversationPause('conv_1');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+        await harness.waitFor(
+          () => !harness.state.conversationSyncPaused('conv_1'),
+        );
 
-      expect(await store.loadConversationPause('conv_1'), isNull);
-      expect(harness.crypto.order,
-          <String>['msg_ok', 'mls_bad', 'msg_held', 'msg_new']);
-      expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isTrue);
-      final held = await store.hasProcessedMlsMessage('application:6:msg_held');
-      expect(held, isTrue);
-      expect(harness.state.syncRecovery, isNull);
-      harness.dispose();
-    });
+        expect(await store.loadConversationPause('conv_1'), isNull);
+        expect(harness.crypto.order, <String>[
+          'msg_ok',
+          'mls_bad',
+          'msg_held',
+          'msg_new',
+        ]);
+        expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isTrue);
+        final held = await store.hasProcessedMlsMessage(
+          'application:6:msg_held',
+        );
+        expect(held, isTrue);
+        expect(harness.state.syncRecovery, isNull);
+        harness.dispose();
+      },
+    );
 
-    test('a retry that fails again keeps the pause and skips nothing',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-          _envelopeEvent(6, 'msg_held'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+    test(
+      'a retry that fails again keeps the pause and skips nothing',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+            _envelopeEvent(6, 'msg_held'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
 
-      await harness.state.retryConversationPause('conv_1');
-      await harness.waitFor(() async =>
-          (await store.loadConversationPause('conv_1'))?.generation == 2);
-      final pause = (await store.loadConversationPause('conv_1'))!;
-      expect(pause.failedEventId, 4);
-      expect(pause.resumeAfter, 3);
-      expect(await store.loadSyncCursor(), 6);
-      expect(harness.crypto.order, <String>['msg_ok']);
-      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
-      expect(harness.state.syncRecovery, isNull);
-      harness.dispose();
-    });
+        await harness.state.retryConversationPause('conv_1');
+        await harness.waitFor(
+          () async =>
+              (await store.loadConversationPause('conv_1'))?.generation == 2,
+        );
+        final pause = (await store.loadConversationPause('conv_1'))!;
+        expect(pause.failedEventId, 4);
+        expect(pause.resumeAfter, 3);
+        expect(await store.loadSyncCursor(), 6);
+        expect(harness.crypto.order, <String>['msg_ok']);
+        expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+        expect(harness.state.syncRecovery, isNull);
+        harness.dispose();
+      },
+    );
 
-    test('a short page that is not the last one does not end the replay',
-        () async {
-      // Six held events, served two to a page.
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_a'),
-          _envelopeEvent(6, 'msg_b'),
-          _envelopeEvent(7, 'msg_c'),
-          _envelopeEvent(8, 'msg_d'),
-          _envelopeEvent(9, 'msg_e'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
-      expect(harness.crypto.order, isEmpty);
+    test(
+      'a short page that is not the last one does not end the replay',
+      () async {
+        // Six held events, served two to a page.
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_a'),
+            _envelopeEvent(6, 'msg_b'),
+            _envelopeEvent(7, 'msg_c'),
+            _envelopeEvent(8, 'msg_d'),
+            _envelopeEvent(9, 'msg_e'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
+        expect(harness.crypto.order, isEmpty);
 
-      harness.crypto.rejectedMls.clear();
-      api.conversationPageCap = 2;
-      await harness.state.retryConversationPause('conv_1');
-      await harness
-          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+        harness.crypto.rejectedMls.clear();
+        api.conversationPageCap = 2;
+        await harness.state.retryConversationPause('conv_1');
+        await harness.waitFor(
+          () => !harness.state.conversationSyncPaused('conv_1'),
+        );
 
-      // Nothing at or below the cursor was left behind, and the pause went
-      // only after the last of them.
-      expect(await store.loadConversationPause('conv_1'), isNull);
-      expect(harness.crypto.order, <String>[
-        'mls_bad',
-        'msg_a',
-        'msg_b',
-        'msg_c',
-        'msg_d',
-        'msg_e',
-      ]);
-      expect(await store.loadSyncCursor(), 9);
-      harness.dispose();
-    });
+        // Nothing at or below the cursor was left behind, and the pause went
+        // only after the last of them.
+        expect(await store.loadConversationPause('conv_1'), isNull);
+        expect(harness.crypto.order, <String>[
+          'mls_bad',
+          'msg_a',
+          'msg_b',
+          'msg_c',
+          'msg_d',
+          'msg_e',
+        ]);
+        expect(await store.loadSyncCursor(), 9);
+        harness.dispose();
+      },
+    );
 
     test('a budget-limited empty page does not end the replay (D92)', () async {
       // Four events the conversation stream hides from this device sit
@@ -452,62 +506,69 @@ void main() {
       final harness = await _Harness.start(api, store: store);
       harness.crypto.rejectedMls.add('mls_bad');
       await harness.waitFor(() async => await store.loadSyncCursor() == 9);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+      await harness.waitFor(
+        () => harness.state.conversationSyncPaused('conv_1'),
+      );
 
       harness.crypto.rejectedMls.clear();
       api.hideFromConversationStream.addAll(<int>[5, 6, 7, 8]);
       api.conversationScanBudget = 2;
       await harness.state.retryConversationPause('conv_1');
-      await harness
-          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+      await harness.waitFor(
+        () => !harness.state.conversationSyncPaused('conv_1'),
+      );
 
       expect(harness.crypto.order, <String>['mls_bad', 'msg_e']);
       expect(await store.loadConversationPause('conv_1'), isNull);
       harness.dispose();
     });
 
-    test('a failure on a later short page keeps the pause where it stopped',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_a'),
-          _envelopeEvent(6, 'msg_b'),
-          _envelopeEvent(7, 'msg_c'),
-          _mlsEvent(8, 'mls_bad_too'),
-          _envelopeEvent(9, 'msg_d'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.addAll(<String>['mls_bad', 'mls_bad_too']);
-      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+    test(
+      'a failure on a later short page keeps the pause where it stopped',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_a'),
+            _envelopeEvent(6, 'msg_b'),
+            _envelopeEvent(7, 'msg_c'),
+            _mlsEvent(8, 'mls_bad_too'),
+            _envelopeEvent(9, 'msg_d'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.addAll(<String>['mls_bad', 'mls_bad_too']);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
 
-      // The first cause is gone, the second event still fails. It sits on
-      // the third page, so the replay has to get there to see it.
-      harness.crypto.rejectedMls.remove('mls_bad');
-      api.conversationPageCap = 2;
-      await harness.state.retryConversationPause('conv_1');
-      await harness.waitFor(() async =>
-          (await store.loadConversationPause('conv_1'))?.failedEventId == 8);
+        // The first cause is gone, the second event still fails. It sits on
+        // the third page, so the replay has to get there to see it.
+        harness.crypto.rejectedMls.remove('mls_bad');
+        api.conversationPageCap = 2;
+        await harness.state.retryConversationPause('conv_1');
+        await harness.waitFor(
+          () async =>
+              (await store.loadConversationPause('conv_1'))?.failedEventId == 8,
+        );
 
-      final pause = (await store.loadConversationPause('conv_1'))!;
-      expect(pause.resumeAfter, 7);
-      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
-      expect(harness.crypto.order, <String>[
-        'mls_bad',
-        'msg_a',
-        'msg_b',
-        'msg_c',
-      ]);
-      expect(await store.loadSyncCursor(), 9);
-      final last = await store.hasProcessedMlsMessage('application:9:msg_d');
-      expect(last, isFalse);
-      harness.dispose();
-    });
+        final pause = (await store.loadConversationPause('conv_1'))!;
+        expect(pause.resumeAfter, 7);
+        expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+        expect(harness.crypto.order, <String>[
+          'mls_bad',
+          'msg_a',
+          'msg_b',
+          'msg_c',
+        ]);
+        expect(await store.loadSyncCursor(), 9);
+        final last = await store.hasProcessedMlsMessage('application:9:msg_d');
+        expect(last, isFalse);
+        harness.dispose();
+      },
+    );
 
     test('a stop recorded before pauses existed becomes the pause', () async {
       final api = _ScriptedApi()
@@ -517,13 +578,15 @@ void main() {
           _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
         ];
       final store = MemoryLocalStore();
-      await store.saveSyncRecovery(SyncRecovery(
-        kind: SyncFailureKind.mlsState,
-        recordedAt: DateTime.utc(2026, 10, 1),
-        eventId: 4,
-        eventType: 'mls.message.created',
-        conversationId: 'conv_1',
-      ));
+      await store.saveSyncRecovery(
+        SyncRecovery(
+          kind: SyncFailureKind.mlsState,
+          recordedAt: DateTime.utc(2026, 10, 1),
+          eventId: 4,
+          eventType: 'mls.message.created',
+          conversationId: 'conv_1',
+        ),
+      );
       final harness = await _Harness.start(api, store: store);
 
       await harness.waitFor(() async => await store.loadSyncCursor() == 5);
@@ -536,41 +599,45 @@ void main() {
       harness.dispose();
     });
 
-    test('without the conversation stream the device stops as before',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_bad'),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
+    test(
+      'without the conversation stream the device stops as before',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_bad'),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
 
-      await harness.waitFor(() => harness.state.syncRecovery != null);
-      expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
-      expect(await store.loadConversationPauses(), isEmpty);
-      expect(await store.loadSyncCursor(), 0);
-      expect(harness.crypto.order, isEmpty);
-      harness.dispose();
-    });
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+        expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
+        expect(await store.loadConversationPauses(), isEmpty);
+        expect(await store.loadSyncCursor(), 0);
+        expect(harness.crypto.order, isEmpty);
+        harness.dispose();
+      },
+    );
 
-    test('an event the server cannot serve again is never passed over',
-        () async {
-      // The conversation stream answers, but not with the failed event.
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..hideFromConversationStream.add(4)
-        ..events = <SyncEvent>[_mlsEvent(4, 'mls_bad')];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.rejectedMls.add('mls_bad');
+    test(
+      'an event the server cannot serve again is never passed over',
+      () async {
+        // The conversation stream answers, but not with the failed event.
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..hideFromConversationStream.add(4)
+          ..events = <SyncEvent>[_mlsEvent(4, 'mls_bad')];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.rejectedMls.add('mls_bad');
 
-      await harness.waitFor(() => harness.state.syncRecovery != null);
-      expect(await store.loadConversationPauses(), isEmpty);
-      expect(await store.loadSyncCursor(), 0);
-      harness.dispose();
-    });
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+        expect(await store.loadConversationPauses(), isEmpty);
+        expect(await store.loadSyncCursor(), 0);
+        harness.dispose();
+      },
+    );
   });
 
   // Each test fails on an uncaught asynchronous error: catch-ups run
@@ -582,8 +649,10 @@ void main() {
       final store = _FlakyStore()..recoveryReadFailures = 1;
       final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() =>
-          harness.state.syncError == harness.state.l10n.syncErrorStorageBusy);
+      await harness.waitFor(
+        () =>
+            harness.state.syncError == harness.state.l10n.syncErrorStorageBusy,
+      );
       expect(harness.state.connectionStatus, ConnectionStatus.offline);
       expect(harness.state.syncRecovery, isNull);
       expect(api.syncCalls, 0);
@@ -594,24 +663,28 @@ void main() {
       harness.dispose();
     });
 
-    test('a lasting error reading it records a local storage recovery',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
-      final store = _FlakyStore()
-        ..recoveryReadFailures = 1
-        ..recoveryReadError = _refused;
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'a lasting error reading it records a local storage recovery',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')];
+        final store = _FlakyStore()
+          ..recoveryReadFailures = 1
+          ..recoveryReadError = _refused;
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() => harness.state.syncRecovery != null);
-      expect(harness.state.syncRecovery!.kind, SyncFailureKind.localStorage);
-      expect(harness.state.deviceRecoveryRequired, isTrue);
-      expect(harness.state.connectionStatus, ConnectionStatus.offline);
-      expect(
-          (await store.loadSyncRecovery())!.kind, SyncFailureKind.localStorage);
-      expect(api.syncCalls, 0);
-      harness.dispose();
-    });
+        await harness.waitFor(() => harness.state.syncRecovery != null);
+        expect(harness.state.syncRecovery!.kind, SyncFailureKind.localStorage);
+        expect(harness.state.deviceRecoveryRequired, isTrue);
+        expect(harness.state.connectionStatus, ConnectionStatus.offline);
+        expect(
+          (await store.loadSyncRecovery())!.kind,
+          SyncFailureKind.localStorage,
+        );
+        expect(api.syncCalls, 0);
+        harness.dispose();
+      },
+    );
 
     test('a refused write of the record still stops sync in memory', () async {
       final api = _ScriptedApi()
@@ -633,20 +706,22 @@ void main() {
       harness.dispose();
     });
 
-    test('a sign-out that fails in storage after a 401 does not escape',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')]
-        ..syncStatus = 401;
-      final store = _FlakyStore()..refuseClear = true;
-      final harness = await _Harness.start(api, store: store);
+    test(
+      'a sign-out that fails in storage after a 401 does not escape',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[_projectionEvent(4, 'conversation.updated')]
+          ..syncStatus = 401;
+        final store = _FlakyStore()..refuseClear = true;
+        final harness = await _Harness.start(api, store: store);
 
-      await harness.waitFor(() => store.clearAttempts > 0);
-      await harness.settle();
-      expect(harness.state.syncRecovery, isNull);
-      expect(await store.loadSyncRecovery(), isNull);
-      harness.dispose();
-    });
+        await harness.waitFor(() => store.clearAttempts > 0);
+        await harness.settle();
+        expect(harness.state.syncRecovery, isNull);
+        expect(await store.loadSyncRecovery(), isNull);
+        harness.dispose();
+      },
+    );
   });
 
   group('projection refreshes per run of events (TASK-036)', () {
@@ -661,60 +736,70 @@ void main() {
       return api;
     }
 
-    test('a burst of device events costs one device and list refresh',
-        () async {
-      final one =
-          await catchUp(<SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
-      final burst = await catchUp(<SyncEvent>[
-        for (var id = 1; id <= 50; id++) _projectionEvent(id, 'device.updated'),
-      ], 50);
-      expect(burst.deviceCalls, one.deviceCalls);
-      expect(burst.conversationCalls, one.conversationCalls);
-    });
+    test(
+      'a burst of device events costs one device and list refresh',
+      () async {
+        final one = await catchUp(<SyncEvent>[
+          _projectionEvent(1, 'device.updated'),
+        ], 1);
+        final burst = await catchUp(<SyncEvent>[
+          for (var id = 1; id <= 50; id++)
+            _projectionEvent(id, 'device.updated'),
+        ], 50);
+        expect(burst.deviceCalls, one.deviceCalls);
+        expect(burst.conversationCalls, one.conversationCalls);
+      },
+    );
 
-    test('a member-linked notice asks for a pass, not a device refresh',
-        () async {
-      final base = await catchUp(
-          <SyncEvent>[_projectionEvent(1, 'conversation.updated')], 1);
-      final device =
-          await catchUp(<SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
-      final notice = await catchUp(<SyncEvent>[
-        _projectionEvent(1, 'device.member_linked', conversationId: null),
-      ], 1);
-      expect(notice.deviceCalls, base.deviceCalls);
-      expect(notice.conversationCalls, lessThan(device.conversationCalls));
-    });
-
-    test('each run is refreshed and committed before the next message',
-        () async {
-      // The same two runs, of one event each.
-      final single = await catchUp(<SyncEvent>[
-        _projectionEvent(1, 'conversation.updated'),
-        _envelopeEvent(2, 'msg_a'),
-        _projectionEvent(3, 'conversation.updated'),
-        _envelopeEvent(4, 'msg_b'),
-      ], 4);
-
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[
+    test(
+      'a member-linked notice asks for a pass, not a device refresh',
+      () async {
+        final base = await catchUp(<SyncEvent>[
           _projectionEvent(1, 'conversation.updated'),
-          _projectionEvent(2, 'membership.added'),
-          _envelopeEvent(3, 'msg_a'),
-          _projectionEvent(4, 'conversation.updated'),
-          _projectionEvent(5, 'retention.updated'),
-          _envelopeEvent(6, 'msg_b'),
-        ];
-      final store = MemoryLocalStore();
-      final harness = await _Harness.start(api, store: store);
-      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-      await harness.waitFor(() => harness.state.lastSyncedAt != null);
-      await harness.settle();
+        ], 1);
+        final device = await catchUp(<SyncEvent>[
+          _projectionEvent(1, 'device.updated'),
+        ], 1);
+        final notice = await catchUp(<SyncEvent>[
+          _projectionEvent(1, 'device.member_linked', conversationId: null),
+        ], 1);
+        expect(notice.deviceCalls, base.deviceCalls);
+        expect(notice.conversationCalls, lessThan(device.conversationCalls));
+      },
+    );
 
-      // A message is applied only once the run before it is committed.
-      expect(harness.crypto.cursorAtApply, <int>[2, 5]);
-      expect(api.conversationCalls, single.conversationCalls);
-      harness.dispose();
-    });
+    test(
+      'each run is refreshed and committed before the next message',
+      () async {
+        // The same two runs, of one event each.
+        final single = await catchUp(<SyncEvent>[
+          _projectionEvent(1, 'conversation.updated'),
+          _envelopeEvent(2, 'msg_a'),
+          _projectionEvent(3, 'conversation.updated'),
+          _envelopeEvent(4, 'msg_b'),
+        ], 4);
+
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[
+            _projectionEvent(1, 'conversation.updated'),
+            _projectionEvent(2, 'membership.added'),
+            _envelopeEvent(3, 'msg_a'),
+            _projectionEvent(4, 'conversation.updated'),
+            _projectionEvent(5, 'retention.updated'),
+            _envelopeEvent(6, 'msg_b'),
+          ];
+        final store = MemoryLocalStore();
+        final harness = await _Harness.start(api, store: store);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+        await harness.waitFor(() => harness.state.lastSyncedAt != null);
+        await harness.settle();
+
+        // A message is applied only once the run before it is committed.
+        expect(harness.crypto.cursorAtApply, <int>[2, 5]);
+        expect(api.conversationCalls, single.conversationCalls);
+        harness.dispose();
+      },
+    );
 
     test('a failed refresh commits none of its run', () async {
       final api = _ScriptedApi()
@@ -741,86 +826,100 @@ void main() {
   });
 
   group('a held C4 commit (docs/crypto.md, held commits)', () {
-    test('pauses its conversation as held and replays by itself when due',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[
-          _mlsEvent(4, 'mls_held'),
-          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
-          _envelopeEvent(6, 'msg_after'),
+    test(
+      'pauses its conversation as held and replays by itself when due',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[
+            _mlsEvent(4, 'mls_held'),
+            _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+            _envelopeEvent(6, 'msg_after'),
+          ];
+        final store = _AgedPauseStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.heldMls.add('mls_held');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
+        final pause = (await store.loadConversationPause('conv_1'))!;
+        expect(pause.kind, SyncFailureKind.governanceHeld);
+        expect(pause.held, isTrue);
+        expect(pause.generation, 1);
+        expect(harness.state.syncRecovery, isNull);
+        expect(harness.crypto.order, <String>['msg_ok']);
+
+        // Before its backoff runs out, a foreground pass leaves it alone.
+        harness.crypto.heldMls.clear();
+        api.events = <SyncEvent>[
+          ...api.events,
+          _envelopeEvent(7, 'msg_other', conversationId: 'conv_2'),
         ];
-      final store = _AgedPauseStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.heldMls.add('mls_held');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
-      final pause = (await store.loadConversationPause('conv_1'))!;
-      expect(pause.kind, SyncFailureKind.governanceHeld);
-      expect(pause.held, isTrue);
-      expect(pause.generation, 1);
-      expect(harness.state.syncRecovery, isNull);
-      expect(harness.crypto.order, <String>['msg_ok']);
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+        await harness.settle();
+        expect((await store.loadConversationPause('conv_1'))!.generation, 1);
+        expect(harness.crypto.order, <String>['msg_ok', 'msg_other']);
 
-      // Before its backoff runs out, a foreground pass leaves it alone.
-      harness.crypto.heldMls.clear();
-      api.events = <SyncEvent>[
-        ...api.events,
-        _envelopeEvent(7, 'msg_other', conversationId: 'conv_2'),
-      ];
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
-      await harness.settle();
-      expect((await store.loadConversationPause('conv_1'))!.generation, 1);
-      expect(harness.crypto.order, <String>['msg_ok', 'msg_other']);
+        // Once it is due, the next pass replays it with no user action, in
+        // order, and the pause lifts.
+        store.age = const Duration(minutes: 2);
+        api.events = <SyncEvent>[
+          ...api.events,
+          _envelopeEvent(8, 'msg_more', conversationId: 'conv_2'),
+        ];
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(
+          () => !harness.state.conversationSyncPaused('conv_1'),
+        );
+        expect(await store.loadConversationPause('conv_1'), isNull);
+        expect(
+          harness.crypto.order,
+          containsAllInOrder(<String>['mls_held', 'msg_after']),
+        );
+        expect(await store.hasProcessedMlsMessage('mls:4:mls_held'), isTrue);
+        expect(harness.state.syncRecovery, isNull);
+        harness.dispose();
+      },
+    );
 
-      // Once it is due, the next pass replays it with no user action, in
-      // order, and the pause lifts.
-      store.age = const Duration(minutes: 2);
-      api.events = <SyncEvent>[
-        ...api.events,
-        _envelopeEvent(8, 'msg_more', conversationId: 'conv_2'),
-      ];
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness
-          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
-      expect(await store.loadConversationPause('conv_1'), isNull);
-      expect(harness.crypto.order,
-          containsAllInOrder(<String>['mls_held', 'msg_after']));
-      expect(await store.hasProcessedMlsMessage('mls:4:mls_held'), isTrue);
-      expect(harness.state.syncRecovery, isNull);
-      harness.dispose();
-    });
+    test(
+      'a due replay that is still held stays held, one generation on',
+      () async {
+        final api = _ScriptedApi()
+          ..conversationRoute = true
+          ..events = <SyncEvent>[_mlsEvent(4, 'mls_held')];
+        final store = _AgedPauseStore();
+        final harness = await _Harness.start(api, store: store);
+        harness.crypto.heldMls.add('mls_held');
+        await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+        await harness.waitFor(
+          () => harness.state.conversationSyncPaused('conv_1'),
+        );
 
-    test('a due replay that is still held stays held, one generation on',
-        () async {
-      final api = _ScriptedApi()
-        ..conversationRoute = true
-        ..events = <SyncEvent>[_mlsEvent(4, 'mls_held')];
-      final store = _AgedPauseStore();
-      final harness = await _Harness.start(api, store: store);
-      harness.crypto.heldMls.add('mls_held');
-      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
-      await harness
-          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
-
-      store.age = const Duration(minutes: 2);
-      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      await harness.waitFor(() async =>
-          (await store.loadConversationPause('conv_1'))?.generation == 2);
-      final pause = (await store.loadConversationPause('conv_1'))!;
-      expect(pause.kind, SyncFailureKind.governanceHeld);
-      expect(pause.failedEventId, 4);
-      expect(harness.crypto.order, isEmpty);
-      expect(harness.state.syncRecovery, isNull);
-      harness.dispose();
-    });
+        store.age = const Duration(minutes: 2);
+        harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await harness.waitFor(
+          () async =>
+              (await store.loadConversationPause('conv_1'))?.generation == 2,
+        );
+        final pause = (await store.loadConversationPause('conv_1'))!;
+        expect(pause.kind, SyncFailureKind.governanceHeld);
+        expect(pause.failedEventId, 4);
+        expect(harness.crypto.order, isEmpty);
+        expect(harness.state.syncRecovery, isNull);
+        harness.dispose();
+      },
+    );
   });
 }
 
-SyncEvent _projectionEvent(int id, String type,
-        {String? conversationId = 'conv_1'}) =>
+SyncEvent _projectionEvent(
+  int id,
+  String type, {
+  String? conversationId = 'conv_1',
+}) =>
     SyncEvent(
       id: id,
       type: type,
@@ -848,11 +947,13 @@ void Function(AppState) _recordPublished(List<String> published) =>
 /// Protected MLS state, so signing in again keeps this device's identity
 /// and its cursor.
 Future<void> _keepIdentity(LocalStore store) => store.saveCryptoState(
-    StoredCryptoState(
+      StoredCryptoState(
         counter: 1,
         stateKey: List<int>.filled(32, 7),
-        sealedState: const <int>[1]),
-    0);
+        sealedState: const <int>[1],
+      ),
+      0,
+    );
 
 const _session = Session(
   baseUrl: 'https://localhost:8080',
@@ -862,9 +963,12 @@ const _session = Session(
   deviceSecret: 'secret',
 );
 
-SyncEvent _envelopeEvent(int id, String messageId,
-        {List<int> ciphertext = const <int>[1],
-        String conversationId = 'conv_1'}) =>
+SyncEvent _envelopeEvent(
+  int id,
+  String messageId, {
+  List<int> ciphertext = const <int>[1],
+  String conversationId = 'conv_1',
+}) =>
     SyncEvent(
       id: id,
       type: 'message.envelope.created',
@@ -893,8 +997,11 @@ class _Harness {
   final LocalStore store;
   final _FakeMlsCrypto crypto;
 
-  static Future<_Harness> start(_ScriptedApi api,
-      {LocalStore? store, void Function(AppState state)? configure}) async {
+  static Future<_Harness> start(
+    _ScriptedApi api, {
+    LocalStore? store,
+    void Function(AppState state)? configure,
+  }) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
     final crypto = _FakeMlsCrypto(local);
@@ -991,12 +1098,16 @@ class _FlakyStore extends MemoryLocalStore {
   }
 
   @override
-  Future<void> clearCachedState(
-      {bool preserveOutbox = false, bool keepDrafts = false}) async {
+  Future<void> clearCachedState({
+    bool preserveOutbox = false,
+    bool keepDrafts = false,
+  }) async {
     clearAttempts++;
     if (refuseClear) throw _refused;
     return super.clearCachedState(
-        preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
+      preserveOutbox: preserveOutbox,
+      keepDrafts: keepDrafts,
+    );
   }
 }
 
@@ -1040,14 +1151,17 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
     final cap = min(limit, conversationPageCap ?? limit);
     final budget = conversationScanBudget;
     final candidates = events
-        .where((event) =>
-            event.conversationId == conversationId && event.id > after)
+        .where(
+          (event) => event.conversationId == conversationId && event.id > after,
+        )
         .toList(growable: false);
     if (budget == null) {
-      return ConversationSyncPage(candidates
-          .where((event) => !hideFromConversationStream.contains(event.id))
-          .take(cap)
-          .toList(growable: false));
+      return ConversationSyncPage(
+        candidates
+            .where((event) => !hideFromConversationStream.contains(event.id))
+            .take(cap)
+            .toList(growable: false),
+      );
     }
     final page = <SyncEvent>[];
     var through = after;
@@ -1063,8 +1177,11 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
       through = event.id;
       if (!hideFromConversationStream.contains(event.id)) page.add(event);
     }
-    return ConversationSyncPage(page,
-        scannedThrough: through, truncated: truncated);
+    return ConversationSyncPage(
+      page,
+      scannedThrough: through,
+      truncated: truncated,
+    );
   }
 
   @override
@@ -1116,7 +1233,8 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
     final budget = accountScanBudget;
     if (budget == null) {
       return ConversationSyncPage(
-          await syncEvents(token, after: after, limit: limit));
+        await syncEvents(token, after: after, limit: limit),
+      );
     }
     syncCalls++;
     pageAfters.add(after);
@@ -1137,8 +1255,11 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
       through = event.id;
       if (!hiddenFromAccount.contains(event.id)) page.add(event);
     }
-    return ConversationSyncPage(page,
-        scannedThrough: scanReportOverride ?? through, truncated: truncated);
+    return ConversationSyncPage(
+      page,
+      scannedThrough: scanReportOverride ?? through,
+      truncated: truncated,
+    );
   }
 
   @override
@@ -1181,7 +1302,9 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<ReceivedMessageEnvelope> message(
-          String token, String messageId) async =>
+    String token,
+    String messageId,
+  ) async =>
       throw ApiException(404, '{"error":"not_found"}');
 
   MlsMessage _mls(SyncEvent event) => MlsMessage(
@@ -1209,10 +1332,13 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
       ].take(limit).toList(growable: false);
 
   @override
-  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
-      _mls(events.firstWhere((event) =>
-          event.type == 'mls.message.created' &&
-          (event.payload as Map)['mls_message_id'] == messageId));
+  Future<MlsMessage> mlsMessage(String token, String messageId) async => _mls(
+        events.firstWhere(
+          (event) =>
+              event.type == 'mls.message.created' &&
+              (event.payload as Map)['mls_message_id'] == messageId,
+        ),
+      );
 }
 
 class _FakeMlsCrypto implements MlsConversationCryptoService {
@@ -1239,17 +1365,21 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
       throw const GovernanceHeldException('removal_unproven');
     }
     order.add(message.id);
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'mls:${message.syncEventId}:${message.id}',
-      conversationId: message.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: message.syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'mls:${message.syncEventId}:${message.id}',
+        conversationId: message.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: message.syncEventId,
+      ),
+    );
   }
 
   @override
   Future<List<int>?> processApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId) async {
+    ReceivedMessageEnvelope envelope,
+    int syncEventId,
+  ) async {
     applied.add(envelope.id);
     order.add(envelope.id);
     cursorAtApply.add(await store.loadSyncCursor());
@@ -1259,46 +1389,52 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
       // decrypt (D54): the same group state, the cursor, and a placeholder
       // row with no content.
       final previous = (await store.loadCryptoState())!;
-      await store.commitMlsTransition(MlsStateTransition(
-        messageId: 'application:$syncEventId:${envelope.id}',
-        conversationId: envelope.conversationId,
-        expectedCounter: previous.counter,
-        expectedCursor: await store.loadSyncCursor(),
-        state: StoredCryptoState(
+      await store.commitMlsTransition(
+        MlsStateTransition(
+          messageId: 'application:$syncEventId:${envelope.id}',
+          conversationId: envelope.conversationId,
+          expectedCounter: previous.counter,
+          expectedCursor: await store.loadSyncCursor(),
+          state: StoredCryptoState(
             counter: previous.counter + 1,
             stateKey: previous.stateKey,
-            sealedState: previous.sealedState),
-        cursor: syncEventId,
-        upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-        messageEffects: <MessageEffect>[
-          InsertMessageEffect(
-            key: 'undecryptable:$syncEventId:${envelope.id}',
-            serverMessageId: envelope.id,
-            conversationId: envelope.conversationId,
-            senderAccountId: envelope.senderAccountId,
-            senderDeviceId: envelope.senderDeviceId,
-            kind: LocalMessageKind.invalid,
-            createdAt: envelope.createdAt.millisecondsSinceEpoch,
-            state: LocalMessageState.received,
+            sealedState: previous.sealedState,
           ),
-        ],
-      ));
+          cursor: syncEventId,
+          upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+          messageEffects: <MessageEffect>[
+            InsertMessageEffect(
+              key: 'undecryptable:$syncEventId:${envelope.id}',
+              serverMessageId: envelope.id,
+              conversationId: envelope.conversationId,
+              senderAccountId: envelope.senderAccountId,
+              senderDeviceId: envelope.senderDeviceId,
+              kind: LocalMessageKind.invalid,
+              createdAt: envelope.createdAt.millisecondsSinceEpoch,
+              state: LocalMessageState.received,
+            ),
+          ],
+        ),
+      );
       return null;
     }
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'application:$syncEventId:${envelope.id}',
-      conversationId: envelope.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'application:$syncEventId:${envelope.id}',
+        conversationId: envelope.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: syncEventId,
+      ),
+    );
     return null;
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override

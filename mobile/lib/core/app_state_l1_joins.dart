@@ -72,8 +72,9 @@ extension AppStateL1Joins on AppState {
           for (final account in accounts.entries) {
             if (account.key is String && account.value is int) {
               map[account.key as String] = DateTime.fromMillisecondsSinceEpoch(
-                  account.value as int,
-                  isUtc: true);
+                account.value as int,
+                isUtc: true,
+              );
             }
           }
           if (map.isNotEmpty) loaded[conversation.key as String] = map;
@@ -118,17 +119,20 @@ extension AppStateL1Joins on AppState {
     };
     try {
       await localStore.saveSetting(
-          _l1MissingJoinsSetting,
-          out.isEmpty
-              ? ''
-              : jsonEncode(<String, Object?>{
-                  'owner': _missingJoinsOwner(current),
-                  'joins': out,
-                }));
+        _l1MissingJoinsSetting,
+        out.isEmpty
+            ? ''
+            : jsonEncode(<String, Object?>{
+                'owner': _missingJoinsOwner(current),
+                'joins': out,
+              }),
+      );
     } on Object catch (err) {
       // Memory still holds the clocks; the next change writes them again.
-      developer.log('l1_missing_joins_not_saved ${err.runtimeType}',
-          name: 'veritra.l1');
+      developer.log(
+        'l1_missing_joins_not_saved ${err.runtimeType}',
+        name: 'veritra.l1',
+      );
     }
   }
 
@@ -139,7 +143,10 @@ extension AppStateL1Joins on AppState {
   /// never sequence the bundle), so the clock keeps running until the next
   /// discovery finds the device in the group.
   Future<void> _noteMissingJoins(
-      String conversationId, Set<String> unresolved, DateTime now) async {
+    String conversationId,
+    Set<String> unresolved,
+    DateTime now,
+  ) async {
     final before =
         _l1Joins.missingSince[conversationId] ?? const <String, DateTime>{};
     final next = <String, DateTime>{
@@ -158,8 +165,9 @@ extension AppStateL1Joins on AppState {
   }
 
   /// The accounts [discovered] names.
-  static Set<String> _gapAccounts(List<MlsDeviceRef> discovered) =>
-      <String>{for (final ref in discovered) ref.accountId};
+  static Set<String> _gapAccounts(List<MlsDeviceRef> discovered) => <String>{
+        for (final ref in discovered) ref.accountId,
+      };
 
   /// Claims one package for each of [requested] by explicit ID. The server
   /// refuses a whole batch (403) when one device in it is revoked or off
@@ -167,14 +175,21 @@ extension AppStateL1Joins on AppState {
   /// device is claimed alone and the refused ones are skipped, so one such
   /// device cannot keep its siblings out. Every answer must be a unique
   /// subset of [requested].
-  Future<List<DeviceKeyPackage>> _claimListedDevices(Session current,
-      ApiClient client, String conversationId, List<MlsDeviceRef> requested,
-      {bool Function()? stillOwner}) async {
+  Future<List<DeviceKeyPackage>> _claimListedDevices(
+    Session current,
+    ApiClient client,
+    String conversationId,
+    List<MlsDeviceRef> requested, {
+    bool Function()? stillOwner,
+  }) async {
     if (requested.isEmpty) return const <DeviceKeyPackage>[];
     List<DeviceKeyPackage> packages;
     try {
-      packages = await client.claimDeviceKeyPackages(current.token,
-          conversationId, [for (final ref in requested) ref.deviceId]);
+      packages = await client.claimDeviceKeyPackages(
+        current.token,
+        conversationId,
+        [for (final ref in requested) ref.deviceId],
+      );
     } on ApiException catch (err) {
       if (err.statusCode != 403 || requested.length == 1) rethrow;
       packages = <DeviceKeyPackage>[];
@@ -183,8 +198,13 @@ extension AppStateL1Joins on AppState {
       for (final ref in requested) {
         if (stillOwner != null && !stillOwner()) break;
         try {
-          packages.addAll(await client.claimDeviceKeyPackages(
-              current.token, conversationId, <String>[ref.deviceId]));
+          packages.addAll(
+            await client.claimDeviceKeyPackages(
+              current.token,
+              conversationId,
+              <String>[ref.deviceId],
+            ),
+          );
           anyAnswered = true;
         } on ApiException catch (one) {
           if (one.statusCode != 403) rethrow;
@@ -245,8 +265,12 @@ extension AppStateL1Joins on AppState {
         final local = await mls.groupEpoch(id);
         // No group here, or a commit of this device is still out.
         if (local == null || local.pending) continue;
-        final discovered =
-            await _discoverApprovedAdds(current, client, discovery, id);
+        final discovered = await _discoverApprovedAdds(
+          current,
+          client,
+          discovery,
+          id,
+        );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (discovered.isEmpty) {
           await _noteMissingJoins(id, const <String>{}, now);
@@ -266,21 +290,30 @@ extension AppStateL1Joins on AppState {
           _l1Joins.due[id] = waitUntil.add(AppState._reconcileFallbackMargin);
           continue;
         }
-        final adds = await _claimListedDevices(current, client, id, discovered,
-            stillOwner: () => _syncOwnerActive(current, ownerGeneration));
+        final adds = await _claimListedDevices(
+          current,
+          client,
+          id,
+          discovered,
+          stillOwner: () => _syncOwnerActive(current, ownerGeneration),
+        );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (adds.isEmpty) continue;
-        await mls.stageMembershipChange(id,
-            adds: adds, removes: const <MlsDeviceRef>[]);
+        await mls.stageMembershipChange(
+          id,
+          adds: adds,
+          removes: const <MlsDeviceRef>[],
+        );
         staged = true;
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         // Body-free: no conversation, device or server text.
         developer.log(
-            'l1_join_audit_failed '
-            '${err is ApiException ? err.statusCode : err.runtimeType}',
-            name: 'veritra.sync');
+          'l1_join_audit_failed '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync',
+        );
       }
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;

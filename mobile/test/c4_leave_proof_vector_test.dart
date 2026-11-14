@@ -13,8 +13,10 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 /// hands to Rust, and validates the `member_leave_signed` body.
 void main() {
   final vector = jsonDecode(
-          File('../testing/vectors/c4-leave-proof-v1.json').readAsStringSync())
-      as Map<String, Object?>;
+    File(
+      '../testing/vectors/c4-leave-proof-v1.json',
+    ).readAsStringSync(),
+  ) as Map<String, Object?>;
   Uint8List unhex(Object? value) {
     final text = value as String;
     return Uint8List.fromList([
@@ -37,17 +39,23 @@ void main() {
   test('the list refuses what Rust would refuse', () {
     expect(() => encodeLeaveProofs(const []), throwsArgumentError);
     expect(
-        () => encodeLeaveProofs([statement, statement]), throwsArgumentError);
+      () => encodeLeaveProofs([statement, statement]),
+      throwsArgumentError,
+    );
     expect(
-        () => encodeLeaveProofs([statement.sublist(1)]), throwsArgumentError);
+      () => encodeLeaveProofs([statement.sublist(1)]),
+      throwsArgumentError,
+    );
     final badLength = Uint8List.fromList(statement)..[5] = 63;
     expect(() => encodeLeaveProofs([badLength]), throwsArgumentError);
     final many = [
       for (var leaf = 0; leaf <= leaveStatementsMax; leaf++)
         Uint8List.fromList(statement)..[3] = leaf,
     ];
-    expect(encodeLeaveProofs(many.sublist(0, leaveStatementsMax)).length,
-        5 + leaveStatementsMax * leaveStatementBytes);
+    expect(
+      encodeLeaveProofs(many.sublist(0, leaveStatementsMax)).length,
+      5 + leaveStatementsMax * leaveStatementBytes,
+    );
     expect(() => encodeLeaveProofs(many), throwsArgumentError);
   });
 
@@ -77,19 +85,24 @@ void main() {
       body: body,
       hidden: true,
     );
-    final decoded = AppPayloadCodec().decode(encoded,
-        conversationId: 'conv_1', senderDeviceId: 'dev_bob', actionId: 'act_1');
+    final decoded = AppPayloadCodec().decode(
+      encoded,
+      conversationId: 'conv_1',
+      senderDeviceId: 'dev_bob',
+      actionId: 'act_1',
+    );
     expect(decoded.type, type);
     expect(decoded.body, body);
     expect(
-        () => AppPayloadCodec().encode(
-              type: type,
-              conversationId: 'conv_1',
-              senderDeviceId: 'dev_bob',
-              actionId: 'act_1',
-              body: const {'epoch': 1},
-              hidden: true,
-            ),
-        throwsFormatException);
+      () => AppPayloadCodec().encode(
+        type: type,
+        conversationId: 'conv_1',
+        senderDeviceId: 'dev_bob',
+        actionId: 'act_1',
+        body: const {'epoch': 1},
+        hidden: true,
+      ),
+      throwsFormatException,
+    );
   });
 }

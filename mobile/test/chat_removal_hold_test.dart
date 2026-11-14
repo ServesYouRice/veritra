@@ -30,12 +30,16 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: false);
 
   @override
@@ -49,7 +53,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {}
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {}
 }
 
 class _Sync implements SyncService {
@@ -64,8 +71,9 @@ class _Sync implements SyncService {
 }
 
 void main() {
-  testWidgets('a held conversation shows why and does not send again',
-      (tester) async {
+  testWidgets('a held conversation shows why and does not send again', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final api = _Api();
@@ -86,9 +94,11 @@ void main() {
       ..conversations = <Conversation>[
         Conversation(id: 'conv_1', kind: 'group'),
       ];
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(state: state, conversationId: 'conv_1'),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv_1'),
+      ),
+    );
     await tester.pumpAndSettle();
     final notice = AppLocalizationsEn().chatRemovalHoldNotice;
     expect(find.text(notice), findsNothing);
@@ -99,16 +109,20 @@ void main() {
     expect(find.text(notice), findsOneWidget);
 
     await tester.showKeyboard(find.byType(TextField));
-    tester.testTextInput.updateEditingValue(const TextEditingValue(
-      text: 'again',
-      selection: TextSelection.collapsed(offset: 5),
-    ));
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'again',
+        selection: TextSelection.collapsed(offset: 5),
+      ),
+    );
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
-        'again',
-        reason: 'the send control is off while sends are held');
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'again',
+      reason: 'the send control is off while sends are held',
+    );
     expect(api.sends, 0);
     // Lets the draft debounce run out before the test ends.
     await tester.pumpWidget(const SizedBox());

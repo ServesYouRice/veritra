@@ -52,8 +52,10 @@ class TestDeviceLists extends DeviceListPins {
           : _keys[_key(accountId, deviceId)];
 
   @override
-  Future<List<DeviceListPair>> approvedDevices(String accountId,
-          {bool refreshFirst = true}) async =>
+  Future<List<DeviceListPair>> approvedDevices(
+    String accountId, {
+    bool refreshFirst = true,
+  }) async =>
       [
         if (!unavailable.contains(accountId))
           for (final entry in _keys.entries)
@@ -69,8 +71,11 @@ class TestDeviceLists extends DeviceListPins {
 
   @override
   Future<LeafVerdict> judge(
-      List<int> accountId, List<int> deviceId, List<int> signingKey,
-      {bool refreshFirst = true}) async {
+    List<int> accountId,
+    List<int> deviceId,
+    List<int> signingKey, {
+    bool refreshFirst = true,
+  }) async {
     if (refreshFirst) await onFetch?.call();
     final String account;
     final String device;
@@ -94,15 +99,19 @@ class TestDeviceLists extends DeviceListPins {
 
 class _NoServer implements DeviceListSource {
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-          {required int after}) =>
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) =>
       throw UnsupportedError('TestDeviceLists has no server');
 }
 
 class _NoVerifier implements DeviceListVerifier {
   @override
   DeviceListChainResult checkChain(
-          String accountId, List<List<int>> statements) =>
+    String accountId,
+    List<List<int>> statements,
+  ) =>
       throw UnsupportedError('TestDeviceLists verifies nothing');
 
   @override
@@ -141,10 +150,14 @@ class TestNativeCryptoService extends NativeCryptoService {
 
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation) async {
+    EnrollmentReservation reservation,
+  ) async {
     final credential = await super.createEnrollmentCredential(reservation);
     sharedTestDeviceLists.approve(
-        reservation.accountId, reservation.deviceId, credential.signingKey);
+      reservation.accountId,
+      reservation.deviceId,
+      credential.signingKey,
+    );
     return credential;
   }
 }

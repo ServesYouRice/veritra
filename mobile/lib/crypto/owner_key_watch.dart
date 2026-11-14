@@ -102,12 +102,16 @@ class OwnerKeyWatch {
       // An owner listed twice: record nothing from a listing this odd.
       if (listed.containsKey(row.inboxId)) return false;
       listed[row.inboxId] = ReportRecipientKey(
-          inboxId: row.inboxId, publicKey: row.publicKey, keyRev: row.keyRev);
+        inboxId: row.inboxId,
+        publicKey: row.publicKey,
+        keyRev: row.keyRev,
+      );
     }
     var pinned = false;
     final owned = await _ownerPins();
-    final firstPinDone =
-        await store.loadSetting(ownerKeysFirstPinSetting(origin));
+    final firstPinDone = await store.loadSetting(
+      ownerKeysFirstPinSetting(origin),
+    );
     if (owned.isNotEmpty) {
       if (firstPinDone == null) {
         await store.saveSetting(ownerKeysFirstPinSetting(origin), '1');
@@ -120,15 +124,16 @@ class OwnerKeyWatch {
       pinned = true;
     }
     await store.saveSetting(
-        ownerKeysSeenSetting(origin),
-        jsonEncode(<Object?>[
-          for (final recipient in listed.values)
-            <String, Object?>{
-              'id': recipient.inboxId,
-              'key': base64Encode(recipient.publicKey),
-              'rev': recipient.keyRev,
-            },
-        ]));
+      ownerKeysSeenSetting(origin),
+      jsonEncode(<Object?>[
+        for (final recipient in listed.values)
+          <String, Object?>{
+            'id': recipient.inboxId,
+            'key': base64Encode(recipient.publicKey),
+            'rev': recipient.keyRev,
+          },
+      ]),
+    );
     await _pruneRejections();
     return pinned;
   }
@@ -141,7 +146,7 @@ class OwnerKeyWatch {
     final rejected = await _rejections();
     return [
       for (final item in all)
-        if (rejected[item.inboxId] != _rejectionValue(item)) item
+        if (rejected[item.inboxId] != _rejectionValue(item)) item,
     ];
   }
 
@@ -206,23 +211,39 @@ class OwnerKeyWatch {
     final seen = await _seen();
     if (seen == null) return <OwnerKeyReviewItem>[];
     final owned = {
-      for (final pin in await _ownerPins()) pin.ownerAccountId: pin
+      for (final pin in await _ownerPins()) pin.ownerAccountId: pin,
     };
     final items = <OwnerKeyReviewItem>[];
     for (final listed in seen.values) {
       final pin = owned[listed.inboxId];
       if (pin == null) {
-        items.add(OwnerKeyReviewItem(listed.inboxId, OwnerKeyChange.added,
-            listed: listed));
+        items.add(
+          OwnerKeyReviewItem(
+            listed.inboxId,
+            OwnerKeyChange.added,
+            listed: listed,
+          ),
+        );
       } else if (!_same(pin.publicKey, listed.publicKey)) {
-        items.add(OwnerKeyReviewItem(listed.inboxId, OwnerKeyChange.changed,
-            pin: pin, listed: listed));
+        items.add(
+          OwnerKeyReviewItem(
+            listed.inboxId,
+            OwnerKeyChange.changed,
+            pin: pin,
+            listed: listed,
+          ),
+        );
       }
     }
     for (final pin in owned.values) {
       if (!seen.containsKey(pin.ownerAccountId)) {
-        items.add(OwnerKeyReviewItem(pin.ownerAccountId, OwnerKeyChange.missing,
-            pin: pin));
+        items.add(
+          OwnerKeyReviewItem(
+            pin.ownerAccountId,
+            OwnerKeyChange.missing,
+            pin: pin,
+          ),
+        );
       }
     }
     items.sort((a, b) => a.inboxId.compareTo(b.inboxId));
@@ -272,7 +293,7 @@ class OwnerKeyWatch {
     if (rejected.isEmpty) return;
     final current = {
       for (final item in await _differences())
-        item.inboxId: _rejectionValue(item)
+        item.inboxId: _rejectionValue(item),
     };
     rejected.removeWhere((id, value) => current[id] != value);
     await _saveRejections(rejected);

@@ -29,7 +29,9 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
   @override
   Future<List<ConversationMember>> communityMembers(
-          String token, String id) async =>
+    String token,
+    String id,
+  ) async =>
       [ConversationMember(accountId: 'alice', role: 'owner')];
 }
 
@@ -44,10 +46,11 @@ class _State extends AppState {
         ) {
     api = client;
     session = const Session(
-        baseUrl: 'https://example.test',
-        token: 'token',
-        accountId: 'alice',
-        deviceId: 'device');
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'alice',
+      deviceId: 'device',
+    );
   }
 
   bool full = false;
@@ -69,104 +72,137 @@ class _State extends AppState {
   }
 
   @override
-  Future<Channel?> createChannel(String communityId, String name,
-      {String? kind, bool fullHistory = false}) async {
+  Future<Channel?> createChannel(
+    String communityId,
+    String name, {
+    String? kind,
+    bool fullHistory = false,
+  }) async {
     createdFull = fullHistory;
     return Channel(
-        id: 'channel',
-        communityId: communityId,
-        name: '',
-        kind: kind!,
-        conversationId: 'shared',
-        layoutGeneration: 1);
+      id: 'channel',
+      communityId: communityId,
+      name: '',
+      kind: kind!,
+      conversationId: 'shared',
+      layoutGeneration: 1,
+    );
   }
 }
 
 final _channel = Channel(
-    id: 'channel',
-    communityId: 'community',
-    name: '',
-    kind: 'open',
-    conversationId: 'shared',
-    layoutGeneration: 1);
+  id: 'channel',
+  communityId: 'community',
+  name: '',
+  kind: 'open',
+  conversationId: 'shared',
+  layoutGeneration: 1,
+);
 
 Future<void> _pump(WidgetTester tester, Widget body) async {
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(body: body),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: body),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
   testWidgets(
-      'turning full history on warns that posts can be proven to be the '
-      "author's; cancelling changes nothing", (tester) async {
-    final state = _State();
-    addTearDown(state.dispose);
-    await _pump(tester, ChannelHistorySetting(state: state, channel: _channel));
-    expect(find.text(_proof), findsOneWidget);
-    await tester.tap(find.byType(SwitchListTile));
-    await tester.pumpAndSettle();
-    expect(
-        find.textContaining('can be proven to be its author'), findsOneWidget);
-    expect(find.textContaining('Authors cannot deny their posts.'),
-        findsOneWidget);
-    // U32: three short points, each a fact C7 states.
-    expect(find.text('New posts can be read by people who join later.'),
-        findsOneWidget);
-    expect(
+    'turning full history on warns that posts can be proven to be the '
+    "author's; cancelling changes nothing",
+    (tester) async {
+      final state = _State();
+      addTearDown(state.dispose);
+      await _pump(
+        tester,
+        ChannelHistorySetting(state: state, channel: _channel),
+      );
+      expect(find.text(_proof), findsOneWidget);
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('can be proven to be its author'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Authors cannot deny their posts.'),
+        findsOneWidget,
+      );
+      // U32: three short points, each a fact C7 states.
+      expect(
+        find.text('New posts can be read by people who join later.'),
+        findsOneWidget,
+      );
+      expect(
         find.text('Posts made before you turn this on stay hidden from them.'),
-        findsOneWidget);
-    await tester.tap(find.text('Cancel').last);
-    await tester.pumpAndSettle();
-    expect(state.changes, isEmpty);
-    await tester.tap(find.byType(SwitchListTile));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Turn on'));
-    await tester.pumpAndSettle();
-    expect(state.changes, [true]);
-    // Turning it off has no proof warning.
-    await tester.tap(find.byType(SwitchListTile));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Authors cannot deny'), findsNothing);
-    expect(find.textContaining("won't see earlier posts"), findsOneWidget);
-    expect(find.text('Members who already have earlier posts keep them.'),
-        findsOneWidget);
-    expect(find.textContaining('turn it back on later'), findsOneWidget);
-  });
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel').last);
+      await tester.pumpAndSettle();
+      expect(state.changes, isEmpty);
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Turn on'));
+      await tester.pumpAndSettle();
+      expect(state.changes, [true]);
+      // Turning it off has no proof warning.
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Authors cannot deny'), findsNothing);
+      expect(find.textContaining("won't see earlier posts"), findsOneWidget);
+      expect(
+        find.text('Members who already have earlier posts keep them.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('turn it back on later'), findsOneWidget);
+    },
+  );
 
   testWidgets(
-      'a new channel with full history asks first, and the warning line is on '
-      'the switch', (tester) async {
-    final state = _State();
-    addTearDown(state.dispose);
-    await _pump(
+    'a new channel with full history asks first, and the warning line is on '
+    'the switch',
+    (tester) async {
+      final state = _State();
+      addTearDown(state.dispose);
+      await _pump(
         tester,
         CreateChannelScreen(
-            state: state,
-            community: Community(
-                id: 'community', name: '', sharedConversationId: 'shared')));
-    expect(find.text(_proof), findsOneWidget);
-    final history = find.widgetWithText(
-        SwitchListTile, 'People who join later can read earlier posts');
-    await tester.tap(history);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Authors cannot deny their posts.'),
-        findsOneWidget);
-    await tester.tap(find.text('Cancel').last);
-    await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(history).value, isFalse);
-    await tester.tap(history);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Turn on'));
-    await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(history).value, isTrue);
-    await tester.enterText(find.byType(TextField), 'general');
-    await tester.pump();
-    await tester.tap(find.text('Create'));
-    await tester.pumpAndSettle();
-    expect(state.createdFull, isTrue);
-  });
+          state: state,
+          community: Community(
+            id: 'community',
+            name: '',
+            sharedConversationId: 'shared',
+          ),
+        ),
+      );
+      expect(find.text(_proof), findsOneWidget);
+      final history = find.widgetWithText(
+        SwitchListTile,
+        'People who join later can read earlier posts',
+      );
+      await tester.tap(history);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Authors cannot deny their posts.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel').last);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(history).value, isFalse);
+      await tester.tap(history);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Turn on'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(history).value, isTrue);
+      await tester.enterText(find.byType(TextField), 'general');
+      await tester.pump();
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(state.createdFull, isTrue);
+    },
+  );
 }

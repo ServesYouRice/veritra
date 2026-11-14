@@ -123,9 +123,11 @@ class _AccountPickerState extends State<AccountPicker> {
     final ownAccountId = widget.state.session?.accountId;
     setState(() {
       matches = found
-          .where((account) =>
-              account.id != ownAccountId &&
-              !selected.any((existing) => existing.id == account.id))
+          .where(
+            (account) =>
+                account.id != ownAccountId &&
+                !selected.any((existing) => existing.id == account.id),
+          )
           .toList();
       searching = false;
       searched = true;
@@ -171,7 +173,8 @@ class _AccountPickerState extends State<AccountPicker> {
 
   void _remove(SelectedAccount account) {
     setState(
-        () => selected.removeWhere((existing) => existing.id == account.id));
+      () => selected.removeWhere((existing) => existing.id == account.id),
+    );
     widget.onChanged(List<SelectedAccount>.unmodifiable(selected));
   }
 

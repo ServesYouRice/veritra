@@ -26,10 +26,12 @@ bool _hasTurnUrl(Map<String, Object?> server) {
           ? urls
           : null;
   return list != null &&
-      list.any((url) =>
-          url is String &&
-          (url.toLowerCase().startsWith('turn:') ||
-              url.toLowerCase().startsWith('turns:')));
+      list.any(
+        (url) =>
+            url is String &&
+            (url.toLowerCase().startsWith('turn:') ||
+                url.toLowerCase().startsWith('turns:')),
+      );
 }
 
 /// The relay-only candidate filter (D56), defence in depth behind
@@ -80,11 +82,11 @@ class CallUnavailableException implements Exception {
 }
 
 class ActiveCall {
-  ActiveCall._(
-      {required this.session,
-      required _CallMedia media,
-      required this.signalErrors})
-      : _media = media;
+  ActiveCall._({
+    required this.session,
+    required _CallMedia media,
+    required this.signalErrors,
+  }) : _media = media;
   CallSession session;
   final _CallMedia _media;
   RTCPeerConnection get peerConnection => _media.peer;
@@ -133,8 +135,10 @@ class ActiveCall {
           controller.close();
           return;
         }
-        final updates = _remoteUpdates.stream
-            .listen(controller.add, onDone: controller.close);
+        final updates = _remoteUpdates.stream.listen(
+          controller.add,
+          onDone: controller.close,
+        );
         controller.onCancel = updates.cancel;
       });
   final StreamController<MediaStream> _remoteUpdates =
@@ -219,9 +223,10 @@ class _CallMedia {
 
   /// Connects this media to its call: flushes buffered candidates in order
   /// to [onCandidate], then routes later events directly.
-  void attach(
-      {required void Function(Map<String, Object?> signal) onCandidate,
-      required void Function(MediaStream stream) onRemoteStream}) {
+  void attach({
+    required void Function(Map<String, Object?> signal) onCandidate,
+    required void Function(MediaStream stream) onRemoteStream,
+  }) {
     for (final signal in _pendingCandidates) {
       onCandidate(signal);
     }
@@ -262,18 +267,20 @@ class _CallMedia {
 /// Native WebRTC transport. Signaling is always an MLS application payload;
 /// the server sees only call lifecycle metadata and ciphertext.
 class NativeCallService {
-  NativeCallService(
-      {required this.api,
-      required this.token,
-      required this.crypto,
-      required Stream<IncomingCallSignal> incoming,
-      CallMediaFactory? media,
-      Future<void> Function(Duration delay)? retryDelay,
-      this.allowDirectConnections = false})
-      : media = media ?? const FlutterWebRtcMediaFactory(),
+  NativeCallService({
+    required this.api,
+    required this.token,
+    required this.crypto,
+    required Stream<IncomingCallSignal> incoming,
+    CallMediaFactory? media,
+    Future<void> Function(Duration delay)? retryDelay,
+    this.allowDirectConnections = false,
+  })  : media = media ?? const FlutterWebRtcMediaFactory(),
         _retryDelay = retryDelay ?? Future<void>.delayed {
-    _subscription = incoming.listen(_onIncoming,
-        onError: (Object error) => _reportError(null, error));
+    _subscription = incoming.listen(
+      _onIncoming,
+      onError: (Object error) => _reportError(null, error),
+    );
   }
 
   /// How many times one transition is retried after a stale-version
@@ -325,8 +332,10 @@ class NativeCallService {
       StreamController<({String callId, String state})>.broadcast();
 
   @visibleForTesting
-  List<String> get pendingCallIds => List<String>.unmodifiable(
-      <String>{..._pendingSessions.keys, ..._earlySignals.keys});
+  List<String> get pendingCallIds => List<String>.unmodifiable(<String>{
+        ..._pendingSessions.keys,
+        ..._earlySignals.keys,
+      });
 
   @visibleForTesting
   int get recentlyTerminatedCount => _terminated.length;
@@ -353,14 +362,19 @@ class NativeCallService {
       final offer = await media.peer.createOffer(<String, Object?>{});
       await media.peer.setLocalDescription(offer);
       final encrypted = await crypto.encryptCallSignal(
-          conversationId, <String, Object?>{
-        'kind': 'offer',
-        'sdp': offer.sdp,
-        'sdp_type': offer.type,
-        'video': video
-      });
-      final call = created =
-          await api.createCall(token, conversationId, encrypted.metadata);
+        conversationId,
+        <String, Object?>{
+          'kind': 'offer',
+          'sdp': offer.sdp,
+          'sdp_type': offer.type,
+          'video': video,
+        },
+      );
+      final call = created = await api.createCall(
+        token,
+        conversationId,
+        encrypted.metadata,
+      );
       active = _activate(call, media);
     } catch (_) {
       await media.release();
@@ -382,9 +396,12 @@ class NativeCallService {
     if (_terminated.contains(call.id)) return;
     var latest = call;
     try {
-      await _transition(() => latest, (session) => latest = session,
-          state: (_) => 'ended',
-          giveUp: (current) => isTerminalCallState(current.state));
+      await _transition(
+        () => latest,
+        (session) => latest = session,
+        state: (_) => 'ended',
+        giveUp: (current) => isTerminalCallState(current.state),
+      );
     } catch (_) {
       // Best effort: the server expires the ringing call eventually.
     }
@@ -392,7 +409,9 @@ class NativeCallService {
   }
 
   Future<ActiveCall> answer(
-      CallSession call, Map<String, Object?> offer) async {
+    CallSession call,
+    Map<String, Object?> offer,
+  ) async {
     if (offer['kind'] != 'offer' ||
         offer['sdp'] is! String ||
         offer['sdp_type'] is! String) {
@@ -405,22 +424,29 @@ class NativeCallService {
     final media = await _createConnection(video: offer['video'] == true);
     final ActiveCall active;
     try {
-      await media.peer.setRemoteDescription(RTCSessionDescription(
-          offer['sdp'] as String, offer['sdp_type'] as String));
+      await media.peer.setRemoteDescription(
+        RTCSessionDescription(
+          offer['sdp'] as String,
+          offer['sdp_type'] as String,
+        ),
+      );
       final answer = await media.peer.createAnswer(<String, Object?>{});
       await media.peer.setLocalDescription(answer);
       final encrypted = await crypto.encryptCallSignal(
-          call.conversationId, <String, Object?>{
-        'kind': 'answer',
-        'sdp': answer.sdp,
-        'sdp_type': answer.type
-      });
+        call.conversationId,
+        <String, Object?>{
+          'kind': 'answer',
+          'sdp': answer.sdp,
+          'sdp_type': answer.type,
+        },
+      );
       final updated = await _transition(
-          () => _newest(_pendingSessions[call.id], call), _recordPending,
-          state: (_) => 'active',
-          metadata: encrypted.metadata,
-          giveUp: (current) =>
-              current.state != 'ringing' || _isOver(current.id));
+        () => _newest(_pendingSessions[call.id], call),
+        _recordPending,
+        state: (_) => 'active',
+        metadata: encrypted.metadata,
+        giveUp: (current) => current.state != 'ringing' || _isOver(current.id),
+      );
       active = _activate(updated, media);
     } catch (_) {
       await media.release();
@@ -436,9 +462,11 @@ class NativeCallService {
     if (_terminated.contains(call.id)) return;
     try {
       await _transition(
-          () => _newest(_pendingSessions[call.id], call), _recordPending,
-          state: (_) => 'rejected',
-          giveUp: (current) => current.state != 'ringing');
+        () => _newest(_pendingSessions[call.id], call),
+        _recordPending,
+        state: (_) => 'rejected',
+        giveUp: (current) => current.state != 'ringing',
+      );
     } on CallUnavailableException catch (error) {
       // Already over (the caller hung up): nothing left to reject.
       if (!isTerminalCallState(error.state)) rethrow;
@@ -473,8 +501,12 @@ class NativeCallService {
       _recordTerminating(_newest(pending, active.session));
       await active._media.release();
       try {
-        await active.enqueueSend(() => _sendEnded(
-            callId, () => _newest(_terminating[callId], active.session)));
+        await active.enqueueSend(
+          () => _sendEnded(
+            callId,
+            () => _newest(_terminating[callId], active.session),
+          ),
+        );
       } finally {
         await _closeCall(active);
       }
@@ -490,20 +522,28 @@ class NativeCallService {
     }
     if (expectedVersion == null) {
       throw StateError(
-          'Cannot end unknown call session $callId without an explicit expectedVersion');
+        'Cannot end unknown call session $callId without an explicit expectedVersion',
+      );
     }
     // The caller vouches for the version; without a session there is no
     // conversation to refresh from, so this is a single attempt.
-    await api.transitionCall(token, callId, 'ended',
-        expectedVersion: expectedVersion);
+    await api.transitionCall(
+      token,
+      callId,
+      'ended',
+      expectedVersion: expectedVersion,
+    );
     _markTerminated(callId);
   }
 
   Future<void> _sendEnded(String callId, CallSession Function() latest) async {
     try {
-      await _transition(latest, _recordTerminating,
-          state: (_) => 'ended',
-          giveUp: (current) => isTerminalCallState(current.state));
+      await _transition(
+        latest,
+        _recordTerminating,
+        state: (_) => 'ended',
+        giveUp: (current) => isTerminalCallState(current.state),
+      );
     } on CallUnavailableException {
       // The server already shows the call as over.
     }
@@ -561,13 +601,15 @@ class NativeCallService {
       throw CallUnavailableException(call.id, 'ended');
     }
     final active = ActiveCall._(
-        session: call,
-        media: media,
-        signalErrors: StreamController<Object>.broadcast());
+      session: call,
+      media: media,
+      signalErrors: StreamController<Object>.broadcast(),
+    );
     _calls[call.id] = active;
     media.attach(
-        onCandidate: (signal) => _queueSignal(active, signal),
-        onRemoteStream: active._remoteUpdates.add);
+      onCandidate: (signal) => _queueSignal(active, signal),
+      onRemoteStream: active._remoteUpdates.add,
+    );
     return active;
   }
 
@@ -594,7 +636,8 @@ class NativeCallService {
     if (!iceServers.any(_hasTurnUrl)) {
       // No server details here: they would carry TURN credentials.
       throw StateError(
-          'Calls need a self-hosted TURN service, and none is configured');
+        'Calls need a self-hosted TURN service, and none is configured',
+      );
     }
     final relayOnly = !allowDirectConnections;
     final peer = await media.createPeer(<String, Object?>{
@@ -613,7 +656,7 @@ class NativeCallService {
         'audio': <String, Object?>{
           'echoCancellation': true,
           'noiseSuppression': true,
-          'autoGainControl': true
+          'autoGainControl': true,
         },
         'video': video,
       });
@@ -632,28 +675,36 @@ class NativeCallService {
   /// of racing and losing all but one candidate to a stale-version rejection.
   void _queueSignal(ActiveCall active, Map<String, Object?> signal) {
     final sent = active.enqueueSend(() => _sendSignal(active, signal));
-    unawaited(sent.catchError((Object error) {
-      if (!active.signalErrors.isClosed) active.signalErrors.add(error);
-    }));
+    unawaited(
+      sent.catchError((Object error) {
+        if (!active.signalErrors.isClosed) active.signalErrors.add(error);
+      }),
+    );
   }
 
   Future<void> _sendSignal(
-      ActiveCall active, Map<String, Object?> signal) async {
+    ActiveCall active,
+    Map<String, Object?> signal,
+  ) async {
     // Hung up after this send was queued: the call is over, skip it.
     if (active._ending) return;
-    final encrypted =
-        await crypto.encryptCallSignal(active.session.conversationId, signal);
+    final encrypted = await crypto.encryptCallSignal(
+      active.session.conversationId,
+      signal,
+    );
     final CallSession updated;
     try {
       updated = await _transition(
-          () => active.session, (session) => _adopt(active, session),
-          // A same-state write: after a refresh the state may have moved on
-          // (ringing -> active), and the server allows no step back.
-          state: (current) => current.state,
-          metadata: encrypted.metadata,
-          // Stop retrying once hung up, so 'ended' is not held back.
-          giveUp: (current) =>
-              active._ending || isTerminalCallState(current.state));
+        () => active.session,
+        (session) => _adopt(active, session),
+        // A same-state write: after a refresh the state may have moved on
+        // (ringing -> active), and the server allows no step back.
+        state: (current) => current.state,
+        metadata: encrypted.metadata,
+        // Stop retrying once hung up, so 'ended' is not held back.
+        giveUp: (current) =>
+            active._ending || isTerminalCallState(current.state),
+      );
     } on CallUnavailableException {
       if (active._ending) return;
       rethrow;
@@ -701,26 +752,37 @@ class NativeCallService {
   /// checks the version before it writes anything, so a rejected attempt
   /// stored nothing and the peer never saw that ciphertext.
   Future<CallSession> _transition(
-      CallSession Function() latest, void Function(CallSession) adopt,
-      {required String Function(CallSession current) state,
-      Map<String, Object?>? metadata,
-      required bool Function(CallSession current) giveUp}) async {
+    CallSession Function() latest,
+    void Function(CallSession) adopt, {
+    required String Function(CallSession current) state,
+    Map<String, Object?>? metadata,
+    required bool Function(CallSession current) giveUp,
+  }) async {
     for (var attempt = 0;; attempt++) {
       final current = latest();
       if (giveUp(current)) {
         throw CallUnavailableException(current.id, current.state);
       }
       try {
-        return await api.transitionCall(token, current.id, state(current),
-            expectedVersion: current.version, encryptedMetadata: metadata);
+        return await api.transitionCall(
+          token,
+          current.id,
+          state(current),
+          expectedVersion: current.version,
+          encryptedMetadata: metadata,
+        );
       } on ApiException catch (error) {
         if (error.serverCode != 'call_version_conflict' ||
             attempt >= maxConflictRetries) {
           rethrow;
         }
         await _retryDelay(
-            Duration(milliseconds: 50 * (attempt + 1) + _jitter.nextInt(100)));
-        final refreshed = (await api.calls(token, current.conversationId))
+          Duration(milliseconds: 50 * (attempt + 1) + _jitter.nextInt(100)),
+        );
+        final refreshed = (await api.calls(
+          token,
+          current.conversationId,
+        ))
             .where((call) => call.id == current.id)
             .firstOrNull;
         // Not listed any more (pruned or out of the newest 100): give up.
@@ -782,8 +844,9 @@ class NativeCallService {
     // ones so they are applied in arrival order.
     if (active == null || !active._drained) {
       _recordPending(incoming.call);
-      (_earlySignals[incoming.call.id] ??= <Map<String, Object?>>[])
-          .add(incoming.signal);
+      (_earlySignals[incoming.call.id] ??= <Map<String, Object?>>[]).add(
+        incoming.signal,
+      );
       if (active == null && incoming.signal['kind'] == 'offer') {
         _incomingOffers.add(incoming);
       }
@@ -818,7 +881,9 @@ class NativeCallService {
       });
 
   Future<void> _applySignal(
-      ActiveCall active, Map<String, Object?> signal) async {
+    ActiveCall active,
+    Map<String, Object?> signal,
+  ) async {
     switch (signal['kind']) {
       case 'answer':
         final sdp = signal['sdp'];
@@ -826,8 +891,9 @@ class NativeCallService {
         if (sdp is! String || type is! String) {
           throw const FormatException('invalid encrypted call answer');
         }
-        await active.peerConnection
-            .setRemoteDescription(RTCSessionDescription(sdp, type));
+        await active.peerConnection.setRemoteDescription(
+          RTCSessionDescription(sdp, type),
+        );
         break;
       case 'ice':
         final candidate = signal['candidate'];
@@ -840,8 +906,9 @@ class NativeCallService {
             (rawIndex != null && index == null)) {
           throw const FormatException('invalid encrypted ICE candidate');
         }
-        await active.peerConnection
-            .addCandidate(RTCIceCandidate(candidate, sdpMid, index));
+        await active.peerConnection.addCandidate(
+          RTCIceCandidate(candidate, sdpMid, index),
+        );
         break;
     }
   }

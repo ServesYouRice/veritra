@@ -11,8 +11,10 @@ import 'package:private_messenger/l10n/l10n.dart';
 /// same placeholders and ICU structure, so no screen silently falls back to
 /// English or loses a value.
 
-const _serbianLatin =
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn');
+const _serbianLatin = Locale.fromSubtags(
+  languageCode: 'sr',
+  scriptCode: 'Latn',
+);
 
 Map<String, Object?> _readArb(String name) =>
     jsonDecode(File('lib/l10n/$name').readAsStringSync())
@@ -126,9 +128,9 @@ List<_Argument> _flatten(List<_Argument> arguments) => <_Argument>[
 Map<String, Set<String>> _kinds(List<_Argument> arguments) {
   final kinds = <String, Set<String>>{};
   for (final argument in _flatten(arguments)) {
-    kinds.putIfAbsent(argument.name, () => <String>{}).add(
-          argument.kind ?? 'value',
-        );
+    kinds
+        .putIfAbsent(argument.name, () => <String>{})
+        .add(argument.kind ?? 'value');
   }
   return kinds;
 }
@@ -150,8 +152,10 @@ void main() {
 
   test('the ARB files are English, Serbian and Serbian Latin', () {
     expect(english['@@locale'], 'en');
-    expect(
-        translations.keys.toSet(), <String>{'app_sr.arb', 'app_sr_Latn.arb'});
+    expect(translations.keys.toSet(), <String>{
+      'app_sr.arb',
+      'app_sr_Latn.arb',
+    });
     for (final entry in translations.entries) {
       final locale = entry.key.substring(4, entry.key.length - 4);
       expect(entry.value['@@locale'], locale, reason: entry.key);
@@ -196,21 +200,22 @@ void main() {
           };
           for (final argument in _flatten(_parse(messages[key]!))) {
             if (argument.kind == 'select') {
-              expect(argument.cases.keys.toSet(),
-                  source[argument.name]!.cases.keys.toSet(),
-                  reason: key);
+              expect(
+                argument.cases.keys.toSet(),
+                source[argument.name]!.cases.keys.toSet(),
+                reason: key,
+              );
             } else if (argument.kind == 'plural') {
               final english = source[argument.name]!.cases.keys.toSet();
               final exact = english.where((name) => name.startsWith('='));
               expect(
-                argument.cases.keys.toSet(),
-                <String>{
-                  ..._serbianPluralCases,
-                  // A literal =0 says something other than "0 items".
-                  ...exact.where((name) => name == '=0'),
-                },
-                reason: '$key: ${argument.shape}',
-              );
+                  argument.cases.keys.toSet(),
+                  <String>{
+                    ..._serbianPluralCases,
+                    // A literal =0 says something other than "0 items".
+                    ...exact.where((name) => name == '=0'),
+                  },
+                  reason: '$key: ${argument.shape}');
             }
           }
         }
@@ -247,10 +252,9 @@ void main() {
     ).firstMatch(plist);
     expect(declared, isNotNull);
     expect(
-      RegExp(r'<string>([^<]*)</string>')
-          .allMatches(declared!.group(1)!)
-          .map((match) => match.group(1))
-          .toList(),
+      RegExp(
+        r'<string>([^<]*)</string>',
+      ).allMatches(declared!.group(1)!).map((match) => match.group(1)).toList(),
       AppLocalizations.supportedLocales
           .map((locale) => locale.toLanguageTag())
           .toList(),
@@ -281,29 +285,41 @@ void main() {
     expect(latin.settingsTitle, 'Podešavanja');
   });
 
-  testWidgets('Material, Cupertino and Widgets strings exist for both scripts',
-      (tester) async {
-    final seen = <String, List<String>>{};
-    for (final locale in <Locale>[const Locale('sr'), _serbianLatin]) {
-      expect(GlobalMaterialLocalizations.delegate.isSupported(locale), isTrue);
-      expect(GlobalCupertinoLocalizations.delegate.isSupported(locale), isTrue);
-      expect(GlobalWidgetsLocalizations.delegate.isSupported(locale), isTrue);
-      await tester.pumpWidget(MaterialApp(
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Builder(builder: (context) {
-          seen[locale.toLanguageTag()] = <String>[
-            MaterialLocalizations.of(context).cancelButtonLabel,
-            CupertinoLocalizations.of(context).cutButtonLabel,
-            Directionality.of(context).name,
-            context.l10n.commonCancel,
-          ];
-          return const SizedBox();
-        }),
-      ));
-    }
-    expect(seen['sr'], <String>['Откажи', 'Исеци', 'ltr', 'Откажи']);
-    expect(seen['sr-Latn'], <String>['Otkaži', 'Iseci', 'ltr', 'Otkaži']);
-  });
+  testWidgets(
+    'Material, Cupertino and Widgets strings exist for both scripts',
+    (tester) async {
+      final seen = <String, List<String>>{};
+      for (final locale in <Locale>[const Locale('sr'), _serbianLatin]) {
+        expect(
+          GlobalMaterialLocalizations.delegate.isSupported(locale),
+          isTrue,
+        );
+        expect(
+          GlobalCupertinoLocalizations.delegate.isSupported(locale),
+          isTrue,
+        );
+        expect(GlobalWidgetsLocalizations.delegate.isSupported(locale), isTrue);
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) {
+                seen[locale.toLanguageTag()] = <String>[
+                  MaterialLocalizations.of(context).cancelButtonLabel,
+                  CupertinoLocalizations.of(context).cutButtonLabel,
+                  Directionality.of(context).name,
+                  context.l10n.commonCancel,
+                ];
+                return const SizedBox();
+              },
+            ),
+          ),
+        );
+      }
+      expect(seen['sr'], <String>['Откажи', 'Исеци', 'ltr', 'Откажи']);
+      expect(seen['sr-Latn'], <String>['Otkaži', 'Iseci', 'ltr', 'Otkaži']);
+    },
+  );
 }

@@ -49,8 +49,10 @@ class ReportBody {
 
   /// The body of a report about the message [reveal] was kept for. The
   /// message key is `<sender_device_id>:<action_id>`.
-  factory ReportBody.fromReveal(FrankReveal reveal,
-      {required ReportReason reason}) {
+  factory ReportBody.fromReveal(
+    FrankReveal reveal, {
+    required ReportReason reason,
+  }) {
     final split = reveal.messageKey.indexOf(':');
     if (split < 1 || split == reveal.messageKey.length - 1) {
       throw const FormatException('invalid message key');
@@ -104,27 +106,37 @@ class ReportBody {
   /// Writes a version 3 body. Refuses a body without a [reason]: the writer
   /// never falls back to version 1 or 2.
   Uint8List encode() {
-    _check(envelopeId, conversationId, senderDeviceId, actionId, payload,
-        frankKey);
+    _check(
+      envelopeId,
+      conversationId,
+      senderDeviceId,
+      actionId,
+      payload,
+      frankKey,
+    );
     _checkSealed(senderAccountId, designation);
     final chosen = reason;
     if (chosen == null) {
       throw const FormatException('a report body needs a reason');
     }
-    return Uint8List.fromList(utf8.encode(jsonEncode({
-      'v': reasonVersion,
-      'envelope_id': envelopeId,
-      'conversation_id': conversationId,
-      'sender_device_id': senderDeviceId,
-      'action_id': actionId,
-      'payload': base64Encode(payload),
-      'frank_key': base64Encode(frankKey),
-      'reason': chosen.code,
-      if (sealed) ...{
-        'sender_account_id': senderAccountId,
-        'designation': base64Encode(designation!),
-      },
-    })));
+    return Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          'v': reasonVersion,
+          'envelope_id': envelopeId,
+          'conversation_id': conversationId,
+          'sender_device_id': senderDeviceId,
+          'action_id': actionId,
+          'payload': base64Encode(payload),
+          'frank_key': base64Encode(frankKey),
+          'reason': chosen.code,
+          if (sealed) ...{
+            'sender_account_id': senderAccountId,
+            'designation': base64Encode(designation!),
+          },
+        }),
+      ),
+    );
   }
 
   /// Reads a body a recipient opened. Throws [FormatException] for anything
@@ -207,8 +219,14 @@ class ReportBody {
       designation: designation,
       reason: reason,
     );
-    _check(body.envelopeId, body.conversationId, body.senderDeviceId,
-        body.actionId, payload, frankKey);
+    _check(
+      body.envelopeId,
+      body.conversationId,
+      body.senderDeviceId,
+      body.actionId,
+      payload,
+      frankKey,
+    );
     _checkSealed(body.senderAccountId, body.designation);
     return body;
   }
@@ -337,16 +355,18 @@ Future<List<SealedReportCopy>> sealReportCopies({
         reportId: reportId,
         reporterAccountId: reporterAccountId,
       );
-      copies.add(SealedReportCopy(
-        inboxId: recipient.inboxId,
-        keyRev: recipient.keyRev,
-        recipientPublicKey: recipient.publicKey,
-        sealed: await crypto.sealReport(
+      copies.add(
+        SealedReportCopy(
+          inboxId: recipient.inboxId,
+          keyRev: recipient.keyRev,
           recipientPublicKey: recipient.publicKey,
-          aad: aad,
-          plaintext: Uint8List.fromList(plaintext),
+          sealed: await crypto.sealReport(
+            recipientPublicKey: recipient.publicKey,
+            aad: aad,
+            plaintext: Uint8List.fromList(plaintext),
+          ),
         ),
-      ));
+      );
     }
     return copies;
   } finally {

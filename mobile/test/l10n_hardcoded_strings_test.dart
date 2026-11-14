@@ -153,14 +153,20 @@ void main() {
       expect(scan('a;\nb;\nText(\n  "Wrapped")'), <String>[
         'lib/ui/x.dart:4: Wrapped',
       ]);
-      expect(scan("Text('A long '\n    'sentence')"),
-          <String>['lib/ui/x.dart:1: A long sentence']);
-      expect(scan("InputDecoration(hintText: 'https://a.example/x') // c"),
-          <String>['lib/ui/x.dart:1: https://a.example/x']);
+      expect(scan("Text('A long '\n    'sentence')"), <String>[
+        'lib/ui/x.dart:1: A long sentence',
+      ]);
       expect(
-          _scan('lib/features/auth/connect_screen.dart',
-              "InputDecoration(hintText: 'https://chat.example.org')"),
-          isEmpty);
+        scan("InputDecoration(hintText: 'https://a.example/x') // c"),
+        <String>['lib/ui/x.dart:1: https://a.example/x'],
+      );
+      expect(
+        _scan(
+          'lib/features/auth/connect_screen.dart',
+          "InputDecoration(hintText: 'https://chat.example.org')",
+        ),
+        isEmpty,
+      );
     });
   });
 }
@@ -313,8 +319,12 @@ class _Lexer {
           ? null
           : String.fromCharCodes(code, head.end, piece.start);
       if (head != null && between!.trim().isEmpty) {
-        head = _Literal(head.start, piece.end, head.text + piece.text,
-            '${head.words}${piece.words}');
+        head = _Literal(
+          head.start,
+          piece.end,
+          head.text + piece.text,
+          '${head.words}${piece.words}',
+        );
         code[piece.start] = 0x20;
       } else {
         head = piece;
@@ -433,11 +443,14 @@ class _Lexer {
     _blank(start, end);
     if (record) {
       code[start] = _literalMark.codeUnitAt(0);
-      pieces.add(_Literal(
+      pieces.add(
+        _Literal(
           start,
           end,
           source.substring(contentStart, contentEnd.clamp(contentStart, end)),
-          '$words'));
+          '$words',
+        ),
+      );
     }
     return end;
   }

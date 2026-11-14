@@ -168,8 +168,9 @@ class K1BackupState {
   void recordConfirmed(DateTime now) {
     confirmedCount++;
     confirmMisses = 0;
-    confirmDueAt =
-        now.add(confirmedCount == 1 ? k1ConfirmSecond : k1ConfirmLater);
+    confirmDueAt = now.add(
+      confirmedCount == 1 ? k1ConfirmSecond : k1ConfirmLater,
+    );
   }
 
   /// "Not now": ask again in 7 days.

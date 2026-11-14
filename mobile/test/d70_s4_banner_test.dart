@@ -42,13 +42,16 @@ void main() {
         home: Scaffold(body: ConnectionBanner(state: state)),
       );
 
-  testWidgets('a listed conversation is named in the banner and the dialog',
-      (tester) async {
+  testWidgets('a listed conversation is named in the banner and the dialog', (
+    tester,
+  ) async {
     final state = stateWith('conv_team');
     addTearDown(state.dispose);
     await tester.pumpWidget(app(state));
-    expect(find.text(state.l10n.syncErrorRecordLimitNamed('Team')),
-        findsOneWidget);
+    expect(
+      find.text(state.l10n.syncErrorRecordLimitNamed('Team')),
+      findsOneWidget,
+    );
     final leave = find.widgetWithText(TextButton, 'Leave "Team"');
     expect(leave, findsOneWidget);
     await tester.tap(leave);
@@ -58,14 +61,17 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('an unlisted conversation gets the generic wording',
-      (tester) async {
+  testWidgets('an unlisted conversation gets the generic wording', (
+    tester,
+  ) async {
     final state = stateWith('conv_gone');
     addTearDown(state.dispose);
     await tester.pumpWidget(app(state));
     expect(find.text(state.l10n.syncErrorRecordLimit), findsOneWidget);
     expect(
-        find.widgetWithText(TextButton, 'Leave conversation'), findsOneWidget);
+      find.widgetWithText(TextButton, 'Leave conversation'),
+      findsOneWidget,
+    );
   });
 }
 

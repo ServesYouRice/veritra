@@ -18,9 +18,9 @@ import 'native_test_env.dart';
 /// does (`c7OpenLiveParts`, then body0's VAP1, then `c7OpenSlots`); Rust and
 /// Go check the same file. A missing vector fails; it never skips.
 void main() {
-  final vector = jsonDecode(
-    File('../testing/vectors/c7-sync-v1.json').readAsStringSync(),
-  ) as Map<String, dynamic>;
+  final vector =
+      jsonDecode(File('../testing/vectors/c7-sync-v1.json').readAsStringSync())
+          as Map<String, dynamic>;
   final inputs = vector['inputs'] as Map<String, dynamic>;
   final outputs = vector['outputs'] as Map<String, dynamic>;
   final channels = (inputs['channels'] as List).cast<Map<String, dynamic>>();
@@ -48,14 +48,17 @@ void main() {
     expect(c7HistorySyncChannelCount(sealed.length), n);
     expect(c7Body0PaddedLength(n) + 124, outputs['body0_sealed_length']);
     expect(toHex(sha256(sealed)), outputs['sealed_body_sha256_hex']);
-    expect(c7SortedChannels(channels.map((c) => c['channel_id'] as String)),
-        [for (final c in channels) c['channel_id']]);
+    expect(c7SortedChannels(channels.map((c) => c['channel_id'] as String)), [
+      for (final c in channels) c['channel_id'],
+    ]);
   });
 
   test('a live member opens body0, its VAP1 and every slot', () {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     final reference = C7Reference(
-        hex(inputs['body_key_hex']), Uint8List.fromList(sha256(sealed)));
+      hex(inputs['body_key_hex']),
+      Uint8List.fromList(sha256(sealed)),
+    );
     final opened = c7OpenLiveParts(
       bindings: bindings,
       reference: reference,
@@ -81,13 +84,14 @@ void main() {
     );
     expect(toHex(fields), outputs['post_signed_fields_hex']);
     expect(
-        bindings.c7Verify(
-          domain: c7PostSignatureDomain,
-          publicKey: hex(outputs['signing_public_key_hex']),
-          message: fields,
-          signature: opened.signature,
-        ),
-        isTrue);
+      bindings.c7Verify(
+        domain: c7PostSignatureDomain,
+        publicKey: hex(outputs['signing_public_key_hex']),
+        message: fields,
+        signature: opened.signature,
+      ),
+      isTrue,
+    );
     final outcome = AppPayloadCodec().classify(
       opened.paddedVap1,
       conversationId: conversation,
@@ -108,8 +112,9 @@ void main() {
       senderDeviceId: sender,
       actionId: action,
     )!;
-    expect(slots.map((s) => s.channelId),
-        [for (final c in channels) c['channel_id']]);
+    expect(slots.map((s) => s.channelId), [
+      for (final c in channels) c['channel_id'],
+    ]);
     for (var i = 0; i < slots.length; i++) {
       expect(toHex(slots[i].plain), channels[i]['slot_plain_hex']);
       expect(toHex(slots[i].key), channels[i]['key_hex']);
@@ -124,22 +129,27 @@ void main() {
       expect(entry.previousEpoch, greaterThanOrEqualTo(record.epoch));
       expect(c7ChkCommitOf(entry.previousKey!), record.chkCommit);
       expect(
-          c7VerifyRecord(
-              bindings, record, hex(outputs['signing_public_key_hex'])),
-          isTrue);
+        c7VerifyRecord(
+          bindings,
+          record,
+          hex(outputs['signing_public_key_hex']),
+        ),
+        isTrue,
+      );
     }
     // One damaged slot: the whole history_sync is not valid.
     final damaged = Uint8List.fromList(opened.trailer)..[c7SlotBytes + 50] ^= 1;
     expect(
-        c7OpenSlots(
-          bindings: bindings,
-          body: payload.body,
-          trailer: damaged,
-          communityId: community,
-          conversationId: conversation,
-          senderDeviceId: sender,
-          actionId: action,
-        ),
-        isNull);
+      c7OpenSlots(
+        bindings: bindings,
+        body: payload.body,
+        trailer: damaged,
+        communityId: community,
+        conversationId: conversation,
+        senderDeviceId: sender,
+        actionId: action,
+      ),
+      isNull,
+    );
   }, skip: nativeCryptoSkip());
 }

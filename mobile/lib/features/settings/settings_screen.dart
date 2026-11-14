@@ -70,8 +70,9 @@ class SettingsScreen extends StatelessWidget {
           ),
           // Compact rows (48 dp) so the tab fits two screens (U18).
           body: ListTileTheme(
-            data: ListTileTheme.of(context)
-                .copyWith(visualDensity: VisualDensity.compact),
+            data: ListTileTheme.of(
+              context,
+            ).copyWith(visualDensity: VisualDensity.compact),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(
                 BoneSpacing.gutter,
@@ -106,8 +107,10 @@ class SettingsScreen extends StatelessWidget {
                         title: Text(l10n.autoBackupTitle),
                         subtitle: Text(autoBackupStatusText(context, state)),
                         trailing: state.k1BackupNeedsAttention
-                            ? Icon(Icons.error_outline,
-                                color: Theme.of(context).colorScheme.error)
+                            ? Icon(
+                                Icons.error_outline,
+                                color: Theme.of(context).colorScheme.error,
+                              )
                             : _chevron,
                         onTap: () => _open(
                           context,
@@ -120,10 +123,8 @@ class SettingsScreen extends StatelessWidget {
                         leading: const Icon(Icons.switch_account_outlined),
                         title: Text(l10n.settingsAccounts),
                         trailing: _chevron,
-                        onTap: () => _open(
-                          context,
-                          (_) => AccountsScreen(host: host),
-                        ),
+                        onTap: () =>
+                            _open(context, (_) => AccountsScreen(host: host)),
                       ),
                     if (state.passkeyClient.platformSupported)
                       ListTile(
@@ -131,10 +132,8 @@ class SettingsScreen extends StatelessWidget {
                         leading: const Icon(Icons.fingerprint),
                         title: Text(l10n.settingsPasskeys),
                         trailing: _chevron,
-                        onTap: () => _open(
-                          context,
-                          (_) => PasskeysScreen(state: state),
-                        ),
+                        onTap: () =>
+                            _open(context, (_) => PasskeysScreen(state: state)),
                       ),
                     if (state.recoveryAvailable)
                       ListTile(
@@ -202,7 +201,9 @@ class SettingsScreen extends StatelessWidget {
                           if (await _reauthenticate(context) &&
                               context.mounted) {
                             _open(
-                                context, (_) => DeviceLinkScreen(state: state));
+                              context,
+                              (_) => DeviceLinkScreen(state: state),
+                            );
                           }
                         },
                       ),
@@ -253,7 +254,8 @@ class SettingsScreen extends StatelessWidget {
                                 l10n.l2OwnerKeysReviewTile,
                                 key: const ValueKey('owner-key-review-tile'),
                                 style: TextStyle(
-                                    color: Theme.of(context).colorScheme.error),
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
                               ),
                         trailing: _chevron,
                         onTap: () => _open(
@@ -262,13 +264,15 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     SwitchListTile(
-                        secondary: const Icon(Icons.alternate_email),
-                        title: Text(l10n.w8MentionsMuted),
-                        value: state.mentionsInMutedChats,
-                        onChanged: state.setMentionsInMutedChats),
+                      secondary: const Icon(Icons.alternate_email),
+                      title: Text(l10n.w8MentionsMuted),
+                      value: state.mentionsInMutedChats,
+                      onChanged: state.setMentionsInMutedChats,
+                    ),
                     LinkPreviewTile(
-                        mode: state.linkPreviewMode,
-                        onChanged: state.setLinkPreviewMode),
+                      mode: state.linkPreviewMode,
+                      onChanged: state.setLinkPreviewMode,
+                    ),
                     SwitchListTile(
                       key: const ValueKey<String>('settings-chat-previews'),
                       secondary: const Icon(Icons.short_text),
@@ -299,9 +303,11 @@ class SettingsScreen extends StatelessWidget {
                       // A count only when there is something to count (U18).
                       subtitle:
                           state.blocksLoaded && state.blockedAccounts.isNotEmpty
-                              ? Text(l10n.settingsBlockedCount(
-                                  state.blockedAccounts.length,
-                                ))
+                              ? Text(
+                                  l10n.settingsBlockedCount(
+                                    state.blockedAccounts.length,
+                                  ),
+                                )
                               : null,
                       trailing: _chevron,
                       onTap: () => _open(
@@ -357,13 +363,16 @@ class SettingsScreen extends StatelessWidget {
                 if (updates != null) ...<Widget>[
                   _header(l10n.settingsSectionUpdates),
                   AnimatedBuilder(
-                    animation:
-                        Listenable.merge([updates.settings, updates.service]),
+                    animation: Listenable.merge([
+                      updates.settings,
+                      updates.service,
+                    ]),
                     builder: (context, _) => TileGroup(
                       children: <Widget>[
                         SwitchListTile(
                           key: const ValueKey<String>(
-                              'settings-auto-update-check'),
+                            'settings-auto-update-check',
+                          ),
                           secondary: const Icon(Icons.system_update_outlined),
                           title: Text(l10n.settingsAutoUpdateCheck),
                           value: updates.settings.autoCheckEnabled,
@@ -372,7 +381,8 @@ class SettingsScreen extends StatelessWidget {
                         ),
                         ListTile(
                           key: const ValueKey<String>(
-                              'settings-check-for-updates'),
+                            'settings-check-for-updates',
+                          ),
                           leading: const Icon(Icons.refresh_outlined),
                           title: Text(l10n.settingsCheckForUpdates),
                           subtitle: Text(
@@ -380,8 +390,9 @@ class SettingsScreen extends StatelessWidget {
                           ),
                           onTap: updates.service.isChecking
                               ? null
-                              : () =>
-                                  updates.service.checkForUpdates(force: true),
+                              : () => updates.service.checkForUpdates(
+                                    force: true,
+                                  ),
                         ),
                       ],
                     ),
@@ -420,8 +431,9 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       if (isAdmin)
                         ListTile(
-                          leading:
-                              const Icon(Icons.admin_panel_settings_outlined),
+                          leading: const Icon(
+                            Icons.admin_panel_settings_outlined,
+                          ),
                           title: Text(l10n.settingsAdminDetail),
                           trailing: _chevron,
                           onTap: () async {
@@ -465,8 +477,10 @@ class SettingsScreen extends StatelessWidget {
                   children: <Widget>[
                     ListTile(
                       key: const ValueKey<String>('settings-sign-out'),
-                      leading:
-                          Icon(Icons.logout, color: theme.colorScheme.error),
+                      leading: Icon(
+                        Icons.logout,
+                        color: theme.colorScheme.error,
+                      ),
                       title: Text(
                         l10n.settingsSignOut,
                         style: TextStyle(color: theme.colorScheme.error),
@@ -617,8 +631,11 @@ class SettingsScreen extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     value: keep.contains(device.id),
                     title: Text(device.name),
-                    subtitle: Text(dialogContext.l10n.settingsDeviceAdded(
-                        formatDate(dialogContext, device.createdAt))),
+                    subtitle: Text(
+                      dialogContext.l10n.settingsDeviceAdded(
+                        formatDate(dialogContext, device.createdAt),
+                      ),
+                    ),
                     onChanged: device.id == own
                         ? null
                         : (value) => setDialogState(() {
@@ -654,8 +671,9 @@ class SettingsScreen extends StatelessWidget {
     if (result == RecoveryActionResult.failed && context.mounted) {
       final message = state.errorFor(Ops.devices);
       if (message != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }
@@ -706,8 +724,9 @@ class SettingsScreen extends StatelessWidget {
   void _showRecoveryResult(BuildContext context, bool ok, String done) {
     final message = ok ? done : state.errorFor(Ops.recoveryKey);
     if (message != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -731,8 +750,11 @@ class SettingsScreen extends StatelessWidget {
       result = await state.confirmPreL1RecoveryKey(typed);
     }
     if (context.mounted && result != RecoveryActionResult.needsRecentAuth) {
-      _showRecoveryResult(context, result == RecoveryActionResult.done,
-          context.l10n.recoveryKeyConfirmedForList);
+      _showRecoveryResult(
+        context,
+        result == RecoveryActionResult.done,
+        context.l10n.recoveryKeyConfirmedForList,
+      );
     }
   }
 
@@ -812,9 +834,7 @@ class SettingsScreen extends StatelessWidget {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            state.error ?? context.l10n.settingsPasswordChanged,
-          ),
+          content: Text(state.error ?? context.l10n.settingsPasswordChanged),
         ),
       );
     } finally {
@@ -1208,9 +1228,7 @@ class _DeviceTile extends StatelessWidget {
       trailingWidth: measureTextWidth(context, signOutLabel) + 32,
       trailing: TextButton(
         key: ValueKey<String>('device-sign-out-${device.id}'),
-        style: TextButton.styleFrom(
-          foregroundColor: theme.colorScheme.error,
-        ),
+        style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
         onPressed: busy ? null : onRevoke,
         child: Text(signOutLabel),
       ),

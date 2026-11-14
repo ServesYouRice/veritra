@@ -34,20 +34,23 @@ StoredCryptoState _first() => StoredCryptoState(
       sealedState: _root,
       changes: <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: cryptoRecordKindDevice,
-            recordId: const <int>[],
-            generation: 1,
-            sealed: _sealed('device')),
+          kind: cryptoRecordKindDevice,
+          recordId: const <int>[],
+          generation: 1,
+          sealed: _sealed('device'),
+        ),
         CryptoRecordChange(
-            kind: cryptoRecordKindGroup,
-            recordId: _groupId,
-            generation: 1,
-            sealed: _sealed('group')),
+          kind: cryptoRecordKindGroup,
+          recordId: _groupId,
+          generation: 1,
+          sealed: _sealed('group'),
+        ),
         CryptoRecordChange(
-            kind: cryptoRecordKindKeyPackage,
-            recordId: _kpId,
-            generation: 1,
-            sealed: _sealed('kp')),
+          kind: cryptoRecordKindKeyPackage,
+          recordId: _kpId,
+          generation: 1,
+          sealed: _sealed('kp'),
+        ),
       ],
     );
 
@@ -58,15 +61,17 @@ StoredCryptoState _second() => StoredCryptoState(
       sealedState: [..._root, 2],
       changes: <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: cryptoRecordKindGroup,
-            recordId: _groupId,
-            generation: 2,
-            sealed: _sealed('group2')),
+          kind: cryptoRecordKindGroup,
+          recordId: _groupId,
+          generation: 2,
+          sealed: _sealed('group2'),
+        ),
         CryptoRecordChange(
-            kind: cryptoRecordKindKeyPackage,
-            recordId: _kpId,
-            generation: 2,
-            sealed: null),
+          kind: cryptoRecordKindKeyPackage,
+          recordId: _kpId,
+          generation: 2,
+          sealed: null,
+        ),
       ],
     );
 
@@ -94,7 +99,10 @@ Future<void> _seedDevice(LocalStore store, Session session) async {
   await store.saveSession(session);
   await store.saveCryptoState(_first(), 10);
   await store.commitLocalMlsState(
-      expectedCounter: 1, expectedCursor: 10, state: _second());
+    expectedCounter: 1,
+    expectedCursor: 10,
+    state: _second(),
+  );
   expect(await store.loadCryptoRecords(), hasLength(2));
 }
 
@@ -132,39 +140,45 @@ void main() {
   Future<List<int>> sourceSnapshot(LocalStore store) async {
     await _seedDevice(store, _source);
     await store.saveSnapshot(
-        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
-        const <String, List<ReceivedMessageEnvelope>>{},
-        10);
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: 'application:11:m1',
-      conversationId: 'conv_1',
-      expectedCounter: 2,
-      expectedCursor: 10,
-      state: StoredCryptoState(counter: 3, stateKey: _stateKey, sealedState: [
-        ..._root,
-        3
-      ], changes: <CryptoRecordChange>[
-        CryptoRecordChange(
-            kind: cryptoRecordKindGroup,
-            recordId: _groupId,
-            generation: 3,
-            sealed: _sealed('group3')),
-      ]),
-      cursor: 11,
-      messageEffects: <MessageEffect>[
-        InsertMessageEffect(
-          key: 'dev_peer:m1',
-          serverMessageId: 'm1',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_peer',
-          senderDeviceId: 'dev_peer',
-          kind: LocalMessageKind.text,
-          body: 'hello',
-          createdAt: DateTime.utc(2026, 10, 24).millisecondsSinceEpoch,
-          state: LocalMessageState.received,
+      <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+      const <String, List<ReceivedMessageEnvelope>>{},
+      10,
+    );
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: 'application:11:m1',
+        conversationId: 'conv_1',
+        expectedCounter: 2,
+        expectedCursor: 10,
+        state: StoredCryptoState(
+          counter: 3,
+          stateKey: _stateKey,
+          sealedState: [..._root, 3],
+          changes: <CryptoRecordChange>[
+            CryptoRecordChange(
+              kind: cryptoRecordKindGroup,
+              recordId: _groupId,
+              generation: 3,
+              sealed: _sealed('group3'),
+            ),
+          ],
         ),
-      ],
-    ));
+        cursor: 11,
+        messageEffects: <MessageEffect>[
+          InsertMessageEffect(
+            key: 'dev_peer:m1',
+            serverMessageId: 'm1',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_peer',
+            senderDeviceId: 'dev_peer',
+            kind: LocalMessageKind.text,
+            body: 'hello',
+            createdAt: DateTime.utc(2026, 10, 24).millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+          ),
+        ],
+      ),
+    );
     expect(await store.loadCryptoRecords(), hasLength(2));
     return store.exportHistorySnapshot();
   }
@@ -174,12 +188,14 @@ void main() {
     LocalStore store(String namespace) =>
         memory ? MemoryLocalStore() : createStore(namespace);
 
-    test('the history snapshot holds no root, record or state key ($label)',
-        () async {
-      final text = utf8.decode(await sourceSnapshot(store('source')));
-      for (final needle in _forbidden()) {
-        expect(text, isNot(contains(needle)), reason: needle);
-      }
-    });
+    test(
+      'the history snapshot holds no root, record or state key ($label)',
+      () async {
+        final text = utf8.decode(await sourceSnapshot(store('source')));
+        for (final needle in _forbidden()) {
+          expect(text, isNot(contains(needle)), reason: needle);
+        }
+      },
+    );
   }
 }

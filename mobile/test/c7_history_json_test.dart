@@ -42,12 +42,13 @@ void main() {
     expect(key.accountId, 'acct_9');
     expect(key.signingKey, List<int>.filled(32, 7));
     expect(
-        C7FormerKey.tryParse(<String, Object?>{
-          'device_id': 'dev_9',
-          'account_id': 'acct_9',
-          'signing_key': base64Encode(<int>[1, 2]),
-        }),
-        isNull);
+      C7FormerKey.tryParse(<String, Object?>{
+        'device_id': 'dev_9',
+        'account_id': 'acct_9',
+        'signing_key': base64Encode(<int>[1, 2]),
+      }),
+      isNull,
+    );
   });
 
   test('a malformed row is refused', () {

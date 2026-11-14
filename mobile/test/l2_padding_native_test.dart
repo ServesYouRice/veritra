@@ -18,17 +18,20 @@ void main() {
 
   group('L2 padding (native)', () {
     late NativeCryptoBindings bindings;
-    setUp(() =>
-        bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+    setUp(
+      () => bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+    );
 
     test('the bucket rule matches the shared vector', () {
       final cases = vector['buckets'] as List<dynamic>;
       expect(cases.length, greaterThanOrEqualTo(10));
       for (final raw in cases) {
         final item = raw as Map<String, dynamic>;
-        expect(bindings.l2PaddedSize(item['length'] as int),
-            item['padded'] as int?,
-            reason: 'length ${item['length']}');
+        expect(
+          bindings.l2PaddedSize(item['length'] as int),
+          item['padded'] as int?,
+          reason: 'length ${item['length']}',
+        );
       }
     }, skip: skip);
 
@@ -55,12 +58,16 @@ void main() {
             ),
         ];
         for (final add in adds) {
-          expect(bindings.l2PaddedSize(add.keyPackage.length),
-              add.keyPackage.length);
+          expect(
+            bindings.l2PaddedSize(add.keyPackage.length),
+            add.keyPackage.length,
+          );
         }
         final staged = alice.stageCommit(groupId, adds: adds);
-        expect(bindings.l2PaddedSize(staged.welcome.length),
-            staged.welcome.length);
+        expect(
+          bindings.l2PaddedSize(staged.welcome.length),
+          staged.welcome.length,
+        );
         alice.mergePendingCommit(groupId);
         for (final member in members.take(joined)) {
           member.device.processCommit(groupId, staged.commit);
@@ -78,8 +85,10 @@ void main() {
       expect(utf8.decode(opened.plaintext), 'hello');
       expect(opened.accountId, 'acct_l2_alice');
       expect(opened.deviceId, 'dev_l2_alice');
-      final fromBob =
-          members.first.device.encrypt(groupId, utf8.encode('from bob'));
+      final fromBob = members.first.device.encrypt(
+        groupId,
+        utf8.encode('from bob'),
+      );
       final byBob = members[1].device.decryptSealed(groupId, fromBob);
       expect(byBob.accountId, 'acct_l2_0');
       expect(byBob.deviceId, 'dev_l2_0');

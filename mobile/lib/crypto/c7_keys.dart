@@ -34,8 +34,12 @@ final class C7Keys {
         info: [...c7Lp(communityId), ...c7Lp(channelId)],
       );
 
-  List<int> _messageInfo(String communityId, String channelId,
-          String senderDeviceId, String actionId) =>
+  List<int> _messageInfo(
+    String communityId,
+    String channelId,
+    String senderDeviceId,
+    String actionId,
+  ) =>
       [
         ...c7Lp(communityId),
         ...c7Lp(channelId),

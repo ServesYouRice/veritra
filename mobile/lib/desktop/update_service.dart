@@ -91,11 +91,13 @@ class UpdateInfo {
         parsedUri.scheme != 'https' ||
         parsedUri.host.trim().isEmpty) {
       throw const FormatException(
-          'Update URL must use https with a valid host');
+        'Update URL must use https with a valid host',
+      );
     }
     if (sha256 is! String || !_hex64.hasMatch(sha256)) {
       throw const FormatException(
-          'Update sha256 must be 64 lowercase hex characters');
+        'Update sha256 must be 64 lowercase hex characters',
+      );
     }
     final notesStr = notes is String ? notes : '';
 
@@ -197,10 +199,7 @@ class UpdateStatus {
 /// Verification interface for detached update signatures.
 /// Signing stays a placeholder that waits for the owner's certificate and key.
 abstract interface class UpdateSignatureVerifier {
-  Future<bool> verify({
-    required List<int> data,
-    required List<int>? signature,
-  });
+  Future<bool> verify({required List<int> data, required List<int>? signature});
 }
 
 /// Placeholder signature verifier: records that signing waits for the owner's
@@ -230,7 +229,8 @@ class PlaceholderUpdateSignatureVerifier implements UpdateSignatureVerifier {
 /// Client interface for downloading update feeds without cookies or tracking.
 abstract interface class UpdateClient {
   Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
-      Uri feedUri);
+    Uri feedUri,
+  );
 }
 
 /// Real HTTPS update client. Sends one clean HTTPS GET without credentials or cookies.
@@ -247,10 +247,12 @@ class HttpUpdateClient implements UpdateClient {
 
   @override
   Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
-      Uri feedUri) async {
+    Uri feedUri,
+  ) async {
     if (feedUri.scheme != 'https' || feedUri.host.trim().isEmpty) {
       throw const FormatException(
-          'Update feed must use https with a valid host');
+        'Update feed must use https with a valid host',
+      );
     }
     final http = client ?? HttpClient();
     http.connectionTimeout = timeout;
@@ -260,15 +262,18 @@ class HttpUpdateClient implements UpdateClient {
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close().timeout(timeout);
       if (response.statusCode != HttpStatus.ok) {
-        throw HttpException('Update feed answered HTTP ${response.statusCode}',
-            uri: feedUri);
+        throw HttpException(
+          'Update feed answered HTTP ${response.statusCode}',
+          uri: feedUri,
+        );
       }
       final bytesBuilder = BytesBuilder(copy: false);
       await for (final chunk in response.timeout(timeout)) {
         bytesBuilder.add(chunk);
         if (bytesBuilder.length > maxBytes) {
           throw const FormatException(
-              'Update feed response exceeds size limit');
+            'Update feed response exceeds size limit',
+          );
         }
       }
       final jsonBytes = bytesBuilder.takeBytes();
@@ -285,7 +290,8 @@ class HttpUpdateClient implements UpdateClient {
             sigBuilder.add(chunk);
             if (sigBuilder.length > maxBytes) {
               throw const FormatException(
-                  'Update signature exceeds size limit');
+                'Update signature exceeds size limit',
+              );
             }
           }
           sigBytes = sigBuilder.takeBytes();
@@ -303,11 +309,7 @@ class HttpUpdateClient implements UpdateClient {
 
 /// Mock client for tests.
 class MemoryUpdateClient implements UpdateClient {
-  MemoryUpdateClient({
-    this.responseBytes,
-    this.signatureBytes,
-    this.error,
-  });
+  MemoryUpdateClient({this.responseBytes, this.signatureBytes, this.error});
 
   Uint8List? responseBytes;
   Uint8List? signatureBytes;
@@ -315,7 +317,8 @@ class MemoryUpdateClient implements UpdateClient {
 
   @override
   Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
-      Uri feedUri) async {
+    Uri feedUri,
+  ) async {
     if (error != null) throw error!;
     if (responseBytes == null) {
       throw const HttpException('Not found');
@@ -440,7 +443,8 @@ class UpdateService extends ChangeNotifier {
         _verifier = verifier ?? const PlaceholderUpdateSignatureVerifier(),
         _feedUri = feedUri ??
             Uri.parse(
-                'https://raw.githubusercontent.com/ServesYouRice/veritra/main/release/windows/update.json'),
+              'https://raw.githubusercontent.com/ServesYouRice/veritra/main/release/windows/update.json',
+            ),
         _platform = platform ?? 'windows',
         _arch = arch ?? 'x64',
         _currentBuild = currentBuild ?? veritraBuildNumber,
@@ -489,8 +493,10 @@ class UpdateService extends ChangeNotifier {
   }
 
   /// Runs an update check. [force] ignores the disabled setting (used by manual button).
-  Future<UpdateStatus> checkForUpdates(
-      {bool force = false, Uri? feedUri}) async {
+  Future<UpdateStatus> checkForUpdates({
+    bool force = false,
+    Uri? feedUri,
+  }) async {
     if (!settings.isLoaded) {
       await settings.load();
     }
@@ -534,8 +540,9 @@ class UpdateService extends ChangeNotifier {
         return _status;
       }
       if (!info.matchesArch(_arch)) {
-        _status =
-            const UpdateStatus.error('Update architecture does not match');
+        _status = const UpdateStatus.error(
+          'Update architecture does not match',
+        );
         notifyListeners();
         return _status;
       }

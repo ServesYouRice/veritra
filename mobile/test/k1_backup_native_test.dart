@@ -31,8 +31,8 @@ void main() {
       bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       // A missing vector fails the test; it never skips.
       vector = jsonDecode(
-              File('../testing/vectors/k1-backup-v1.json').readAsStringSync())
-          as Map<String, dynamic>;
+        File('../testing/vectors/k1-backup-v1.json').readAsStringSync(),
+      ) as Map<String, dynamic>;
     });
 
     test('the pinned header reads back to its fields', () {
@@ -46,98 +46,120 @@ void main() {
       expect(info.rkId, hex(vector['rk_id_hex']));
     });
 
-    test('seal then open round trips with the vector key and rejects the rest',
-        () {
-      final entropy = hex(vector['recovery_key_entropy_hex']);
-      final rk = bindings.deriveRecoveryKey(entropy);
-      expect(rk.rkPub, hex(vector['rk_pub_hex']));
-      final plaintext = Uint8List.fromList(utf8.encode('{"synthetic":true}'));
-      final sealed = bindings.sealBackup(
-        accountId: 'acct_1',
-        sourceDeviceId: 'dev_a',
-        createdAtMs: 1730000000000,
-        counter: 3,
-        plaintextVersion: 6,
-        rkPub: rk.rkPub,
-        plaintext: plaintext,
-      );
-      // Padded to the floor, so the size says little about the history.
-      expect(sealed.length, greaterThan(1024 * 1024));
-      final peek = bindings.peekBackup(Uint8List.sublistView(
-          sealed, 0, NativeCryptoBindings.backupPeekBytes));
-      expect(peek.counter, 3);
-      expect(peek.rkId, rk.rkId);
+    test(
+      'seal then open round trips with the vector key and rejects the rest',
+      () {
+        final entropy = hex(vector['recovery_key_entropy_hex']);
+        final rk = bindings.deriveRecoveryKey(entropy);
+        expect(rk.rkPub, hex(vector['rk_pub_hex']));
+        final plaintext = Uint8List.fromList(utf8.encode('{"synthetic":true}'));
+        final sealed = bindings.sealBackup(
+          accountId: 'acct_1',
+          sourceDeviceId: 'dev_a',
+          createdAtMs: 1730000000000,
+          counter: 3,
+          plaintextVersion: 6,
+          rkPub: rk.rkPub,
+          plaintext: plaintext,
+        );
+        // Padded to the floor, so the size says little about the history.
+        expect(sealed.length, greaterThan(1024 * 1024));
+        final peek = bindings.peekBackup(
+          Uint8List.sublistView(
+            sealed,
+            0,
+            NativeCryptoBindings.backupPeekBytes,
+          ),
+        );
+        expect(peek.counter, 3);
+        expect(peek.rkId, rk.rkId);
 
-      final opened = bindings.openBackup(
+        final opened = bindings.openBackup(
           ciphertext: sealed,
           entropy: entropy,
           accountId: 'acct_1',
-          sourceDeviceId: 'dev_a');
-      expect(opened.plaintext, plaintext);
-      expect(opened.header.sourceDeviceId, 'dev_a');
-      expect(opened.header.counter, 3);
+          sourceDeviceId: 'dev_a',
+        );
+        expect(opened.plaintext, plaintext);
+        expect(opened.header.sourceDeviceId, 'dev_a');
+        expect(opened.header.counter, 3);
 
-      // A file restore does not pin the device and learns it from the header.
-      final fromFile = bindings.openBackup(
-          ciphertext: sealed, entropy: entropy, accountId: 'acct_1');
-      expect(fromFile.header.sourceDeviceId, 'dev_a');
+        // A file restore does not pin the device and learns it from the header.
+        final fromFile = bindings.openBackup(
+          ciphertext: sealed,
+          entropy: entropy,
+          accountId: 'acct_1',
+        );
+        expect(fromFile.header.sourceDeviceId, 'dev_a');
 
-      final wrongKey = Uint8List.fromList(entropy)..[0] ^= 1;
-      for (final attempt in <Uint8List Function()>[
-        () => bindings
-            .openBackup(
-                ciphertext: sealed, entropy: wrongKey, accountId: 'acct_1')
-            .plaintext,
-        () => bindings
-            .openBackup(
-                ciphertext: sealed, entropy: entropy, accountId: 'acct_2')
-            .plaintext,
-        () => bindings
-            .openBackup(
+        final wrongKey = Uint8List.fromList(entropy)..[0] ^= 1;
+        for (final attempt in <Uint8List Function()>[
+          () => bindings
+              .openBackup(
+                ciphertext: sealed,
+                entropy: wrongKey,
+                accountId: 'acct_1',
+              )
+              .plaintext,
+          () => bindings
+              .openBackup(
+                ciphertext: sealed,
+                entropy: entropy,
+                accountId: 'acct_2',
+              )
+              .plaintext,
+          () => bindings
+              .openBackup(
                 ciphertext: sealed,
                 entropy: entropy,
                 accountId: 'acct_1',
-                sourceDeviceId: 'dev_b')
-            .plaintext,
-        () {
-          final changed = Uint8List.fromList(sealed)..[sealed.length - 1] ^= 1;
-          return bindings
-              .openBackup(
-                  ciphertext: changed, entropy: entropy, accountId: 'acct_1')
-              .plaintext;
-        },
-      ]) {
-        expect(attempt, throwsA(isA<NativeCryptoException>()));
-      }
-    });
+                sourceDeviceId: 'dev_b',
+              )
+              .plaintext,
+          () {
+            final changed = Uint8List.fromList(sealed)
+              ..[sealed.length - 1] ^= 1;
+            return bindings
+                .openBackup(
+                  ciphertext: changed,
+                  entropy: entropy,
+                  accountId: 'acct_1',
+                )
+                .plaintext;
+          },
+        ]) {
+          expect(attempt, throwsA(isA<NativeCryptoException>()));
+        }
+      },
+    );
 
     test('a history snapshot survives seal and open for the K1-4 import', () {
       final entropy = hex(vector['recovery_key_entropy_hex']);
       final rk = bindings.deriveRecoveryKey(entropy);
       final snapshot = HistorySnapshot(
-          accountId: 'acct_1',
-          sourceDeviceId: 'dev_a',
-          counter: 4,
-          createdAt: 1730000000000,
-          conversations: const [
-            HistoryConversation('conv', 'dm')
-          ],
-          messages: [
-            LocalMessage(
-                key: 'dev_a:1',
-                conversationId: 'conv',
-                senderAccountId: 'bob',
-                senderDeviceId: 'dev_a',
-                kind: 'text',
-                body: 'hi',
-                createdAt: 1729999999000,
-                state: 'received',
-                senderHidden: false)
-          ],
-          reactions: const [],
-          pins: const [],
-          starred: const {},
-          preferences: const []);
+        accountId: 'acct_1',
+        sourceDeviceId: 'dev_a',
+        counter: 4,
+        createdAt: 1730000000000,
+        conversations: const [HistoryConversation('conv', 'dm')],
+        messages: [
+          LocalMessage(
+            key: 'dev_a:1',
+            conversationId: 'conv',
+            senderAccountId: 'bob',
+            senderDeviceId: 'dev_a',
+            kind: 'text',
+            body: 'hi',
+            createdAt: 1729999999000,
+            state: 'received',
+            senderHidden: false,
+          ),
+        ],
+        reactions: const [],
+        pins: const [],
+        starred: const {},
+        preferences: const [],
+      );
       final sealed = bindings.sealBackup(
         accountId: 'acct_1',
         sourceDeviceId: 'dev_a',
@@ -148,10 +170,11 @@ void main() {
         plaintext: Uint8List.fromList(snapshot.encode()),
       );
       final opened = bindings.openBackup(
-          ciphertext: sealed,
-          entropy: entropy,
-          accountId: 'acct_1',
-          sourceDeviceId: 'dev_a');
+        ciphertext: sealed,
+        entropy: entropy,
+        accountId: 'acct_1',
+        sourceDeviceId: 'dev_a',
+      );
       final back = HistorySnapshot.decode(opened.plaintext);
       expect(back.messages.single.body, 'hi');
       expect(back.accountId, opened.header.accountId);
@@ -176,13 +199,20 @@ void main() {
           plaintext: Uint8List(length)..fillRange(0, length, 7),
         );
         final padded = bindings
-            .peekBackup(Uint8List.sublistView(
-                sealed, 0, NativeCryptoBindings.backupPeekBytes))
+            .peekBackup(
+              Uint8List.sublistView(
+                sealed,
+                0,
+                NativeCryptoBindings.backupPeekBytes,
+              ),
+            )
             .paddedSize;
         // Dart's bucket (the same function attachments use), floored at
         // 1 MiB and rounded up to the 64 KiB frame, must equal Rust's.
-        final bucket =
-            paddedAttachmentSize(length + 8, limit: 64 * 1024 * 1024);
+        final bucket = paddedAttachmentSize(
+          length + 8,
+          limit: 64 * 1024 * 1024,
+        );
         final expected =
             ((bucket < 1048576 ? 1048576 : bucket) + 65535) ~/ 65536 * 65536;
         expect(padded, expected, reason: 'payload $length');

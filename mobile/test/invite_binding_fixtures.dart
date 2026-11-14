@@ -6,8 +6,9 @@ import 'package:private_messenger/core/membership_models.dart';
 import 'test_crypto_service.dart';
 
 /// The inviting device's key in the default fixtures (40 41 .. 5f).
-final Uint8List defaultInviterKey =
-    Uint8List.fromList(List<int>.generate(32, (i) => 0x40 + i));
+final Uint8List defaultInviterKey = Uint8List.fromList(
+  List<int>.generate(32, (i) => 0x40 + i),
+);
 
 /// A new link whose key commitment names [signingKey] (default
 /// [defaultInviterKey]).
@@ -75,8 +76,9 @@ InviteBinding tampered(
       targetId: targetId ?? binding.targetId,
       inviterAccountId: accountId ?? binding.inviterAccountId,
       inviterDeviceId: deviceId ?? binding.inviterDeviceId,
-      inviterSigningKey:
-          Uint8List.fromList(signingKey ?? binding.inviterSigningKey),
+      inviterSigningKey: Uint8List.fromList(
+        signingKey ?? binding.inviterSigningKey,
+      ),
       tag: tag ?? binding.tag,
       signature: Uint8List.fromList(signature ?? binding.signature),
     );

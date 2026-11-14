@@ -128,8 +128,11 @@ class CommunityScreen extends StatelessWidget {
                         ),
                       ),
                       onOpenChannel: (conversationId, channelId) =>
-                          _openChannel(context, conversationId,
-                              channelId: channelId),
+                          _openChannel(
+                        context,
+                        conversationId,
+                        channelId: channelId,
+                      ),
                     ),
                   if (_orphanChannels(state).isNotEmpty) ...<Widget>[
                     SectionHeader(context.l10n.communityOtherChannels),
@@ -142,8 +145,9 @@ class CommunityScreen extends StatelessWidget {
                               conversation.title ??
                                   context.l10n.searchTypeChannel,
                             ),
-                            subtitle:
-                                Text(context.l10n.communityChannelSubtitle),
+                            subtitle: Text(
+                              context.l10n.communityChannelSubtitle,
+                            ),
                             onTap: () => _openChannel(context, conversation.id),
                           ),
                       ],
@@ -155,23 +159,23 @@ class CommunityScreen extends StatelessWidget {
     );
   }
 
-  void _join(BuildContext context) => Navigator.of(context).push(
-        sharedAxisRoute<void>((_) => JoinByLinkScreen(state: state)),
-      );
+  void _join(BuildContext context) => Navigator.of(
+        context,
+      ).push(sharedAxisRoute<void>((_) => JoinByLinkScreen(state: state)));
 
   /// [channelId] is set for a channel inside a community's shared group,
   /// which holds every open channel: the chat then shows and posts to that
   /// channel only.
-  void _openChannel(BuildContext context, String conversationId,
-      {String? channelId}) {
+  void _openChannel(
+    BuildContext context,
+    String conversationId, {
+    String? channelId,
+  }) {
     state.selectChannel(conversationId, channelId);
     state.selectAndPrepare(conversationId);
     Navigator.of(context).push(
       sharedAxisRoute<void>(
-        (_) => ChatScreen(
-          state: state,
-          conversationId: conversationId,
-        ),
+        (_) => ChatScreen(state: state, conversationId: conversationId),
       ),
     );
   }
@@ -185,11 +189,13 @@ class CommunityScreen extends StatelessWidget {
         for (final channel in channels) channel.id,
     };
     return state.conversations
-        .where((conversation) =>
-            conversation.isChannel &&
-            !conversation.isCommunityShared &&
-            (conversation.channelId == null ||
-                !known.contains(conversation.channelId)))
+        .where(
+          (conversation) =>
+              conversation.isChannel &&
+              !conversation.isCommunityShared &&
+              (conversation.channelId == null ||
+                  !known.contains(conversation.channelId)),
+        )
         .toList(growable: false);
   }
 
@@ -207,30 +213,30 @@ class CommunityScreen extends StatelessWidget {
       return;
     }
     if (community == null && state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.error!)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(state.error!)));
     }
   }
 
-  Future<void> _createChannel(
-    BuildContext context,
-    Community community,
-  ) async {
+  Future<void> _createChannel(BuildContext context, Community community) async {
     // Legacy communities put every member in each channel. Keep their
     // existing form; a selective member picker would promise false privacy.
     if (community.sharedConversationId == null) {
-      final name = await _promptForName(context,
-          title: context.l10n.communityNewChannelIn(
-              state.communityDisplayName(community) ??
-                  context.l10n.communityPlaceholderName),
-          label: context.l10n.communityChannelName);
+      final name = await _promptForName(
+        context,
+        title: context.l10n.communityNewChannelIn(
+          state.communityDisplayName(community) ??
+              context.l10n.communityPlaceholderName,
+        ),
+        label: context.l10n.communityChannelName,
+      );
       if (name != null && name.isNotEmpty) {
         await state.createChannel(community.id, name);
         if (context.mounted && state.error != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(state.error!)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(state.error!)));
         }
       }
       return;
@@ -268,10 +274,7 @@ class CommunityScreen extends StatelessWidget {
                 textInputAction: TextInputAction.done,
                 textCapitalization: TextCapitalization.words,
                 onSubmitted: (_) => submit(),
-                decoration: InputDecoration(
-                  labelText: label,
-                  errorText: shown,
-                ),
+                decoration: InputDecoration(labelText: label, errorText: shown),
               ),
               actions: <Widget>[
                 TextButton(
@@ -340,7 +343,8 @@ class _CommunityCard extends StatelessWidget {
                   ? PhotoAvatar(
                       png: icon.png,
                       radius: 20,
-                      fallback: const Icon(Icons.groups_outlined, size: 18))
+                      fallback: const Icon(Icons.groups_outlined, size: 18),
+                    )
                   : Container(
                       width: 40,
                       height: 40,
@@ -357,8 +361,10 @@ class _CommunityCard extends StatelessWidget {
                       ),
                     ),
             ),
-            title: Text(state.communityDisplayName(community) ??
-                context.l10n.communityPlaceholderName),
+            title: Text(
+              state.communityDisplayName(community) ??
+                  context.l10n.communityPlaceholderName,
+            ),
             subtitle: Text(
               channels.isEmpty
                   ? context.l10n.communityNoChannels
@@ -381,7 +387,9 @@ class _CommunityCard extends StatelessWidget {
               ListTile(
                 dense: true,
                 leading: const SizedBox(
-                    width: 40, child: Icon(Icons.folder_outlined, size: 18)),
+                  width: 40,
+                  child: Icon(Icons.folder_outlined, size: 18),
+                ),
                 title: Text(
                   state.categoryDisplayName(category) ??
                       context.l10n.communityCategoryPlaceholder,
@@ -461,8 +469,8 @@ class _CommunityCard extends StatelessWidget {
     if (actions.isEmpty) return null;
     return PopupMenuButton<String>(
       tooltip: l10n.communityActionsTooltip(
-          state.communityDisplayName(community) ??
-              l10n.communityPlaceholderName),
+        state.communityDisplayName(community) ?? l10n.communityPlaceholderName,
+      ),
       onSelected: (action) {
         switch (action) {
           case 'edit':
@@ -478,8 +486,9 @@ class _CommunityCard extends StatelessWidget {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => RolesScreen(
-                    state: state,
-                    conversationId: community.sharedConversationId!),
+                  state: state,
+                  conversationId: community.sharedConversationId!,
+                ),
               ),
             );
           case 'reports':
@@ -533,9 +542,11 @@ class _CommunityCard extends StatelessWidget {
   /// A routed channel names its group; a legacy channel has a conversation
   /// of its own that names the channel.
   String? _conversationIdFor(Channel channel) => state.conversations
-      .where((conversation) => channel.isRouted
-          ? conversation.id == channel.conversationId
-          : conversation.channelId == channel.id)
+      .where(
+        (conversation) => channel.isRouted
+            ? conversation.id == channel.conversationId
+            : conversation.channelId == channel.id,
+      )
       .firstOrNull
       ?.id;
 }
@@ -571,8 +582,10 @@ class _ChannelTile extends StatelessWidget {
       leading: SizedBox(
         width: 40,
         child: channel.isRouted && channel.kind == 'private'
-            ? Icon(Icons.lock_outline,
-                semanticLabel: context.l10n.channelPrivate)
+            ? Icon(
+                Icons.lock_outline,
+                semanticLabel: context.l10n.channelPrivate,
+              )
             : const Icon(Icons.tag),
       ),
       title: Text(title),

@@ -21,13 +21,18 @@ Future<void> _tapIcon(WidgetTester tester, IconData icon) async {
 /// Drags every vertical list on screen to its end so lazily built rows are
 /// laid out too.
 Future<void> _scrollThrough(WidgetTester tester) async {
-  final lists = find.byWidgetPredicate((widget) =>
-      widget is Scrollable && widget.axisDirection == AxisDirection.down);
+  final lists = find.byWidgetPredicate(
+    (widget) =>
+        widget is Scrollable && widget.axisDirection == AxisDirection.down,
+  );
   final count = lists.evaluate().length;
   for (var i = 0; i < count; i++) {
     for (var step = 0; step < 6; step++) {
-      await tester.drag(lists.at(i), const Offset(0, -400),
-          warnIfMissed: false);
+      await tester.drag(
+        lists.at(i),
+        const Offset(0, -400),
+        warnIfMissed: false,
+      );
       await tester.pump();
     }
   }
@@ -48,22 +53,28 @@ class _Screen {
 final _screens = <_Screen>[
   _Screen('connect', connected: false, text: (l10n) => l10n.connectTagline),
   _Screen('chat list', connected: true, text: (l10n) => l10n.navChats),
-  _Screen('chat',
-      connected: true,
-      open: (tester) async {
-        await tester.tap(find.text('@alice'));
-        await tester.pumpAndSettle();
-      },
-      text: (l10n) => l10n.chatSenderUnverified),
-  _Screen('communities',
-      connected: true,
-      open: (tester) => _tapIcon(tester, Icons.groups_outlined),
-      text: (l10n) => l10n.navCommunities),
-  _Screen('settings',
-      connected: true,
-      open: (tester) => _tapIcon(tester, Icons.settings_outlined),
-      // Section headers are set in capitals.
-      text: (l10n) => l10n.settingsSectionAccount.toUpperCase()),
+  _Screen(
+    'chat',
+    connected: true,
+    open: (tester) async {
+      await tester.tap(find.text('@alice'));
+      await tester.pumpAndSettle();
+    },
+    text: (l10n) => l10n.chatSenderUnverified,
+  ),
+  _Screen(
+    'communities',
+    connected: true,
+    open: (tester) => _tapIcon(tester, Icons.groups_outlined),
+    text: (l10n) => l10n.navCommunities,
+  ),
+  _Screen(
+    'settings',
+    connected: true,
+    open: (tester) => _tapIcon(tester, Icons.settings_outlined),
+    // Section headers are set in capitals.
+    text: (l10n) => l10n.settingsSectionAccount.toUpperCase(),
+  ),
 ];
 
 class _Viewport {
@@ -80,8 +91,10 @@ const _viewports = <_Viewport>[
   _Viewport('desktop', wideSize, 1.0),
 ];
 
-const _serbianLatin =
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn');
+const _serbianLatin = Locale.fromSubtags(
+  languageCode: 'sr',
+  scriptCode: 'Latn',
+);
 
 /// English messages that read differently in [l10n], so finding one on
 /// screen means a string did not follow the locale.
@@ -132,11 +145,13 @@ void main() {
             final AppState state =
                 screen.connected ? await connectedState() : disconnectedState();
             state.communitiesLoaded = true;
-            await tester.pumpWidget(veritraTestApp(
-              state: state,
-              textScale: viewport.textScale,
-              locale: locale,
-            ));
+            await tester.pumpWidget(
+              veritraTestApp(
+                state: state,
+                textScale: viewport.textScale,
+                locale: locale,
+              ),
+            );
             await tester.pumpAndSettle();
             await screen.open?.call(tester);
 
@@ -172,12 +187,14 @@ void main() {
     });
   }
 
-  testWidgets('AppState text switches back to English with the app',
-      (tester) async {
+  testWidgets('AppState text switches back to English with the app', (
+    tester,
+  ) async {
     setWindowSize(tester, phoneSize);
     final state = disconnectedState();
-    await tester
-        .pumpWidget(veritraTestApp(state: state, locale: const Locale('sr')));
+    await tester.pumpWidget(
+      veritraTestApp(state: state, locale: const Locale('sr')),
+    );
     await tester.pumpAndSettle();
     expect(state.l10n.localeName, 'sr');
 

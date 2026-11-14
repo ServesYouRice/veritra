@@ -54,13 +54,17 @@ final class C7SyncDuty {
   /// A matching `history_sync` arrived, or this device sent one.
   final bool settled;
 
-  Map<String, Object?> toJson() =>
-      <String, Object?>{'due': dueAtMs, if (settled) 'settled': true};
+  Map<String, Object?> toJson() => <String, Object?>{
+        'due': dueAtMs,
+        if (settled) 'settled': true,
+      };
 
   static C7SyncDuty fromJson(Object? raw) {
     final map = raw! as Map;
     return C7SyncDuty(
-        dueAtMs: map['due'] as int, settled: map['settled'] == true);
+      dueAtMs: map['due'] as int,
+      settled: map['settled'] == true,
+    );
   }
 }
 
@@ -82,8 +86,9 @@ final class C7GroupState {
     List<String> released = const <String>[],
   })  : channels = Set<String>.unmodifiable(channels),
         released = List<String>.unmodifiable(released),
-        snapshots =
-            Map<int, Map<String, C7SlotSnapshot>>.unmodifiable(snapshots),
+        snapshots = Map<int, Map<String, C7SlotSnapshot>>.unmodifiable(
+          snapshots,
+        ),
         duties = Map<int, C7SyncDuty>.unmodifiable(duties);
 
   /// A group this device holds no C7 state for.
@@ -152,9 +157,10 @@ final class C7GroupState {
   C7GroupState withReleased(Iterable<String> actionIds) {
     final kept = <String>[...released, ...actionIds];
     return copyWith(
-        released: kept.length <= c7ReleasedLimit
-            ? kept
-            : kept.sublist(kept.length - c7ReleasedLimit));
+      released: kept.length <= c7ReleasedLimit
+          ? kept
+          : kept.sublist(kept.length - c7ReleasedLimit),
+    );
   }
 
   C7GroupState copyWith({
@@ -304,7 +310,10 @@ final class C7GroupState {
   /// send its `history_sync` at [dueAtMs]. Older snapshots beyond
   /// [c7SnapshotLimit] are dropped.
   C7GroupState withSnapshot(
-      int forEpoch, Map<String, C7SlotSnapshot> slots, int dueAtMs) {
+    int forEpoch,
+    Map<String, C7SlotSnapshot> slots,
+    int dueAtMs,
+  ) {
     final nextSnapshots = <int, Map<String, C7SlotSnapshot>>{
       ...snapshots,
       forEpoch: Map<String, C7SlotSnapshot>.unmodifiable(slots),

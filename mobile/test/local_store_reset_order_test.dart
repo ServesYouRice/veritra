@@ -76,10 +76,9 @@ void main() {
 
   bool resetDone() =>
       !File('${directory.path}/veritra-local.reset-intent').existsSync() &&
-      directory
-          .listSync()
-          .whereType<Directory>()
-          .any((item) => item.path.contains('unreadable-'));
+      directory.listSync().whereType<Directory>().any(
+            (item) => item.path.contains('unreadable-'),
+          );
 
   SecureLocalStore recordingStore() => SecureLocalStore(
         storage: storage,
@@ -91,8 +90,11 @@ void main() {
         databaseFactory: (file, keyHex) {
           final id = opened.length;
           final database = _RecordingDatabase(
-              openEncryptedLocalDatabase(file, keyHex).executor, id, log, file)
-            ..readGate = nextReadGate;
+            openEncryptedLocalDatabase(file, keyHex).executor,
+            id,
+            log,
+            file,
+          )..readGate = nextReadGate;
           nextReadGate = null;
           opened.add(database);
           databases.add(database);
@@ -122,32 +124,34 @@ void main() {
   Future<void> settle() =>
       Future<void>.delayed(const Duration(milliseconds: 50));
 
-  test('an open requested before the reset takes its locks waits for it',
-      () async {
-    final store = recordingStore();
-    await store.saveSyncCursor(4);
-    expect(log, <String>['open#0 before-reset']);
+  test(
+    'an open requested before the reset takes its locks waits for it',
+    () async {
+      final store = recordingStore();
+      await store.saveSyncCursor(4);
+      expect(log, <String>['open#0 before-reset']);
 
-    // Hold the reset before it reaches the profile locks.
-    final gate = directoryGate = Completer<void>();
-    final reset = store.quarantineUnreadableDatabase(confirmed: true);
-    await settle();
-    final gapRead = store.loadSyncCursor();
-    await settle();
-    directoryGate = null;
-    gate.complete();
+      // Hold the reset before it reaches the profile locks.
+      final gate = directoryGate = Completer<void>();
+      final reset = store.quarantineUnreadableDatabase(confirmed: true);
+      await settle();
+      final gapRead = store.loadSyncCursor();
+      await settle();
+      directoryGate = null;
+      gate.complete();
 
-    await reset;
-    // The caller in the gap gets a handle opened on the new files.
-    expect(await gapRead, 0);
-    expect(await store.loadSyncCursor(), 0);
-    expect(log, <String>[
-      'open#0 before-reset',
-      'close#0 in-place',
-      'open#1 after-reset',
-    ]);
-    expect(opened, hasLength(2));
-  });
+      await reset;
+      // The caller in the gap gets a handle opened on the new files.
+      expect(await gapRead, 0);
+      expect(await store.loadSyncCursor(), 0);
+      expect(log, <String>[
+        'open#0 before-reset',
+        'close#0 in-place',
+        'open#1 after-reset',
+      ]);
+      expect(opened, hasLength(2));
+    },
+  );
 
   test('a reset requested while an open runs waits for that open', () async {
     await seedClosed();
@@ -160,8 +164,10 @@ void main() {
     final reset = store.quarantineUnreadableDatabase(confirmed: true);
     await settle();
     // The open still holds the profile: nothing has moved.
-    expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
-        isFalse);
+    expect(
+      File('${directory.path}/veritra-local.reset-intent').existsSync(),
+      isFalse,
+    );
     expect(File('${directory.path}/veritra-local.db').existsSync(), isTrue);
 
     gate.complete();
@@ -198,50 +204,63 @@ void main() {
     ]);
   });
 
-  test('a profile another process owns is not reset', () async {
-    await seedClosed();
-    await SecureLocalStore.releaseInstanceLocks();
-    final original =
-        await File('${directory.path}/veritra-local.db').readAsBytes();
-    final key = await storage.read(key: 'veritra.database_key.v1');
+  test(
+    'a profile another process owns is not reset',
+    () async {
+      await seedClosed();
+      await SecureLocalStore.releaseInstanceLocks();
+      final original = await File(
+        '${directory.path}/veritra-local.db',
+      ).readAsBytes();
+      final key = await storage.read(key: 'veritra.database_key.v1');
 
-    // A POSIX record lock, the kind RandomAccessFile.lock takes, held by
-    // another process.
-    final owner = await Process.start('python3', <String>[
-      '-c',
-      'import fcntl, sys\n'
-          'f = open(sys.argv[1], "a")\n'
-          'fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n'
-          'print("locked", flush=True)\n'
-          'sys.stdin.read()\n',
-      '${directory.path}/veritra-instance.lock',
-    ]);
-    addTearDown(() async {
-      owner.kill();
-      await owner.exitCode;
-    });
-    final lines =
-        owner.stdout.transform(utf8.decoder).transform(const LineSplitter());
-    expect(await lines.first.timeout(const Duration(seconds: 20)), 'locked');
+      // A POSIX record lock, the kind RandomAccessFile.lock takes, held by
+      // another process.
+      final owner = await Process.start('python3', <String>[
+        '-c',
+        'import fcntl, sys\n'
+            'f = open(sys.argv[1], "a")\n'
+            'fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n'
+            'print("locked", flush=True)\n'
+            'sys.stdin.read()\n',
+        '${directory.path}/veritra-instance.lock',
+      ]);
+      addTearDown(() async {
+        owner.kill();
+        await owner.exitCode;
+      });
+      final lines =
+          owner.stdout.transform(utf8.decoder).transform(const LineSplitter());
+      expect(await lines.first.timeout(const Duration(seconds: 20)), 'locked');
 
-    final refused = isA<LocalStoreUnavailableException>().having(
-        (error) => error.kind, 'kind', LocalStoreFailureKind.profileLocked);
-    // Control: an open is refused, so the two lock kinds do meet.
-    await expectLater(recordingStore().loadSyncCursor(), throwsA(refused));
+      final refused = isA<LocalStoreUnavailableException>().having(
+        (error) => error.kind,
+        'kind',
+        LocalStoreFailureKind.profileLocked,
+      );
+      // Control: an open is refused, so the two lock kinds do meet.
+      await expectLater(recordingStore().loadSyncCursor(), throwsA(refused));
 
-    await expectLater(
+      await expectLater(
         recordingStore().quarantineUnreadableDatabase(confirmed: true),
-        throwsA(refused));
-    expect(await File('${directory.path}/veritra-local.db').readAsBytes(),
-        original);
-    expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
-        isFalse);
-    expect(
+        throwsA(refused),
+      );
+      expect(
+        await File('${directory.path}/veritra-local.db').readAsBytes(),
+        original,
+      );
+      expect(
+        File('${directory.path}/veritra-local.reset-intent').existsSync(),
+        isFalse,
+      );
+      expect(
         directory.listSync().where((item) => item.path.contains('unreadable-')),
-        isEmpty);
-    expect(await storage.read(key: 'veritra.database_key.v1'), key);
-  },
-      skip: Platform.isLinux || Platform.isMacOS
-          ? false
-          : 'needs python3 and POSIX record locks');
+        isEmpty,
+      );
+      expect(await storage.read(key: 'veritra.database_key.v1'), key);
+    },
+    skip: Platform.isLinux || Platform.isMacOS
+        ? false
+        : 'needs python3 and POSIX record locks',
+  );
 }

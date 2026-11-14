@@ -25,8 +25,10 @@ class RecoveryFollowUpScreen extends StatelessWidget {
       builder: (context, _) {
         final l10n = context.l10n;
         final step = state.recoveryFollowUp;
-        final (number, total) = recoveryFollowUpPosition(step,
-            restoreOffered: state.k1RestoreSupported);
+        final (number, total) = recoveryFollowUpPosition(
+          step,
+          restoreOffered: state.k1RestoreSupported,
+        );
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: false,
@@ -39,22 +41,28 @@ class RecoveryFollowUpScreen extends StatelessWidget {
                 // U23: where the user is in the forced steps.
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                      BoneSpacing.xl, BoneSpacing.md, BoneSpacing.xl, 0),
+                    BoneSpacing.xl,
+                    BoneSpacing.md,
+                    BoneSpacing.xl,
+                    0,
+                  ),
                   child: Semantics(
                     header: true,
                     child: Text(
                       l10n.recoveryFollowUpStepOf(number, total),
                       key: const ValueKey<String>('follow-up-step'),
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: Theme.of(context).colorScheme.primary),
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
                     ),
                   ),
                 ),
                 Expanded(
                   child: switch (step) {
                     RecoveryFollowUpStep.restore => _RestoreStep(state: state),
-                    RecoveryFollowUpStep.password =>
-                      _NewPasswordStep(state: state),
+                    RecoveryFollowUpStep.password => _NewPasswordStep(
+                        state: state,
+                      ),
                     _ => RecoveryKeySetup(
                         state: state,
                         intro: l10n.recoveryFollowUpKeyDetail,
@@ -73,8 +81,10 @@ class RecoveryFollowUpScreen extends StatelessWidget {
 
 /// The follow-up [step]'s number and the number of steps: three when the
 /// history restore is offered, else two.
-(int, int) recoveryFollowUpPosition(RecoveryFollowUpStep? step,
-    {required bool restoreOffered}) {
+(int, int) recoveryFollowUpPosition(
+  RecoveryFollowUpStep? step, {
+  required bool restoreOffered,
+}) {
   final total = restoreOffered || step == RecoveryFollowUpStep.restore ? 3 : 2;
   return switch (step) {
     RecoveryFollowUpStep.restore => (1, total),
@@ -118,8 +128,10 @@ class _RestoreStep extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(BoneSpacing.xl),
       children: <Widget>[
-        Text(l10n.recoveryFollowUpRestoreDetail,
-            style: Theme.of(context).textTheme.bodyLarge),
+        Text(
+          l10n.recoveryFollowUpRestoreDetail,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
         const SizedBox(height: BoneSpacing.xl),
         FilledButton(
           key: const ValueKey<String>('follow-up-restore'),
@@ -189,8 +201,9 @@ class _NewPasswordStepState extends State<_NewPasswordStep> {
       await widget.state.changePassword(_password.text);
       if (!mounted) return;
       final error = widget.state.error;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(error ?? context.l10n.settingsPasswordChanged)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? context.l10n.settingsPasswordChanged)),
+      );
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -204,8 +217,10 @@ class _NewPasswordStepState extends State<_NewPasswordStep> {
       child: ListView(
         padding: const EdgeInsets.all(BoneSpacing.xl),
         children: <Widget>[
-          Text(l10n.recoveryFollowUpPasswordDetail,
-              style: Theme.of(context).textTheme.bodyLarge),
+          Text(
+            l10n.recoveryFollowUpPasswordDetail,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
           const SizedBox(height: BoneSpacing.lg),
           TextFormField(
             controller: _password,
@@ -229,8 +244,9 @@ class _NewPasswordStepState extends State<_NewPasswordStep> {
             validator: (value) => (value ?? '') != _password.text
                 ? l10n.settingsPasswordsMismatch
                 : null,
-            decoration:
-                InputDecoration(labelText: l10n.settingsConfirmNewPassword),
+            decoration: InputDecoration(
+              labelText: l10n.settingsConfirmNewPassword,
+            ),
           ),
           const SizedBox(height: BoneSpacing.xl),
           FilledButton(

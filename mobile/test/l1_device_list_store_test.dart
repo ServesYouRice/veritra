@@ -19,10 +19,11 @@ DeviceListPin _pin(int version, {bool conflict = false}) => DeviceListPin(
       recoveryKey: Uint8List(32)..[1] = 5,
       keys: [
         DeviceListKeyRow(
-            deviceId: [1, 2],
-            signingKey: Uint8List(32)..[0] = 7,
-            addedVersion: 1,
-            removedVersion: version > 1 ? version : 0),
+          deviceId: [1, 2],
+          signingKey: Uint8List(32)..[0] = 7,
+          addedVersion: 1,
+          removedVersion: version > 1 ? version : 0,
+        ),
       ],
     );
 
@@ -53,49 +54,68 @@ void main() {
       });
       tearDown(() async => db?.close());
 
-      test('a pin is written only from the expected version, forward',
-          () async {
-        expect(await store.saveDeviceListPin(_pin(1), expectedVersion: null),
-            isTrue);
-        expect(await store.saveDeviceListPin(_pin(2), expectedVersion: null),
-            isFalse);
-        expect(
-            await store.saveDeviceListPin(_pin(3), expectedVersion: 1), isTrue);
-        expect(await store.saveDeviceListPin(_pin(2), expectedVersion: 3),
-            isFalse);
-        final read = (await store.loadDeviceListPin('acct_a'))!;
-        expect(read.version, 3);
-        expect(read.recoveryKey![1], 5);
-        expect(read.keys.single.removedVersion, 3);
-        expect(read.listed, isEmpty);
-      });
+      test(
+        'a pin is written only from the expected version, forward',
+        () async {
+          expect(
+            await store.saveDeviceListPin(_pin(1), expectedVersion: null),
+            isTrue,
+          );
+          expect(
+            await store.saveDeviceListPin(_pin(2), expectedVersion: null),
+            isFalse,
+          );
+          expect(
+            await store.saveDeviceListPin(_pin(3), expectedVersion: 1),
+            isTrue,
+          );
+          expect(
+            await store.saveDeviceListPin(_pin(2), expectedVersion: 3),
+            isFalse,
+          );
+          final read = (await store.loadDeviceListPin('acct_a'))!;
+          expect(read.version, 3);
+          expect(read.recoveryKey![1], 5);
+          expect(read.keys.single.removedVersion, 3);
+          expect(read.listed, isEmpty);
+        },
+      );
 
       test('a conflict is sticky', () async {
         await store.saveDeviceListPin(_pin(1), expectedVersion: null);
         await store.saveDeviceListConflict(
-            accountId: 'acct_a',
-            version: 1,
-            pinnedStatement: [1],
-            otherStatement: [2],
-            recordedAt: 3);
+          accountId: 'acct_a',
+          version: 1,
+          pinnedStatement: [1],
+          otherStatement: [2],
+          recordedAt: 3,
+        );
         expect((await store.loadDeviceListPin('acct_a'))!.conflict, isTrue);
-        expect(await store.saveDeviceListPin(_pin(2), expectedVersion: 1),
-            isFalse);
+        expect(
+          await store.saveDeviceListPin(_pin(2), expectedVersion: 1),
+          isFalse,
+        );
       });
 
       test('leaf verdicts replace a group and mark the hold', () async {
-        await store.saveApprovalLeaves(ApprovalLeafChange(
+        await store.saveApprovalLeaves(
+          ApprovalLeafChange(
             conversationId: 'conv_1',
             leaves: [
               _leaf('dev_1', LeafVerdict.approved),
               _leaf('dev_22', LeafVerdict.unapproved),
             ],
-            replaceAll: true));
+            replaceAll: true,
+          ),
+        );
         expect(await store.loadHeldConversations(), ['conv_1']);
-        await store.saveApprovalLeaves(ApprovalLeafChange(
+        await store.saveApprovalLeaves(
+          ApprovalLeafChange(
             conversationId: 'conv_1',
             leaves: [_leaf('dev_1', LeafVerdict.approved)],
-            replaceAll: true));
+            replaceAll: true,
+          ),
+        );
         expect(await store.loadHeldConversations(), isEmpty);
         expect(await store.loadApprovalLeaves('conv_1'), hasLength(1));
       });
@@ -125,20 +145,27 @@ void main() {
     expect(await db.writeDeviceListPin(_pin(1), expectedVersion: null), isTrue);
     final version = await db.customSelect('PRAGMA user_version').getSingle();
     // Whatever the current schema is: later packages add tables after 26.
-    expect(version.read<int>('user_version'),
-        EncryptedLocalDatabase.currentSchemaVersion);
     expect(
-        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(26));
+      version.read<int>('user_version'),
+      EncryptedLocalDatabase.currentSchemaVersion,
+    );
+    expect(
+      EncryptedLocalDatabase.currentSchemaVersion,
+      greaterThanOrEqualTo(26),
+    );
   });
 
   test('sign-out clears every L1 table', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await db.writeDeviceListPin(_pin(1), expectedVersion: null);
-    await db.writeApprovalLeaves(ApprovalLeafChange(
+    await db.writeApprovalLeaves(
+      ApprovalLeafChange(
         conversationId: 'conv_1',
         leaves: [_leaf('dev_1', LeafVerdict.unapproved)],
-        replaceAll: true));
+        replaceAll: true,
+      ),
+    );
     await db.clearAll();
     expect(await db.readDeviceListPin('acct_a'), isNull);
     expect(await db.readHeldConversations(), isEmpty);
@@ -155,8 +182,10 @@ class _DbStore extends MemoryLocalStore {
       db.readDeviceListPin(accountId);
 
   @override
-  Future<bool> saveDeviceListPin(DeviceListPin pin,
-          {required int? expectedVersion}) =>
+  Future<bool> saveDeviceListPin(
+    DeviceListPin pin, {
+    required int? expectedVersion,
+  }) =>
       db.writeDeviceListPin(pin, expectedVersion: expectedVersion);
 
   @override
@@ -168,11 +197,12 @@ class _DbStore extends MemoryLocalStore {
     required int recordedAt,
   }) =>
       db.writeDeviceListConflict(
-          accountId: accountId,
-          version: version,
-          pinnedStatement: pinnedStatement,
-          otherStatement: otherStatement,
-          recordedAt: recordedAt);
+        accountId: accountId,
+        version: version,
+        pinnedStatement: pinnedStatement,
+        otherStatement: otherStatement,
+        recordedAt: recordedAt,
+      );
 
   @override
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) =>

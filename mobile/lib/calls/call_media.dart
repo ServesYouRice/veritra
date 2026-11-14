@@ -5,7 +5,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 /// interfaces, AGENTS.md).
 abstract interface class CallMediaFactory {
   Future<webrtc.RTCPeerConnection> createPeer(
-      Map<String, Object?> configuration);
+    Map<String, Object?> configuration,
+  );
   Future<webrtc.MediaStream> getUserMedia(Map<String, Object?> constraints);
 }
 
@@ -16,7 +17,8 @@ class FlutterWebRtcMediaFactory implements CallMediaFactory {
 
   @override
   Future<webrtc.RTCPeerConnection> createPeer(
-          Map<String, Object?> configuration) =>
+    Map<String, Object?> configuration,
+  ) =>
       webrtc.createPeerConnection(configuration);
 
   @override

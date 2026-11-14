@@ -129,8 +129,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _probeResult = const SetupProbeResult.probing();
       setupRequired = null;
     });
-    _setupProbeDebounce =
-        Timer(const Duration(milliseconds: 600), _probeSetupStatus);
+    _setupProbeDebounce = Timer(
+      const Duration(milliseconds: 600),
+      _probeSetupStatus,
+    );
   }
 
   Future<void> _loadStoredDeviceIdentity() async {
@@ -349,8 +351,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
           child: Text(
             recoveryError,
             textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.error),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
           ),
         ),
     ];
@@ -477,9 +480,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!_sharesServerWithAnotherAccount) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: BoneSpacing.sm),
-      child: Text(context.l10n.accountsSameServer,
-          key: const ValueKey<String>('connect-same-server'),
-          style: theme.textTheme.bodySmall),
+      child: Text(
+        context.l10n.accountsSameServer,
+        key: const ValueKey<String>('connect-same-server'),
+        style: theme.textTheme.bodySmall,
+      ),
     );
   }
 
@@ -499,13 +504,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
               icon: widget.state.busy || _submitting
                   ? const SizedBox.square(
                       dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Icon(mode == AuthMode.linkDevice
-                      ? Icons.qr_code_2
-                      : Icons.login),
+                  : Icon(
+                      mode == AuthMode.linkDevice
+                          ? Icons.qr_code_2
+                          : Icons.login,
+                    ),
               label: Text(_submitLabel),
             ),
     );
@@ -596,15 +601,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
       Center(
         child: TextButton(
           key: ValueKey<String>(
-              _joinManual ? 'connect-invite-paste' : 'connect-invite-manual'),
+            _joinManual ? 'connect-invite-paste' : 'connect-invite-manual',
+          ),
           onPressed: () => setState(() {
             _joinManual = !_joinManual;
             _inviteLinkError = null;
             _inviteCodeError = null;
           }),
-          child: Text(_joinManual
-              ? l10n.connectInviteLinkInstead
-              : l10n.connectInviteTypeInstead),
+          child: Text(
+            _joinManual
+                ? l10n.connectInviteLinkInstead
+                : l10n.connectInviteTypeInstead,
+          ),
         ),
       ),
     ];
@@ -697,7 +705,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
       );
       if (link == null) {
         setState(
-            () => _inviteLinkError = context.l10n.connectInviteLinkInvalid);
+          () => _inviteLinkError = context.l10n.connectInviteLinkInvalid,
+        );
         return;
       }
       url.text = link.origin;
@@ -765,7 +774,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
       : <String>[code];
 
   List<Widget> _linkDeviceFields(
-      ThemeData theme, DeviceLinkClaimView? pendingLink) {
+    ThemeData theme,
+    DeviceLinkClaimView? pendingLink,
+  ) {
     return <Widget>[
       // Once the claim is sent the link code has done its work.
       if (pendingLink == null) ...<Widget>[
@@ -815,11 +826,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   key: const ValueKey<String>('connect-link-code-display'),
                   spacing: BoneSpacing.lg,
                   children: <Widget>[
-                    for (final (index, half)
-                        in _codeHalves(pendingLink.verificationCode).indexed)
+                    for (final (index, half) in _codeHalves(
+                      pendingLink.verificationCode,
+                    ).indexed)
                       ConstrainedBox(
-                        constraints:
-                            BoxConstraints(maxWidth: constraints.maxWidth),
+                        constraints: BoxConstraints(
+                          maxWidth: constraints.maxWidth,
+                        ),
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           alignment: AlignmentDirectional.centerStart,
@@ -904,9 +917,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
               tooltip: showPassword
                   ? context.l10n.connectHidePassword
                   : context.l10n.connectShowPassword,
-              icon: Icon(showPassword
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined),
+              icon: Icon(
+                showPassword
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
               onPressed: () => setState(() => showPassword = !showPassword),
             ),
           ),
@@ -1068,8 +1083,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (host == null) return null;
     final active = host.activeSlot;
     if (active == null || active.state != SlotState.pending) return null;
-    final others = host.registry.slots.where((s) =>
-        s.namespace != active.namespace && s.state != SlotState.removing);
+    final others = host.registry.slots.where(
+      (s) => s.namespace != active.namespace && s.state != SlotState.removing,
+    );
     return others.isEmpty ? null : host;
   }
 
@@ -1079,10 +1095,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
     final origin = _probeResult.origin;
     if (host == null || origin == null) return false;
     final active = host.registry.active;
-    return host.registry.slots.any((s) =>
-        s.namespace != active &&
-        s.state != SlotState.removing &&
-        s.origin == origin);
+    return host.registry.slots.any(
+      (s) =>
+          s.namespace != active &&
+          s.state != SlotState.removing &&
+          s.origin == origin,
+    );
   }
 
   Future<void> _backToAccounts(AccountHost host) async {
@@ -1207,9 +1225,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _modeManuallySelected = true;
     }
     if (origin != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.connectOriginFilled)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.connectOriginFilled)));
     }
   }
 
@@ -1275,15 +1293,9 @@ class _Field extends StatelessWidget {
             left: BoneSpacing.xs,
             bottom: BoneSpacing.sm,
           ),
-          child: Text(
-            label.toUpperCase(),
-            style: theme.textTheme.labelSmall,
-          ),
+          child: Text(label.toUpperCase(), style: theme.textTheme.labelSmall),
         ),
-        Semantics(
-          label: label,
-          child: child,
-        ),
+        Semantics(label: label, child: child),
       ],
     );
   }

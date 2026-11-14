@@ -43,8 +43,12 @@ String deviceLinkV3ClaimToken(String value) {
   }
 }
 
-List<int> _binary(Map<String, Object?> json, String key,
-    {int min = 32, int max = 32}) {
+List<int> _binary(
+  Map<String, Object?> json,
+  String key, {
+  int min = 32,
+  int max = 32,
+}) {
   final value = _string(json, key, (max + 2) ~/ 3 * 4);
   try {
     final bytes = base64Decode(value);
@@ -96,9 +100,10 @@ String _origin(Map<String, Object?> json, TransportPolicy transport) {
 /// Public server context only. This is NOT proof of the source's approval;
 /// the native transcript/MAC check must succeed before identity promotion.
 class DeviceLinkV3Record {
-  DeviceLinkV3Record.fromJson(Map<String, Object?> json,
-      {TransportPolicy transport = TransportPolicy.production})
-      : fields = Map<String, Object?>.unmodifiable(json) {
+  DeviceLinkV3Record.fromJson(
+    Map<String, Object?> json, {
+    TransportPolicy transport = TransportPolicy.production,
+  }) : fields = Map<String, Object?>.unmodifiable(json) {
     _keys(fields, const {
       'id',
       'code',
@@ -129,8 +134,13 @@ class DeviceLinkV3Record {
       'completed_at',
     });
     if (fields['protocol_version'] != deviceLinkV3Protocol ||
-        !const {'pending', 'claimed', 'approved', 'consumed', 'revoked'}
-            .contains(fields['state'])) _invalid();
+        !const {
+          'pending',
+          'claimed',
+          'approved',
+          'consumed',
+          'revoked',
+        }.contains(fields['state'])) _invalid();
     for (final key in ['id', 'account_id', 'created_by_device_id']) {
       deviceLinkV3Id(fields[key]);
     }
@@ -154,7 +164,7 @@ class DeviceLinkV3Record {
       'transfer_public_key',
       'transcript_hash',
       'claim_tag',
-      'approval_tag'
+      'approval_tag',
     ]) {
       if (fields.containsKey(key)) _binary(fields, key);
     }
@@ -162,7 +172,7 @@ class DeviceLinkV3Record {
       'claimed_at',
       'approved_at',
       'transfer_expires_at',
-      'completed_at'
+      'completed_at',
     ]) {
       if (fields.containsKey(key)) _time(fields, key);
     }
@@ -189,7 +199,7 @@ class DeviceLinkV3Record {
         'claimed_signing_key',
         'transfer_public_key',
         'transcript_hash',
-        'claim_tag'
+        'claim_tag',
       ]) {
         _binary(fields, key);
       }
@@ -218,8 +228,12 @@ class DeviceLinkV3Record {
           completed.isAfter(expires)) _invalid();
     }
     if (state == 'pending' || state == 'claimed') {
-      if (['approval_tag', 'approved_at', 'transfer_expires_at', 'completed_at']
-          .any(fields.containsKey)) _invalid();
+      if ([
+        'approval_tag',
+        'approved_at',
+        'transfer_expires_at',
+        'completed_at',
+      ].any(fields.containsKey)) _invalid();
     }
     if (state == 'pending' &&
         ['recipient_random', 'source_random'].any(fields.containsKey)) {
@@ -241,10 +255,11 @@ class DeviceLinkV3Record {
 /// client-generated credentials BEFORE submission. No raw credential belongs
 /// in this object. The native operation supplies its signature and digest.
 class FrozenDeviceLinkV3Claim {
-  FrozenDeviceLinkV3Claim.fromJson(Map<String, Object?> json,
-      {required String requestHash,
-      TransportPolicy transport = TransportPolicy.production})
-      : fields = Map<String, Object?>.unmodifiable(json),
+  FrozenDeviceLinkV3Claim.fromJson(
+    Map<String, Object?> json, {
+    required String requestHash,
+    TransportPolicy transport = TransportPolicy.production,
+  })  : fields = Map<String, Object?>.unmodifiable(json),
         requestHash = deviceLinkV3Hash(requestHash) {
     const keys = {
       'code',
@@ -273,14 +288,14 @@ class FrozenDeviceLinkV3Claim {
       'reservation_request_id',
       'claim_token_hash',
       'device_secret_hash',
-      'initial_session_token_hash'
+      'initial_session_token_hash',
     ]) {
       deviceLinkV3Hash(fields[key]);
     }
     if ({
           fields['claim_token_hash'],
           fields['device_secret_hash'],
-          fields['initial_session_token_hash']
+          fields['initial_session_token_hash'],
         }.length !=
         3) _invalid();
     deviceLinkV3Id(fields['enrollment_reservation_id']);
@@ -291,7 +306,7 @@ class FrozenDeviceLinkV3Claim {
       'signing_key',
       'transfer_public_key',
       'transcript_hash',
-      'claim_tag'
+      'claim_tag',
     ]) {
       _binary(fields, key);
     }
@@ -316,7 +331,7 @@ class DeviceLinkV3Reservation {
       'link_nonce',
       'existing_device_id',
       'existing_signing_key',
-      'source_commitment'
+      'source_commitment',
     });
     if (fields['protocol_version'] != deviceLinkV3Protocol) _invalid();
     // The commitment must arrive before this device chooses its random.
@@ -334,8 +349,10 @@ class DeviceLinkV3Reservation {
 
 /// A public receipt and approval MAC, never a server-issued Session/token.
 class DeviceLinkV3Completion {
-  DeviceLinkV3Completion.fromJson(Map<String, Object?> json,
-      {TransportPolicy transport = TransportPolicy.production}) {
+  DeviceLinkV3Completion.fromJson(
+    Map<String, Object?> json, {
+    TransportPolicy transport = TransportPolicy.production,
+  }) {
     _keys(json, const {'completion', 'approval_tag'});
     final raw = json['completion'];
     if (raw is! Map<String, Object?>) _invalid();
@@ -348,7 +365,7 @@ class DeviceLinkV3Completion {
       'claim_request_hash',
       'transcript_hash',
       'initial_session_token_hash',
-      'completed_at'
+      'completed_at',
     });
     for (final key in ['link_id', 'account_id', 'device_id']) {
       deviceLinkV3Id(fields[key]);

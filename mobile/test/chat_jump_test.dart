@@ -37,31 +37,46 @@ Future<AppState> _stateWithHistory(int messages) async {
   final store = MemoryLocalStore();
   await store.saveCryptoState(
     StoredCryptoState(
-        counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
+      counter: 1,
+      stateKey: List.filled(32, 1),
+      sealedState: [1],
+    ),
     0,
   );
-  await store.commitMlsTransition(MlsStateTransition(
-    messageId: 'seed',
-    conversationId: 'conv',
-    expectedCounter: 1,
-    expectedCursor: 0,
-    state: StoredCryptoState(
-        counter: 2, stateKey: List.filled(32, 1), sealedState: [2]),
-    cursor: 1,
-    messageEffects: <MessageEffect>[
-      for (var i = 1; i <= messages; i++)
-        InsertMessageEffect(
-          key: 'peerdev:m$i',
-          conversationId: 'conv',
-          senderAccountId: 'peer',
-          senderDeviceId: 'peerdev',
-          kind: LocalMessageKind.text,
-          body: 'message number $i',
-          createdAt: DateTime.utc(2026, 10, 24, 8, 0, i).millisecondsSinceEpoch,
-          state: LocalMessageState.received,
-        ),
-    ],
-  ));
+  await store.commitMlsTransition(
+    MlsStateTransition(
+      messageId: 'seed',
+      conversationId: 'conv',
+      expectedCounter: 1,
+      expectedCursor: 0,
+      state: StoredCryptoState(
+        counter: 2,
+        stateKey: List.filled(32, 1),
+        sealedState: [2],
+      ),
+      cursor: 1,
+      messageEffects: <MessageEffect>[
+        for (var i = 1; i <= messages; i++)
+          InsertMessageEffect(
+            key: 'peerdev:m$i',
+            conversationId: 'conv',
+            senderAccountId: 'peer',
+            senderDeviceId: 'peerdev',
+            kind: LocalMessageKind.text,
+            body: 'message number $i',
+            createdAt: DateTime.utc(
+              2026,
+              10,
+              24,
+              8,
+              0,
+              i,
+            ).millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+          ),
+      ],
+    ),
+  );
   final state = AppState(
     apiClientFactory: (_) => ApiClient(baseUrl: 'https://example.test'),
     cryptoService: _MlsStub(),
@@ -82,23 +97,27 @@ Future<AppState> _stateWithHistory(int messages) async {
 }
 
 void main() {
-  testWidgets('leaving the chat while a jump waits for a frame is harmless',
-      (tester) async {
+  testWidgets('leaving the chat while a jump waits for a frame is harmless', (
+    tester,
+  ) async {
     final state = await _stateWithHistory(150);
     addTearDown(state.dispose);
     // A route above this one that is popped mid-jump.
     final navigator = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(MaterialApp(
-      navigatorKey: navigator,
-      home: const SizedBox(),
-    ));
-    unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
-      builder: (_) => ChatScreen(
-        state: state,
-        conversationId: 'conv',
-        initialMessageKey: 'peerdev:m12',
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigator, home: const SizedBox()),
+    );
+    unawaited(
+      navigator.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            state: state,
+            conversationId: 'conv',
+            initialMessageKey: 'peerdev:m12',
+          ),
+        ),
       ),
-    )));
+    );
     // One frame builds the chat; its post-frame callback starts the jump,
     // which jumps once and then waits for the next frame to end.
     await tester.pump();
@@ -112,13 +131,15 @@ void main() {
   testWidgets('replacing the chat screen mid-jump is harmless', (tester) async {
     final state = await _stateWithHistory(150);
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(
-        state: state,
-        conversationId: 'conv',
-        initialMessageKey: 'peerdev:m12',
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: state,
+          conversationId: 'conv',
+          initialMessageKey: 'peerdev:m12',
+        ),
       ),
-    ));
+    );
     await tester.pump();
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     await tester.pump(const Duration(milliseconds: 50));
@@ -126,17 +147,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a jump that is left alone still lands on the message',
-      (tester) async {
+  testWidgets('a jump that is left alone still lands on the message', (
+    tester,
+  ) async {
     final state = await _stateWithHistory(150);
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(
-        state: state,
-        conversationId: 'conv',
-        initialMessageKey: 'peerdev:m12',
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: state,
+          conversationId: 'conv',
+          initialMessageKey: 'peerdev:m12',
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(find.text('message number 12'), findsOneWidget);
     expect(tester.takeException(), isNull);

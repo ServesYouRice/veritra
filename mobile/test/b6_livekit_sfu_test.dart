@@ -70,7 +70,10 @@ class FakeRoom implements LiveKitRoomDriver {
 
   @override
   Future<void> connect(
-      String url, String token, void Function(LiveKitRoomEvent) onEvent) async {
+    String url,
+    String token,
+    void Function(LiveKitRoomEvent) onEvent,
+  ) async {
     _on = onEvent;
   }
 
@@ -115,7 +118,9 @@ class FakeRoom implements LiveKitRoomDriver {
 
   @override
   Future<RoomFrameCryptor> senderCryptor(
-      Object sender, String participantId) async {
+    Object sender,
+    String participantId,
+  ) async {
     final c = FakeTestCryptor(sender);
     cryptors.add(c);
     return c;
@@ -123,7 +128,9 @@ class FakeRoom implements LiveKitRoomDriver {
 
   @override
   Future<RoomFrameCryptor> receiverCryptor(
-      Object receiver, String participantId) async {
+    Object receiver,
+    String participantId,
+  ) async {
     final c = FakeTestCryptor(receiver);
     cryptors.add(c);
     return c;
@@ -132,8 +139,10 @@ class FakeRoom implements LiveKitRoomDriver {
 
 /// Waits until [done] holds, up to [limit] (real time: the adapter polls
 /// with timers), so a loaded machine does not fail the test.
-Future<void> eventually(bool Function() done,
-    {Duration limit = const Duration(seconds: 5)}) async {
+Future<void> eventually(
+  bool Function() done, {
+  Duration limit = const Duration(seconds: 5),
+}) async {
   final waited = Stopwatch()..start();
   while (!done() && waited.elapsed < limit) {
     await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -155,9 +164,13 @@ void main() {
   setUp(() async {
     room = FakeRoom();
     keys = await WebRtcFrameKeys.open(
-        create: (_) async => FakeKeyProvider(<String>[]));
-    sfu = LiveKitSfuConnection(keys,
-        driver: room, remoteStartWait: const Duration(milliseconds: 200));
+      create: (_) async => FakeKeyProvider(<String>[]),
+    );
+    sfu = LiveKitSfuConnection(
+      keys,
+      driver: room,
+      remoteStartWait: const Duration(milliseconds: 200),
+    );
     events = <SfuEvent>[];
     sfu.events.listen(events.add);
     await sfu.connect('wss://sfu.test', 'token');
@@ -172,13 +185,15 @@ void main() {
     return track;
   }
 
-  test('its own publish passes: no failure, the voice opens once keyed',
-      () async {
-    await publishVoice();
-    expect(room.published.single.enabled, isTrue);
-    expect(sfu.poisoned, isFalse);
-    expect(events.whereType<SfuDisconnected>(), isEmpty);
-  });
+  test(
+    'its own publish passes: no failure, the voice opens once keyed',
+    () async {
+      await publishVoice();
+      expect(room.published.single.enabled, isTrue);
+      expect(sfu.poisoned, isFalse);
+      expect(events.whereType<SfuDisconnected>(), isEmpty);
+    },
+  );
 
   test(
       'a reconnect disables the voice inside the event callback, and nothing '
@@ -237,8 +252,11 @@ void main() {
     expect(events.whereType<SfuTrackSubscribed>(), isEmpty);
     await eventually(() => events.whereType<SfuTrackSubscribed>().isNotEmpty);
     expect(events.whereType<SfuTrackSubscribed>(), hasLength(1));
-    expect(media.enabled, isFalse,
-        reason: 'disabled again after LiveKit started it');
+    expect(
+      media.enabled,
+      isFalse,
+      reason: 'disabled again after LiveKit started it',
+    );
     final track = events.whereType<SfuTrackSubscribed>().single.track;
     await track.setPlaying(true);
     expect(media.enabled, isTrue);
@@ -246,15 +264,17 @@ void main() {
     expect(media.enabled, isFalse);
   });
 
-  test('a subscribed track that never starts is unsubscribed, never played',
-      () async {
-    final media = FakeRemoteMedia('TR_b', 'sfu_b');
-    room.subscribe(media, starts: false);
-    await eventually(() => media.unsubscribed);
-    expect(media.unsubscribed, isTrue);
-    expect(events.whereType<SfuTrackSubscribed>(), isEmpty);
-    expect(media.enabled, isFalse);
-  });
+  test(
+    'a subscribed track that never starts is unsubscribed, never played',
+    () async {
+      final media = FakeRemoteMedia('TR_b', 'sfu_b');
+      room.subscribe(media, starts: false);
+      await eventually(() => media.unsubscribed);
+      expect(media.unsubscribed, isTrue);
+      expect(events.whereType<SfuTrackSubscribed>(), isEmpty);
+      expect(media.enabled, isFalse);
+    },
+  );
 
   test('a reconnect ends the call through the session and engine', () async {
     final server = FakeServer('conv_1');

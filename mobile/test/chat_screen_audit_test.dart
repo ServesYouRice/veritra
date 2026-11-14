@@ -34,36 +34,47 @@ import 'goldens/golden_harness.dart';
 void main() {
   for (final brightness in Brightness.values) {
     testWidgets(
-        'U14: your own bubble is filled with the plum token, $brightness',
-        (tester) async {
-      final store = MemoryLocalStore(), state = _state();
-      state.localStoreOverride = store;
-      await _seed(store);
-      await state.refreshHistory('conv');
-      await tester.pumpWidget(MaterialApp(
-          theme: ThemeData(brightness: brightness),
-          home: ChatScreen(state: state, conversationId: 'conv')));
-      await tester.pumpAndSettle();
-      expect(
+      'U14: your own bubble is filled with the plum token, $brightness',
+      (tester) async {
+        final store = MemoryLocalStore(), state = _state();
+        state.localStoreOverride = store;
+        await _seed(store);
+        await state.refreshHistory('conv');
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(brightness: brightness),
+            home: ChatScreen(state: state, conversationId: 'conv'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
           find.ancestor(
-              of: find.text('hello'),
-              matching: find.byWidgetPredicate((widget) =>
+            of: find.text('hello'),
+            matching: find.byWidgetPredicate(
+              (widget) =>
                   widget is Container &&
                   (widget.decoration as BoxDecoration?)?.color ==
-                      BoneColors.ownBubble(brightness))),
-          findsOneWidget);
-      await tester.pumpWidget(const SizedBox());
-      state.dispose();
-    });
+                      BoneColors.ownBubble(brightness),
+            ),
+          ),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+      },
+    );
   }
 
-  testWidgets('U13: "encrypted" is said once, at the start of the chat',
-      (tester) async {
+  testWidgets('U13: "encrypted" is said once, at the start of the chat', (
+    tester,
+  ) async {
     final store = MemoryLocalStore(), state = _state();
     state.localStoreOverride = store;
-    await _seed(store, extra: [
-      for (var i = 0; i < 3; i++)
-        InsertMessageEffect(
+    await _seed(
+      store,
+      extra: [
+        for (var i = 0; i < 3; i++)
+          InsertMessageEffect(
             key: 'dev:m$i',
             conversationId: 'conv',
             senderAccountId: i.isEven ? 'alice' : 'bob',
@@ -71,11 +82,16 @@ void main() {
             kind: LocalMessageKind.text,
             body: 'body $i',
             createdAt: 2 + i,
-            state: LocalMessageState.received),
-    ]);
+            state: LocalMessageState.received,
+          ),
+      ],
+    );
     await state.refreshHistory('conv');
     await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(FormattedMessage), findsNWidgets(4));
     // One notice, and it is the only padlock: no header line, no per-bubble
@@ -86,20 +102,26 @@ void main() {
     expect(find.byIcon(Icons.lock_outline), findsOneWidget);
     expect(find.textContaining('ENCRYPTED'), findsNothing);
     // It opens the chat: above the oldest message.
-    expect(tester.getBottomLeft(notice).dy,
-        lessThanOrEqualTo(tester.getTopLeft(find.text('hello')).dy));
+    expect(
+      tester.getBottomLeft(notice).dy,
+      lessThanOrEqualTo(tester.getTopLeft(find.text('hello')).dy),
+    );
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
 
-  testWidgets('U13: a muted chat keeps a plain Muted line in its header',
-      (tester) async {
+  testWidgets('U13: a muted chat keeps a plain Muted line in its header', (
+    tester,
+  ) async {
     final store = MemoryLocalStore(), state = _state();
     state.localStoreOverride = store;
     await _seed(store);
     await state.refreshHistory('conv');
     await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text(englishL10n.chatStatusMuted), findsNothing);
     await state.setConversationMuted('conv', true);
@@ -110,21 +132,32 @@ void main() {
   });
 
   for (final (kind, dm) in <(String, bool)>[('dm', true), ('group', false)]) {
-    testWidgets('U36: an empty $kind chat says who can read it',
-        (tester) async {
+    testWidgets('U36: an empty $kind chat says who can read it', (
+      tester,
+    ) async {
       final state = _state()
         ..conversations = [
           Conversation(
-              id: 'conv', kind: kind, title: 'Team', createdBy: 'alice')
+            id: 'conv',
+            kind: kind,
+            title: 'Team',
+            createdBy: 'alice',
+          ),
         ];
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(
-          find.text(dm
+        find.text(
+          dm
               ? englishL10n.chatEmptyMessageDm
-              : englishL10n.chatEmptyMessageGroup),
-          findsOneWidget);
+              : englishL10n.chatEmptyMessageGroup,
+        ),
+        findsOneWidget,
+      );
       expect(englishL10n.chatEmptyMessageDm, 'Only you two can read this.');
       await tester.pumpWidget(const SizedBox());
       state.dispose();
@@ -146,89 +179,111 @@ void main() {
       if (!files.every((path) => File(path).existsSync())) return false;
       final loader = FontLoader('Roboto');
       for (final path in files) {
-        loader.addFont(Future<ByteData>.value(
-            ByteData.sublistView(File(path).readAsBytesSync())));
+        loader.addFont(
+          Future<ByteData>.value(
+            ByteData.sublistView(File(path).readAsBytesSync()),
+          ),
+        );
       }
       await loader.load();
       return true;
     }
 
     testWidgets(
-        'a 12-character name fits beside the call buttons at 360 dp and opens the details',
-        (tester) async {
-      final haveRoboto = await tester.runAsync(loadRoboto) ?? false;
-      tester.view.physicalSize = const Size(360, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      const name = 'Konstantinop';
-      expect(name, hasLength(12));
-      final state = _state()
-        ..conversations = [
-          Conversation(id: 'conv', kind: 'dm', title: name, createdBy: 'alice')
-        ];
-      final log = <String>[];
-      final controller = CallController(
+      'a 12-character name fits beside the call buttons at 360 dp and opens the details',
+      (tester) async {
+        final haveRoboto = await tester.runAsync(loadRoboto) ?? false;
+        tester.view.physicalSize = const Size(360, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        const name = 'Konstantinop';
+        expect(name, hasLength(12));
+        final state = _state()
+          ..conversations = [
+            Conversation(
+              id: 'conv',
+              kind: 'dm',
+              title: name,
+              createdBy: 'alice',
+            ),
+          ];
+        final log = <String>[];
+        final controller = CallController(
           service: NativeCallService(
-              api: FakeCallApi(log),
-              token: 't',
-              crypto: FakeCallCrypto(log),
-              incoming: const Stream.empty(),
-              media: FakeMediaFactory(log)),
-          selfAccountId: 'alice');
-      state.callController.value = controller;
-      addTearDown(controller.dispose);
-      var theme = veritraLightTheme();
-      if (haveRoboto) {
-        theme = theme.copyWith(
-          textTheme: theme.textTheme.apply(fontFamily: 'Roboto'),
-          appBarTheme: theme.appBarTheme.copyWith(
-              titleTextStyle: theme.appBarTheme.titleTextStyle
-                  ?.copyWith(fontFamily: 'Roboto')),
+            api: FakeCallApi(log),
+            token: 't',
+            crypto: FakeCallCrypto(log),
+            incoming: const Stream.empty(),
+            media: FakeMediaFactory(log),
+          ),
+          selfAccountId: 'alice',
         );
-      }
-      // Pushed, as on a phone, so the bar carries a back button too.
-      await tester
-          .pumpWidget(MaterialApp(theme: theme, home: const SizedBox()));
-      unawaited(tester.state<NavigatorState>(find.byType(Navigator)).push(
-          MaterialPageRoute<void>(
-              builder: (_) =>
-                  ChatScreen(state: state, conversationId: 'conv'))));
-      await tester.pumpAndSettle();
-      expect(find.byType(BackButton), findsOneWidget);
+        state.callController.value = controller;
+        addTearDown(controller.dispose);
+        var theme = veritraLightTheme();
+        if (haveRoboto) {
+          theme = theme.copyWith(
+            textTheme: theme.textTheme.apply(fontFamily: 'Roboto'),
+            appBarTheme: theme.appBarTheme.copyWith(
+              titleTextStyle: theme.appBarTheme.titleTextStyle?.copyWith(
+                fontFamily: 'Roboto',
+              ),
+            ),
+          );
+        }
+        // Pushed, as on a phone, so the bar carries a back button too.
+        await tester.pumpWidget(
+          MaterialApp(theme: theme, home: const SizedBox()),
+        );
+        unawaited(
+          tester.state<NavigatorState>(find.byType(Navigator)).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      ChatScreen(state: state, conversationId: 'conv'),
+                ),
+              ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(BackButton), findsOneWidget);
 
-      // The call buttons are there, and so is the menu; star and info are not
-      // bars of their own.
-      expect(find.byKey(const Key('chat-call-voice')), findsOneWidget);
-      expect(find.byKey(const Key('chat-call-video')), findsOneWidget);
-      expect(find.byKey(const Key('chat-menu')), findsOneWidget);
-      expect(find.byIcon(Icons.star_outline), findsNothing);
-      expect(find.byIcon(Icons.info_outline), findsNothing);
+        // The call buttons are there, and so is the menu; star and info are not
+        // bars of their own.
+        expect(find.byKey(const Key('chat-call-voice')), findsOneWidget);
+        expect(find.byKey(const Key('chat-call-video')), findsOneWidget);
+        expect(find.byKey(const Key('chat-menu')), findsOneWidget);
+        expect(find.byIcon(Icons.star_outline), findsNothing);
+        expect(find.byIcon(Icons.info_outline), findsNothing);
 
-      final title = find.text(name);
-      expect(title, findsOneWidget);
-      final paragraph = tester.renderObject<RenderParagraph>(title);
-      final width = tester.getSize(title).width;
-      final fontSize = paragraph.text.style?.fontSize ?? 17;
-      if (haveRoboto) {
-        expect(paragraph.didExceedMaxLines, isFalse,
-            reason: 'the name is cut with an ellipsis');
-        final painter =
-            TextPainter(text: paragraph.text, textDirection: TextDirection.ltr)
-              ..layout();
-        expect(painter.width, lessThanOrEqualTo(width));
-      } else {
-        // Without a real font, hold the line the budget draws: 12 average
-        // glyphs of 0.55 em.
-        expect(width, greaterThanOrEqualTo(12 * 0.55 * fontSize));
-      }
+        final title = find.text(name);
+        expect(title, findsOneWidget);
+        final paragraph = tester.renderObject<RenderParagraph>(title);
+        final width = tester.getSize(title).width;
+        final fontSize = paragraph.text.style?.fontSize ?? 17;
+        if (haveRoboto) {
+          expect(
+            paragraph.didExceedMaxLines,
+            isFalse,
+            reason: 'the name is cut with an ellipsis',
+          );
+          final painter = TextPainter(
+            text: paragraph.text,
+            textDirection: TextDirection.ltr,
+          )..layout();
+          expect(painter.width, lessThanOrEqualTo(width));
+        } else {
+          // Without a real font, hold the line the budget draws: 12 average
+          // glyphs of 0.55 em.
+          expect(width, greaterThanOrEqualTo(12 * 0.55 * fontSize));
+        }
 
-      // Tapping the name opens the details.
-      await tester.tap(title);
-      await tester.pumpAndSettle();
-      expect(find.byType(ConversationDetailsScreen), findsOneWidget);
-      await tester.pumpWidget(const SizedBox());
-      state.dispose();
-    });
+        // Tapping the name opens the details.
+        await tester.tap(title);
+        await tester.pumpAndSettle();
+        expect(find.byType(ConversationDetailsScreen), findsOneWidget);
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+      },
+    );
 
     testWidgets('star and info open from one menu', (tester) async {
       final store = MemoryLocalStore(), state = _state();
@@ -236,7 +291,10 @@ void main() {
       await _seed(store);
       await state.refreshHistory('conv');
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('chat-menu')));
       await tester.pumpAndSettle();
@@ -254,11 +312,15 @@ void main() {
       expect(glyphs, hasLength(MessageTick.values.length));
     });
 
-    testWidgets('one + holds files and polls, and the mic turns into Send',
-        (tester) async {
+    testWidgets('one + holds files and polls, and the mic turns into Send', (
+      tester,
+    ) async {
       final state = _state(attachments: true);
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       // One +, no loose attach or poll buttons.
       expect(find.byKey(const Key('composer-add')), findsOneWidget);
@@ -286,47 +348,59 @@ void main() {
       state.dispose();
     });
 
-    testWidgets('a failed send reads "Not sent · Retry" and the line retries',
-        (tester) async {
+    testWidgets('a failed send reads "Not sent · Retry" and the line retries', (
+      tester,
+    ) async {
       final state = _state();
       state.pendingOutbox = [
         MessageEnvelope(
-            conversationId: 'conv',
-            idempotencyKey: 'k1',
-            ciphertext: const [1],
-            cryptoProtocol: 'test'),
+          conversationId: 'conv',
+          idempotencyKey: 'k1',
+          ciphertext: const [1],
+          cryptoProtocol: 'test',
+        ),
       ];
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Not sent · Retry'), findsOneWidget);
       expect(find.text(englishL10n.chatPendingNotSentRetry), findsOneWidget);
       expect(find.text(englishL10n.commonRetry), findsNothing);
       expect(
-          tester
-              .widget<ButtonStyleButton>(
-                  find.byKey(const Key('pending-not-sent-retry')))
-              .onPressed,
-          isNotNull);
+        tester
+            .widget<ButtonStyleButton>(
+              find.byKey(const Key('pending-not-sent-retry')),
+            )
+            .onPressed,
+        isNotNull,
+      );
       await tester.pumpWidget(const SizedBox());
       state.dispose();
     });
   });
 
   group('U36: small polish', () {
-    testWidgets('a message request says what the sender can see',
-        (tester) async {
+    testWidgets('a message request says what the sender can see', (
+      tester,
+    ) async {
       final state = _state()
         ..conversations = [
           Conversation(
-              id: 'conv',
-              kind: 'dm',
-              peerAccountId: 'bob',
-              peerUsername: 'bob',
-              createdBy: 'bob')
+            id: 'conv',
+            kind: 'dm',
+            peerAccountId: 'bob',
+            peerUsername: 'bob',
+            createdBy: 'bob',
+          ),
         ];
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       final card = find.byKey(const Key('request-shared'));
       expect(card, findsOneWidget);
@@ -336,8 +410,10 @@ void main() {
         englishL10n.requestSharedAccept,
         englishL10n.requestSharedDelete,
       ]) {
-        expect(find.descendant(of: card, matching: find.text(text)),
-            findsOneWidget);
+        expect(
+          find.descendant(of: card, matching: find.text(text)),
+          findsOneWidget,
+        );
       }
       await tester.pumpWidget(const SizedBox());
       state.dispose();
@@ -349,7 +425,10 @@ void main() {
       await _seed(store);
       await state.refreshHistory('conv');
       await tester.pumpWidget(
-          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+        MaterialApp(
+          home: ChatScreen(state: state, conversationId: 'conv'),
+        ),
+      );
       await tester.pumpAndSettle();
       // Too short, too vertical and the wrong way do nothing.
       for (final offset in <Offset>[
@@ -359,8 +438,11 @@ void main() {
       ]) {
         await tester.drag(find.text('hello'), offset, warnIfMissed: false);
         await tester.pumpAndSettle();
-        expect(find.text(englishL10n.chatCopyText), findsNothing,
-            reason: '$offset');
+        expect(
+          find.text(englishL10n.chatCopyText),
+          findsNothing,
+          reason: '$offset',
+        );
       }
       // Toward the start of the line, far enough and quick enough.
       await tester.drag(find.text('hello'), const Offset(-140, 4));
@@ -370,8 +452,9 @@ void main() {
       state.dispose();
     });
 
-    testWidgets('the call relay note lives in Settings, not on a call screen',
-        (tester) async {
+    testWidgets('the call relay note lives in Settings, not on a call screen', (
+      tester,
+    ) async {
       setWindowSize(tester, phoneSize);
       final state = await connectedState();
       await tester.pumpWidget(veritraTestApp(state: state));
@@ -379,16 +462,22 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined).first);
       await tester.pumpAndSettle();
       final note = find.text(englishL10n.settingsCallsRelayNote);
-      await tester.scrollUntilVisible(note, 300,
-          scrollable: find.byType(Scrollable).first);
+      await tester.scrollUntilVisible(
+        note,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(note, findsOneWidget);
-      expect(find.byKey(const ValueKey<String>('settings-calls-relay')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('settings-calls-relay')),
+        findsOneWidget,
+      );
     });
 
     for (final brightness in Brightness.values) {
-      testWidgets('group sender names take one colour each, $brightness',
-          (tester) async {
+      testWidgets('group sender names take one colour each, $brightness', (
+        tester,
+      ) async {
         // Two senders whose IDs land in different colour slots.
         final senders = <String>['bob', 'carol', 'dave', 'erin']
             .where((id) => senderColorSlot(id) != senderColorSlot('bob'))
@@ -400,11 +489,17 @@ void main() {
         state.localStoreOverride = store;
         state.conversations = [
           Conversation(
-              id: 'conv', kind: 'group', title: 'Team', createdBy: 'alice')
+            id: 'conv',
+            kind: 'group',
+            title: 'Team',
+            createdBy: 'alice',
+          ),
         ];
-        await _seed(store, extra: [
-          for (var i = 0; i < senders.length; i++)
-            InsertMessageEffect(
+        await _seed(
+          store,
+          extra: [
+            for (var i = 0; i < senders.length; i++)
+              InsertMessageEffect(
                 key: 'dev:${senders[i]}',
                 conversationId: 'conv',
                 senderAccountId: senders[i],
@@ -412,19 +507,26 @@ void main() {
                 kind: LocalMessageKind.text,
                 body: 'from ${senders[i]}',
                 createdAt: 2 + i,
-                state: LocalMessageState.received),
-        ]);
+                state: LocalMessageState.received,
+              ),
+          ],
+        );
         await state.refreshHistory('conv');
-        await tester.pumpWidget(MaterialApp(
+        await tester.pumpWidget(
+          MaterialApp(
             theme: ThemeData(brightness: brightness),
-            home: ChatScreen(state: state, conversationId: 'conv')));
+            home: ChatScreen(state: state, conversationId: 'conv'),
+          ),
+        );
         await tester.pumpAndSettle();
         Color? nameColor(String id) {
-          final names = find.byWidgetPredicate((widget) =>
-              widget is Text &&
-              widget.data != null &&
-              widget.data!.contains(id.substring(0, 3)) &&
-              widget.style?.fontWeight == FontWeight.w600);
+          final names = find.byWidgetPredicate(
+            (widget) =>
+                widget is Text &&
+                widget.data != null &&
+                widget.data!.contains(id.substring(0, 3)) &&
+                widget.style?.fontWeight == FontWeight.w600,
+          );
           expect(names, findsOneWidget, reason: id);
           return tester.widget<Text>(names).style?.color;
         }
@@ -433,31 +535,42 @@ void main() {
         expect(nameColor(senders[1]), senderNameColor(senders[1], brightness));
         expect(nameColor(senders[0]), isNot(nameColor(senders[1])));
         // Normal small text, not the capitalised micro style.
-        final label = tester.widget<Text>(find.byWidgetPredicate((widget) =>
-            widget is Text &&
-            widget.data != null &&
-            widget.data!.contains(senders[0].substring(0, 3)) &&
-            widget.style?.fontWeight == FontWeight.w600));
-        final textTheme =
-            Theme.of(tester.element(find.byType(ChatScreen))).textTheme;
+        final label = tester.widget<Text>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is Text &&
+                widget.data != null &&
+                widget.data!.contains(senders[0].substring(0, 3)) &&
+                widget.style?.fontWeight == FontWeight.w600,
+          ),
+        );
+        final textTheme = Theme.of(
+          tester.element(find.byType(ChatScreen)),
+        ).textTheme;
         expect(label.style?.fontSize, textTheme.bodySmall?.fontSize);
         expect(label.style?.letterSpacing, textTheme.bodySmall?.letterSpacing);
-        expect(label.style?.letterSpacing,
-            isNot(textTheme.labelSmall?.letterSpacing));
+        expect(
+          label.style?.letterSpacing,
+          isNot(textTheme.labelSmall?.letterSpacing),
+        );
         await tester.pumpWidget(const SizedBox());
         state.dispose();
       });
     }
   });
 
-  testWidgets('U7: a long-press on the message text opens the action sheet',
-      (tester) async {
+  testWidgets('U7: a long-press on the message text opens the action sheet', (
+    tester,
+  ) async {
     final store = MemoryLocalStore(), state = _state();
     state.localStoreOverride = store;
     await _seed(store);
     await state.refreshHistory('conv');
     await tester.pumpWidget(
-        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv'),
+      ),
+    );
     await tester.pumpAndSettle();
     // The text itself, not the bubble's padding.
     await tester.longPress(find.text('hello'));
@@ -470,8 +583,9 @@ void main() {
     final selectable = find.byKey(const Key('select-text'));
     expect(selectable, findsOneWidget);
     expect(
-        find.descendant(of: selectable, matching: find.byType(SelectableText)),
-        findsOneWidget);
+      find.descendant(of: selectable, matching: find.byType(SelectableText)),
+      findsOneWidget,
+    );
     // No bubble in the thread is selectable by itself.
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -485,12 +599,13 @@ void main() {
 class _UiState extends AppState {
   _UiState._(this.stub, {bool attachments = false})
       : super(
-            apiClientFactory: (_) => _UiApi(),
-            cryptoService: stub,
-            localStore: MemoryLocalStore(),
-            attachmentService:
-                attachments ? AttachmentCryptoService(_NoBindings()) : null,
-            syncServiceFactory: (_, __) => _QuietSync());
+          apiClientFactory: (_) => _UiApi(),
+          cryptoService: stub,
+          localStore: MemoryLocalStore(),
+          attachmentService:
+              attachments ? AttachmentCryptoService(_NoBindings()) : null,
+          syncServiceFactory: (_, __) => _QuietSync(),
+        );
   factory _UiState([_MlsStub? stub, bool attachments = false]) =>
       _UiState._(stub ?? _MlsStub(), attachments: attachments);
   final _MlsStub stub;
@@ -513,7 +628,9 @@ class _UiApi extends ApiClient {
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {}
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const [];
 }
 
@@ -527,56 +644,68 @@ _UiState _state({bool attachments = false}) {
   return _UiState(stub, attachments)
     ..api = _UiApi()
     ..session = const Session(
-        baseUrl: 'https://example.test',
-        token: 'token',
-        accountId: 'alice',
-        deviceId: 'dev')
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'alice',
+      deviceId: 'dev',
+    )
     ..conversations = [
-      Conversation(id: 'conv', kind: 'dm', title: 'Team', createdBy: 'alice')
+      Conversation(id: 'conv', kind: 'dm', title: 'Team', createdBy: 'alice'),
     ]
     ..conversationsLoaded = true;
 }
 
-Future<void> _seed(LocalStore store,
-    {String messageState = LocalMessageState.received,
-    String conversationId = 'conv',
-    String key = 'dev:t',
-    String body = 'hello',
-    String? formatJson,
-    int? forwardHops,
-    List<MessageEffect> extra = const []}) async {
+Future<void> _seed(
+  LocalStore store, {
+  String messageState = LocalMessageState.received,
+  String conversationId = 'conv',
+  String key = 'dev:t',
+  String body = 'hello',
+  String? formatJson,
+  int? forwardHops,
+  List<MessageEffect> extra = const [],
+}) async {
   if (await store.loadCryptoState() == null) {
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List.filled(32, 1),
+        sealedState: [1],
+      ),
+      0,
+    );
   }
   final current = (await store.loadCryptoState())!;
   final cursor = await store.loadSyncCursor();
-  await store.commitMlsTransition(MlsStateTransition(
+  await store.commitMlsTransition(
+    MlsStateTransition(
       messageId: 'seed-${cursor + 1}',
       conversationId: conversationId,
       expectedCounter: current.counter,
       expectedCursor: cursor,
       state: StoredCryptoState(
-          counter: current.counter + 1,
-          stateKey: current.stateKey,
-          sealedState: [current.counter + 1]),
+        counter: current.counter + 1,
+        stateKey: current.stateKey,
+        sealedState: [current.counter + 1],
+      ),
       cursor: cursor + 1,
       messageEffects: [
         InsertMessageEffect(
-            key: key,
-            conversationId: conversationId,
-            senderAccountId: 'alice',
-            senderDeviceId: 'dev',
-            kind: LocalMessageKind.text,
-            body: body,
-            formatJson: formatJson,
-            forwardHops: forwardHops,
-            createdAt: 1,
-            state: messageState),
+          key: key,
+          conversationId: conversationId,
+          senderAccountId: 'alice',
+          senderDeviceId: 'dev',
+          kind: LocalMessageKind.text,
+          body: body,
+          formatJson: formatJson,
+          forwardHops: forwardHops,
+          createdAt: 1,
+          state: messageState,
+        ),
         ...extra,
-      ]));
+      ],
+    ),
+  );
 }
 
 class _MlsStub implements MlsConversationCryptoService {
@@ -587,15 +716,20 @@ class _MlsStub implements MlsConversationCryptoService {
   Future<void> dispose() async {}
   @override
   Future<MessageEnvelope> encryptPayload(
-      String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {List<String> attachmentRefs = const [], String? draftText}) async {
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const [],
+    String? draftText,
+  }) async {
     lastEncryptedType = type;
     lastEncryptedBody = body;
     return MessageEnvelope(
-        conversationId: conversationId,
-        idempotencyKey: 'action',
-        ciphertext: const [1],
-        cryptoProtocol: 'test');
+      conversationId: conversationId,
+      idempotencyKey: 'action',
+      ciphertext: const [1],
+      cryptoProtocol: 'test',
+    );
   }
 
   @override

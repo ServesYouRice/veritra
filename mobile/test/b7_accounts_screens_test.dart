@@ -89,13 +89,17 @@ void main() {
         build: (ns) async {
           final state = states[ns] = _State();
           return AccountRuntime(
-              namespace: ns, state: state, closeStore: () async {});
+            namespace: ns,
+            state: state,
+            closeStore: () async {},
+          );
         },
       );
 
   Future<void> pumpAsync(WidgetTester tester, [int ms = 80]) async {
-    await tester
-        .runAsync(() => Future<void>.delayed(Duration(milliseconds: ms)));
+    await tester.runAsync(
+      () => Future<void>.delayed(Duration(milliseconds: ms)),
+    );
     await tester.pump();
   }
 
@@ -105,37 +109,50 @@ void main() {
     addTearDown(tester.view.reset);
     final host = newHost();
     await tester.runAsync(host.start);
-    await tester.pumpWidget(VeritraApp(
-      host: host,
-      appearance: AppearanceController(MemoryAppearanceStore()),
-    ));
+    await tester.pumpWidget(
+      VeritraApp(
+        host: host,
+        appearance: AppearanceController(MemoryAppearanceStore()),
+      ),
+    );
     await pumpAsync(tester);
     return host;
   }
 
   /// Signs the open account in so the app shell shows chats and settings.
-  Future<void> signIn(WidgetTester tester, AccountHost host, String account,
-      {String origin = 'https://a.example'}) async {
+  Future<void> signIn(
+    WidgetTester tester,
+    AccountHost host,
+    String account, {
+    String origin = 'https://a.example',
+  }) async {
     (host.runtime!.state as _State).signInAs(account, origin);
     await pumpAsync(tester);
   }
 
   Finder tile(String ns) => find.byKey(ValueKey<String>('account-$ns'));
 
-  testWidgets('a fresh device opens the connect screen of the primary slot',
-      (tester) async {
+  testWidgets('a fresh device opens the connect screen of the primary slot', (
+    tester,
+  ) async {
     final host = await openApp(tester);
     addTearDown(host.dispose);
-    expect(find.text('Connect'), findsNothing,
-        reason: 'no account switcher chrome before a second account exists');
+    expect(
+      find.text('Connect'),
+      findsNothing,
+      reason: 'no account switcher chrome before a second account exists',
+    );
     expect(find.byKey(const ValueKey<String>('connect-back')), findsNothing);
     expect(
-        find.byKey(const ValueKey<String>('accounts-shortcut')), findsNothing);
+      find.byKey(const ValueKey<String>('accounts-shortcut')),
+      findsNothing,
+    );
     expect(host.runtime!.namespace, '');
   });
 
-  testWidgets('switching replaces the whole app: no route of A survives in B',
-      (tester) async {
+  testWidgets('switching replaces the whole app: no route of A survives in B', (
+    tester,
+  ) async {
     final host = await openApp(tester);
     addTearDown(host.dispose);
     await signIn(tester, host, 'one');
@@ -146,10 +163,14 @@ void main() {
     await tester.runAsync(() => host.idle());
 
     // Push a route in B, then switch back to A.
-    final navigator =
-        tester.state<NavigatorState>(find.byType(Navigator).first);
-    navigator.push(MaterialPageRoute<void>(
-        builder: (_) => const Scaffold(body: Text('a screen of B'))));
+    final navigator = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('a screen of B')),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('a screen of B'), findsOneWidget);
 
@@ -180,8 +201,10 @@ void main() {
   });
 
   group('the accounts screen', () {
-    Future<AccountHost> twoAccounts(WidgetTester tester,
-        {String secondOrigin = 'https://b.example'}) async {
+    Future<AccountHost> twoAccounts(
+      WidgetTester tester, {
+      String secondOrigin = 'https://b.example',
+    }) async {
       final host = await openApp(tester);
       addTearDown(host.dispose);
       await signIn(tester, host, 'one');
@@ -196,15 +219,18 @@ void main() {
     }
 
     Future<void> openScreen(WidgetTester tester, AccountHost host) async {
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: AccountsScreen(host: host),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: AccountsScreen(host: host),
+        ),
+      );
       await tester.pump();
     }
 
-    testWidgets('lists both accounts with their host and marks the open one',
-        (tester) async {
+    testWidgets('lists both accounts with their host and marks the open one', (
+      tester,
+    ) async {
       final host = await twoAccounts(tester);
       await openScreen(tester, host);
       expect(find.text('userone@a.example'), findsOneWidget);
@@ -231,8 +257,9 @@ void main() {
       expect(host.runtime!.namespace, other);
     });
 
-    testWidgets('five accounts is the most: the add button is off',
-        (tester) async {
+    testWidgets('five accounts is the most: the add button is off', (
+      tester,
+    ) async {
       final host = await twoAccounts(tester);
       for (var i = 0; i < 3; i++) {
         await tester.runAsync(() => host.beginAdd());
@@ -243,18 +270,24 @@ void main() {
       expect(host.registry.liveCount, maxAccountSlots);
       await openScreen(tester, host);
       final button = tester.widget<FilledButton>(
-          find.byKey(const ValueKey<String>('accounts-add')));
+        find.byKey(const ValueKey<String>('accounts-add')),
+      );
       expect(button.onPressed, isNull);
       expect(find.byKey(const ValueKey('cap-note')), findsOneWidget);
     });
 
-    testWidgets('removing asks first; cancelling keeps the account',
-        (tester) async {
+    testWidgets('removing asks first; cancelling keeps the account', (
+      tester,
+    ) async {
       final host = await twoAccounts(tester);
       final other = host.registry.slots.last.namespace;
       await openScreen(tester, host);
-      await tester.tap(find.descendant(
-          of: tile(other), matching: find.byType(PopupMenuButton<String>)));
+      await tester.tap(
+        find.descendant(
+          of: tile(other),
+          matching: find.byType(PopupMenuButton<String>),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Remove from this device').last);
       await tester.pumpAndSettle();
@@ -266,8 +299,9 @@ void main() {
       expect(host.runtime!.namespace, '');
     });
 
-    testWidgets('push that will not go asks before switching anyway',
-        (tester) async {
+    testWidgets('push that will not go asks before switching anyway', (
+      tester,
+    ) async {
       final host = await twoAccounts(tester);
       final other = host.registry.slots.last.namespace;
       (host.runtime!.state as _State).pushGone = false;
@@ -283,41 +317,47 @@ void main() {
   });
 
   testWidgets(
-      'a signed-out account still reaches the others: the connect screen '
-      'opens the account list, and nothing is removed', (tester) async {
-    final host = await openApp(tester);
-    addTearDown(host.dispose);
-    await signIn(tester, host, 'one');
-    await tester.runAsync(() => host.beginAdd());
-    await pumpAsync(tester);
-    final second = host.runtime!.namespace;
-    await signIn(tester, host, 'two', origin: 'https://b.example');
-    await tester.runAsync(() => host.idle());
-    await tester.runAsync(() => host.switchTo(''));
-    await pumpAsync(tester);
-    // Back to B, whose session expired while it was paused: B's runtime
-    // restores nothing, so its sign-in screen shows. Settings is out of
-    // reach without a session.
-    await tester.runAsync(() => host.switchTo(second));
-    await pumpAsync(tester);
-    expect(host.runtime!.state.session, isNull);
-    expect(host.activeSlot!.state, SlotState.active);
-    expect(find.byType(ConnectScreen), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('connect-back')), findsNothing,
-        reason: 'B is a real account: going back must never remove it');
+    'a signed-out account still reaches the others: the connect screen '
+    'opens the account list, and nothing is removed',
+    (tester) async {
+      final host = await openApp(tester);
+      addTearDown(host.dispose);
+      await signIn(tester, host, 'one');
+      await tester.runAsync(() => host.beginAdd());
+      await pumpAsync(tester);
+      final second = host.runtime!.namespace;
+      await signIn(tester, host, 'two', origin: 'https://b.example');
+      await tester.runAsync(() => host.idle());
+      await tester.runAsync(() => host.switchTo(''));
+      await pumpAsync(tester);
+      // Back to B, whose session expired while it was paused: B's runtime
+      // restores nothing, so its sign-in screen shows. Settings is out of
+      // reach without a session.
+      await tester.runAsync(() => host.switchTo(second));
+      await pumpAsync(tester);
+      expect(host.runtime!.state.session, isNull);
+      expect(host.activeSlot!.state, SlotState.active);
+      expect(find.byType(ConnectScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('connect-back')),
+        findsNothing,
+        reason: 'B is a real account: going back must never remove it',
+      );
 
-    await tester.tap(find.byKey(const ValueKey<String>('accounts-shortcut')));
-    await tester.pumpAndSettle();
-    expect(find.byType(AccountsScreen), findsOneWidget);
-    await tester.tap(tile(''));
-    await pumpAsync(tester);
-    expect(host.runtime!.namespace, '');
-    expect(host.registry.slot(second)!.state, SlotState.active);
-    expect(host.registry.liveCount, 2);
-  });
+      await tester.tap(find.byKey(const ValueKey<String>('accounts-shortcut')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AccountsScreen), findsOneWidget);
+      await tester.tap(tile(''));
+      await pumpAsync(tester);
+      expect(host.runtime!.namespace, '');
+      expect(host.registry.slot(second)!.state, SlotState.active);
+      expect(host.registry.liveCount, 2);
+    },
+  );
 
-  testWidgets('the connect screen of a new account goes back to the old one',
-      (tester) async {
+  testWidgets('the connect screen of a new account goes back to the old one', (
+    tester,
+  ) async {
     final host = await openApp(tester);
     addTearDown(host.dispose);
     await signIn(tester, host, 'one', origin: 'https://a.example');
@@ -332,82 +372,102 @@ void main() {
   });
 
   testWidgets(
-      'the connect screen warns when the server is already on this device',
-      (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    final host = await openApp(tester);
-    addTearDown(host.dispose);
-    await signIn(tester, host, 'one', origin: 'https://a.example');
-    await tester.runAsync(() => host.beginAdd());
-    await pumpAsync(tester);
-    // The new slot's own connect screen, probing the known server.
-    final probing = _ProbeState();
-    addTearDown(probing.dispose);
-    await tester.pumpWidget(AccountHostScope(
-      host: host,
-      child: MaterialApp(
-        theme: veritraLightTheme(),
-        home: ConnectScreen(state: probing),
-      ),
-    ));
-    // U20: the server field opens behind "I already have an account".
-    await pumpAsync(tester);
-    await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
-    await pumpAsync(tester);
-    await tester
-        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
-    await pumpAsync(tester);
-    await tester.enterText(
-        find.byType(TextFormField).first, 'https://a.example');
-    await tester.pump(const Duration(milliseconds: 700));
-    await pumpAsync(tester);
-    expect(find.byKey(const ValueKey<String>('connect-same-server')),
-        findsOneWidget);
-    probing.origin = 'https://z.example';
-    await tester.enterText(
-        find.byType(TextFormField).first, 'https://z.example');
-    await tester.pump(const Duration(milliseconds: 700));
-    await pumpAsync(tester);
-    expect(find.byKey(const ValueKey<String>('connect-same-server')),
-        findsNothing);
-  });
+    'the connect screen warns when the server is already on this device',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final host = await openApp(tester);
+      addTearDown(host.dispose);
+      await signIn(tester, host, 'one', origin: 'https://a.example');
+      await tester.runAsync(() => host.beginAdd());
+      await pumpAsync(tester);
+      // The new slot's own connect screen, probing the known server.
+      final probing = _ProbeState();
+      addTearDown(probing.dispose);
+      await tester.pumpWidget(
+        AccountHostScope(
+          host: host,
+          child: MaterialApp(
+            theme: veritraLightTheme(),
+            home: ConnectScreen(state: probing),
+          ),
+        ),
+      );
+      // U20: the server field opens behind "I already have an account".
+      await pumpAsync(tester);
+      await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
+      await pumpAsync(tester);
+      await tester.tap(
+        find.byKey(const ValueKey<String>('welcome-signed-in-before')),
+      );
+      await pumpAsync(tester);
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'https://a.example',
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await pumpAsync(tester);
+      expect(
+        find.byKey(const ValueKey<String>('connect-same-server')),
+        findsOneWidget,
+      );
+      probing.origin = 'https://z.example';
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'https://z.example',
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await pumpAsync(tester);
+      expect(
+        find.byKey(const ValueKey<String>('connect-same-server')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets(
-      'U21: a pasted invite link to a server already on this device says so '
-      'on the join step', (tester) async {
-    tester.view.physicalSize = const Size(1200, 3000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    final host = await openApp(tester);
-    addTearDown(host.dispose);
-    await signIn(tester, host, 'one', origin: 'https://a.example');
-    await tester.runAsync(() => host.beginAdd());
-    await pumpAsync(tester);
-    final probing = _ProbeState();
-    addTearDown(probing.dispose);
-    await tester.pumpWidget(AccountHostScope(
-      host: host,
-      child: MaterialApp(
-        theme: veritraLightTheme(),
-        home: ConnectScreen(state: probing),
-      ),
-    ));
-    await pumpAsync(tester);
-    await tester.tap(find.byKey(const ValueKey<String>('welcome-invite')));
-    await pumpAsync(tester);
-    await tester.enterText(
+    'U21: a pasted invite link to a server already on this device says so '
+    'on the join step',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final host = await openApp(tester);
+      addTearDown(host.dispose);
+      await signIn(tester, host, 'one', origin: 'https://a.example');
+      await tester.runAsync(() => host.beginAdd());
+      await pumpAsync(tester);
+      final probing = _ProbeState();
+      addTearDown(probing.dispose);
+      await tester.pumpWidget(
+        AccountHostScope(
+          host: host,
+          child: MaterialApp(
+            theme: veritraLightTheme(),
+            home: ConnectScreen(state: probing),
+          ),
+        ),
+      );
+      await pumpAsync(tester);
+      await tester.tap(find.byKey(const ValueKey<String>('welcome-invite')));
+      await pumpAsync(tester);
+      await tester.enterText(
         find.byKey(const ValueKey<String>('connect-invite-link')),
-        'https://a.example/invite#v1.MFRGGZDFMZTWQ2LKNNWG23TPOA');
-    await tester
-        .tap(find.byKey(const ValueKey<String>('connect-join-continue')));
-    await tester.pump(const Duration(milliseconds: 700));
-    await pumpAsync(tester);
-    expect(find.text('Joining a.example'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('connect-same-server')),
-        findsOneWidget);
-  });
+        'https://a.example/invite#v1.MFRGGZDFMZTWQ2LKNNWG23TPOA',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('connect-join-continue')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await pumpAsync(tester);
+      expect(find.text('Joining a.example'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('connect-same-server')),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 class _ProbeState extends AppState {

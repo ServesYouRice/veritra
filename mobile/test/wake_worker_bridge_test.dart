@@ -13,23 +13,26 @@ Map<String, Object> runRequest() => {
       'profile': 'demo',
       'wake_generation': 7,
       'budget_ms': 19000,
-      'deadline_epoch_ms': 1790000000000
+      'deadline_epoch_ms': 1790000000000,
     };
 Future<Object?> nativeCall(String method, Object? args) async {
   final result = Completer<Object?>();
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .handlePlatformMessage(
-          name,
-          const StandardMethodCodec()
-              .encodeMethodCall(MethodCall(method, args)), (reply) {
-    try {
-      result.complete(reply == null
-          ? null
-          : const StandardMethodCodec().decodeEnvelope(reply));
-    } catch (e, s) {
-      result.completeError(e, s);
-    }
-  });
+    name,
+    const StandardMethodCodec().encodeMethodCall(MethodCall(method, args)),
+    (reply) {
+      try {
+        result.complete(
+          reply == null
+              ? null
+              : const StandardMethodCodec().decodeEnvelope(reply),
+        );
+      } catch (e, s) {
+        result.completeError(e, s);
+      }
+    },
+  );
   return result.future;
 }
 
@@ -50,13 +53,13 @@ void main() {
             'bound_profile': 'demo',
             'ui_attached': false,
             'native_silent': true,
-            'can_opt_in': false
+            'can_opt_in': false,
           },
         'install' => {
             'protocol': 1,
             'native_silent': true,
             'worker_attached': true,
-            'can_opt_in': false
+            'can_opt_in': false,
           },
         'validatePermit' => {'active': true, 'remaining_ms': 15000},
         'presentGenericNotice' => 'shown',
@@ -72,255 +75,324 @@ void main() {
   });
 
   test(
-      'bootstrap is advisory; run result binds permit/profile/generation exactly',
-      () async {
-    final boot = await bridge.bootstrap();
-    expect(boot.launchBackground, true);
-    expect(boot.canOptIn, false);
-    WakePermit? received;
-    expect(
+    'bootstrap is advisory; run result binds permit/profile/generation exactly',
+    () async {
+      final boot = await bridge.bootstrap();
+      expect(boot.launchBackground, true);
+      expect(boot.canOptIn, false);
+      WakePermit? received;
+      expect(
         await bridge.install(
-            profile: 'demo',
-            onRun: (p) async {
-              received = p;
-              return WakeOutcome.committed;
-            },
-            onCancel: (_) async {}),
-        true);
-    expect(await nativeCall('run', runRequest()), {
-      ...runRequest()
-        ..remove('budget_ms')
-        ..remove('deadline_epoch_ms'),
-      'outcome': 'committed'
-    });
-    expect(received!.budgetMs, 19000);
-    final status = await bridge.validatePermit(received!);
-    expect(status.active, true);
-    expect(status.remainingMs, 15000);
-    expect(await bridge.presentGenericNotice(received!, 'a' * 32),
-        WakeNoticeResult.shown);
-    final notice = calls.last.arguments as Map;
-    expect(notice.keys,
-        unorderedEquals(['protocol', 'permit', 'profile', 'notice_id']));
-  });
+          profile: 'demo',
+          onRun: (p) async {
+            received = p;
+            return WakeOutcome.committed;
+          },
+          onCancel: (_) async {},
+        ),
+        true,
+      );
+      expect(await nativeCall('run', runRequest()), {
+        ...runRequest()
+          ..remove('budget_ms')
+          ..remove('deadline_epoch_ms'),
+        'outcome': 'committed',
+      });
+      expect(received!.budgetMs, 19000);
+      final status = await bridge.validatePermit(received!);
+      expect(status.active, true);
+      expect(status.remainingMs, 15000);
+      expect(
+        await bridge.presentGenericNotice(received!, 'a' * 32),
+        WakeNoticeResult.shown,
+      );
+      final notice = calls.last.arguments as Map;
+      expect(
+        notice.keys,
+        unorderedEquals(['protocol', 'permit', 'profile', 'notice_id']),
+      );
+    },
+  );
 
-  test('single process owner, concurrent run refusal and exact cancellation',
-      () async {
-    final pending = Completer<WakeOutcome>();
-    final cancelled = <WakeCancellation>[];
-    await bridge.install(
+  test(
+    'single process owner, concurrent run refusal and exact cancellation',
+    () async {
+      final pending = Completer<WakeOutcome>();
+      final cancelled = <WakeCancellation>[];
+      await bridge.install(
         profile: 'demo',
         onRun: (_) => pending.future,
         onCancel: (c) async {
           cancelled.add(c);
-        });
-    final second = PlatformWakeWorkerBridge();
-    addTearDown(second.dispose);
-    expect(
+        },
+      );
+      final second = PlatformWakeWorkerBridge();
+      addTearDown(second.dispose);
+      expect(
         await second.install(
-            profile: 'demo',
-            onRun: (_) async => WakeOutcome.committed,
-            onCancel: (_) async {}),
-        false);
-    final first = nativeCall('run', runRequest());
-    await Future<void>.delayed(Duration.zero);
-    expect(
+          profile: 'demo',
+          onRun: (_) async => WakeOutcome.committed,
+          onCancel: (_) async {},
+        ),
+        false,
+      );
+      final first = nativeCall('run', runRequest());
+      await Future<void>.delayed(Duration.zero);
+      expect(
         (await nativeCall('run', {
           ...runRequest(),
-          'permit': '11234567-0123-4123-8123-0123456789ab'
+          'permit': '11234567-0123-4123-8123-0123456789ab',
         }) as Map)['outcome'],
-        'unavailable');
-    expect(
+        'unavailable',
+      );
+      expect(
         await nativeCall('cancel', {
           'protocol': 1,
           'permit': id,
           'profile': 'demo',
-          'reason': 'os_stop'
+          'reason': 'os_stop',
         }),
-        true);
-    expect(cancelled.single.reason, 'os_stop');
-    pending.complete(WakeOutcome.retry);
-    expect((await first as Map)['outcome'], 'retry');
-    expect(await bridge.uninstall('demo'), true);
-  });
+        true,
+      );
+      expect(cancelled.single.reason, 'os_stop');
+      pending.complete(WakeOutcome.retry);
+      expect((await first as Map)['outcome'], 'retry');
+      expect(await bridge.uninstall('demo'), true);
+    },
+  );
 
   test(
-      'malformed native fields and budget never reach worker; errors omit payload',
-      () async {
-    var executions = 0;
-    await bridge.install(
+    'malformed native fields and budget never reach worker; errors omit payload',
+    () async {
+      var executions = 0;
+      await bridge.install(
         profile: 'demo',
         onRun: (_) async {
           executions++;
           return WakeOutcome.noChange;
         },
-        onCancel: (_) async {});
-    for (final args in [
-      {...runRequest(), 'budget_ms': 20001},
-      {...runRequest(), 'budget_ms': 1.5},
-      {...runRequest(), 'wake_generation': 0},
-      {...runRequest(), 'profile': 'demo\n'},
-      {...runRequest(), 'text': 'sensitive-forbidden'},
-      {...runRequest(), 'protocol': 2},
-    ]) {
-      await expectLater(
+        onCancel: (_) async {},
+      );
+      for (final args in [
+        {...runRequest(), 'budget_ms': 20001},
+        {...runRequest(), 'budget_ms': 1.5},
+        {...runRequest(), 'wake_generation': 0},
+        {...runRequest(), 'profile': 'demo\n'},
+        {...runRequest(), 'text': 'sensitive-forbidden'},
+        {...runRequest(), 'protocol': 2},
+      ]) {
+        await expectLater(
           nativeCall('run', args),
-          throwsA(isA<PlatformException>().having((e) => e.message, 'message',
-              isNot(contains('sensitive-forbidden')))));
-    }
-    expect(executions, 0);
-  });
+          throwsA(
+            isA<PlatformException>().having(
+              (e) => e.message,
+              'message',
+              isNot(contains('sensitive-forbidden')),
+            ),
+          ),
+        );
+      }
+      expect(executions, 0);
+    },
+  );
 
   test(
-      'worker failure is retry; native installation cannot opt subscriptions in',
-      () async {
-    await bridge.install(
+    'worker failure is retry; native installation cannot opt subscriptions in',
+    () async {
+      await bridge.install(
         profile: 'demo',
         onRun: (_) async => throw StateError('private failure'),
-        onCancel: (_) async {});
-    expect((await nativeCall('run', runRequest()) as Map)['outcome'], 'retry');
-    await bridge.uninstall('demo');
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            channel,
-            (_) async => {
-                  'protocol': 1,
-                  'native_silent': true,
-                  'worker_attached': true,
-                  'can_opt_in': true
-                });
-    await expectLater(
+        onCancel: (_) async {},
+      );
+      expect(
+        (await nativeCall('run', runRequest()) as Map)['outcome'],
+        'retry',
+      );
+      await bridge.uninstall('demo');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        channel,
+        (_) async => {
+          'protocol': 1,
+          'native_silent': true,
+          'worker_attached': true,
+          'can_opt_in': true,
+        },
+      );
+      await expectLater(
         bridge.install(
+          profile: 'demo',
+          onRun: (_) async => WakeOutcome.noChange,
+          onCancel: (_) async {},
+        ),
+        throwsFormatException,
+      );
+    },
+  );
+  test(
+    'a demo bridge accepts native opt-in only after a successful install',
+    () async {
+      final demo = PlatformWakeWorkerBridge(channel: channel, allowOptIn: true);
+      addTearDown(demo.dispose);
+      var attached = true;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        channel,
+        (call) async => call.method == 'uninstall'
+            ? true
+            : {
+                'protocol': 1,
+                'native_silent': true,
+                'worker_attached': attached,
+                'can_opt_in': true,
+              },
+      );
+      Future<bool> install() => demo.install(
             profile: 'demo',
             onRun: (_) async => WakeOutcome.noChange,
-            onCancel: (_) async {}),
-        throwsFormatException);
-  });
-  test('a demo bridge accepts native opt-in only after a successful install',
-      () async {
-    final demo = PlatformWakeWorkerBridge(channel: channel, allowOptIn: true);
-    addTearDown(demo.dispose);
-    var attached = true;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            channel,
-            (call) async => call.method == 'uninstall'
-                ? true
-                : {
-                    'protocol': 1,
-                    'native_silent': true,
-                    'worker_attached': attached,
-                    'can_opt_in': true
-                  });
-    Future<bool> install() => demo.install(
-        profile: 'demo',
-        onRun: (_) async => WakeOutcome.noChange,
-        onCancel: (_) async {});
-    expect(demo.canOptIn, isFalse);
-    expect(await install(), isTrue);
-    expect(demo.canOptIn, isTrue);
-    await demo.uninstall('demo');
-    expect(demo.canOptIn, isFalse);
-    // A native that is not attached never authorizes opt-in.
-    attached = false;
-    expect(await install(), isFalse);
-    expect(demo.canOptIn, isFalse);
-  });
+            onCancel: (_) async {},
+          );
+      expect(demo.canOptIn, isFalse);
+      expect(await install(), isTrue);
+      expect(demo.canOptIn, isTrue);
+      await demo.uninstall('demo');
+      expect(demo.canOptIn, isFalse);
+      // A native that is not attached never authorizes opt-in.
+      attached = false;
+      expect(await install(), isFalse);
+      expect(demo.canOptIn, isFalse);
+    },
+  );
   test(
-      'UI observer needs no profile and survives unavailable worker installation',
-      () async {
-    final attachments = <bool>[];
-    bridge.observeUiAttachment(attachments.add);
-    await nativeCall('uiAttached', {'protocol': 1, 'attached': true});
-    expect(attachments, [true]);
-    expect((await nativeCall('run', runRequest()) as Map)['outcome'],
-        'unavailable');
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            channel, (_) async => throw MissingPluginException());
-    expect(
+    'UI observer needs no profile and survives unavailable worker installation',
+    () async {
+      final attachments = <bool>[];
+      bridge.observeUiAttachment(attachments.add);
+      await nativeCall('uiAttached', {'protocol': 1, 'attached': true});
+      expect(attachments, [true]);
+      expect(
+        (await nativeCall('run', runRequest()) as Map)['outcome'],
+        'unavailable',
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        channel,
+        (_) async => throw MissingPluginException(),
+      );
+      expect(
         await bridge.install(
+          profile: 'demo',
+          onRun: (_) async => WakeOutcome.committed,
+          onCancel: (_) async {},
+        ),
+        false,
+      );
+      await nativeCall('uiAttached', {'protocol': 1, 'attached': false});
+      expect(attachments, [true, false]);
+      expect(
+        (await nativeCall('run', runRequest()) as Map)['outcome'],
+        'unavailable',
+      );
+    },
+  );
+  test(
+    'unavailable notification metadata preserves native UI launch facts',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        channel,
+        (_) async => {
+          'protocol': 1,
+          'launch': 'ui',
+          'bound_profile': null,
+          'ui_attached': true,
+          'native_silent': false,
+          'can_opt_in': false,
+        },
+      );
+      final bootstrap = await bridge.bootstrap();
+      expect(bootstrap.launchBackground, false);
+      expect(bootstrap.uiAttached, true);
+      expect(bootstrap.boundProfile, isNull);
+      expect(bootstrap.nativeSilent, false);
+      expect(bootstrap.canOptIn, false);
+    },
+  );
+
+  test(
+    'a new profile installs after the old one is uninstalled (B7 switch)',
+    () async {
+      Future<WakeOutcome> run(WakePermit _) async => WakeOutcome.committed;
+      Future<void> cancel(WakeCancellation _) async {}
+      expect(
+        await bridge.install(profile: 'demo', onRun: run, onCancel: cancel),
+        isTrue,
+      );
+      // While one profile is bound, another is refused for the process.
+      expect(
+        await bridge.install(
+          profile: 'demo-a-abcdefghijkl',
+          onRun: run,
+          onCancel: cancel,
+        ),
+        isFalse,
+      );
+
+      expect(await bridge.uninstall('demo'), isTrue);
+      expect(
+        await bridge.install(
+          profile: 'demo-a-abcdefghijkl',
+          onRun: run,
+          onCancel: cancel,
+        ),
+        isTrue,
+      );
+      final installs = calls.where((c) => c.method == 'install').toList();
+      expect(installs.last.arguments['profile'], 'demo-a-abcdefghijkl');
+    },
+  );
+
+  test(
+    'a wake for the profile that was left is refused after the rebind',
+    () async {
+      var ran = 0;
+      Future<WakeOutcome> run(WakePermit _) async {
+        ran++;
+        return WakeOutcome.committed;
+      }
+
+      Future<void> cancel(WakeCancellation _) async {}
+      await bridge.install(profile: 'demo', onRun: run, onCancel: cancel);
+      await bridge.uninstall('demo');
+      await bridge.install(
+        profile: 'demo-a-abcdefghijkl',
+        onRun: run,
+        onCancel: cancel,
+      );
+
+      final stale = await nativeCall('run', runRequest()) as Map;
+      expect(stale['outcome'], 'unavailable');
+      expect(ran, 0);
+      final current = await nativeCall('run', {
+        ...runRequest(),
+        'profile': 'demo-a-abcdefghijkl',
+      }) as Map;
+      expect(current['outcome'], 'committed');
+      expect(ran, 1);
+      // Permit checks and notices are bound to the open profile as well.
+      expect(
+        (await bridge.validatePermit(
+          WakePermit(
+            permit: id,
             profile: 'demo',
-            onRun: (_) async => WakeOutcome.committed,
-            onCancel: (_) async {}),
-        false);
-    await nativeCall('uiAttached', {'protocol': 1, 'attached': false});
-    expect(attachments, [true, false]);
-    expect((await nativeCall('run', runRequest()) as Map)['outcome'],
-        'unavailable');
-  });
-  test('unavailable notification metadata preserves native UI launch facts',
-      () async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            channel,
-            (_) async => {
-                  'protocol': 1,
-                  'launch': 'ui',
-                  'bound_profile': null,
-                  'ui_attached': true,
-                  'native_silent': false,
-                  'can_opt_in': false
-                });
-    final bootstrap = await bridge.bootstrap();
-    expect(bootstrap.launchBackground, false);
-    expect(bootstrap.uiAttached, true);
-    expect(bootstrap.boundProfile, isNull);
-    expect(bootstrap.nativeSilent, false);
-    expect(bootstrap.canOptIn, false);
-  });
-
-  test('a new profile installs after the old one is uninstalled (B7 switch)',
-      () async {
-    Future<WakeOutcome> run(WakePermit _) async => WakeOutcome.committed;
-    Future<void> cancel(WakeCancellation _) async {}
-    expect(await bridge.install(profile: 'demo', onRun: run, onCancel: cancel),
-        isTrue);
-    // While one profile is bound, another is refused for the process.
-    expect(
-        await bridge.install(
-            profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel),
-        isFalse);
-
-    expect(await bridge.uninstall('demo'), isTrue);
-    expect(
-        await bridge.install(
-            profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel),
-        isTrue);
-    final installs = calls.where((c) => c.method == 'install').toList();
-    expect(installs.last.arguments['profile'], 'demo-a-abcdefghijkl');
-  });
-
-  test('a wake for the profile that was left is refused after the rebind',
-      () async {
-    var ran = 0;
-    Future<WakeOutcome> run(WakePermit _) async {
-      ran++;
-      return WakeOutcome.committed;
-    }
-
-    Future<void> cancel(WakeCancellation _) async {}
-    await bridge.install(profile: 'demo', onRun: run, onCancel: cancel);
-    await bridge.uninstall('demo');
-    await bridge.install(
-        profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel);
-
-    final stale = await nativeCall('run', runRequest()) as Map;
-    expect(stale['outcome'], 'unavailable');
-    expect(ran, 0);
-    final current = await nativeCall(
-        'run', {...runRequest(), 'profile': 'demo-a-abcdefghijkl'}) as Map;
-    expect(current['outcome'], 'committed');
-    expect(ran, 1);
-    // Permit checks and notices are bound to the open profile as well.
-    expect(
-        (await bridge.validatePermit(WakePermit(
-                permit: id,
-                profile: 'demo',
-                wakeGeneration: 7,
-                budgetMs: 1000,
-                deadlineEpochMs: 1790000000000)))
+            wakeGeneration: 7,
+            budgetMs: 1000,
+            deadlineEpochMs: 1790000000000,
+          ),
+        ))
             .active,
-        isFalse);
-  });
+        isFalse,
+      );
+    },
+  );
 }

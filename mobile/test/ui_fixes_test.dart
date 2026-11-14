@@ -21,7 +21,8 @@ void main() {
     );
     expect(
       describeError(
-          StateError('Production MLS/OpenMLS encryption is not integrated')),
+        StateError('Production MLS/OpenMLS encryption is not integrated'),
+      ),
       contains('encryption engine'),
     );
     expect(
@@ -33,8 +34,10 @@ void main() {
       'Something went wrong. Please try again.',
     );
     // Never leak raw internals to the UI.
-    expect(describeError(Exception('internal detail')),
-        isNot(contains('internal detail')));
+    expect(
+      describeError(Exception('internal detail')),
+      isNot(contains('internal detail')),
+    );
   });
 
   test('ApiException maps known server codes and falls back by status', () {
@@ -116,62 +119,72 @@ void main() {
       syncServiceFactory: (_, __) => _FakeSyncService(),
     );
     await state.createOwner(
-        'http://localhost:8080', 'owner', 'owner-password-123', '');
+      'http://localhost:8080',
+      'owner',
+      'owner-password-123',
+      '',
+    );
     expect(state.session, isNull);
     expect(state.api, isNull);
     expect(state.error, isNotNull);
   });
 
-  test('setup probe preserves actionable states without global errors',
-      () async {
-    final api = _FlakyMessagesApi();
-    final state = _connectedState(api);
+  test(
+    'setup probe preserves actionable states without global errors',
+    () async {
+      final api = _FlakyMessagesApi();
+      final state = _connectedState(api);
 
-    api.setupRequired = true;
-    expect(
-      (await state.probeSetup('https://localhost:8443')).state,
-      SetupProbeState.reachable,
-    );
-    expect(await state.checkSetupRequired('https://localhost:8443'), isTrue);
+      api.setupRequired = true;
+      expect(
+        (await state.probeSetup('https://localhost:8443')).state,
+        SetupProbeState.reachable,
+      );
+      expect(await state.checkSetupRequired('https://localhost:8443'), isTrue);
 
-    api.setupRequired = false;
-    expect(await state.checkSetupRequired('https://localhost:8443'), isFalse);
-    expect(
-      (await state.probeSetup('http://localhost:8080')).state,
-      SetupProbeState.insecureTransport,
-    );
+      api.setupRequired = false;
+      expect(await state.checkSetupRequired('https://localhost:8443'), isFalse);
+      expect(
+        (await state.probeSetup('http://localhost:8080')).state,
+        SetupProbeState.insecureTransport,
+      );
 
-    api.failSetupStatus = true;
-    expect(await state.checkSetupRequired('https://localhost:8443'), isNull);
-    expect(
-      (await state.probeSetup('https://localhost:8443')).state,
-      SetupProbeState.unavailable,
-    );
-    expect(state.error, isNull);
-  });
+      api.failSetupStatus = true;
+      expect(await state.checkSetupRequired('https://localhost:8443'), isNull);
+      expect(
+        (await state.probeSetup('https://localhost:8443')).state,
+        SetupProbeState.unavailable,
+      );
+      expect(state.error, isNull);
+    },
+  );
 
-  test('conversationsLoaded flips after first refresh, resets on logout',
-      () async {
-    final api = _FlakyMessagesApi();
-    final state = _connectedState(api);
-    expect(state.conversationsLoaded, isFalse);
+  test(
+    'conversationsLoaded flips after first refresh, resets on logout',
+    () async {
+      final api = _FlakyMessagesApi();
+      final state = _connectedState(api);
+      expect(state.conversationsLoaded, isFalse);
 
-    await state.refreshConversations();
-    expect(state.conversationsLoaded, isTrue);
+      await state.refreshConversations();
+      expect(state.conversationsLoaded, isTrue);
 
-    await state.logout();
-    expect(state.conversationsLoaded, isFalse);
-  });
+      await state.logout();
+      expect(state.conversationsLoaded, isFalse);
+    },
+  );
 
   test('session round-trips username through the local store', () async {
     final store = MemoryLocalStore();
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 't',
-      accountId: 'acct_1',
-      deviceId: 'dev_1',
-      username: 'alice',
-    ));
+    await store.saveSession(
+      const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 't',
+        accountId: 'acct_1',
+        deviceId: 'dev_1',
+        username: 'alice',
+      ),
+    );
     final restored = await store.loadSession();
     expect(restored?.username, 'alice');
   });
