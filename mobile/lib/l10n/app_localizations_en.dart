@@ -1895,7 +1895,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatPendingTerminal => 'Message needs attention';
 
   @override
-  String get chatPendingFailed => 'Send failed';
+  String get chatPendingNotSentRetry => 'Not sent · Retry';
 
   @override
   String get chatDiscard => 'Discard';
@@ -2023,6 +2023,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatAttachFile => 'Attach a file';
+
+  @override
+  String get chatAddTooltip => 'Add a file or poll';
 
   @override
   String get chatComposerHint => 'Message';

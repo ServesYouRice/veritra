@@ -126,7 +126,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final attach = tester.widget<IconButton>(find.ancestor(
-        of: find.byIcon(Icons.attach_file),
+        of: find.byIcon(Icons.add),
         matching: find.byType(IconButton),
       ));
       expect(attach.onPressed, isNull, reason: 'the control stays disabled');

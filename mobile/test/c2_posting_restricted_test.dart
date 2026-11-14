@@ -597,8 +597,8 @@ void main() {
       final sendButton = tester.widget<IconButton>(sendFinder);
       expect(sendButton.onPressed, isNull);
 
-      // Verify attach button is disabled
-      final attachFinder = find.widgetWithIcon(IconButton, Icons.attach_file);
+      // Verify the + (files and polls) is disabled
+      final attachFinder = find.widgetWithIcon(IconButton, Icons.add);
       expect(attachFinder, findsOneWidget);
       final attachButton = tester.widget<IconButton>(attachFinder);
       expect(attachButton.onPressed, isNull);

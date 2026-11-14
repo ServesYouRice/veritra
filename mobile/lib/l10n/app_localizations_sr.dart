@@ -1909,7 +1909,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatPendingTerminal => 'Порука захтева пажњу';
 
   @override
-  String get chatPendingFailed => 'Слање није успело';
+  String get chatPendingNotSentRetry => 'Није послато · Покушај поново';
 
   @override
   String get chatDiscard => 'Одбаци';
@@ -2038,6 +2038,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatAttachFile => 'Приложи датотеку';
+
+  @override
+  String get chatAddTooltip => 'Додај датотеку или анкету';
 
   @override
   String get chatComposerHint => 'Порука';
@@ -6565,7 +6568,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatPendingTerminal => 'Poruka zahteva pažnju';
 
   @override
-  String get chatPendingFailed => 'Slanje nije uspelo';
+  String get chatPendingNotSentRetry => 'Nije poslato · Pokušaj ponovo';
 
   @override
   String get chatDiscard => 'Odbaci';
@@ -6694,6 +6697,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatAttachFile => 'Priloži datoteku';
+
+  @override
+  String get chatAddTooltip => 'Dodaj datoteku ili anketu';
 
   @override
   String get chatComposerHint => 'Poruka';

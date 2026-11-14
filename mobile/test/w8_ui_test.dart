@@ -66,7 +66,10 @@ void main() {
     await tester.tap(find.text(englishL10n.w8Star));
     await tester.pumpAndSettle();
     expect(await store.loadStarred(), {'dev:t'});
-    await tester.tap(find.byTooltip(englishL10n.w8StarredMessages));
+    // Starred messages sit in the chat menu (U29).
+    await tester.tap(find.byKey(const Key('chat-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(englishL10n.w8StarredMessages));
     await tester.pumpAndSettle();
     expect(find.text(englishL10n.w8StarredMessages), findsOneWidget);
     expect(find.byIcon(Icons.star), findsWidgets);

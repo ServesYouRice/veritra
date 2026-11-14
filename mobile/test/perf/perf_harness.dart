@@ -457,21 +457,30 @@ void setBenchWindow(WidgetTester tester, Size size) {
 /// framework's debug rebuild hook (test builds run with asserts on).
 class RebuildCounter {
   final Map<String, int> counts = <String, int>{};
+
+  /// Like [counts], but only elements that had been built before: a row a
+  /// lazy list mounts for the first time is not a rebuild.
+  final Map<String, int> rebuilds = <String, int>{};
   int total = 0;
 
   void start() {
     counts.clear();
+    rebuilds.clear();
     total = 0;
-    debugOnRebuildDirtyWidget = (element, _) {
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
       total++;
       final type = element.widget.runtimeType.toString();
       counts[type] = (counts[type] ?? 0) + 1;
+      if (builtOnce) rebuilds[type] = (rebuilds[type] ?? 0) + 1;
     };
   }
 
   void stop() => debugOnRebuildDirtyWidget = null;
 
   int of(String type) => counts[type] ?? 0;
+
+  /// How many already-built elements of [type] rebuilt.
+  int rebuiltOf(String type) => rebuilds[type] ?? 0;
 }
 
 /// Wall-clock durations of individual frames, in microseconds.

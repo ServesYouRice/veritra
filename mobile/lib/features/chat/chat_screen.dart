@@ -373,40 +373,48 @@ class _ChatScreenState extends State<ChatScreen> {
                 titleSpacing: widget.showBackButton ? 0 : BoneSpacing.gutter,
                 title: conversation == null
                     ? Text(context.l10n.searchTypeConversation)
-                    : Row(
-                        children: <Widget>[
-                          conversationAvatar(
-                            context,
-                            conversation,
-                            profiles: widget.state.profiles,
-                            radius: 17,
-                            // Only the pushed layout: see conversationAvatar.
-                            hero: widget.showBackButton,
-                          ),
-                          const SizedBox(width: BoneSpacing.md),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                Text(
-                                  conversationTitle(context.l10n, conversation,
-                                      profiles: widget.state.profiles),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                // Every chat is encrypted, and the chat's first
-                                // line says so once (U13); the header names only
-                                // a state that is not the default.
-                                if (widget.state.isMuted(conversation.id))
-                                  Text(
-                                    context.l10n.chatStatusMuted,
-                                    style: theme.textTheme.labelSmall,
-                                  ),
-                              ],
+                    // U29: the name opens the details, so it is the one big
+                    // tap target of the bar. Star and info sit in the menu.
+                    : InkWell(
+                        key: const Key('chat-title'),
+                        borderRadius: BorderRadius.circular(BoneRadii.sm),
+                        onTap: () => _openDetails(conversation.id),
+                        child: Row(
+                          children: <Widget>[
+                            conversationAvatar(
+                              context,
+                              conversation,
+                              profiles: widget.state.profiles,
+                              radius: 17,
+                              // Only the pushed layout: see conversationAvatar.
+                              hero: widget.showBackButton,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: BoneSpacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Text(
+                                    conversationTitle(
+                                        context.l10n, conversation,
+                                        profiles: widget.state.profiles),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  // Every chat is encrypted, and the chat's
+                                  // first line says so once (U13); the header
+                                  // names only a state that is not the default.
+                                  if (widget.state.isMuted(conversation.id))
+                                    Text(
+                                      context.l10n.chatStatusMuted,
+                                      style: theme.textTheme.labelSmall,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                 actions: <Widget>[
                   if (conversation != null && conversation.isDm && !readOnly)
@@ -453,24 +461,29 @@ class _ChatScreenState extends State<ChatScreen> {
                                   _openRoom(session, conversation.id)),
                               icon: const Icon(Icons.groups_outlined)),
                     ),
-                  IconButton(
-                      tooltip: context.l10n.w8StarredMessages,
-                      onPressed: _showStarredMessages,
-                      icon: const Icon(Icons.star_outline)),
-                  if (conversation != null)
-                    IconButton(
-                      tooltip: context.l10n.chatListDetails,
-                      onPressed: () => Navigator.of(context).push(
-                        sharedAxisRoute<void>(
-                          (_) => ConversationDetailsScreen(
-                            state: widget.state,
-                            conversationId: conversation.id,
-                          ),
-                        ),
+                  // Starred messages and the details page: two rarely used
+                  // actions behind one menu (U29).
+                  PopupMenuButton<String>(
+                    key: const Key('chat-menu'),
+                    onSelected: (value) {
+                      if (value == 'starred') {
+                        _showStarredMessages();
+                      } else if (conversation != null) {
+                        _openDetails(conversation.id);
+                      }
+                    },
+                    itemBuilder: (context) => <PopupMenuEntry<String>>[
+                      PopupMenuItem<String>(
+                        value: 'starred',
+                        child: Text(context.l10n.w8StarredMessages),
                       ),
-                      icon: const Icon(Icons.info_outline),
-                    ),
-                  const SizedBox(width: BoneSpacing.sm),
+                      if (conversation != null)
+                        PopupMenuItem<String>(
+                          value: 'details',
+                          child: Text(context.l10n.chatListDetails),
+                        ),
+                    ],
+                  ),
                 ],
               ),
               body: ChatDropZone(
@@ -592,6 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             !restricted && widget.state.messageActionsAvailable
                                 ? _createPoll
                                 : null,
+                        tray: _attachments,
                       ),
                   ],
                 ),
@@ -600,6 +614,17 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       },
+    );
+  }
+
+  void _openDetails(String conversationId) {
+    Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ConversationDetailsScreen(
+          state: widget.state,
+          conversationId: conversationId,
+        ),
+      ),
     );
   }
 
@@ -1790,34 +1815,46 @@ class _PendingMessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (sending)
-                    const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(
-                      Icons.error_outline,
-                      size: 18,
-                      color: scheme.onErrorContainer,
-                    ),
-                  const SizedBox(width: BoneSpacing.sm),
-                  Text(
-                    sending
-                        ? l10n.chatPendingSending
-                        : terminal
-                            ? l10n.chatPendingTerminal
-                            : l10n.chatPendingFailed,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color:
-                          sending ? scheme.onSurface : scheme.onErrorContainer,
-                    ),
+              if (!sending && !terminal && onRetry != null)
+                // U29: one line says what happened and what to do, and the
+                // whole line is the button.
+                TextButton.icon(
+                  key: const Key('pending-not-sent-retry'),
+                  onPressed: onRetry,
+                  style: TextButton.styleFrom(
+                    foregroundColor: scheme.onErrorContainer,
                   ),
-                ],
-              ),
+                  icon: const Icon(Icons.error_outline, size: 18),
+                  label: Text(l10n.chatPendingNotSentRetry),
+                )
+              else
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (sending)
+                      const SizedBox.square(
+                        dimension: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      Icon(
+                        Icons.error_outline,
+                        size: 18,
+                        color: scheme.onErrorContainer,
+                      ),
+                    const SizedBox(width: BoneSpacing.sm),
+                    Text(
+                      sending
+                          ? l10n.chatPendingSending
+                          : l10n.chatPendingTerminal,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: sending
+                            ? scheme.onSurface
+                            : scheme.onErrorContainer,
+                      ),
+                    ),
+                  ],
+                ),
               if (failureMessage != null) ...<Widget>[
                 const SizedBox(height: BoneSpacing.xs),
                 Text(
@@ -1836,11 +1873,6 @@ class _PendingMessageBubble extends StatelessWidget {
                       TextButton(
                         onPressed: onSendNormally,
                         child: Text(l10n.chatSendNormally),
-                      ),
-                    if (onRetry != null)
-                      TextButton(
-                        onPressed: onRetry,
-                        child: Text(l10n.commonRetry),
                       ),
                     if (onCopy != null)
                       TextButton(
@@ -2521,7 +2553,12 @@ class _Composer extends StatelessWidget {
     this.voiceListenable,
     this.onEditLast,
     this.onPoll,
+    this.tray,
   });
+
+  /// The files waiting to be sent. Send replaces the mic while there are any,
+  /// as it does while there is text.
+  final ComposerAttachments? tray;
 
   final bool enabled;
   final bool restricted;
@@ -2550,9 +2587,10 @@ class _Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: controller,
-      builder: (context, value, _) => _build(context, value.text),
+    return ListenableBuilder(
+      listenable:
+          Listenable.merge(<Listenable>[controller, if (tray != null) tray!]),
+      builder: (context, _) => _build(context, controller.text),
     );
   }
 
@@ -2593,6 +2631,84 @@ class _Composer extends StatelessWidget {
     );
   }
 
+  /// The one + that holds what else a message can be: a file or a poll
+  /// (U29). It keeps the reasons the two used to show on their own buttons.
+  Widget _addButton(BuildContext context) {
+    final l10n = context.l10n;
+    if (restricted) {
+      return IconButton(
+        key: const Key('composer-add'),
+        onPressed: null,
+        icon: const Icon(Icons.add),
+        tooltip: l10n.chatPostingRestricted,
+      );
+    }
+    if (onAttach == null && onPoll == null) {
+      // Attachments need the MLS path (demo builds); elsewhere the control
+      // stays visible but disabled, and the reason is reachable by focus,
+      // tap and screen reader.
+      return GatedExplanation(
+        message: l10n.gatedAttachmentsUnavailable,
+        child: const IconButton(
+          key: Key('composer-add'),
+          onPressed: null,
+          icon: Icon(Icons.add),
+        ),
+      );
+    }
+    return IconButton(
+      key: const Key('composer-add'),
+      onPressed: enabled && !attaching ? () => _openAddSheet(context) : null,
+      icon: attaching
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.add),
+      tooltip: attaching ? l10n.chatSendingFile : l10n.chatAddTooltip,
+    );
+  }
+
+  Future<void> _openAddSheet(BuildContext context) async {
+    final l10n = context.l10n;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              key: const Key('composer-add-file'),
+              enabled: onAttach != null,
+              leading: const Icon(Icons.attach_file),
+              title: Text(l10n.chatAttachFile),
+              subtitle: onAttach == null
+                  ? Text(l10n.gatedAttachmentsUnavailable)
+                  : null,
+              onTap: onAttach == null
+                  ? null
+                  : () => Navigator.of(sheetContext).pop('file'),
+            ),
+            if (onPoll != null)
+              ListTile(
+                key: const Key('composer-add-poll'),
+                enabled: !busy,
+                leading: const Icon(Icons.poll_outlined),
+                title: Text(l10n.pollComposerTitle),
+                onTap: () => Navigator.of(sheetContext).pop('poll'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'file') {
+      onAttach?.call();
+    } else if (choice == 'poll') {
+      onPoll?.call();
+    }
+  }
+
   Widget _build(BuildContext context, String text) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -2600,6 +2716,15 @@ class _Composer extends StatelessWidget {
     final nearLimit = length > maxAppTextLength * 0.9;
     final overLimit = length > maxAppTextLength;
     final canSend = enabled && !restricted && !busy && !overLimit;
+    // The mic and Send share one place (U29): the mic while there is nothing
+    // to send, Send from the first character or file on. Where voice notes
+    // are unavailable, Send is always there.
+    final showMic = onVoice != null &&
+        voiceListenable != null &&
+        !restricted &&
+        !busy &&
+        text.trim().isEmpty &&
+        !(tray?.isNotEmpty ?? false);
     return SafeArea(
       top: false,
       child: Padding(
@@ -2619,42 +2744,7 @@ class _Composer extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              if (restricted)
-                IconButton(
-                  onPressed: null,
-                  icon: const Icon(Icons.attach_file),
-                  tooltip: context.l10n.chatPostingRestricted,
-                )
-              else if (onAttach == null)
-                // Attachments need the MLS path (demo builds); elsewhere the
-                // control stays visible but disabled, and the reason is
-                // reachable by focus, tap and screen reader.
-                GatedExplanation(
-                  message: context.l10n.gatedAttachmentsUnavailable,
-                  child: const IconButton(
-                    onPressed: null,
-                    icon: Icon(Icons.attach_file),
-                  ),
-                )
-              else
-                IconButton(
-                  onPressed: enabled && !attaching ? onAttach : null,
-                  icon: attaching
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.attach_file),
-                  tooltip: attaching
-                      ? context.l10n.chatSendingFile
-                      : context.l10n.chatAttachFile,
-                ),
-              if (onPoll != null && !restricted)
-                IconButton(
-                  onPressed: enabled && !busy ? onPoll : null,
-                  icon: const Icon(Icons.poll_outlined),
-                  tooltip: context.l10n.pollComposerTitle,
-                ),
+              _addButton(context),
               Expanded(
                 child: _wrapDesktopInput(
                     canSend: canSend,
@@ -2714,31 +2804,33 @@ class _Composer extends StatelessWidget {
                       ),
                     )),
               ),
-              if (onVoice != null && voiceListenable != null && !restricted)
+              const SizedBox(width: BoneSpacing.xs),
+              if (showMic)
                 ListenableBuilder(
                   listenable: voiceListenable!,
-                  builder: (context, _) => IconButton(
+                  builder: (context, _) => IconButton.filled(
+                    key: const Key('composer-mic'),
                     onPressed: enabled && !voiceListenable!.isRecording
                         ? onVoice
                         : null,
                     icon: const Icon(Icons.mic_none),
                     tooltip: context.l10n.voiceNoteRecord,
                   ),
+                )
+              else
+                IconButton.filled(
+                  onPressed: canSend ? () => onSend() : null,
+                  icon: busy
+                      ? SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.send),
+                  tooltip: context.l10n.attachmentSend,
                 ),
-              const SizedBox(width: BoneSpacing.xs),
-              IconButton.filled(
-                onPressed: canSend ? () => onSend() : null,
-                icon: busy
-                    ? SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: scheme.onPrimary,
-                        ),
-                      )
-                    : const Icon(Icons.send),
-                tooltip: context.l10n.attachmentSend,
-              ),
             ],
           ),
         ),

@@ -3165,11 +3165,11 @@ abstract class AppLocalizations {
   /// **'Message needs attention'**
   String get chatPendingTerminal;
 
-  /// No description provided for @chatPendingFailed.
+  /// No description provided for @chatPendingNotSentRetry.
   ///
   /// In en, this message translates to:
-  /// **'Send failed'**
-  String get chatPendingFailed;
+  /// **'Not sent · Retry'**
+  String get chatPendingNotSentRetry;
 
   /// No description provided for @chatDiscard.
   ///
@@ -3362,6 +3362,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Attach a file'**
   String get chatAttachFile;
+
+  /// No description provided for @chatAddTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a file or poll'**
+  String get chatAddTooltip;
 
   /// No description provided for @chatComposerHint.
   ///
