@@ -319,11 +319,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCallsComingSoonDetail => '1:1 audio/video';
 
   @override
-  String get settingsCallsRelayTitle => 'Calls';
+  String get settingsDirectCallsTitle => 'Direct calls';
 
   @override
-  String get settingsCallsRelayNote =>
-      'Calls go through the server\'s relay, so the other side never sees your network address.';
+  String get settingsDirectCallsNote =>
+      'Faster, but the other person sees your network address.';
 
   @override
   String get settingsDeleteAccount => 'Delete account';

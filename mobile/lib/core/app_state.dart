@@ -586,6 +586,11 @@ class AppState extends ChangeNotifier
   /// `u12.chat_previews`. Defaults to true.
   bool showChatPreviews = true;
 
+  /// Whether calls may connect directly (D56/D134). Off by default: calls
+  /// relay through TURN and the other side never sees this device's network
+  /// address. Stored under `d134.direct_calls`.
+  bool allowDirectCalls = false;
+
   /// The message each chat row quotes, by conversation. `source` is the
   /// history it was taken from (null: read straight from the local store), so
   /// a newer history is noticed by identity.
@@ -813,6 +818,12 @@ class AppState extends ChangeNotifier
   Future<void> setMentionsInMutedChats(bool value) async {
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
+    notifyListeners();
+  }
+
+  Future<void> setAllowDirectCalls(bool value) async {
+    allowDirectCalls = value;
+    await localStore.saveSetting(directCallsSetting, '$value');
     notifyListeners();
   }
 
@@ -2131,6 +2142,8 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('screen_guard_chats') != 'false';
       showChatPreviews =
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
+      allowDirectCalls =
+          await localStore.loadSetting(directCallsSetting) == 'true';
       _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
@@ -2624,6 +2637,7 @@ class AppState extends ChangeNotifier
     final String? previewMode;
     final String? screenGuardPref;
     final String? previewsPref;
+    final String? directCallsPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
@@ -2631,6 +2645,7 @@ class AppState extends ChangeNotifier
       previewMode = await localStore.loadSetting('b2.link_preview');
       screenGuardPref = await localStore.loadSetting('screen_guard_chats');
       previewsPref = await localStore.loadSetting(_chatPreviewsSetting);
+      directCallsPref = await localStore.loadSetting(directCallsSetting);
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -2646,6 +2661,7 @@ class AppState extends ChangeNotifier
     linkPreviewMode = linkPreviewModeFromName(previewMode);
     screenGuardChats = screenGuardPref != 'false';
     showChatPreviews = previewsPref != 'false';
+    allowDirectCalls = directCallsPref == 'true';
     _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
@@ -6802,6 +6818,8 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('screen_guard_chats') != 'false';
       showChatPreviews =
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
+      allowDirectCalls =
+          await localStore.loadSetting(directCallsSetting) == 'true';
       _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
