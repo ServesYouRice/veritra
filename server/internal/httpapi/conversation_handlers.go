@@ -111,12 +111,14 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			writeError(w, http.StatusBadRequest, "invalid_channel_kind")
 			return
 		}
-		channel, conversation, err := a.Store.CreateChannelWithConversation(r.Context(), parts[0], req.Kind, principal.AccountID)
+		channel, conversation, skipped, err := a.Store.CreateChannelSkippingFullMembers(r.Context(), parts[0], req.Kind, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"channel": channel, "conversation": conversation})
+		// D134: skipped_members counts community members left out because they
+		// are at the conversation limit; it names none of them.
+		writeJSON(w, http.StatusCreated, map[string]interface{}{"channel": channel, "conversation": conversation, "skipped_members": skipped})
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found")

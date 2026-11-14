@@ -7437,6 +7437,12 @@ abstract class AppLocalizations {
   /// **'The channel was created. Some members could not be added. Retry to add only those members.'**
   String get channelMembersFailed;
 
+  /// No description provided for @channelMembersSkipped.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 member was not added: they are in too many chats. Add them later from the channel\'s members.} other{{count} members were not added: they are in too many chats. Add them later from the channel\'s members.}}'**
+  String channelMembersSkipped(int count);
+
   /// No description provided for @channelAdminOnly.
   ///
   /// In en, this message translates to:

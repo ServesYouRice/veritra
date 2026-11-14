@@ -113,6 +113,65 @@ func doRawRecorder(t *testing.T, handler http.Handler, method, path, token strin
 
 func containsBytes(body []byte, want string) bool { return bytes.Contains(body, []byte(want)) }
 
+// D134: a legacy-layout channel is made without a community member that is
+// at the conversation limit, and the answer counts the members left out
+// without naming any.
+func TestChannelCreationReportsMembersLeftOutAtTheLimit(t *testing.T) {
+	handler, ownerToken := newLimitedHandler(t, config.Limits{ConversationsPerAccount: 2})
+	busyToken, busyID := registerMemberWithID(t, handler, ownerToken, "busy")
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
+	if status != http.StatusCreated {
+		t.Fatalf("create community status=%d body=%s", status, body)
+	}
+	var community struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &community); err != nil || community.ID == "" {
+		t.Fatalf("community body=%s err=%v", body, err)
+	}
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/members", ownerToken,
+		map[string]interface{}{"account_id": busyID, "role": "member"})
+	if status != http.StatusOK {
+		t.Fatalf("add busy status=%d body=%s", status, body)
+	}
+	type creation struct {
+		Conversation struct {
+			ID string `json:"id"`
+		} `json:"conversation"`
+		Skipped *int `json:"skipped_members"`
+	}
+	createChannel := func() creation {
+		t.Helper()
+		status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{})
+		if status != http.StatusCreated {
+			t.Fatalf("create channel status=%d body=%s", status, body)
+		}
+		if containsBytes(body, busyID) {
+			t.Fatalf("channel answer names a member: %s", body)
+		}
+		var decoded creation
+		if err := json.Unmarshal(body, &decoded); err != nil || decoded.Skipped == nil {
+			t.Fatalf("channel body=%s err=%v", body, err)
+		}
+		return decoded
+	}
+	if first := createChannel(); *first.Skipped != 0 {
+		t.Fatalf("first channel skipped_members=%d, want 0", *first.Skipped)
+	}
+	// busy now holds the first channel; one group puts it at the limit of two.
+	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", busyToken, map[string]interface{}{"kind": "group"}); status != http.StatusCreated {
+		t.Fatalf("busy group status=%d body=%s", status, body)
+	}
+	second := createChannel()
+	if *second.Skipped != 1 {
+		t.Fatalf("second channel skipped_members=%d, want 1", *second.Skipped)
+	}
+	status, body = doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+second.Conversation.ID+"/members", ownerToken, nil)
+	if status != http.StatusOK || containsBytes(body, busyID) {
+		t.Fatalf("second channel members status=%d body=%s, want busy left out", status, body)
+	}
+}
+
 // Limit refusals name only the caller's own state.
 func TestAdmissionLimitErrorsAreSpecificForTheCaller(t *testing.T) {
 	handler, ownerToken := newLimitedHandler(t, config.Limits{ConversationMembers: 2, ConversationsPerAccount: 10})

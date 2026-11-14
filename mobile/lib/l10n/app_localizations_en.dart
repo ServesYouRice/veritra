@@ -4541,6 +4541,23 @@ class AppLocalizationsEn extends AppLocalizations {
       'The channel was created. Some members could not be added. Retry to add only those members.';
 
   @override
+  String channelMembersSkipped(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString members were not added: they are in too many chats. Add them later from the channel\'s members.',
+      one:
+          '1 member was not added: they are in too many chats. Add them later from the channel\'s members.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get channelAdminOnly => 'Only owners and admins can create channels.';
 
   @override

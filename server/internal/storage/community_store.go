@@ -572,40 +572,52 @@ func (s *Store) CreateChannel(ctx context.Context, communityID, kind, createdBy 
 
 // CreateChannelWithConversation makes a channel (and, where the layout needs
 // one, its conversation) with no name or title: both are the apps' encrypted
-// info records (C3).
+// info records (C3). It is CreateChannelSkippingFullMembers without the count
+// of members left out.
 func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, kind, createdBy string) (domain.Channel, domain.Conversation, error) {
+	channel, conversation, _, err := s.CreateChannelSkippingFullMembers(ctx, communityID, kind, createdBy)
+	return channel, conversation, err
+}
+
+// CreateChannelSkippingFullMembers makes a channel as CreateChannelWithConversation
+// does and also returns how many community members were left out of its
+// conversation because they already belong to the most conversations an
+// account may (D134). Only a legacy-layout channel adds the whole community,
+// so only it can leave anyone out; an active-layout channel adds nobody but
+// the creator and always reports 0.
+func (s *Store) CreateChannelSkippingFullMembers(ctx context.Context, communityID, kind, createdBy string) (domain.Channel, domain.Conversation, int, error) {
 	// An empty kind is private in a legacy community and open in one with the
 	// shared-group layout; open exists only in the latter.
 	if kind != "" && kind != "private" && kind != "announcement" && kind != ChannelAccessOpen {
-		return domain.Channel{}, domain.Conversation{}, ErrInvalidInput
+		return domain.Channel{}, domain.Conversation{}, 0, ErrInvalidInput
 	}
 	channelID, err := domain.NewID("chan")
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	conversationID, err := domain.NewID("conv")
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	createdAt := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	defer tx.Rollback()
 	var actorRole string
 	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, communityID, createdBy).Scan(&actorRole); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Channel{}, domain.Conversation{}, ErrNotMember
+			return domain.Channel{}, domain.Conversation{}, 0, ErrNotMember
 		}
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if !domain.CanCreateChannels(actorRole) {
-		return domain.Channel{}, domain.Conversation{}, ErrForbidden
+		return domain.Channel{}, domain.Conversation{}, 0, ErrForbidden
 	}
 	layout, err := communityLayoutOf(ctx, tx, communityID)
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if layout.active {
 		if kind == "" {
@@ -613,32 +625,32 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		}
 		channel, conversation, err := s.createRoutedChannel(ctx, tx, layout, communityID, kind, createdBy, actorRole, createdAt)
 		if err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
 		if err := tx.Commit(); err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
-		return channel, conversation, nil
+		return channel, conversation, 0, nil
 	}
 	if kind == "" {
 		kind = "private"
 	}
 	if kind == ChannelAccessOpen {
-		return domain.Channel{}, domain.Conversation{}, ErrInvalidInput
+		return domain.Channel{}, domain.Conversation{}, 0, ErrInvalidInput
 	}
 	communityMembers, err := communityMemberCount(ctx, tx, communityID)
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if err := s.checkMembers(0, communityMembers); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if err := s.checkOwnConversations(ctx, tx, createdBy, 1); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT account_id, role FROM memberships WHERE community_id = ?`, communityID)
 	if err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	type member struct{ accountID, role string }
 	members := make([]member, 0)
@@ -646,54 +658,64 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		var item member
 		if err := rows.Scan(&item.accountID, &item.role); err != nil {
 			rows.Close()
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
 		members = append(members, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if err := rows.Close(); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
-	// Every community member joins the new channel, so each one needs room for
-	// it, as CreateConversation requires of the members it adds. One member at
-	// the limit refuses the channel rather than being left out of it.
+	// Every community member joins the new channel if it has room for one more
+	// conversation. D134: a member already at the limit is left out instead of
+	// refusing the channel. It gets no membership row and no event, so the
+	// creator's device does not put it in the MLS group, and the server's
+	// pending changes list nothing for it. It joins later as any member is
+	// added to a channel (ManageConversationMember, which checks the limit
+	// again), or when a community role change finds it room
+	// (applyCommunityRoleTx). The creator learns only how many were left out.
+	joining := make([]member, 0, len(members))
+	skipped := 0
 	for _, item := range members {
-		if item.accountID == createdBy {
-			continue
+		if item.accountID != createdBy {
+			if err := s.checkOtherConversations(ctx, tx, item.accountID, 1); errors.Is(err, ErrForbidden) {
+				skipped++
+				continue
+			} else if err != nil {
+				return domain.Channel{}, domain.Conversation{}, 0, err
+			}
 		}
-		if err := s.checkOtherConversations(ctx, tx, item.accountID, 1); err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
-		}
+		joining = append(joining, item)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, kind, created_at) VALUES(?, ?, ?, ?)`, channelID, communityID, kind, createdAt); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', NULL, ?, ?, ?, ?)`, conversationID, communityID, channelID, createdBy, createdAt); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
-	for _, item := range members {
+	for _, item := range joining {
 		membershipID, err := domain.NewID("mbr")
 		if err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, conversation_id, role, created_at) VALUES(?, ?, ?, ?, ?)`, membershipID, item.accountID, conversationID, item.role, createdAt); err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
 		payload, _ := json.Marshal(map[string]string{"conversation_id": conversationID, "role": item.role})
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, item.accountID, conversationID, string(payload), createdAt); err != nil {
-			return domain.Channel{}, domain.Conversation{}, err
+			return domain.Channel{}, domain.Conversation{}, 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.Channel{}, domain.Conversation{}, err
+		return domain.Channel{}, domain.Conversation{}, 0, err
 	}
 	created := parseTime(createdAt)
 	channel := domain.Channel{ID: channelID, CommunityID: communityID, Kind: kind, CreatedAt: created}
 	conversation := domain.Conversation{ID: conversationID, Kind: "community_channel", CommunityID: &communityID, ChannelID: &channelID, CreatedBy: createdBy, CreatedAt: created, PostingRestricted: kind == "announcement"}
-	return channel, conversation, nil
+	return channel, conversation, skipped, nil
 }
 
 func (s *Store) ListCommunityMembers(ctx context.Context, communityID, accountID string) ([]domain.Membership, error) {
@@ -856,6 +878,22 @@ func (s *Store) applyCommunityRoleTx(ctx context.Context, tx *sql.Tx, communityI
 	}
 	eventIDs := make([]int64, 0, len(conversationIDs)+1)
 	for _, conversationID := range conversationIDs {
+		// D134: a legacy channel may lack a member that was at the conversation
+		// limit when it was made. A role change adds it there only if it has
+		// room now, so the limit holds; a new community member always has room
+		// (checkNewCommunityMember counted every channel). The added row is a
+		// pending MLS add like any other.
+		existing, err := countRows(ctx, tx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == 0 {
+			if err := s.checkOtherConversations(ctx, tx, targetAccountID, 1); errors.Is(err, ErrForbidden) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+		}
 		id, err := domain.NewID("mbr")
 		if err != nil {
 			return nil, err

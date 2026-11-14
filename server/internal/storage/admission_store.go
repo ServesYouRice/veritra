@@ -17,7 +17,11 @@ import (
 // community the caller already belongs to. When a limit of another account
 // stops a write (an account added to more conversations than its limit), the
 // error is ErrForbidden, the same one a block between the two gives, so it
-// reveals nothing new about that account.
+// reveals nothing new about that account. One exception, by owner decision
+// D134: a legacy-layout channel leaves out a community member at the
+// conversation limit instead of refusing, and tells its creator how many it
+// left out, so the creator (and any channel member reading the roster) can
+// tell that those members are at the limit.
 var (
 	ErrDeviceLimit             = errors.New("account has the maximum number of devices")
 	ErrDeviceLinkLimit         = errors.New("account has the maximum number of pending device links")

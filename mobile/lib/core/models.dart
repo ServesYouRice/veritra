@@ -320,10 +320,19 @@ class Channel {
 }
 
 class ChannelCreation {
-  const ChannelCreation({required this.channel, required this.conversation});
+  const ChannelCreation({
+    required this.channel,
+    required this.conversation,
+    this.skippedMembers = 0,
+  });
 
   final Channel channel;
   final Conversation conversation;
+
+  /// Community members the server left out of the channel because they are
+  /// in the most chats an account may (D134). Only a legacy-layout channel
+  /// can leave anyone out; an older server never sends it.
+  final int skippedMembers;
 
   factory ChannelCreation.fromJson(Map<String, Object?> json) =>
       ChannelCreation(
@@ -333,6 +342,10 @@ class ChannelCreation {
         conversation: Conversation.fromJson(
           Map<String, Object?>.from(json['conversation']! as Map),
         ),
+        skippedMembers: switch (json['skipped_members']) {
+          final num n when n > 0 => n.toInt(),
+          _ => 0,
+        },
       );
 }
 
