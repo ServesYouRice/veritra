@@ -540,6 +540,7 @@ def build_apk(
     manifest: bytes | None = None,
     dex: bool = True,
     crypto: bool = True,
+    build_info: bytes | None = b"source_revision=" + b"0" * 40 + b"\ncargo_lock_sha256=" + b"0" * 64 + b"\nsource_tree_dirty=false\nrustc 1\n",
     signers: dict[int, list[bytes]] | None = None,
     signer_options: dict[str, object] | None = None,
     options_schemes: tuple[int, ...] | None = None,
@@ -568,6 +569,8 @@ def build_apk(
                 archive.writestr("classes.dex", b"dex\n035\0synthetic")
             if crypto:
                 archive.writestr("lib/arm64-v8a/libprivate_messenger_crypto.so", b"\x7fELF synthetic")
+            if build_info is not None:
+                archive.writestr("assets/veritra-crypto/build-info.txt", build_info)
             archive.writestr("resources.arsc", b"synthetic")
             if v1_only:
                 archive.writestr("META-INF/CERT.RSA", RELEASE_CERT)
@@ -1816,6 +1819,13 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_android(apk("other-app.apk", manifest=axml(package="org.example.other"))),
                    "signed android artifact is not the org.veritra.private_messenger app")
     expect_blocked(root, with_android(apk("no-crypto.apk", crypto=False)), "does not ship the arm64-v8a crypto library")
+    # D134: a crypto library built from uncommitted sources never ships.
+    dirty = b"source_revision=" + b"0" * 40 + b"\nsource_tree_dirty=true\n"
+    expect_blocked(root, with_android(apk("dirty-crypto.apk", build_info=dirty)),
+                   "crypto library was built from uncommitted crypto sources", "has no valid android signed-release artifact")
+    expect_blocked(root, with_android(apk("no-build-info.apk", build_info=None)), "has no crypto build record")
+    for name, text in (("empty", b""), ("odd", b"source_tree_dirty=maybe\n"), ("twice", b"source_tree_dirty=false\nsource_tree_dirty=true\n")):
+        expect_blocked(root, with_android(apk(f"bad-info-{name}.apk", build_info=text)), "has no single, valid source_tree_dirty record")
     expect_blocked(root, with_android(apk("no-dex.apk", dex=False)), "signed android artifact is not an Android app package")
     expect_blocked(root, with_android(apk("text-manifest.apk", manifest=b"<manifest package='org.veritra.private_messenger'/>")),
                    "signed android artifact is not a readable APK")

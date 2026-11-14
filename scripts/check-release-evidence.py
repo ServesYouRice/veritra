@@ -140,6 +140,7 @@ SIGNING_PINS = {
 }
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
+ANDROID_CRYPTO_BUILD_INFO = "assets/veritra-crypto/build-info.txt"  # written by scripts/build-mobile-crypto.sh
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
 ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
@@ -1210,6 +1211,16 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
     return package, debuggable, min(min_sdks, default=1)
 
 
+def crypto_build_info_error(text: str) -> str | None:
+    """None only when the record says ``source_tree_dirty=false`` exactly once (D134)."""
+    flags = [line for line in text.splitlines() if line.startswith("source_tree_dirty=")]
+    if flags == ["source_tree_dirty=false"]:
+        return None
+    if flags == ["source_tree_dirty=true"]:
+        return "was built from uncommitted crypto sources (source_tree_dirty=true)"
+    return "has no single, valid source_tree_dirty record"
+
+
 def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
     """Release-signing checks: structure, pinned signer, and the v2/v3 signatures
     and content digests themselves (``apk_scheme_error``).
@@ -1243,6 +1254,12 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
                 )
             if ANDROID_CRYPTO_LIBRARY not in names:
                 errors.append("signed android artifact does not ship the arm64-v8a crypto library")
+            if ANDROID_CRYPTO_BUILD_INFO not in names:
+                errors.append("signed android artifact has no crypto build record")
+            else:
+                problem = crypto_build_info_error(read_member(archive, ANDROID_CRYPTO_BUILD_INFO).decode("utf-8", "replace"))
+                if problem:
+                    errors.append(f"signed android artifact crypto library {problem}")
     except Exception:  # BadZipFile, struct, index and decode errors all fail closed
         return ["signed android artifact is not a readable APK"]
     try:
