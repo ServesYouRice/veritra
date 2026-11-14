@@ -17,7 +17,14 @@ import (
 // community the caller already belongs to. When a limit of another account
 // stops a write (an account added to more conversations than its limit), the
 // error is ErrForbidden, the same one a block between the two gives, so it
-// reveals nothing new about that account.
+// reveals nothing new about that account. One exception, by owner decision
+// D134: a legacy-layout channel leaves out a community member at the
+// conversation limit instead of refusing, and tells its creator how many it
+// left out, so the creator (and any channel member reading the roster) can
+// tell that those members are at the limit. The community owner is never left
+// out: an owner at the limit still refuses the channel, so every legacy
+// channel keeps its owner. A member left out is not a refusal and is not
+// counted in the refusal metrics.
 var (
 	ErrDeviceLimit             = errors.New("account has the maximum number of devices")
 	ErrDeviceLinkLimit         = errors.New("account has the maximum number of pending device links")
@@ -71,14 +78,26 @@ func (s *Store) checkOwnConversations(ctx context.Context, tx *sql.Tx, accountID
 // checkOtherConversations is the same limit for an account someone else is
 // adding; its refusal is indistinguishable from a block.
 func (s *Store) checkOtherConversations(ctx context.Context, tx *sql.Tx, accountID string, adding int) error {
-	n, err := countRows(ctx, tx, `SELECT COUNT(conversation_id) FROM memberships WHERE account_id = ?`, accountID)
+	room, err := s.hasConversationRoom(ctx, tx, accountID, adding)
 	if err != nil {
 		return err
 	}
-	if n+adding > s.limits.ConversationsPerAccount {
+	if !room {
 		return s.refuse(admission.Conversations, ErrForbidden)
 	}
 	return nil
+}
+
+// hasConversationRoom reports whether accountID can join adding more
+// conversations within the limit. It refuses nothing and counts nothing: a
+// legacy channel that leaves out a member at the limit (D134) is not a
+// refused write, so it must not show in the refusal metrics.
+func (s *Store) hasConversationRoom(ctx context.Context, tx *sql.Tx, accountID string, adding int) (bool, error) {
+	n, err := countRows(ctx, tx, `SELECT COUNT(conversation_id) FROM memberships WHERE account_id = ?`, accountID)
+	if err != nil {
+		return false, err
+	}
+	return n+adding <= s.limits.ConversationsPerAccount, nil
 }
 
 // checkMembers refuses a conversation or community that would exceed the

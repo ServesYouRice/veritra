@@ -1295,6 +1295,7 @@
   "channelOpenDisclosure": "Svaki član zajednice vidi ovaj kanal.",
   "channelCreateFailed": "Kanal nije napravljen. Pokušajte ponovo.",
   "channelMembersFailed": "Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.",
+  "channelMembersSkipped": "{count, plural, one{{count} član nije dodat: u previše je razgovora. Dodajte ga kasnije iz članova kanala.} few{{count} člana nisu dodata: u previše su razgovora. Dodajte ih kasnije iz članova kanala.} other{{count} članova nije dodato: u previše su razgovora. Dodajte ih kasnije iz članova kanala.}}",
   "channelAdminOnly": "Samo vlasnici i administratori mogu da prave kanale.",
   "k1ConfirmTitle": "Proverite ključ za oporavak",
   "k1ConfirmDetail": "Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.",

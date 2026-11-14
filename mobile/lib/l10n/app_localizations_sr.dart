@@ -4608,6 +4608,25 @@ class AppLocalizationsSr extends AppLocalizations {
       'Канал је направљен. Неки чланови нису додати. Покушајте поново да додате само те чланове.';
 
   @override
+  String channelMembersSkipped(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString чланова није додато: у превише су разговора. Додајте их касније из чланова канала.',
+      few:
+          '$countString члана нису додата: у превише су разговора. Додајте их касније из чланова канала.',
+      one:
+          '$countString члан није додат: у превише је разговора. Додајте га касније из чланова канала.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get channelAdminOnly =>
       'Само власници и администратори могу да праве канале.';
 
@@ -9994,6 +10013,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get channelMembersFailed =>
       'Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.';
+
+  @override
+  String channelMembersSkipped(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString članova nije dodato: u previše su razgovora. Dodajte ih kasnije iz članova kanala.',
+      few:
+          '$countString člana nisu dodata: u previše su razgovora. Dodajte ih kasnije iz članova kanala.',
+      one:
+          '$countString član nije dodat: u previše je razgovora. Dodajte ga kasnije iz članova kanala.',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get channelAdminOnly =>

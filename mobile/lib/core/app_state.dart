@@ -3113,6 +3113,10 @@ class AppState extends ChangeNotifier
     return error == null ? created : null;
   }
 
+  /// How many community members the last [createChannel] left out because
+  /// they are in too many chats (D134); 0 when it failed or left none out.
+  int lastChannelSkippedMembers = 0;
+
   /// Creates a channel and its backing conversation in one server transaction.
   Future<Channel?> createChannel(
     String communityId,
@@ -3122,6 +3126,7 @@ class AppState extends ChangeNotifier
   }) async {
     ({Channel channel, bool shared})? made;
     Channel? created;
+    lastChannelSkippedMembers = 0;
     await _run(() async {
       final current = session;
       final client = api;
@@ -3146,6 +3151,10 @@ class AppState extends ChangeNotifier
         kind: kind ?? (sharedLayout ? 'open' : 'private'),
       );
       created = creation.channel;
+      // D134: the left-out members are not in the server roster, so the MLS
+      // group set up below never gets their devices; an admin adds them
+      // later through the channel's members.
+      lastChannelSkippedMembers = creation.skippedMembers;
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
@@ -3180,6 +3189,7 @@ class AppState extends ChangeNotifier
       }
       await loadMessages(creation.conversation.id);
     });
+    if (error != null) lastChannelSkippedMembers = 0;
     // C3: the encrypted channel record, and for an open channel the
     // community record that lists it. Outside `_run` (see createCommunity).
     final routed = made;

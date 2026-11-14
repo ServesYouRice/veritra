@@ -1746,6 +1746,8 @@
   "channelOpenDisclosure": "Every community member can see this channel.",
   "channelCreateFailed": "Could not create the channel. Try again.",
   "channelMembersFailed": "The channel was created. Some members could not be added. Retry to add only those members.",
+  "channelMembersSkipped": "{count, plural, =1{1 member was not added: they are in too many chats. Add them later from the channel's members.} other{{count} members were not added: they are in too many chats. Add them later from the channel's members.}}",
+  "@channelMembersSkipped": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "channelAdminOnly": "Only owners and admins can create channels.",
   "k1ConfirmTitle": "Check your recovery key",
   "k1ConfirmDetail": "Type it once more to be sure you still have it. It never leaves this device.",
