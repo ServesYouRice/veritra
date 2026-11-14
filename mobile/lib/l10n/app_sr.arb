@@ -1227,6 +1227,7 @@
   "c6ReportsNoText": "Није текстуална порука. Њени подаци, укључујући кључ којим се датотека отвара, налазе се у пријави, али не и сама датотека.",
   "c6ReportsReporter": "Пријавио: {account}",
   "c6ReportsReason": "Разлог који је навео пријавилац: {reason}",
+  "c6ReportsRowReason": "Разлог пријавиоца: {reason}",
   "c6ReportsReasonNone": "Разлог није наведен. Послата је из старије апликације.",
   "c6ReportsReasonNotChecked": "Провера обухвата само поруку, не и разлог.",
   "c6ReportsSender": "Послао: {account}",

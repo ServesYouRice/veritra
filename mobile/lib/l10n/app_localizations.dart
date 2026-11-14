@@ -96,7 +96,7 @@ abstract class AppLocalizations {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -7101,6 +7101,12 @@ abstract class AppLocalizations {
   /// **'Reason given by the reporter: {reason}'**
   String c6ReportsReason(String reason);
 
+  /// C6 reports (U33): first part of an inbox row's second line. Names the reason as the reporter's claim, never a finding.
+  ///
+  /// In en, this message translates to:
+  /// **'Reporter\'s reason: {reason}'**
+  String c6ReportsRowReason(String reason);
+
   /// C6 reports (U33): an opened report from before reasons existed.
   ///
   /// In en, this message translates to:
@@ -8773,9 +8779,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-    'an issue with the localizations generation tool. Please file an issue '
-    'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
-  );
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
 }

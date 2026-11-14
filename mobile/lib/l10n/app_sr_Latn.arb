@@ -1227,6 +1227,7 @@
   "c6ReportsNoText": "Nije tekstualna poruka. Njeni podaci, uključujući ključ kojim se datoteka otvara, nalaze se u prijavi, ali ne i sama datoteka.",
   "c6ReportsReporter": "Prijavio: {account}",
   "c6ReportsReason": "Razlog koji je naveo prijavilac: {reason}",
+  "c6ReportsRowReason": "Razlog prijavioca: {reason}",
   "c6ReportsReasonNone": "Razlog nije naveden. Poslata je iz starije aplikacije.",
   "c6ReportsReasonNotChecked": "Provera obuhvata samo poruku, ne i razlog.",
   "c6ReportsSender": "Poslao: {account}",

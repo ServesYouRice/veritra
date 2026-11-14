@@ -1647,6 +1647,8 @@
   "@c6ReportsReporter": {"description": "C6 reports.", "placeholders": {"account": {"type": "String"}}},
   "c6ReportsReason": "Reason given by the reporter: {reason}",
   "@c6ReportsReason": {"description": "C6 reports (U33): the reporter's chosen reason, one of the c6ReportReason labels. It is the reporter's claim, not something the check proves.", "placeholders": {"reason": {"type": "String"}}},
+  "c6ReportsRowReason": "Reporter's reason: {reason}",
+  "@c6ReportsRowReason": {"description": "C6 reports (U33): first part of an inbox row's second line. Names the reason as the reporter's claim, never a finding.", "placeholders": {"reason": {"type": "String"}}},
   "c6ReportsReasonNone": "No reason given. It was sent by an older app.",
   "@c6ReportsReasonNone": {"description": "C6 reports (U33): an opened report from before reasons existed."},
   "c6ReportsReasonNotChecked": "The check covers the message only, not the reason.",

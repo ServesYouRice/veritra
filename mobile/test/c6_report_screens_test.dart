@@ -570,7 +570,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // The row leads its second line with the reason.
-    expect(find.textContaining("Shares someone's private information\n"),
+    expect(
+        find.textContaining(
+            "Reporter's reason: Shares someone's private information\n"),
         findsOneWidget);
     expect(find.text('old words'), findsOneWidget);
 

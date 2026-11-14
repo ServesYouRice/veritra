@@ -619,8 +619,9 @@ version. Design and build on branch `u33-report-reasons`.
   way. Nothing acts on a reason automatically (open item 6).
 - **Not evidence.** The reason is the reporter's claim. It is not franked
   and not part of the commitment, so a check against the server record
-  says nothing about it. The inbox shows it as "Reason given by the
-  reporter", beside the reporter's name and away from the verdict, with
+  says nothing about it. The inbox row reads "Reporter's reason: …" and the
+  report reads "Reason given by the reporter: …", beside the reporter's
+  name and away from the verdict, with
   the line "The check covers the message only, not the reason." It never
   feeds the verdict or the next step. A report that cannot be opened shows
   no reason (it is inside the seal).

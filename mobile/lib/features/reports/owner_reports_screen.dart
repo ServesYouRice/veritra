@@ -201,7 +201,8 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                               // inside the seal).
                               subtitle: Text(<String>[
                                 if (report.reason case final reason?)
-                                  reportReasonLabel(l10n, reason),
+                                  l10n.c6ReportsRowReason(
+                                      reportReasonLabel(l10n, reason)),
                                 l10n.c6ReportsFiledBy(
                                     _personName(widget.state,
                                         report.row.reporterAccountId),
