@@ -443,7 +443,7 @@ class _CommunityCard extends StatelessWidget {
       onSelected: (action) {
         switch (action) {
           case 'edit':
-            if (!state.busy) _editInfo(context);
+            _editInfo(context);
           case 'info':
             Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -471,7 +471,7 @@ class _CommunityCard extends StatelessWidget {
               ),
             );
           case 'channel':
-            if (!state.busy) onCreateChannel();
+            onCreateChannel();
         }
       },
       itemBuilder: (_) => <PopupMenuEntry<String>>[
@@ -479,6 +479,9 @@ class _CommunityCard extends StatelessWidget {
           PopupMenuItem<String>(
             key: action.itemKey,
             value: action.key,
+            // Editing and creating wait for the busy operation to finish.
+            enabled: !state.busy ||
+                (action.key != 'edit' && action.key != 'channel'),
             child: Row(
               children: <Widget>[
                 Icon(action.icon, size: 20),

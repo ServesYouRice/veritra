@@ -148,9 +148,9 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
       _requested = false;
     });
     final text = value.trim();
-    if (text.isEmpty || text == _checked || state.isBusy(Ops.membership)) {
-      return;
-    }
+    // Not gated on busy: membership calls queue, and a paste right after
+    // the screen opens (its own request list is loading) must not be lost.
+    if (text.isEmpty || text == _checked) return;
     final origin = state.api?.baseUrl;
     final wellFormed = origin != null &&
         MembershipInviteLink.tryParse(text, expectedOrigin: origin) != null;

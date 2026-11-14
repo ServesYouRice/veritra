@@ -41,9 +41,6 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
   bool _saving = false;
   bool _failed = false;
 
-  /// An untouched empty name reads as a prompt, not an error.
-  bool _nameTouched = false;
-
   bool get _allowed =>
       _owner != null &&
       identical(widget.state.session, _owner) &&
@@ -106,14 +103,13 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                     controller: _name,
                     enabled: !_saving && _allowed,
                     autofocus: true,
-                    onChanged: (_) => setState(() => _nameTouched = true),
+                    onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       labelText: widget.channel == null
                           ? l10n.communityName
                           : l10n.communityChannelName,
-                      errorText: _nameTouched || _name.text.isNotEmpty
-                          ? _nameError(l10n)
-                          : null,
+                      // Always shown while it is what keeps Save off.
+                      errorText: _nameError(l10n),
                     ),
                   ),
                   if (widget.channel != null)

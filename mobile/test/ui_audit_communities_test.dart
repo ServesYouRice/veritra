@@ -104,6 +104,9 @@ void main() {
     expect(find.byType(IconButton), findsNWidgets(2),
         reason: 'only the top bar: Join with a link and Refresh');
 
+    // Every tap target is named for a screen reader.
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+
     await tester.tap(menu);
     await tester.pumpAndSettle();
     expect(find.text('Edit community'), findsOneWidget);
@@ -144,8 +147,8 @@ void main() {
       final state = _ownerState();
       addTearDown(state.dispose);
       await openEdit(tester, state);
-      // An untouched empty name is a prompt, not an error; Save stays off.
-      expect(find.text('Enter a name.'), findsNothing);
+      // Save is off, and the field says why.
+      expect(find.text('Enter a name.'), findsOneWidget);
       expect(save(tester).onPressed, isNull);
 
       await tester.enterText(find.byType(TextField).first, 'x' * 101);
