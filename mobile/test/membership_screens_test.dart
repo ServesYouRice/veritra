@@ -399,7 +399,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Time out…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 h'));
+      await tester.tap(find.text('1 hour'));
       await tester.pumpAndSettle();
       expect(find.text('Timeout set.'), findsOneWidget);
       await tester.tap(find.text('Undo'));
@@ -548,7 +548,9 @@ void main() {
       api.failWrites = true;
       await tester.tap(find.text('Invites'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Revoke link'));
+      await tester.tap(find.text('Turn off'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
       await expectStays(tester);
       // Leaving the tab and coming back keeps the message: the page is kept.
       await tester.tap(find.text('Members'));
@@ -575,7 +577,7 @@ void main() {
       api.failWrites = true;
       await tester.tap(find.text('Requests'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Decline @bob'));
+      await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
       await expectStays(tester);
       expect(find.text('@bob'), findsOneWidget,
           reason: 'the request is still waiting');
