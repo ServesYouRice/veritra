@@ -978,7 +978,9 @@ Widget conversationAvatar(
           ? Text(
               initials,
               style: TextStyle(
-                fontSize: radius * 0.62,
+                // Never under 12 (U10): the 17 dp chat-header avatar would be
+                // 10.5 otherwise.
+                fontSize: radius * 0.62 < 12 ? 12 : radius * 0.62,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
                 color: colors.glyph,
