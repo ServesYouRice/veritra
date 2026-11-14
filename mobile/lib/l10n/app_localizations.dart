@@ -4926,14 +4926,26 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyShowDetail.
   ///
   /// In en, this message translates to:
-  /// **'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.'**
+  /// **'Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.'**
   String get recoveryKeyShowDetail;
 
   /// No description provided for @recoveryKeyWritten.
   ///
   /// In en, this message translates to:
-  /// **'I wrote it down'**
+  /// **'I have saved it'**
   String get recoveryKeyWritten;
+
+  /// No description provided for @recoveryKeyCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy for a password manager'**
+  String get recoveryKeyCopy;
+
+  /// No description provided for @recoveryKeyCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.'**
+  String get recoveryKeyCopied;
 
   /// No description provided for @recoveryKeyConfirmTitle.
   ///
@@ -4944,7 +4956,7 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyConfirmDetail.
   ///
   /// In en, this message translates to:
-  /// **'Type the whole key from your paper to check it. Dashes and spaces do not matter.'**
+  /// **'Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.'**
   String get recoveryKeyConfirmDetail;
 
   /// No description provided for @recoveryKeyField.
@@ -4964,6 +4976,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'That is not the key shown. Check your paper and try again.'**
   String get recoveryKeyMismatch;
+
+  /// No description provided for @recoveryKeyGroupWrong.
+  ///
+  /// In en, this message translates to:
+  /// **'Group {group} does not match. Check it on your copy.'**
+  String recoveryKeyGroupWrong(int group);
+
+  /// No description provided for @recoveryKeyGroupsMatched.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} of 13 groups match.'**
+  String recoveryKeyGroupsMatched(int count);
+
+  /// No description provided for @recoveryKeyTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'This is longer than the key. Check for extra characters.'**
+  String get recoveryKeyTooLong;
 
   /// No description provided for @recoveryKeyShowAgain.
   ///

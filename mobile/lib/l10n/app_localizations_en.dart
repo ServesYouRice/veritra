@@ -3002,17 +3002,24 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.';
+      'Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.';
 
   @override
-  String get recoveryKeyWritten => 'I wrote it down';
+  String get recoveryKeyWritten => 'I have saved it';
+
+  @override
+  String get recoveryKeyCopy => 'Copy for a password manager';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Type your recovery key';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Type the whole key from your paper to check it. Dashes and spaces do not matter.';
+      'Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.';
 
   @override
   String get recoveryKeyField => 'Recovery key';
@@ -3023,6 +3030,20 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryKeyMismatch =>
       'That is not the key shown. Check your paper and try again.';
+
+  @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Group $group does not match. Check it on your copy.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return '$count of 13 groups match.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'This is longer than the key. Check for extra characters.';
 
   @override
   String get recoveryKeyShowAgain => 'Show the key again';

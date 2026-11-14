@@ -61,9 +61,17 @@ void main() {
     await tester.tap(find.text('Create a recovery key'));
     await tester.pumpAndSettle();
     expect(find.text('Write down your recovery key'), findsOneWidget);
-    expect(find.textContaining('ABCD EFGH JKMN PQRS'), findsOneWidget);
+    // U24: 13 numbered groups.
+    expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey<String>('recovery-key-group-1')))
+            .data,
+        'ABCD');
+    expect(find.byKey(const ValueKey<String>('recovery-key-group-13')),
+        findsOneWidget);
 
-    await tester.tap(find.text('I wrote it down'));
+    await tester.tap(find.text('I have saved it'));
     await tester.pumpAndSettle();
     await tester.enterText(
         find.byKey(const ValueKey<String>('recovery-key-confirm-field')),

@@ -3019,17 +3019,24 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryKeyShowDetail =>
-      'Запишите ова 52 знака на папир и чувајте га на сигурном. Свако ко има овај кључ и вашу лозинку може да преузме ваш налог. Не правите снимак екрана и не чувајте га у разговору.';
+      'Запишите ова 52 знака на папир или их сачувајте у менаџеру лозинки. Свако ко има овај кључ и вашу лозинку може да преузме ваш налог. Не правите снимак екрана и не чувајте га у разговору.';
 
   @override
-  String get recoveryKeyWritten => 'Кључ је записан';
+  String get recoveryKeyWritten => 'Кључ је сачуван';
+
+  @override
+  String get recoveryKeyCopy => 'Копирај за менаџер лозинки';
+
+  @override
+  String get recoveryKeyCopied =>
+      'Копирано. Налепите га сада у менаџер лозинки. Апликација га брише из оставе када наставите.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Унесите кључ за опоравак';
 
   @override
   String get recoveryKeyConfirmDetail =>
-      'Унесите цео кључ са папира да бисте га проверили. Цртице и размаци нису битни.';
+      'Унесите цео кључ са папира или из менаџера лозинки да бисте га проверили. Цртице и размаци нису битни.';
 
   @override
   String get recoveryKeyField => 'Кључ за опоравак';
@@ -3040,6 +3047,20 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryKeyMismatch =>
       'То није приказани кључ. Проверите папир и покушајте поново.';
+
+  @override
+  String recoveryKeyGroupWrong(int group) {
+    return 'Група $group се не поклапа. Проверите је на свом запису.';
+  }
+
+  @override
+  String recoveryKeyGroupsMatched(int count) {
+    return 'Поклапа се $count од 13 група.';
+  }
+
+  @override
+  String get recoveryKeyTooLong =>
+      'Ово је дуже од кључа. Проверите да ли има вишка знакова.';
 
   @override
   String get recoveryKeyShowAgain => 'Прикажи кључ поново';
