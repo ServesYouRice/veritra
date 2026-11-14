@@ -445,6 +445,14 @@ class SettingsScreen extends StatelessWidget {
                       value: state.screenGuardChats,
                       onChanged: state.setScreenGuardChats,
                     ),
+                  // How a call is routed, said once here rather than on
+                  // every call screen (U36).
+                  ListTile(
+                    key: const ValueKey<String>('settings-calls-relay'),
+                    leading: const Icon(Icons.call_outlined),
+                    title: Text(l10n.settingsCallsRelayTitle),
+                    subtitle: Text(l10n.settingsCallsRelayNote),
+                  ),
                 ],
               ),
               if (appearance != null) ...<Widget>[

@@ -621,6 +621,18 @@ abstract class AppLocalizations {
   /// **'1:1 audio/video'**
   String get settingsCallsComingSoonDetail;
 
+  /// No description provided for @settingsCallsRelayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Calls'**
+  String get settingsCallsRelayTitle;
+
+  /// No description provided for @settingsCallsRelayNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Calls go through the server\'s relay, so the other side never sees your network address.'**
+  String get settingsCallsRelayNote;
+
   /// No description provided for @settingsDeleteAccount.
   ///
   /// In en, this message translates to:
@@ -4467,6 +4479,30 @@ abstract class AppLocalizations {
   /// **'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.'**
   String get requestExplanation;
 
+  /// No description provided for @requestSharedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'What they can see'**
+  String get requestSharedTitle;
+
+  /// No description provided for @requestSharedNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Now: they are not told you opened this, and no read receipt is sent.'**
+  String get requestSharedNow;
+
+  /// No description provided for @requestSharedAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'If you accept: they can see when you are typing and, if read receipts are on in Settings, when you read their messages.'**
+  String get requestSharedAccept;
+
+  /// No description provided for @requestSharedDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'If you delete: they are not told.'**
+  String get requestSharedDelete;
+
   /// No description provided for @requestAccept.
   ///
   /// In en, this message translates to:
@@ -5534,12 +5570,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Call in progress'**
   String get callInProgress;
-
-  /// No description provided for @callRelayNote.
-  ///
-  /// In en, this message translates to:
-  /// **'This call goes through the server\'s relay, so the other side never sees your network address.'**
-  String get callRelayNote;
 
   /// No description provided for @callAccept.
   ///

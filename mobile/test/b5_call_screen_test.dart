@@ -57,6 +57,8 @@ void main() {
         .pumpWidget(_app(CallScreen(controller: controller, title: 'Ana')));
     await tester.pump();
     expect(find.byKey(const Key('call-accept')), findsOneWidget);
+    // The relay note moved to Settings (U36).
+    expect(find.textContaining('relay'), findsNothing);
     expect(find.byKey(const Key('call-decline')), findsOneWidget);
     expect(find.text('Incoming call'), findsOneWidget);
     expect(find.byKey(const Key('call-mute')), findsNothing);

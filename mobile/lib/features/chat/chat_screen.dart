@@ -6,7 +6,8 @@ import 'package:file_selector/file_selector.dart' show XFile;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart'
+    show kPrimaryButton, kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
@@ -46,6 +47,7 @@ import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
 import 'poll_widgets.dart';
+import 'sender_colors.dart';
 import '../reports/report_message_screen.dart';
 import 'typing_line.dart';
 import 'voice_notes.dart';
@@ -1605,6 +1607,11 @@ class _MessageList extends StatelessWidget {
                     : () => onMessageActions!(local, mine),
                 // Review M2: a former member's name only when this device
                 // proved the device was that account's.
+                // A former member whose device was not proven keeps no colour
+                // either: nothing the server named for it shows (Review M2).
+                senderColorSeed: local?.c7Former == C7FormerMark.unnamed
+                    ? null
+                    : senderAccountId,
                 senderLabel: local?.c7Former == C7FormerMark.unnamed
                     ? context.l10n.channelHistoryFormerMemberUnnamed
                     : _senderLabel(senderAccountId),
@@ -1952,11 +1959,75 @@ List<double> redactedBarFractions(int byteLength) {
   return shapes[bucket];
 }
 
+/// A swipe to the left across a message opens its actions, as a long-press
+/// does (U36). It only watches the pointer and joins no gesture, so it never
+/// competes with scrolling or the system's swipe back: a short, quick,
+/// mostly horizontal move toward the start of the line counts, anything else
+/// does not.
+class _SwipeForActions extends StatefulWidget {
+  const _SwipeForActions({required this.onSwipe, required this.child});
+
+  final VoidCallback? onSwipe;
+  final Widget child;
+
+  /// How far the finger must travel, in logical pixels.
+  static const double distance = 72;
+
+  /// How far it may drift up or down on the way.
+  static const double drift = 32;
+
+  /// How long it may take.
+  static const Duration within = Duration(milliseconds: 700);
+
+  @override
+  State<_SwipeForActions> createState() => _SwipeForActionsState();
+}
+
+class _SwipeForActionsState extends State<_SwipeForActions> {
+  int? _pointer;
+  Offset _start = Offset.zero;
+  Duration _startedAt = Duration.zero;
+
+  @override
+  Widget build(BuildContext context) {
+    final towardStart =
+        Directionality.of(context) == TextDirection.ltr ? -1.0 : 1.0;
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        // A second finger, or a mouse button, is not a swipe.
+        if (_pointer != null || event.buttons != kPrimaryButton) {
+          _pointer = null;
+          return;
+        }
+        _pointer = event.pointer;
+        _start = event.position;
+        _startedAt = event.timeStamp;
+      },
+      onPointerUp: (event) {
+        if (event.pointer != _pointer) return;
+        _pointer = null;
+        final moved = event.position - _start;
+        if (moved.dx * towardStart >= _SwipeForActions.distance &&
+            moved.dy.abs() <= _SwipeForActions.drift &&
+            event.timeStamp - _startedAt <= _SwipeForActions.within) {
+          widget.onSwipe?.call();
+        }
+      },
+      onPointerCancel: (event) {
+        if (event.pointer == _pointer) _pointer = null;
+      },
+      child: widget.child,
+    );
+  }
+}
+
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     required this.mine,
     required this.senderLabel,
+    this.senderColorSeed,
     required this.showSender,
     this.local,
     this.replyPreview,
@@ -2011,6 +2082,10 @@ class _MessageBubble extends StatelessWidget {
   final List<({String reaction, int count, bool mine})> reactions;
   final bool mine;
   final String senderLabel;
+
+  /// Picks the colour of the sender's name in a group; null: the muted
+  /// default.
+  final String? senderColorSeed;
   final bool showSender;
 
   /// Horizontal padding inside the bubble, doubled — the amount the bars have
@@ -2042,15 +2117,18 @@ class _MessageBubble extends StatelessWidget {
         : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? context.l10n.chatSenderYou : senderLabel;
-    return Listener(
-        onPointerDown: (event) {
-          if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
-        },
-        child: GestureDetector(
-          onLongPress: onActions,
-          child: _bubble(context, theme, scheme, background, foreground, sender,
-              deleted, unverifiable, text),
-        ));
+    return _SwipeForActions(
+      onSwipe: onActions,
+      child: Listener(
+          onPointerDown: (event) {
+            if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
+          },
+          child: GestureDetector(
+            onLongPress: onActions,
+            child: _bubble(context, theme, scheme, background, foreground,
+                sender, deleted, unverifiable, text),
+          )),
+    );
   }
 
   /// The poll of a live poll bubble, when its stored JSON reads.
@@ -2254,8 +2332,14 @@ class _MessageBubble extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 5),
                         child: Text(
                           senderLabel,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                          // Normal small text in the sender's own colour
+                          // (U36), not the capitalised micro style.
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: senderColorSeed == null
+                                ? scheme.onSurfaceVariant
+                                : senderNameColor(
+                                    senderColorSeed!, theme.brightness),
                           ),
                         ),
                       )),

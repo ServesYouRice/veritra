@@ -309,7 +309,6 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
-    final l10n = context.l10n;
     final theme = Theme.of(context);
     final showVideo = _renderersReady && c.video && c.remoteStream != null;
     if (_renderersReady) {
@@ -351,16 +350,6 @@ class _CallScreenState extends State<CallScreen> {
                   Text(_status(c),
                       key: const Key('call-status'),
                       style: theme.textTheme.titleMedium),
-                  const SizedBox(height: BoneSpacing.sm),
-                  Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: BoneSpacing.xl),
-                    child: Text(
-                      l10n.callRelayNote,
-                      style: theme.textTheme.bodySmall,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
                   const Spacer(),
                   if (c.phase == CallPhase.ringingIn)
                     _incomingButtons(c)

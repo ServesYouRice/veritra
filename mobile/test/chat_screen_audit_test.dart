@@ -9,6 +9,7 @@ import 'package:private_messenger/calls/call_controller.dart';
 import 'package:private_messenger/calls/call_service.dart';
 import 'package:private_messenger/features/chat/conversation_details_screen.dart';
 import 'package:private_messenger/features/chat/message_ticks.dart';
+import 'package:private_messenger/features/chat/sender_colors.dart';
 import 'package:private_messenger/ui/theme.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -27,6 +28,7 @@ import 'package:private_messenger/ui/tokens.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'call_service_fakes.dart';
+import 'goldens/golden_harness.dart';
 
 /// UI-audit cards U7, U13, U14, U29 and U36 on the chat screen.
 void main() {
@@ -309,6 +311,143 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       state.dispose();
     });
+  });
+
+  group('U36: small polish', () {
+    testWidgets('a message request says what the sender can see',
+        (tester) async {
+      final state = _state()
+        ..conversations = [
+          Conversation(
+              id: 'conv',
+              kind: 'dm',
+              peerAccountId: 'bob',
+              peerUsername: 'bob',
+              createdBy: 'bob')
+        ];
+      await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      await tester.pumpAndSettle();
+      final card = find.byKey(const Key('request-shared'));
+      expect(card, findsOneWidget);
+      for (final text in <String>[
+        englishL10n.requestSharedTitle,
+        englishL10n.requestSharedNow,
+        englishL10n.requestSharedAccept,
+        englishL10n.requestSharedDelete,
+      ]) {
+        expect(find.descendant(of: card, matching: find.text(text)),
+            findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    testWidgets('a swipe across a message opens its actions', (tester) async {
+      final store = MemoryLocalStore(), state = _state();
+      state.localStoreOverride = store;
+      await _seed(store);
+      await state.refreshHistory('conv');
+      await tester.pumpWidget(
+          MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+      await tester.pumpAndSettle();
+      // Too short, too vertical and the wrong way do nothing.
+      for (final offset in <Offset>[
+        const Offset(-30, 0),
+        const Offset(-120, 80),
+        const Offset(120, 0),
+      ]) {
+        await tester.drag(find.text('hello'), offset, warnIfMissed: false);
+        await tester.pumpAndSettle();
+        expect(find.text(englishL10n.chatCopyText), findsNothing,
+            reason: '$offset');
+      }
+      // Toward the start of the line, far enough and quick enough.
+      await tester.drag(find.text('hello'), const Offset(-140, 4));
+      await tester.pumpAndSettle();
+      expect(find.text(englishL10n.chatCopyText), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    testWidgets('the call relay note lives in Settings, not on a call screen',
+        (tester) async {
+      setWindowSize(tester, phoneSize);
+      final state = await connectedState();
+      await tester.pumpWidget(veritraTestApp(state: state));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.settings_outlined).first);
+      await tester.pumpAndSettle();
+      final note = find.text(englishL10n.settingsCallsRelayNote);
+      await tester.scrollUntilVisible(note, 300,
+          scrollable: find.byType(Scrollable).first);
+      expect(note, findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('settings-calls-relay')),
+          findsOneWidget);
+    });
+
+    for (final brightness in Brightness.values) {
+      testWidgets('group sender names take one colour each, $brightness',
+          (tester) async {
+        // Two senders whose IDs land in different colour slots.
+        final senders = <String>['bob', 'carol', 'dave', 'erin']
+            .where((id) => senderColorSlot(id) != senderColorSlot('bob'))
+            .take(1)
+            .toList()
+          ..insert(0, 'bob');
+        expect(senderColorSlot(senders[0]), isNot(senderColorSlot(senders[1])));
+        final store = MemoryLocalStore(), state = _state();
+        state.localStoreOverride = store;
+        state.conversations = [
+          Conversation(
+              id: 'conv', kind: 'group', title: 'Team', createdBy: 'alice')
+        ];
+        await _seed(store, extra: [
+          for (var i = 0; i < senders.length; i++)
+            InsertMessageEffect(
+                key: 'dev:${senders[i]}',
+                conversationId: 'conv',
+                senderAccountId: senders[i],
+                senderDeviceId: 'dev_${senders[i]}',
+                kind: LocalMessageKind.text,
+                body: 'from ${senders[i]}',
+                createdAt: 2 + i,
+                state: LocalMessageState.received),
+        ]);
+        await state.refreshHistory('conv');
+        await tester.pumpWidget(MaterialApp(
+            theme: ThemeData(brightness: brightness),
+            home: ChatScreen(state: state, conversationId: 'conv')));
+        await tester.pumpAndSettle();
+        Color? nameColor(String id) {
+          final names = find.byWidgetPredicate((widget) =>
+              widget is Text &&
+              widget.data != null &&
+              widget.data!.contains(id.substring(0, 3)) &&
+              widget.style?.fontWeight == FontWeight.w600);
+          expect(names, findsOneWidget, reason: id);
+          return tester.widget<Text>(names).style?.color;
+        }
+
+        expect(nameColor(senders[0]), senderNameColor(senders[0], brightness));
+        expect(nameColor(senders[1]), senderNameColor(senders[1], brightness));
+        expect(nameColor(senders[0]), isNot(nameColor(senders[1])));
+        // Normal small text, not the capitalised micro style.
+        final label = tester.widget<Text>(find.byWidgetPredicate((widget) =>
+            widget is Text &&
+            widget.data != null &&
+            widget.data!.contains(senders[0].substring(0, 3)) &&
+            widget.style?.fontWeight == FontWeight.w600));
+        final textTheme =
+            Theme.of(tester.element(find.byType(ChatScreen))).textTheme;
+        expect(label.style?.fontSize, textTheme.bodySmall?.fontSize);
+        expect(label.style?.letterSpacing, textTheme.bodySmall?.letterSpacing);
+        expect(label.style?.letterSpacing,
+            isNot(textTheme.labelSmall?.letterSpacing));
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+      });
+    }
   });
 
   testWidgets('U7: a long-press on the message text opens the action sheet',

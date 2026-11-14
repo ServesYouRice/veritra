@@ -302,6 +302,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCallsComingSoonDetail => '1:1 audio/video';
 
   @override
+  String get settingsCallsRelayTitle => 'Calls';
+
+  @override
+  String get settingsCallsRelayNote =>
+      'Calls go through the server\'s relay, so the other side never sees your network address.';
+
+  @override
   String get settingsDeleteAccount => 'Delete account';
 
   @override
@@ -2742,6 +2749,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'Nothing from this person is shown or downloaded, and they cannot see that you read anything, until you accept.';
 
   @override
+  String get requestSharedTitle => 'What they can see';
+
+  @override
+  String get requestSharedNow =>
+      'Now: they are not told you opened this, and no read receipt is sent.';
+
+  @override
+  String get requestSharedAccept =>
+      'If you accept: they can see when you are typing and, if read receipts are on in Settings, when you read their messages.';
+
+  @override
+  String get requestSharedDelete => 'If you delete: they are not told.';
+
+  @override
   String get requestAccept => 'Accept';
 
   @override
@@ -3352,10 +3373,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get callInProgress => 'Call in progress';
-
-  @override
-  String get callRelayNote =>
-      'This call goes through the server\'s relay, so the other side never sees your network address.';
 
   @override
   String get callAccept => 'Accept';

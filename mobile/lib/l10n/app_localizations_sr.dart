@@ -303,6 +303,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsCallsComingSoonDetail => 'Аудио и видео позиви 1:1';
 
   @override
+  String get settingsCallsRelayTitle => 'Позиви';
+
+  @override
+  String get settingsCallsRelayNote =>
+      'Позиви иду преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
+
+  @override
   String get settingsDeleteAccount => 'Избриши налог';
 
   @override
@@ -2760,6 +2767,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ништа од ове особе се не приказује нити преузима, и она не може да види да сте нешто прочитали, док не прихватите.';
 
   @override
+  String get requestSharedTitle => 'Шта они могу да виде';
+
+  @override
+  String get requestSharedNow =>
+      'Сада: не знају да сте ово отворили и не шаље се потврда о читању.';
+
+  @override
+  String get requestSharedAccept =>
+      'Ако прихватите: видеће када куцате и, ако су потврде о читању укључене у подешавањима, када прочитате њихове поруке.';
+
+  @override
+  String get requestSharedDelete => 'Ако избришете: не добијају обавештење.';
+
+  @override
   String get requestAccept => 'Прихвати';
 
   @override
@@ -3365,10 +3386,6 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get callInProgress => 'Позив у току';
-
-  @override
-  String get callRelayNote =>
-      'Овај позив иде преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
 
   @override
   String get callAccept => 'Прихвати';
@@ -4960,6 +4977,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get settingsCallsComingSoonDetail => 'Audio i video pozivi 1:1';
+
+  @override
+  String get settingsCallsRelayTitle => 'Pozivi';
+
+  @override
+  String get settingsCallsRelayNote =>
+      'Pozivi idu preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
 
   @override
   String get settingsDeleteAccount => 'Izbriši nalog';
@@ -7422,6 +7446,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ništa od ove osobe se ne prikazuje niti preuzima, i ona ne može da vidi da ste nešto pročitali, dok ne prihvatite.';
 
   @override
+  String get requestSharedTitle => 'Šta oni mogu da vide';
+
+  @override
+  String get requestSharedNow =>
+      'Sada: ne znaju da ste ovo otvorili i ne šalje se potvrda o čitanju.';
+
+  @override
+  String get requestSharedAccept =>
+      'Ako prihvatite: videće kada kucate i, ako su potvrde o čitanju uključene u podešavanjima, kada pročitate njihove poruke.';
+
+  @override
+  String get requestSharedDelete => 'Ako izbrišete: ne dobijaju obaveštenje.';
+
+  @override
   String get requestAccept => 'Prihvati';
 
   @override
@@ -8028,10 +8066,6 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get callInProgress => 'Poziv u toku';
-
-  @override
-  String get callRelayNote =>
-      'Ovaj poziv ide preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
 
   @override
   String get callAccept => 'Prihvati';

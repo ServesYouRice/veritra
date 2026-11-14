@@ -36,10 +36,8 @@ void main() {
                   ]
                 }))));
     await tester.pumpWidget(app('secret'));
-    String visible() => tester
-        .widget<Text>(find.byType(Text))
-        .textSpan!
-        .toPlainText();
+    String visible() =>
+        tester.widget<Text>(find.byType(Text)).textSpan!.toPlainText();
     expect(visible(), '█' * 6);
     await tester.tap(find.byType(Text));
     await tester.pump();

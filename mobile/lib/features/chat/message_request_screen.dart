@@ -56,6 +56,34 @@ class MessageRequestScreen extends StatelessWidget {
             ),
             textAlign: TextAlign.center,
           ),
+          const SizedBox(height: BoneSpacing.lg),
+          // What the sender can learn from each choice (U36), each line
+          // matching what the code does: no receipt before accepting, a
+          // typing signal and the receipt setting after, nothing on delete.
+          Container(
+            key: const Key('request-shared'),
+            padding: const EdgeInsets.all(BoneSpacing.md),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(BoneRadii.md),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(l10n.requestSharedTitle,
+                    style: theme.textTheme.titleSmall),
+                const SizedBox(height: BoneSpacing.sm),
+                Text(l10n.requestSharedNow, style: theme.textTheme.bodyMedium),
+                const SizedBox(height: BoneSpacing.xs),
+                Text(l10n.requestSharedAccept,
+                    style: theme.textTheme.bodyMedium),
+                const SizedBox(height: BoneSpacing.xs),
+                Text(l10n.requestSharedDelete,
+                    style: theme.textTheme.bodyMedium),
+              ],
+            ),
+          ),
           const SizedBox(height: BoneSpacing.xl),
           FilledButton(
             onPressed: () async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/features/chat/chat_list_screen.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
+import 'package:private_messenger/features/chat/sender_colors.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/ui/avatar.dart';
 import 'package:private_messenger/ui/theme.dart';
@@ -127,6 +128,44 @@ void main() {
         expect(BoneColors.ownBubble(theme.brightness),
             isNot(theme.colorScheme.surfaceContainerHigh));
       }
+    });
+  });
+
+  group('sender name colours (U36)', () {
+    test('every colour reads as text on its theme, 4.5:1 or better', () {
+      for (final theme in <ThemeData>[
+        veritraLightTheme(),
+        veritraDarkTheme(),
+      ]) {
+        final scheme = theme.colorScheme;
+        final palette = theme.brightness == Brightness.dark
+            ? senderNameColorsDark
+            : senderNameColorsLight;
+        expect(palette, hasLength(6));
+        for (final color in palette) {
+          // Their bubble, the canvas and the highlight of a jumped-to row.
+          for (final surface in <Color>[
+            scheme.surfaceContainerLow,
+            scheme.surface,
+            compositeColor(scheme.primary.withValues(alpha: 0.14),
+                scheme.surfaceContainerLow),
+          ]) {
+            expect(contrastRatio(color, surface), greaterThanOrEqualTo(4.5),
+                reason: '$color on $surface');
+          }
+        }
+        expect(palette.toSet(), hasLength(6));
+      }
+    });
+
+    test('an account keeps its colour, and the slots spread', () {
+      expect(senderColorSlot('acct_alice'), senderColorSlot('acct_alice'));
+      final slots = <int>{
+        for (var i = 0; i < 300; i++) senderColorSlot('acct_$i'),
+      };
+      expect(slots, hasLength(6));
+      expect(senderNameColor('acct_alice', Brightness.dark),
+          isNot(senderNameColor('acct_alice', Brightness.light)));
     });
   });
 
