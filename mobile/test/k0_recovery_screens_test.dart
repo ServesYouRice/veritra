@@ -352,13 +352,13 @@ void main() {
             readyAt: DateTime.utc(2099, 11, 8, 10)),
       );
     await tester
-        .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
+        .pumpWidget(app(Scaffold(body: RecoveryAttemptCard(state: state))));
     await tester.pumpAndSettle();
     expect(
         find.textContaining('Someone is recovering your account on '
             '“Unknown phone”'),
         findsOneWidget);
-    await tester.tap(find.text('Cancel recovery'));
+    await tester.tap(find.text('This is not me'));
     await tester.pumpAndSettle();
     expect(find.text('Cancel this recovery?'), findsOneWidget);
     await tester.tap(find.descendant(
@@ -379,7 +379,7 @@ void main() {
     await store.saveSetting('k0.password_leak_day', '$scope$today');
     await state.refreshRecoveryNotices();
     await tester
-        .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
+        .pumpWidget(app(Scaffold(body: PasswordLeakBanner(state: state))));
     await tester.pumpAndSettle();
     expect(
         find.text('Your password was used with a wrong recovery key many '

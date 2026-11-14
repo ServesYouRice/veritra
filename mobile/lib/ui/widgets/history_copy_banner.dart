@@ -26,6 +26,8 @@ class HistoryCopyBanner extends StatelessWidget {
 
   final AppState state;
 
+  static bool active(AppState state) => state.historyTransferStatus != null;
+
   @override
   Widget build(BuildContext context) {
     return ListenableSelector<(bool?, HistoryTransferPhase?)>(

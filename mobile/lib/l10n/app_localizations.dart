@@ -96,7 +96,7 @@ abstract class AppLocalizations {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -2726,6 +2726,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Messages paused'**
   String get bannerPaused;
+
+  /// Button under the one notice that is showing, when others are folded behind it.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} more'**
+  String noticesMore(int count);
+
+  /// No description provided for @noticesShowFewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Show fewer'**
+  String get noticesShowFewer;
 
   /// No description provided for @bannerTryAgain.
   ///
@@ -5775,6 +5787,18 @@ abstract class AppLocalizations {
   /// **'Someone is recovering your account on “{device}”, finishing {date}. Not you? Cancel, or change your password or recovery key.'**
   String recoveryPendingNotice(String device, String date);
 
+  /// No description provided for @recoveryPendingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery attempt'**
+  String get recoveryPendingTitle;
+
+  /// No description provided for @recoveryPendingNotMe.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not me'**
+  String get recoveryPendingNotMe;
+
   /// No description provided for @recoveryPendingCancel.
   ///
   /// In en, this message translates to:
@@ -8779,8 +8803,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

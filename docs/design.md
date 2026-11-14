@@ -73,9 +73,24 @@ every Material surface role used by the app. The minimum ratios are:
 
 The contract is covered by `mobile/test/chat_visuals_test.dart` and protects
 both the token values and the surface-role mapping in `theme.dart`.
-The `ConnectionBanner`'s error-container hairline is a decorative status
-boundary; actionable error controls use the opaque `error` border and are
-covered separately.
+The `ConnectionBanner` now sits on a neutral `surfaceContainerHigh` strip
+(U17), so its hairline is the ordinary `outlineVariant`; actionable error
+controls use the opaque `error` border and are covered separately.
+
+**Calm colours, loud only for danger (U17).** Red (`error`,
+`errorContainer`) is kept for real danger: an account-recovery attempt, a
+leaked password, a passkey change, a stopped sync. Offline, connecting,
+"messages waiting" and the hidden-message bubble are neutral surfaces with
+the amber `warning` state colour on the icon, and a failed send keeps the
+own-bubble plum with an amber border and icon. Words always stay in
+`onSurface` or `onSurfaceVariant` (4.5:1 or better), never amber, because
+light amber text does not reach 4.5:1 on the raised surfaces; amber is used
+only for icons and borders (3:1). When several notices show at once the app
+shell folds them into the most urgent one plus an "N more" button
+(`notice_stack.dart`). An account-recovery attempt is never folded: it is its
+own red card with a filled "This is not me" button, which opens the same
+cancel dialog as before. `mobile/test/u17_calm_colours_test.dart` pins the
+tones, the contrast and the folding.
 
 ### The five bone temperatures
 

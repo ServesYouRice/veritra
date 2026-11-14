@@ -603,6 +603,9 @@
   "bannerOffline": "Offline",
   "bannerConnecting": "Connecting…",
   "bannerPaused": "Messages paused",
+  "noticesMore": "{count} more",
+  "@noticesMore": {"description": "Button under the one notice that is showing, when others are folded behind it.", "placeholders": {"count": {"type": "int"}}},
+  "noticesShowFewer": "Show fewer",
   "bannerTryAgain": "Try again",
   "bannerRelink": "Link this device again",
   "bannerRestoreBackup": "Restore from backup",
@@ -1327,6 +1330,8 @@
   "@recoveryPendingNotice": {
     "placeholders": {"device": {"type": "String", "example": "Pixel 9"}, "date": {"type": "String", "example": "8 Nov 2026, 10:00"}}
   },
+  "recoveryPendingTitle": "Account recovery attempt",
+  "recoveryPendingNotMe": "This is not me",
   "recoveryPendingCancel": "Cancel recovery",
   "recoveryCancelTitle": "Cancel this recovery?",
   "recoveryCancelMessage": "The new device will not join your account. If it was not you, change your password too.",
