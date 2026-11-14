@@ -492,7 +492,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInstanceUrl => 'Instance URL';
 
   @override
-  String get connectCheckApproval => 'Check approval';
+  String get connectCheckApproval => 'Check now';
 
   @override
   String get connectLinkInstead => 'Link this device instead';
@@ -517,11 +517,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectScanQr => 'Scan QR code';
 
   @override
-  String get connectVerificationTitle => 'Verification code';
+  String get connectVerificationTitle => 'Type this code on your other device';
 
   @override
   String get connectVerificationMessage =>
-      'Confirm this code on your already-linked device, then check approval below.';
+      'On the device you already use, type this code. Never send it to anyone or read it out to them.';
 
   @override
   String get connectInviteCode => 'Invite code';
@@ -863,9 +863,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -876,9 +875,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1181,7 +1179,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.';
+      'Add a new phone or computer to your account in three steps. On the new device, open Veritra and choose Link this device.';
 
   @override
   String get deviceLinkCreate => 'Create link';
@@ -1202,13 +1200,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'pending',
-      'claimed': 'claimed',
-      'approved': 'approved',
-      'expired': 'expired',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'pending',
+        'claimed': 'claimed',
+        'approved': 'approved',
+        'expired': 'expired',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -1226,7 +1227,70 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkApproveHint =>
-      'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.';
+      'The new device now shows an 8-digit code. Type it here.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Never use a code someone sent you or read out to you. Type only the code you see yourself on the new device\'s screen.';
+
+  @override
+  String get deviceLinkCodeField => 'Code from the new device';
+
+  @override
+  String get deviceLinkCompareTitle => 'Type the code from the new device';
+
+  @override
+  String get deviceLinkStepScan => 'Scan';
+
+  @override
+  String get deviceLinkStepCompare => 'Compare';
+
+  @override
+  String get deviceLinkStepDone => 'Done';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Step $step of 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Scan this code with the new device';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'This code works until $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Waiting for the new device. This screen updates by itself.';
+
+  @override
+  String get deviceLinkCannotScan => 'Cannot scan?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'On the new device, choose to type the link code, then enter this one:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'New device: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Checking the new device. If this does not change, try again.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Your new device is linked';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Your chat history is copied to it, encrypted. Keep both devices online until it finishes.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'This link has ended. Create a new one to link a device.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -1261,7 +1325,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Waiting for your other device to approve. Keep this screen open.';
+      'Waiting for your other device to approve. This screen updates by itself.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -1397,9 +1461,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1407,9 +1470,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1419,9 +1481,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2035,9 +2095,8 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';

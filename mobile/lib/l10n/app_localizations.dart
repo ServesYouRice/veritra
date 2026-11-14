@@ -63,7 +63,7 @@ import 'app_localizations_sr.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,17 +86,17 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-        delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-      ];
+    delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+  ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -948,7 +948,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectCheckApproval.
   ///
   /// In en, this message translates to:
-  /// **'Check approval'**
+  /// **'Check now'**
   String get connectCheckApproval;
 
   /// No description provided for @connectLinkInstead.
@@ -996,13 +996,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectVerificationTitle.
   ///
   /// In en, this message translates to:
-  /// **'Verification code'**
+  /// **'Type this code on your other device'**
   String get connectVerificationTitle;
 
   /// No description provided for @connectVerificationMessage.
   ///
   /// In en, this message translates to:
-  /// **'Confirm this code on your already-linked device, then check approval below.'**
+  /// **'On the device you already use, type this code. Never send it to anyone or read it out to them.'**
   String get connectVerificationMessage;
 
   /// No description provided for @connectInviteCode.
@@ -2100,7 +2100,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkIntro.
   ///
   /// In en, this message translates to:
-  /// **'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.'**
+  /// **'Add a new phone or computer to your account in three steps. On the new device, open Veritra and choose Link this device.'**
   String get deviceLinkIntro;
 
   /// No description provided for @deviceLinkCreate.
@@ -2166,8 +2166,110 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkApproveHint.
   ///
   /// In en, this message translates to:
-  /// **'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.'**
+  /// **'The new device now shows an 8-digit code. Type it here.'**
   String get deviceLinkApproveHint;
+
+  /// No description provided for @deviceLinkApproveWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Never use a code someone sent you or read out to you. Type only the code you see yourself on the new device\'s screen.'**
+  String get deviceLinkApproveWarning;
+
+  /// No description provided for @deviceLinkCodeField.
+  ///
+  /// In en, this message translates to:
+  /// **'Code from the new device'**
+  String get deviceLinkCodeField;
+
+  /// No description provided for @deviceLinkCompareTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the code from the new device'**
+  String get deviceLinkCompareTitle;
+
+  /// No description provided for @deviceLinkStepScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan'**
+  String get deviceLinkStepScan;
+
+  /// No description provided for @deviceLinkStepCompare.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare'**
+  String get deviceLinkStepCompare;
+
+  /// No description provided for @deviceLinkStepDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get deviceLinkStepDone;
+
+  /// No description provided for @deviceLinkStepOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Step {step} of 3: {name}'**
+  String deviceLinkStepOf(int step, String name);
+
+  /// No description provided for @deviceLinkScanTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan this code with the new device'**
+  String get deviceLinkScanTitle;
+
+  /// No description provided for @deviceLinkExpiresAt.
+  ///
+  /// In en, this message translates to:
+  /// **'This code works until {time}.'**
+  String deviceLinkExpiresAt(String time);
+
+  /// No description provided for @deviceLinkWaitingClaim.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the new device. This screen updates by itself.'**
+  String get deviceLinkWaitingClaim;
+
+  /// No description provided for @deviceLinkCannotScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot scan?'**
+  String get deviceLinkCannotScan;
+
+  /// No description provided for @deviceLinkTypeCodeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'On the new device, choose to type the link code, then enter this one:'**
+  String get deviceLinkTypeCodeHint;
+
+  /// No description provided for @deviceLinkNewDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'New device: {name}'**
+  String deviceLinkNewDevice(String name);
+
+  /// No description provided for @deviceLinkChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the new device. If this does not change, try again.'**
+  String get deviceLinkChecking;
+
+  /// No description provided for @deviceLinkDoneTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your new device is linked'**
+  String get deviceLinkDoneTitle;
+
+  /// No description provided for @deviceLinkDoneDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your chat history is copied to it, encrypted. Keep both devices online until it finishes.'**
+  String get deviceLinkDoneDetail;
+
+  /// No description provided for @deviceLinkEndedHere.
+  ///
+  /// In en, this message translates to:
+  /// **'This link has ended. Create a new one to link a device.'**
+  String get deviceLinkEndedHere;
 
   /// No description provided for @deviceLinkUnavailableHere.
   ///
@@ -2220,7 +2322,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkWaitingApproval.
   ///
   /// In en, this message translates to:
-  /// **'Waiting for your other device to approve. Keep this screen open.'**
+  /// **'Waiting for your other device to approve. This screen updates by itself.'**
   String get deviceLinkWaitingApproval;
 
   /// No description provided for @deviceLinkWaitingCode.
@@ -7693,9 +7795,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-    'an issue with the localizations generation tool. Please file an issue '
-    'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
-  );
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
 }

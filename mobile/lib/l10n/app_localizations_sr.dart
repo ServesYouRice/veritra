@@ -493,7 +493,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectInstanceUrl => 'URL инстанце';
 
   @override
-  String get connectCheckApproval => 'Провери одобрење';
+  String get connectCheckApproval => 'Провери сада';
 
   @override
   String get connectLinkInstead => 'Уместо тога повежи овај уређај';
@@ -518,11 +518,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get connectScanQr => 'Скенирај QR код';
 
   @override
-  String get connectVerificationTitle => 'Верификациони код';
+  String get connectVerificationTitle => 'Унесите овај код на другом уређају';
 
   @override
   String get connectVerificationMessage =>
-      'Потврдите овај код на свом већ повезаном уређају, а затим проверите одобрење испод.';
+      'Унесите овај код на уређају који већ користите. Никоме га не шаљите нити читајте наглас.';
 
   @override
   String get connectInviteCode => 'Код позивнице';
@@ -869,9 +869,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -882,9 +881,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1191,7 +1189,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Генеришите једнократни код, унесите га на новом уређају, а затим га овде одобрите помоћу верификационог кода који приказује нови уређај. Ваша историја разговора се затим шифрована копира на нови уређај, па оба уређаја држите на мрежи.';
+      'Додајте нови телефон или рачунар свом налогу у три корака. На новом уређају отворите Veritra и изаберите Повежите овај уређај.';
 
   @override
   String get deviceLinkCreate => 'Направи везу';
@@ -1212,13 +1210,16 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'на чекању',
-      'claimed': 'преузето',
-      'approved': 'одобрено',
-      'expired': 'истекло',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'на чекању',
+        'claimed': 'преузето',
+        'approved': 'одобрено',
+        'expired': 'истекло',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -1236,7 +1237,70 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkApproveHint =>
-      'Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.';
+      'Нови уређај сада приказује осмоцифрени код. Унесите га овде.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Никада не користите код који вам је неко послао или прочитао. Унесите само код који сами видите на екрану новог уређаја.';
+
+  @override
+  String get deviceLinkCodeField => 'Код са новог уређаја';
+
+  @override
+  String get deviceLinkCompareTitle => 'Унесите код са новог уређаја';
+
+  @override
+  String get deviceLinkStepScan => 'Скенирај';
+
+  @override
+  String get deviceLinkStepCompare => 'Упореди';
+
+  @override
+  String get deviceLinkStepDone => 'Готово';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Корак $step од 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Скенирајте овај код новим уређајем';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'Овај код важи до $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Чека се нови уређај. Овај екран се сам освежава.';
+
+  @override
+  String get deviceLinkCannotScan => 'Не можете да скенирате?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'На новом уређају изаберите унос кода за повезивање, па унесите овај:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'Нови уређај: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Нови уређај се проверава. Ако се ово не промени, покушајте поново.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Нови уређај је повезан';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Историја разговора се шифрована копира на њега. Држите оба уређаја на мрежи док се не заврши.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'Ова веза је истекла. Направите нову да бисте повезали уређај.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -1271,7 +1335,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Чека се да ваш други уређај одобри. Оставите овај екран отворен.';
+      'Чека се да ваш други уређај одобри. Овај екран се сам освежава.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -1407,9 +1471,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1417,9 +1480,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1429,9 +1491,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2050,9 +2110,8 @@ class AppLocalizationsSr extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -5150,7 +5209,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectInstanceUrl => 'URL instance';
 
   @override
-  String get connectCheckApproval => 'Proveri odobrenje';
+  String get connectCheckApproval => 'Proveri sada';
 
   @override
   String get connectLinkInstead => 'Umesto toga poveži ovaj uređaj';
@@ -5175,11 +5234,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get connectScanQr => 'Skeniraj QR kod';
 
   @override
-  String get connectVerificationTitle => 'Verifikacioni kod';
+  String get connectVerificationTitle => 'Unesite ovaj kod na drugom uređaju';
 
   @override
   String get connectVerificationMessage =>
-      'Potvrdite ovaj kod na svom već povezanom uređaju, a zatim proverite odobrenje ispod.';
+      'Unesite ovaj kod na uređaju koji već koristite. Nikome ga ne šaljite niti čitajte naglas.';
 
   @override
   String get connectInviteCode => 'Kod pozivnice';
@@ -5526,9 +5585,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5539,9 +5597,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5848,7 +5905,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkIntro =>
-      'Generišite jednokratni kod, unesite ga na novom uređaju, a zatim ga ovde odobrite pomoću verifikacionog koda koji prikazuje novi uređaj. Vaša istorija razgovora se zatim šifrovana kopira na novi uređaj, pa oba uređaja držite na mreži.';
+      'Dodajte novi telefon ili računar svom nalogu u tri koraka. Na novom uređaju otvorite Veritra i izaberite Povežite ovaj uređaj.';
 
   @override
   String get deviceLinkCreate => 'Napravi vezu';
@@ -5869,13 +5926,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'na čekanju',
-      'claimed': 'preuzeto',
-      'approved': 'odobreno',
-      'expired': 'isteklo',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'na čekanju',
+        'claimed': 'preuzeto',
+        'approved': 'odobreno',
+        'expired': 'isteklo',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -5893,7 +5953,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkApproveHint =>
-      'Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.';
+      'Novi uređaj sada prikazuje osmocifreni kod. Unesite ga ovde.';
+
+  @override
+  String get deviceLinkApproveWarning =>
+      'Nikada ne koristite kod koji vam je neko poslao ili pročitao. Unesite samo kod koji sami vidite na ekranu novog uređaja.';
+
+  @override
+  String get deviceLinkCodeField => 'Kod sa novog uređaja';
+
+  @override
+  String get deviceLinkCompareTitle => 'Unesite kod sa novog uređaja';
+
+  @override
+  String get deviceLinkStepScan => 'Skeniraj';
+
+  @override
+  String get deviceLinkStepCompare => 'Uporedi';
+
+  @override
+  String get deviceLinkStepDone => 'Gotovo';
+
+  @override
+  String deviceLinkStepOf(int step, String name) {
+    return 'Korak $step od 3: $name';
+  }
+
+  @override
+  String get deviceLinkScanTitle => 'Skenirajte ovaj kod novim uređajem';
+
+  @override
+  String deviceLinkExpiresAt(String time) {
+    return 'Ovaj kod važi do $time.';
+  }
+
+  @override
+  String get deviceLinkWaitingClaim =>
+      'Čeka se novi uređaj. Ovaj ekran se sam osvežava.';
+
+  @override
+  String get deviceLinkCannotScan => 'Ne možete da skenirate?';
+
+  @override
+  String get deviceLinkTypeCodeHint =>
+      'Na novom uređaju izaberite unos koda za povezivanje, pa unesite ovaj:';
+
+  @override
+  String deviceLinkNewDevice(String name) {
+    return 'Novi uređaj: $name';
+  }
+
+  @override
+  String get deviceLinkChecking =>
+      'Novi uređaj se proverava. Ako se ovo ne promeni, pokušajte ponovo.';
+
+  @override
+  String get deviceLinkDoneTitle => 'Novi uređaj je povezan';
+
+  @override
+  String get deviceLinkDoneDetail =>
+      'Istorija razgovora se šifrovana kopira na njega. Držite oba uređaja na mreži dok se ne završi.';
+
+  @override
+  String get deviceLinkEndedHere =>
+      'Ova veza je istekla. Napravite novu da biste povezali uređaj.';
 
   @override
   String get deviceLinkUnavailableHere =>
@@ -5928,7 +6051,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkWaitingApproval =>
-      'Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.';
+      'Čeka se da vaš drugi uređaj odobri. Ovaj ekran se sam osvežava.';
 
   @override
   String get deviceLinkWaitingCode =>
@@ -6064,9 +6187,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -6074,9 +6196,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -6086,9 +6207,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-          locale: localeName,
-          decimalDigits: 1,
-        );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -6707,9 +6826,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
