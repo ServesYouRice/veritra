@@ -2427,7 +2427,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatPausedNotice =>
-      'Слање је овде паузирано: сервер је одбио ажурирање шифровања за овај разговор. Остали разговори и даље раде.';
+      'Слање је овде паузирано: ажурирање шифровања за овај разговор није могло да се пошаље. Покушајте поново или га одбаците. Остали разговори и даље раде.';
+
+  @override
+  String get chatPausedDiscard => 'Одбаци ажурирање';
 
   @override
   String get chatSyncPausedNotice =>
@@ -7762,7 +7765,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatPausedNotice =>
-      'Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.';
+      'Slanje je ovde pauzirano: ažuriranje šifrovanja za ovaj razgovor nije moglo da se pošalje. Pokušajte ponovo ili ga odbacite. Ostali razgovori i dalje rade.';
+
+  @override
+  String get chatPausedDiscard => 'Odbaci ažuriranje';
 
   @override
   String get chatSyncPausedNotice =>

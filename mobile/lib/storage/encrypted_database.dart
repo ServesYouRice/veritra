@@ -2384,6 +2384,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             <Object?>[idempotencyKey]);
       });
 
+  Future<void> retryMlsOutbox(String idempotencyKey) => transaction(() async {
+        await (update(localMlsOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .write(const LocalMlsOutboxEntriesCompanion(
+          terminal: Value(false),
+          nextAttemptAt: Value(null),
+        ));
+      });
+
   Future<void> deleteMlsOutbox(String idempotencyKey) => transaction(() async {
         await (delete(localMlsOutboxEntries)
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))

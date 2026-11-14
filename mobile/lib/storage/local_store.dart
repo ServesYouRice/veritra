@@ -924,6 +924,10 @@ abstract class LocalStore {
     required bool terminal,
     DateTime? nextAttemptAt,
   });
+
+  /// D134: the person asked to send a terminal MLS outbox item again. It
+  /// becomes due at once; its attempt count and last failure class stay.
+  Future<void> retryPendingMlsMessage(String idempotencyKey);
   Future<void> removePendingMlsMessage(String idempotencyKey);
   Future<void> commitOutgoingApplicationTransition(
       OutgoingApplicationStateTransition transition);
@@ -2206,6 +2210,22 @@ class MemoryLocalStore implements LocalStore {
       failureClass: failureClass,
       terminal: terminal,
       nextAttemptAt: nextAttemptAt?.toUtc(),
+    );
+  }
+
+  @override
+  Future<void> retryPendingMlsMessage(String idempotencyKey) async {
+    final existing = _mlsOutbox[idempotencyKey];
+    if (existing == null) return;
+    _mlsOutbox[idempotencyKey] = PendingMlsMessage(
+      idempotencyKey: existing.idempotencyKey,
+      conversationId: existing.conversationId,
+      kind: existing.kind,
+      payload: existing.payload,
+      recipientDeviceId: existing.recipientDeviceId,
+      revocationDeviceId: existing.revocationDeviceId,
+      attemptCount: existing.attemptCount,
+      failureClass: existing.failureClass,
     );
   }
 
@@ -3961,6 +3981,11 @@ class SecureLocalStore implements LocalStore {
       terminal: terminal,
       nextAttemptAt: nextAttemptAt?.toUtc().millisecondsSinceEpoch,
     );
+  }
+
+  @override
+  Future<void> retryPendingMlsMessage(String idempotencyKey) async {
+    await (await _database()).retryMlsOutbox(idempotencyKey);
   }
 
   @override

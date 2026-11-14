@@ -476,6 +476,176 @@ void main() {
     });
   });
 
+  group('D134: a stuck encryption update is retried or discarded', () {
+    // Queues one commit bundle for conv_a whose first send fails locally,
+    // so it ends terminal and pauses the conversation. An application
+    // message queued behind it waits, unless [held] is false.
+    Future<_Harness> stuck({
+      List<int>? payload,
+      List<MlsDeviceRef> removed = const <MlsDeviceRef>[],
+      bool held = true,
+    }) async {
+      final h = await _Harness.start(
+          pending: const <String>{},
+          refuseOnce: <Object>[ArgumentError('bad bundle')]);
+      await _settle();
+      await _queue(h.store, <PendingMlsMessage>[
+        PendingMlsMessage(
+          idempotencyKey: 'b1',
+          conversationId: 'conv_a',
+          kind: MlsCommitBundle.kind,
+          payload: payload ??
+              MlsCommitBundle(
+                epoch: 3,
+                commit: const <int>[1],
+                removed: removed,
+              ).encode(),
+        ),
+      ]);
+      if (held) {
+        await h.store.enqueueEnvelope(MessageEnvelope(
+          conversationId: 'conv_a',
+          idempotencyKey: 'app1',
+          ciphertext: const <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+        ));
+      }
+      h.sync.frame();
+      await _waitFor(() => h.state.mlsConversationFailed('conv_a'));
+      expect((await h.store.pendingMlsMessages()).single.terminal, isTrue);
+      return h;
+    }
+
+    test('nothing clears the pause by itself', () async {
+      final h = await stuck();
+      await h.frames(const Duration(milliseconds: 1500));
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.api.envelopes, isEmpty);
+      h.state.dispose();
+    });
+
+    test('Retry sends it again under its key, and held messages follow',
+        () async {
+      final h = await stuck();
+      await h.state.retryMlsUpdate('conv_a');
+      expect(h.api.bundleKeys, <String>['b1', 'b1']);
+      expect(h.crypto.completed, 1);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(await h.store.pendingMlsMessages(), isEmpty);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('a retry that fails the same way pauses again', () async {
+      final h = await stuck(payload: const <int>[1]);
+      await h.state.retryMlsUpdate('conv_a');
+      final record = (await h.store.pendingMlsMessages()).single;
+      expect(record.terminal, isTrue);
+      expect(record.attemptCount, 2);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect(h.api.envelopes, isEmpty);
+      h.state.dispose();
+    });
+
+    test('Discard drops the staged commit unsent, and held messages follow',
+        () async {
+      final h = await stuck();
+      await h.state.discardMlsUpdate('conv_a');
+      expect(h.crypto.abandoned, 1);
+      expect(h.crypto.completed, 0);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(await h.store.pendingMlsMessages(), isEmpty);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('an update that no longer decodes can be discarded', () async {
+      final h = await stuck(payload: const <int>[1]);
+      await h.state.discardMlsUpdate('conv_a');
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('Discard leaves alone an update a retry is sending', () async {
+      final h = await stuck();
+      h.api.hangBundles = true;
+      unawaited(h.state.retryMlsUpdate('conv_a'));
+      await _waitFor(() => h.api.bundleKeys.length == 2);
+      await h.state.discardMlsUpdate('conv_a');
+      expect(h.crypto.abandoned, 0);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'b1');
+      expect(queued.terminal, isFalse);
+      h.state.dispose();
+    });
+
+    test('a discarded removal keeps sends held until it is made again',
+        () async {
+      final h = await stuck(removed: const <MlsDeviceRef>[_bob], held: false);
+      expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
+      // The server still lists the removal: the commit never reached it.
+      h.api.pendingRemoves.add('conv_a');
+      await h.state.discardMlsUpdate('conv_a');
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(h.state.sendHeldForRemoval('conv_a'), isTrue);
+      // Reconcile makes the removal again, after the change's backoff.
+      await _waitFor(() => h.crypto.completed == 1);
+      expect(h.api.bundles, <String>['conv_a', 'conv_a']);
+      h.state.dispose();
+    });
+
+    test('a discarded revocation commit is made again by its coordinator',
+        () async {
+      const gone = (accountId: 'acct_me', deviceId: 'dev_gone');
+      final h = await stuck(
+          payload: const MlsCommitBundle(
+            epoch: 3,
+            commit: <int>[1],
+            removed: <MlsDeviceRef>[gone],
+            revocationDeviceId: 'dev_gone',
+          ).encode(),
+          held: false);
+      // The server still waits for this device to revoke dev_gone.
+      h.api.revocationsHook = () async => <MlsRevocation>[
+            MlsRevocation(
+              conversationId: 'conv_a',
+              revokedDeviceId: 'dev_gone',
+              revokedAccountId: 'acct_me',
+              coordinatorDeviceId: 'dev_me',
+              state: h.api.revoked.contains('conv_a')
+                  ? 'commit_submitted'
+                  : 'pending',
+              commitMessageId:
+                  h.api.revoked.contains('conv_a') ? 'mls_rev1' : null,
+              requestedAt: DateTime.utc(2026, 10, 31),
+            ),
+          ];
+      expect(h.crypto.revocationCommits, 0);
+      await h.state.discardMlsUpdate('conv_a');
+      expect(h.crypto.abandoned, 1);
+      await _waitFor(() => h.api.revoked.contains('conv_a'));
+      expect(h.crypto.revocationCommits, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      h.state.dispose();
+    });
+
+    test('only a paused conversation is touched', () async {
+      final h = await stuck();
+      await h.state.retryMlsUpdate('conv_b');
+      await h.state.discardMlsUpdate('conv_b');
+      expect(h.crypto.abandoned, 0);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+  });
+
   group('MLS catch-up failures stay isolated', () {
     test('a change that fails to stage backs off; later changes still go',
         () async {
@@ -677,10 +847,14 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   final Map<String, int> serverEpochs = <String, int>{};
   final Set<String> pendingAdds = <String>{};
+
+  /// Conversations whose pending change also removes `acct_bob`.
+  final Set<String> pendingRemoves = <String>{};
   ApiException Function()? refuse;
   final List<Object> bundleFailures = <Object>[];
   final List<String> claims = <String>[];
   final List<String> bundles = <String>[];
+  final List<String> bundleKeys = <String>[];
   final List<String> messages = <String>[];
   final List<String> envelopes = <String>[];
   final Map<String, Object> messageFailures = <String, Object>{};
@@ -749,12 +923,17 @@ class _Api extends ApiClient with LegacySyncPageFake {
     await _network();
     pendingChangeCalls++;
     return <MlsPendingChange>[
-      for (final conversationId in pendingAdds.toList()..sort())
+      for (final conversationId
+          in {...pendingAdds, ...pendingRemoves}.toList()..sort())
         MlsPendingChange(
           conversationId: conversationId,
           epoch: epochOf(conversationId),
-          add: const <MlsDeviceRef>[_bob],
-          remove: const <MlsDeviceRef>[],
+          add: pendingAdds.contains(conversationId)
+              ? const <MlsDeviceRef>[_bob]
+              : const <MlsDeviceRef>[],
+          remove: pendingRemoves.contains(conversationId)
+              ? const <MlsDeviceRef>[_bob]
+              : const <MlsDeviceRef>[],
         ),
     ];
   }
@@ -788,6 +967,7 @@ class _Api extends ApiClient with LegacySyncPageFake {
   }) async {
     await _network();
     bundles.add(conversationId);
+    bundleKeys.add(idempotencyKey);
     if (hangBundles) await Completer<void>().future;
     onBundle?.call(conversationId, bundle);
     final refusal = refuse;
@@ -795,6 +975,7 @@ class _Api extends ApiClient with LegacySyncPageFake {
     if (bundleFailures.isNotEmpty) throw bundleFailures.removeAt(0);
     serverEpochs[conversationId] = bundle.epoch + 1;
     pendingAdds.remove(conversationId);
+    if (bundle.removed.isNotEmpty) pendingRemoves.remove(conversationId);
     return bundle.epoch + 1;
   }
 

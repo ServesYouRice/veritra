@@ -2408,7 +2408,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatPausedNotice =>
-      'Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.';
+      'Sending is paused here: an encryption update for this conversation could not be sent. Try it again, or discard it. Other conversations still work.';
+
+  @override
+  String get chatPausedDiscard => 'Discard update';
 
   @override
   String get chatSyncPausedNotice =>

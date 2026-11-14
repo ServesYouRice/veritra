@@ -554,7 +554,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     else if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
-                      const _PausedConversationNotice()
+                      _PausedConversationNotice(
+                        state: widget.state,
+                        conversationId: conversation.id,
+                      )
                     else if (conversation != null &&
                         widget.state.sendHeldForRemoval(conversation.id))
                       const _RemovalHoldNotice(),
@@ -2930,27 +2933,60 @@ class _Composer extends StatelessWidget {
   }
 }
 
-/// Shown when the server rejected an encryption update for this
-/// conversation (I34). The update stays queued so later messages cannot
-/// overtake it; sending here is paused until the device recovers.
+/// Shown when an encryption update for this conversation failed for good
+/// (I34): the server refused it or this device could not send it. The
+/// update stays queued so later messages cannot overtake it, and sending
+/// here waits until the person tries it again or discards it (D134).
 class _PausedConversationNotice extends StatelessWidget {
-  const _PausedConversationNotice();
+  const _PausedConversationNotice({
+    required this.state,
+    required this.conversationId,
+  });
+
+  final AppState state;
+  final String conversationId;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final busy = state.isBusy(Ops.send);
     return Semantics(
       liveRegion: true,
+      container: true,
       child: Container(
+        key: const ValueKey('mls-paused-notice'),
         width: double.infinity,
         color: scheme.errorContainer,
         padding: const EdgeInsets.symmetric(
           horizontal: BoneSpacing.gutter,
           vertical: BoneSpacing.sm,
         ),
-        child: Text(
-          context.l10n.chatPausedNotice,
-          style: TextStyle(color: scheme.onErrorContainer),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              context.l10n.chatPausedNotice,
+              style: TextStyle(color: scheme.onErrorContainer),
+            ),
+            Wrap(
+              spacing: BoneSpacing.sm,
+              children: <Widget>[
+                TextButton(
+                  key: const ValueKey('mls-paused-retry'),
+                  onPressed:
+                      busy ? null : () => state.retryMlsUpdate(conversationId),
+                  child: Text(context.l10n.bannerTryAgain),
+                ),
+                TextButton(
+                  key: const ValueKey('mls-paused-discard'),
+                  onPressed: busy
+                      ? null
+                      : () => state.discardMlsUpdate(conversationId),
+                  child: Text(context.l10n.chatPausedDiscard),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

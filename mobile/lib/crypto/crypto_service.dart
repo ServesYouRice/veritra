@@ -70,8 +70,9 @@ abstract class MlsConversationCryptoService implements CryptoService {
   /// outbox item in one step.
   Future<void> completeCommitBundle(PendingMlsMessage bundle);
 
-  /// The server refused the queued commit [bundle] (another commit won):
-  /// drop the staged commit and the outbox item in one step.
+  /// The server refused the queued commit [bundle] (another commit won), or
+  /// the person discarded it after it failed for good (D134): drop the
+  /// staged commit and the outbox item in one step.
   Future<void> abandonCommitBundle(PendingMlsMessage bundle);
 
   /// The local epoch of a group and whether a staged commit waits, or null

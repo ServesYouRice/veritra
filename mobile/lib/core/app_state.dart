@@ -10269,8 +10269,8 @@ class AppState extends ChangeNotifier
   /// rejections are terminal, and so are local errors that cannot pass by
   /// themselves: an item that does not decode, a bad argument, a durable
   /// storage error (TASK-052). They pause the conversation, with the item
-  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
-  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// kept, until the person retries or discards it (D134, bug-hunt
+  /// Q-006). Connection problems, busy servers, a malformed
   /// response, transient storage errors and unknown errors retry with
   /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
@@ -10412,10 +10412,126 @@ class AppState extends ChangeNotifier
     });
   }
 
-  /// Conversations whose MLS control message the server rejected (I34).
-  /// They stay paused, with the message kept, until the device recovers.
+  /// Conversations whose MLS control message failed for good (I34): the
+  /// server refused it, or this device could not send it. They stay paused,
+  /// with the message kept so nothing overtakes it, until the person picks
+  /// [retryMlsUpdate] or [discardMlsUpdate] (D134), or leaves the chat.
   bool mlsConversationFailed(String conversationId) =>
       _failedMlsConversations.contains(conversationId);
+
+  /// Marks [conversationIds] as paused by a failed control message, for
+  /// widget tests.
+  @visibleForTesting
+  void debugMlsConversationFailed(Set<String> conversationIds) {
+    _failedMlsConversations
+      ..clear()
+      ..addAll(conversationIds);
+    notifyListeners();
+  }
+
+  /// D134 (bug-hunt c6ed/Q-006): sends the control message that pauses
+  /// [conversationId] again, under its own idempotency key, so a server that
+  /// already took it answers with the original result. The terminal mark is
+  /// cleared inside the session queue, so a [discardMlsUpdate] queued behind
+  /// this finds the message in flight and leaves it alone. Completes after
+  /// the outbox pass that carries it; failing again pauses again.
+  Future<void> retryMlsUpdate(String conversationId) async {
+    final owner = session;
+    if (owner == null || _mlsCrypto == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var settle = false;
+    await _runScoped(Ops.send, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null) return;
+      await localStore.retryPendingMlsMessage(head.idempotencyKey);
+      settle = true;
+    });
+    if (settle && _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+  }
+
+  /// D134: drops the commit bundle that pauses [conversationId], the way a
+  /// server refusal does (card I51). Safe for ordering: a terminal item was
+  /// never accepted (the server refused it, or it failed here before or at
+  /// the request), its commit was staged and never merged, and no later
+  /// commit can be staged on top of it, so this device stays at the group's
+  /// epoch and every message queued behind it stays valid. What it carried
+  /// fares as after a refusal: a membership change the server still lists
+  /// is made again by reconcile after its backoff, with sends held while it
+  /// removes someone (D68); a revocation is made again by its coordinator
+  /// while the server lists it pending; a self-update waits out its
+  /// backoff; a role change is lost and must be made again; and a group's
+  /// first bundle (epoch 0) never reaches the server. Only a message still
+  /// terminal inside the session queue is dropped, never one a retry is
+  /// sending. Completes after the outbox pass that follows, which releases
+  /// held messages.
+  Future<void> discardMlsUpdate(String conversationId) async {
+    final owner = session;
+    final mls = _mlsCrypto;
+    if (owner == null || mls == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var settle = false;
+    await _runScoped(Ops.send, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null) return;
+      // Only commit bundles are queued; their commit merges on acceptance.
+      // Any other kind cannot be shown to be unmerged here, so it stays,
+      // and leaving the chat (D70) is the way out.
+      if (head.kind != MlsCommitBundle.kind) {
+        throw StateError('only a commit bundle can be discarded');
+      }
+      MlsCommitBundle? bundle;
+      try {
+        bundle = MlsCommitBundle.decode(head.payload);
+      } on FormatException {
+        bundle = null;
+      }
+      // D68: the removal stays open once its commit is dropped. Record the
+      // hold from the queued bundle first, so no send slips out before
+      // reconcile makes the removal again.
+      if (bundle != null &&
+          bundle.removed.isNotEmpty &&
+          bundle.revocationDeviceId == null) {
+        await _heldForRemoval(conversationId);
+      }
+      await mls.abandonCommitBundle(head);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // The same follow-up as a refusal: a self-update waits out its
+      // backoff; a membership change backs off and is reconciled again.
+      if (bundle != null && bundle.isUpdateOnly) {
+        _selfUpdatePolicyFor(owner)?.recordBackoff(
+            conversationId, DateTime.now(), MlsSelfUpdatePolicy.refusedBackoff);
+        await _saveSelfUpdates();
+      } else {
+        _mlsBundleRefused(head);
+        _mlsReconcileRequested = true;
+        unawaited(_catchUpSyncEvents());
+      }
+      settle = true;
+    });
+    if (settle && _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+  }
+
+  /// The first queued control message of [conversationId] if it is the
+  /// terminal one that pauses it; null otherwise, or once [owner]'s session
+  /// ended. Read from the store inside the session queue.
+  Future<PendingMlsMessage?> _pausedMlsHead(
+      String conversationId, Session owner, int ownerGeneration) async {
+    if (!_syncOwnerActive(owner, ownerGeneration)) return null;
+    final head = (await localStore.pendingMlsMessages())
+        .where((message) => message.conversationId == conversationId)
+        .firstOrNull;
+    if (head == null ||
+        !head.terminal ||
+        _mlsAcceptedUnfinished.contains(head.idempotencyKey) ||
+        !_syncOwnerActive(owner, ownerGeneration)) {
+      return null;
+    }
+    return head;
+  }
 
   static bool _sameSetOf(Set<String> left, Set<String> right) =>
       left.length == right.length && left.containsAll(right);

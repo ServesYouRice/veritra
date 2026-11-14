@@ -891,6 +891,18 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END
     expect(items[1].terminal, isTrue);
     expect(items[1].nextAttemptAt, isNull);
     expect(items[2].attemptCount, 0);
+
+    // D134: Retry makes a terminal item due again, in its place, keeping
+    // its count and last failure.
+    await restarted.retryPendingMlsMessage('mm_second');
+    final retried = await restarted.pendingMlsMessages();
+    expect(retried.map((item) => item.idempotencyKey),
+        <String>['zz_first', 'mm_second', 'aa_third', '00_fourth']);
+    expect(retried[1].terminal, isFalse);
+    expect(retried[1].nextAttemptAt, isNull);
+    expect(retried[1].attemptCount, 1);
+    expect(retried[1].failureClass, 'terminal:403:forbidden');
+    expect(retried[0].nextAttemptAt, due);
   });
 
   test('an applied MLS control message is found by its server ID', () async {

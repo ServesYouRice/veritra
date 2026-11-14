@@ -426,6 +426,37 @@ void main() {
     expect((await bob.history()).last.body, 'converged');
   }, skip: skip);
 
+  test('D134: a discarded bundle that no longer decodes drops its commit',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+    await _startConversation(alice, bob);
+    await bob.service.stageMembershipChange('conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: true));
+
+    // The queued entry as the outbox would read it with a damaged payload:
+    // its epoch is unknown, but it is the group's one queued bundle.
+    final queued = (await bob.store.pendingMlsMessages()).single;
+    await bob.service.abandonCommitBundle(PendingMlsMessage(
+      idempotencyKey: queued.idempotencyKey,
+      conversationId: queued.conversationId,
+      kind: queued.kind,
+      payload: const <int>[1],
+      terminal: true,
+    ));
+    expect(await bob.store.pendingMlsMessages(), isEmpty);
+    expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
+
+    // Bob never left Alice's epoch, so the chat goes on.
+    final after = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'still here'});
+    await bob.receive(alice, after);
+    expect((await bob.history()).last.body, 'still here');
+  }, skip: skip);
+
   test('an own commit echo merges the staged commit once', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
