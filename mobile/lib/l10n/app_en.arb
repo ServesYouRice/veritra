@@ -414,6 +414,8 @@
   "communityChannelCount": "{count, plural, =1{1 channel} other{{count} channels}}",
   "@communityChannelCount": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "communityNewChannel": "New channel",
+  "communityActionsTooltip": "Actions for {community}",
+  "@communityActionsTooltip": {"description": "Label of the menu on a community card that holds edit, categories, roles, reports and new channel.", "placeholders": {"community": {"type": "String"}}},
   "communityNoChannelsHint": "Use + to create the first one.",
   "communityPlaceholderName": "Community",
   "channelPlaceholderName": "Channel",

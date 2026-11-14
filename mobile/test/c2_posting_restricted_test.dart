@@ -673,9 +673,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // No "New channel" icon button for member
-      expect(find.byTooltip(AppLocalizationsEn().communityNewChannel),
-          findsNothing);
+      // U1: one actions menu holds them; a member's has no "New channel".
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      expect(find.text(AppLocalizationsEn().communityNewChannel), findsNothing);
+      await tester.tapAt(const Offset(2, 2));
+      await tester.pumpAndSettle();
 
       // 2. As Admin
       final adminState = createAppState(api: api, accountId: 'acct_admin')
@@ -700,9 +703,11 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // "New channel" icon button IS shown for admin
-      expect(find.byTooltip(AppLocalizationsEn().communityNewChannel),
-          findsOneWidget);
+      // "New channel" is in the admin's actions menu.
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      expect(
+          find.text(AppLocalizationsEn().communityNewChannel), findsOneWidget);
     });
   });
 

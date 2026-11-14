@@ -330,6 +330,7 @@
   "communityNoChannels": "Још нема канала",
   "communityChannelCount": "{count, plural, one{{count} канал} few{{count} канала} other{{count} канала}}",
   "communityNewChannel": "Нови канал",
+  "communityActionsTooltip": "Радње за {community}",
   "communityNoChannelsHint": "Користите + да направите први.",
   "communityPlaceholderName": "Заједница",
   "channelPlaceholderName": "Канал",

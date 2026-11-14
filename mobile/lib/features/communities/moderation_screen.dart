@@ -126,8 +126,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
       _loading = false;
       // Any part that did not load fails the whole screen: a missing list
       // must never read as an empty one.
-      _failed =
-          _moderation == null ||
+      _failed = _moderation == null ||
           _bans == null ||
           (widget.canManageInvites && _events == null);
       _names = <String, String>{
@@ -215,8 +214,8 @@ class _ModerationScreenState extends State<ModerationScreen> {
           body: _loading
               ? const Center(child: CircularProgressIndicator())
               : _failed
-              ? _LoadFailed(onRetry: _load)
-              : _content(context, l10n, busy: busy, error: error),
+                  ? _LoadFailed(onRetry: _load)
+                  : _content(context, l10n, busy: busy, error: error),
         );
       },
     );

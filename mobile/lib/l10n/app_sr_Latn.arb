@@ -306,6 +306,7 @@
   "communityNoChannels": "Još nema kanala",
   "communityChannelCount": "{count, plural, one{{count} kanal} few{{count} kanala} other{{count} kanala}}",
   "communityNewChannel": "Novi kanal",
+  "communityActionsTooltip": "Radnje za {community}",
   "communityNoChannelsHint": "Koristite + da napravite prvi.",
   "communityPlaceholderName": "Zajednica",
   "channelPlaceholderName": "Kanal",

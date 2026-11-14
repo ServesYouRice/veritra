@@ -346,68 +346,9 @@ class _CommunityCard extends StatelessWidget {
                   : context.l10n.communityChannelCount(channels.length),
             ),
             onTap: onOpenDetails,
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (state.mayEditCommunityInfo(community.id, 'community'))
-                  IconButton(
-                    tooltip: context.l10n.communityEditInfo,
-                    onPressed: state.busy ? null : () => _editInfo(context),
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                if (community.sharedConversationId != null &&
-                    (state.mayEditCommunityInfo(community.id, 'community') ||
-                        categories.isNotEmpty))
-                  IconButton(
-                    key: Key('community-info-${community.id}'),
-                    tooltip: context.l10n.communityInfoOpen,
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => CommunityInfoScreen(
-                            state: state, community: community),
-                      ),
-                    ),
-                    icon: const Icon(Icons.folder_outlined),
-                  ),
-                // C4: the shared group's verified roles.
-                if (community.sharedConversationId != null)
-                  IconButton(
-                    key: Key('community-roles-${community.id}'),
-                    tooltip: context.l10n.rolesTitle,
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => RolesScreen(
-                            state: state,
-                            conversationId: community.sharedConversationId!),
-                      ),
-                    ),
-                    icon: const Icon(Icons.admin_panel_settings_outlined),
-                  ),
-                // C6: this moderator's report inbox in the community.
-                if (state.moderatesCommunity(community.id))
-                  IconButton(
-                    key: Key('community-reports-${community.id}'),
-                    tooltip: context.l10n.c6ReportsTitle,
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => OwnerReportsScreen(
-                          state: state,
-                          communityId: community.id,
-                          reauthenticate: (context) =>
-                              promptReauthenticate(context, state),
-                        ),
-                      ),
-                    ),
-                    icon: const Icon(Icons.flag_outlined),
-                  ),
-                if (state.canCreateChannel(community.id))
-                  IconButton(
-                    tooltip: context.l10n.communityNewChannel,
-                    onPressed: state.busy ? null : onCreateChannel,
-                    icon: const Icon(Icons.add),
-                  ),
-              ],
-            ),
+            // The five actions sit behind one menu: five icon buttons left
+            // the name 0 dp wide at 360 dp (UI audit U1).
+            trailing: _actionsMenu(context, categories),
           ),
           if (channels.isEmpty)
             ListTile(
@@ -449,6 +390,108 @@ class _CommunityCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+
+  /// One labelled menu for everything the account may do to this community:
+  /// edit, categories and icon, roles, reports and a new channel. Null when
+  /// none applies, so a plain member sees no menu.
+  Widget? _actionsMenu(BuildContext context, List<String> categories) {
+    final l10n = context.l10n;
+    final canEdit = state.mayEditCommunityInfo(community.id, 'community');
+    final shared = community.sharedConversationId;
+    final actions = <({String key, Key? itemKey, IconData icon, String label})>[
+      if (canEdit)
+        (
+          key: 'edit',
+          itemKey: null,
+          icon: Icons.edit_outlined,
+          label: l10n.communityEditInfo,
+        ),
+      if (shared != null && (canEdit || categories.isNotEmpty))
+        (
+          key: 'info',
+          itemKey: Key('community-info-${community.id}'),
+          icon: Icons.folder_outlined,
+          label: l10n.communityInfoOpen,
+        ),
+      // C4: the shared group's verified roles.
+      if (shared != null)
+        (
+          key: 'roles',
+          itemKey: Key('community-roles-${community.id}'),
+          icon: Icons.admin_panel_settings_outlined,
+          label: l10n.rolesTitle,
+        ),
+      // C6: this moderator's report inbox in the community.
+      if (state.moderatesCommunity(community.id))
+        (
+          key: 'reports',
+          itemKey: Key('community-reports-${community.id}'),
+          icon: Icons.flag_outlined,
+          label: l10n.c6ReportsTitle,
+        ),
+      if (state.canCreateChannel(community.id))
+        (
+          key: 'channel',
+          itemKey: null,
+          icon: Icons.add,
+          label: l10n.communityNewChannel,
+        ),
+    ];
+    if (actions.isEmpty) return null;
+    return PopupMenuButton<String>(
+      tooltip: l10n.communityActionsTooltip(
+          state.communityDisplayName(community) ??
+              l10n.communityPlaceholderName),
+      onSelected: (action) {
+        switch (action) {
+          case 'edit':
+            if (!state.busy) _editInfo(context);
+          case 'info':
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    CommunityInfoScreen(state: state, community: community),
+              ),
+            );
+          case 'roles':
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => RolesScreen(
+                    state: state,
+                    conversationId: community.sharedConversationId!),
+              ),
+            );
+          case 'reports':
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => OwnerReportsScreen(
+                  state: state,
+                  communityId: community.id,
+                  reauthenticate: (context) =>
+                      promptReauthenticate(context, state),
+                ),
+              ),
+            );
+          case 'channel':
+            if (!state.busy) onCreateChannel();
+        }
+      },
+      itemBuilder: (_) => <PopupMenuEntry<String>>[
+        for (final action in actions)
+          PopupMenuItem<String>(
+            key: action.itemKey,
+            value: action.key,
+            child: Row(
+              children: <Widget>[
+                Icon(action.icon, size: 20),
+                const SizedBox(width: BoneSpacing.md),
+                Flexible(child: Text(action.label)),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
