@@ -1001,8 +1001,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1013,8 +1014,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1025,8 +1027,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1037,8 +1040,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString искоришћено';
@@ -1397,16 +1401,13 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'на чекању',
-        'claimed': 'преузето',
-        'approved': 'одобрено',
-        'expired': 'истекло',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'на чекању',
+      'claimed': 'преузето',
+      'approved': 'одобрено',
+      'expired': 'истекло',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1658,8 +1659,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1667,8 +1669,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1678,7 +1681,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2418,8 +2423,9 @@ class AppLocalizationsSr extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -4151,6 +4157,40 @@ class AppLocalizationsSr extends AppLocalizations {
       'Порука без текста, на пример прилог. Шаљу се њени подаци, укључујући кључ којим се датотека отвара, али не и сама датотека.';
 
   @override
+  String get c6ReportReasonLabel => 'Зашто пријављујеш ову поруку?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Разлог виде само они који добију пријаву. Запечаћен је заједно са поруком.';
+
+  @override
+  String get c6ReportReasonSpam => 'Нежељене поруке или превара';
+
+  @override
+  String get c6ReportReasonHarassment => 'Узнемиравање или малтретирање';
+
+  @override
+  String get c6ReportReasonHate => 'Говор мржње';
+
+  @override
+  String get c6ReportReasonViolence => 'Претње или насиље';
+
+  @override
+  String get c6ReportReasonSexual => 'Сексуални садржај';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Угрожава дете';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Самоповређивање или самоубиство';
+
+  @override
+  String get c6ReportReasonPrivateInfo => 'Дели нечије приватне податке';
+
+  @override
+  String get c6ReportReasonOther => 'Нешто друго';
+
+  @override
   String get c6ReportSend => 'Пошаљи пријаву';
 
   @override
@@ -4318,6 +4358,19 @@ class AppLocalizationsSr extends AppLocalizations {
   String c6ReportsReporter(String account) {
     return 'Пријавио: $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Разлог који је навео пријавилац: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'Разлог није наведен. Послата је из старије апликације.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'Провера обухвата само поруку, не и разлог.';
 
   @override
   String c6ReportsSender(String account) {
@@ -6284,8 +6337,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6296,8 +6350,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6308,8 +6363,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -6320,8 +6376,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString iskorišćeno';
@@ -6680,16 +6737,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'na čekanju',
-        'claimed': 'preuzeto',
-        'approved': 'odobreno',
-        'expired': 'isteklo',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'na čekanju',
+      'claimed': 'preuzeto',
+      'approved': 'odobreno',
+      'expired': 'isteklo',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -6941,8 +6995,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -6950,8 +7005,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -6961,7 +7017,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -7701,8 +7759,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -9438,6 +9497,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Poruka bez teksta, na primer prilog. Šalju se njeni podaci, uključujući ključ kojim se datoteka otvara, ali ne i sama datoteka.';
 
   @override
+  String get c6ReportReasonLabel => 'Zašto prijavljuješ ovu poruku?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Razlog vide samo oni koji dobiju prijavu. Zapečaćen je zajedno sa porukom.';
+
+  @override
+  String get c6ReportReasonSpam => 'Neželjene poruke ili prevara';
+
+  @override
+  String get c6ReportReasonHarassment => 'Uznemiravanje ili maltretiranje';
+
+  @override
+  String get c6ReportReasonHate => 'Govor mržnje';
+
+  @override
+  String get c6ReportReasonViolence => 'Pretnje ili nasilje';
+
+  @override
+  String get c6ReportReasonSexual => 'Seksualni sadržaj';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Ugrožava dete';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Samopovređivanje ili samoubistvo';
+
+  @override
+  String get c6ReportReasonPrivateInfo => 'Deli nečije privatne podatke';
+
+  @override
+  String get c6ReportReasonOther => 'Nešto drugo';
+
+  @override
   String get c6ReportSend => 'Pošalji prijavu';
 
   @override
@@ -9605,6 +9698,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String c6ReportsReporter(String account) {
     return 'Prijavio: $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Razlog koji je naveo prijavilac: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'Razlog nije naveden. Poslata je iz starije aplikacije.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'Provera obuhvata samo poruku, ne i razlog.';
 
   @override
   String c6ReportsSender(String account) {

@@ -1127,6 +1127,8 @@ sealed post client and its retry rules), `NativeCryptoService`
 - **Reports.** Report body version 2 (`report_body.dart`, 9 fields) adds
   the sender's account id and `d` (empty for the plain form), and is used
   only for sealed envelopes; version 1 is unchanged for identified ones.
+  (Since 2026-11-14 both are written as version 3 with a `reason`; see the
+  change log, "C6 report body v3".)
   The verifier (`reports_service.dart`, `_verifySealed`) runs the order in
   "Franking a sealed message"; the claimed device's franking key comes from
   the claimed account's verified list, approved or removed
@@ -1301,6 +1303,24 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C6 report body v3: reasons (2026-11-14, U33, owner-approved; no ABI,
+  aad, server, migration or local schema change):** the body sealed in
+  every report copy (`ReportBody`, `report_body.dart`) gains a required
+  `reason`, a JSON integer from 1 to 9 (one digit, so the sealed size does
+  not depend on it) from a fixed list: 1 spam, 2 harassment, 3 hate, 4
+  violence, 5 sexual, 6 child safety, 7 self-harm, 8 private information,
+  9 other. No free text. The app now always writes version 3: version 1's
+  fields plus `reason` (8 members), or version 2's plus `reason` for a
+  sealed message (10 members; `sender_account_id` and `designation` both or
+  neither). `decode` still reads version 1 (7) and version 2 (9), which
+  have no reason, and refuses a `reason` in them; a v3 `reason` that is
+  missing, not an integer or out of range refuses the whole body. A new
+  reason is a new body version, never a new value under v3. The reason is
+  the reporter's claim: it is not franked and not in the aad (the AEAD
+  covers it), it never changes the inbox, the recipients or the number of
+  copies, and the inbox shows it apart from the verdict. Rust and Go treat
+  the body as opaque bytes and are unchanged. Design: C6 design, "Report
+  reasons".
 - **C3 channel conversion (`move`) (2026-11-12, owner answers; server
   migration 0089; no ABI or local schema change):** an owner or admin
   turns an open or announcement channel private, or a private one open.
@@ -4395,6 +4415,9 @@ be reported):
 (`ReportBody`, `report_body.dart`) is JSON `{v: 1, envelope_id,
 conversation_id, sender_device_id, action_id, payload (base64 P), frank_key
 (base64 kf)}`; `decode` refuses any other field set, a bad length or base64.
+(Since 2026-11-14 the app writes version 3, which adds the reporter's
+`reason`; version 1 and the sealed version 2 still decode. See the change
+log, "C6 report body v3".)
 The reporter makes one `report_id`, seals the same body once to each pinned
 owner key with that owner's aad (`sealReportCopies`), and posts the copies. A
 recipient opens its copy with its own seed and the aad rebuilt from the row,

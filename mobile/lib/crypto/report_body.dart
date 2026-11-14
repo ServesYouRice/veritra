@@ -26,6 +26,10 @@ import 'report_key_pins.dart';
 /// whose key `d` names can check its tag, with its own report seed and the
 /// franking key the claimed device's signed L1 list names. Nothing in the
 /// body is a signature anyone else could check.
+///
+/// U33: the app writes version 3, which adds the reporter's [reason] to
+/// either form (C6 design, "Report reasons"). Versions 1 and 2 still decode,
+/// with no reason. The reason is the reporter's claim, never franked.
 class ReportBody {
   ReportBody({
     required this.envelopeId,
@@ -36,6 +40,7 @@ class ReportBody {
     required List<int> frankKey,
     this.senderAccountId,
     List<int>? designation,
+    this.reason,
   })  : payload = List<int>.unmodifiable(payload),
         frankKey = List<int>.unmodifiable(frankKey),
         designation = senderAccountId == null
@@ -44,7 +49,8 @@ class ReportBody {
 
   /// The body of a report about the message [reveal] was kept for. The
   /// message key is `<sender_device_id>:<action_id>`.
-  factory ReportBody.fromReveal(FrankReveal reveal) {
+  factory ReportBody.fromReveal(FrankReveal reveal,
+      {required ReportReason reason}) {
     final split = reveal.messageKey.indexOf(':');
     if (split < 1 || split == reveal.messageKey.length - 1) {
       throw const FormatException('invalid message key');
@@ -58,6 +64,7 @@ class ReportBody {
       frankKey: reveal.frankKey,
       senderAccountId: reveal.sealed ? reveal.senderAccountId : null,
       designation: reveal.sealed ? reveal.designation : null,
+      reason: reason,
     );
   }
 
@@ -65,6 +72,10 @@ class ReportBody {
 
   /// L2-3: the body of a report about a sealed message.
   static const int sealedVersion = 2;
+
+  /// U33: either form with the reporter's [reason]. The only version
+  /// [encode] writes.
+  static const int reasonVersion = 3;
   static const int maxIdBytes = 128;
   static const int maxPayloadBytes = 64 * 1024;
 
@@ -82,22 +93,33 @@ class ReportBody {
   final String? senderAccountId;
   final List<int>? designation;
 
+  /// The reporter's reason, from a version 3 body; null for a version 1 or
+  /// 2 body (sent before reasons existed).
+  final ReportReason? reason;
+
   /// Whether the report is about a sealed message (explicit: version 2 and
   /// its sender account, never inferred from what the designation holds).
   bool get sealed => senderAccountId != null;
 
+  /// Writes a version 3 body. Refuses a body without a [reason]: the writer
+  /// never falls back to version 1 or 2.
   Uint8List encode() {
     _check(envelopeId, conversationId, senderDeviceId, actionId, payload,
         frankKey);
     _checkSealed(senderAccountId, designation);
+    final chosen = reason;
+    if (chosen == null) {
+      throw const FormatException('a report body needs a reason');
+    }
     return Uint8List.fromList(utf8.encode(jsonEncode({
-      'v': sealed ? sealedVersion : version,
+      'v': reasonVersion,
       'envelope_id': envelopeId,
       'conversation_id': conversationId,
       'sender_device_id': senderDeviceId,
       'action_id': actionId,
       'payload': base64Encode(payload),
       'frank_key': base64Encode(frankKey),
+      'reason': chosen.code,
       if (sealed) ...{
         'sender_account_id': senderAccountId,
         'designation': base64Encode(designation!),
@@ -106,7 +128,16 @@ class ReportBody {
   }
 
   /// Reads a body a recipient opened. Throws [FormatException] for anything
-  /// but exactly the fields [encode] writes, in range.
+  /// but exactly the fields one of the versions holds, in range:
+  ///
+  /// - version 1: the seven common fields;
+  /// - version 2: those and the sealed pair (`sender_account_id`,
+  ///   `designation`), nine;
+  /// - version 3: the common fields and `reason` (eight), plus the sealed
+  ///   pair for a sealed message (ten).
+  ///
+  /// A reason outside version 3's fixed set refuses the whole body (fail
+  /// closed: a new reason is a new version, never a new value under v3).
   factory ReportBody.decode(List<int> bytes) {
     final Object? decoded;
     try {
@@ -114,10 +145,29 @@ class ReportBody {
     } on FormatException {
       throw const FormatException('invalid report body');
     }
-    final sealedBody = decoded is Map && decoded['v'] == sealedVersion;
-    if (decoded is! Map ||
-        decoded.length != (sealedBody ? 9 : 7) ||
-        (decoded['v'] != version && !sealedBody) ||
+    if (decoded is! Map) throw const FormatException('invalid report body');
+    final v = decoded['v'];
+    if (v is! int) throw const FormatException('invalid report body');
+    final bool sealedBody;
+    final int fields;
+    ReportReason? reason;
+    switch (v) {
+      case version:
+        sealedBody = false;
+        fields = 7;
+      case sealedVersion:
+        sealedBody = true;
+        fields = 9;
+      case reasonVersion:
+        // Both or neither of the sealed pair: the count below refuses one
+        // without the other.
+        sealedBody = decoded.containsKey('sender_account_id');
+        fields = sealedBody ? 10 : 8;
+        reason = ReportReason.fromCode(decoded['reason']);
+      default:
+        throw const FormatException('invalid report body');
+    }
+    if (decoded.length != fields ||
         (sealedBody &&
             (decoded['sender_account_id'] is! String ||
                 decoded['designation'] is! String)) ||
@@ -155,6 +205,7 @@ class ReportBody {
       senderAccountId:
           sealedBody ? decoded['sender_account_id'] as String : null,
       designation: designation,
+      reason: reason,
     );
     _check(body.envelopeId, body.conversationId, body.senderDeviceId,
         body.actionId, payload, frankKey);
@@ -199,6 +250,41 @@ class ReportBody {
 
   @override
   String toString() => 'ReportBody(${'*' * 4})';
+}
+
+/// Why a person reports a message (U33, report body v3). A fixed list: the
+/// codes are the wire values, one digit each, so a sealed report's size
+/// does not depend on the reason. The set is fixed for body version 3; a
+/// reason added later needs a new body version, and a v3 body naming any
+/// other code is refused whole ([ReportBody.decode]). The reason is the
+/// reporter's claim and is not covered by franking.
+enum ReportReason {
+  spam(1),
+  harassment(2),
+  hate(3),
+  violence(4),
+  sexual(5),
+  childSafety(6),
+  selfHarm(7),
+  privateInfo(8),
+  other(9);
+
+  const ReportReason(this.code);
+
+  /// The wire value in a version 3 body.
+  final int code;
+
+  /// The reason [value] names. Throws [FormatException] for anything but
+  /// one of the codes above as a JSON integer (`3.0`, `"3"`, `0`, `10` and a
+  /// missing value are refused).
+  static ReportReason fromCode(Object? value) {
+    if (value is int) {
+      for (final reason in values) {
+        if (reason.code == value) return reason;
+      }
+    }
+    throw const FormatException('invalid report body');
+  }
 }
 
 /// One sealed copy of a report, as `POST /api/v1/reports` takes it.

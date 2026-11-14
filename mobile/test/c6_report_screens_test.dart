@@ -17,6 +17,7 @@ import 'package:private_messenger/crypto/franking.dart'
 import 'package:private_messenger/crypto/owner_key_watch.dart';
 import 'package:private_messenger/crypto/owner_proof_pins.dart';
 import 'package:private_messenger/crypto/report_body.dart';
+import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/features/reports/owner_reports_screen.dart';
 import 'package:private_messenger/features/reports/report_message_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
@@ -78,6 +79,9 @@ class _Api extends ApiClient {
   final List<List<int>> published = [];
   int filed = 0;
 
+  /// The copies of the last report filed, as the server would get them.
+  List<Map<String, Object?>> lastCopies = const [];
+
   @override
   Future<ReportInbox> getReportInbox(
           String token, String conversationId) async =>
@@ -120,6 +124,7 @@ class _Api extends ApiClient {
     required List<Map<String, Object?>> copies,
   }) async {
     filed++;
+    lastCopies = copies;
   }
 }
 
@@ -244,6 +249,7 @@ void main() {
 
   testWidgets('report screen: shows the key code, trusts it, then sends',
       (tester) async {
+    _tallView(tester);
     final h = _harness(role: 'member');
     h.api.recipients = [
       ReportInboxRecipient(
@@ -270,22 +276,86 @@ void main() {
     expect(find.text('Send report'), findsNothing);
     expect(h.api.filed, 0);
 
-    await tester.tap(find.text('Trust and continue'));
-    await tester.pumpAndSettle();
+    // U33: the reason is chosen first and survives the reload that trusting
+    // a key causes.
+    expect(find.text('Why are you reporting it?'), findsOneWidget);
+    await _tapVisible(tester, find.text('Harassment or bullying'));
+    await _tapVisible(tester, find.text('Trust and continue'));
     expect(find.text('Send report'), findsOneWidget);
     expect(
         find.textContaining('Server owners who get a copy: 1'), findsOneWidget);
+    expect(_selectedReason(tester), ReportReason.harassment);
 
-    await tester.tap(find.text('Send report'));
-    await tester.pumpAndSettle();
+    await _tapVisible(tester, find.text('Send report'));
     expect(h.api.filed, 1);
     expect(find.text('Report sent.'), findsOneWidget);
+    // The body sealed in the copy is v3 and carries the chosen reason.
+    final body = _filedBody(h.api);
+    expect(body.reason, ReportReason.harassment);
+    expect(body.envelopeId, 'env_1');
+  });
+
+  // U33: the form offers a fixed list of reasons, and Send waits for one.
+  testWidgets('report screen: send waits for a reason from the fixed list',
+      (tester) async {
+    _tallView(tester);
+    final h = _harness(role: 'member');
+    final key = List<int>.filled(32, 0xab);
+    h.api.recipients = [
+      ReportInboxRecipient(inboxId: 'acct_owner', publicKey: key, keyRev: 1),
+    ];
+    // Already trusted, so Send shows at once.
+    await tester.runAsync(() => h.state.reportsService!.pins.pin(
+        ReportRecipientKey(inboxId: 'acct_owner', publicKey: key, keyRev: 1)));
+    h.store.reveal = FrankReveal(
+      messageKey: 'dev_sender:a1',
+      conversationId: 'conv_1',
+      envelopeId: 'env_1',
+      frankKey: List<int>.filled(32, 7),
+      payload: utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
+    );
+    await tester.pumpWidget(_app(ReportMessageScreen(
+        state: h.state,
+        conversationId: 'conv_1',
+        messageKey: 'dev_sender:a1')));
+    await tester.pumpAndSettle();
+
+    for (final label in [
+      'Spam or scam',
+      'Harassment or bullying',
+      'Hate speech',
+      'Threats or violence',
+      'Sexual content',
+      'Puts a child at risk',
+      'Self-harm or suicide',
+      "Shares someone's private information",
+      'Something else',
+    ]) {
+      await tester.ensureVisible(find.text(label));
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    // No free-text field.
+    expect(find.byType(TextField), findsNothing);
+    final send = find.widgetWithText(FilledButton, 'Send report');
+    await tester.ensureVisible(send);
+    expect(tester.widget<FilledButton>(send).onPressed, isNull);
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    expect(h.api.filed, 0);
+
+    await _tapVisible(tester, find.text('Something else'));
+    await _tapVisible(tester, find.text('Spam or scam'));
+    expect(tester.widget<FilledButton>(send).onPressed, isNotNull);
+    await _tapVisible(tester, send);
+    expect(h.api.filed, 1);
+    expect(_filedBody(h.api).reason, ReportReason.spam);
   });
 
   // L2-3, owner decision 2026-11-12 ("Keep reports manual"): a key pinned
   // on first use for sealed-message proofs does not skip the comparison.
   testWidgets('report screen: a key pinned on first use still shows the code',
       (tester) async {
+    _tallView(tester);
     final h = _harness(role: 'member');
     final key = List<int>.filled(32, 0xab);
     h.api.recipients = [
@@ -322,15 +392,15 @@ void main() {
     expect(find.text('Send report'), findsNothing);
     expect(h.api.filed, 0);
 
-    await tester.tap(find.text('Trust and continue'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Send report'));
-    await tester.pumpAndSettle();
+    await _tapVisible(tester, find.text('Trust and continue'));
+    await _tapVisible(tester, find.text('Hate speech'));
+    await _tapVisible(tester, find.text('Send report'));
     expect(h.api.filed, 1);
   });
 
   testWidgets('report screen: a message with no proof is not reportable',
       (tester) async {
+    _tallView(tester);
     final h = _harness(role: 'member');
     h.api.recipients = [
       ReportInboxRecipient(
@@ -343,10 +413,9 @@ void main() {
         conversationId: 'conv_1',
         messageKey: 'dev_sender:none')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Trust and continue'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Send report'));
-    await tester.pumpAndSettle();
+    await _tapVisible(tester, find.text('Trust and continue'));
+    await _tapVisible(tester, find.text('Something else'));
+    await _tapVisible(tester, find.text('Send report'));
     expect(find.textContaining('cannot be reported'), findsOneWidget);
     expect(h.api.filed, 0);
   });
@@ -469,7 +538,140 @@ void main() {
     expect(find.byKey(const Key('report-next-copy')), findsNothing);
     expect(find.byKey(const Key('report-dismiss')), findsOneWidget);
   });
+
+  // U33: the inbox shows the reporter's reason, opened through the real
+  // open and decode path, and says the check does not cover it. A body
+  // written before reasons (literal v1 bytes) still opens.
+  testWidgets('owner inbox: shows the reason, and an old body has none',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    await tester.runAsync(() => h.state.reportSeedStore.save(
+        'https://example.test',
+        'acct_me',
+        Uint8List.fromList(List<int>.filled(32, 1))));
+    final v3 = ReportBody(
+      envelopeId: 'env_1',
+      conversationId: 'conv_1',
+      senderDeviceId: 'dev_sender',
+      actionId: 'a1',
+      payload: utf8.encode('{"type":"text","body":{"text":"new words"}}'),
+      frankKey: List<int>.filled(32, 7),
+      reason: ReportReason.privateInfo,
+    ).encode();
+    final v1 = utf8.encode('{"v":1,"envelope_id":"env_2",'
+        '"conversation_id":"conv_1","sender_device_id":"dev_sender",'
+        '"action_id":"a2","payload":"${base64Encode(utf8.encode('{"type":"text","body":{"text":"old words"}}'))}",'
+        '"frank_key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}');
+    h.api.rows
+      ..add(_sealedRow('row_new', v3))
+      ..add(_sealedRow('row_old', v1));
+    await tester.pumpWidget(_app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpAndSettle();
+
+    // The row leads its second line with the reason.
+    expect(find.textContaining("Shares someone's private information\n"),
+        findsOneWidget);
+    expect(find.text('old words'), findsOneWidget);
+
+    await tester.tap(find.text('new words'));
+    await tester.pumpAndSettle();
+    expect(
+        find.text("Reason given by the reporter: Shares someone's private "
+            'information'),
+        findsOneWidget);
+    expect(find.text('The check covers the message only, not the reason.'),
+        findsOneWidget);
+    // The reason sits with the reporter, above the message and the verdict.
+    expect(tester.getTopLeft(find.byKey(const Key('report-reason'))).dy,
+        lessThan(tester.getTopLeft(find.text('new words')).dy));
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('old words'));
+    await tester.pumpAndSettle();
+    expect(find.text('No reason given. It was sent by an older app.'),
+        findsOneWidget);
+    expect(find.text('The check covers the message only, not the reason.'),
+        findsNothing);
+  });
+
+  // U33: a v3 body naming a reason outside the list is refused whole, never
+  // shown with a guessed reason.
+  testWidgets('owner inbox: an unknown reason makes the report unreadable',
+      (tester) async {
+    final h = _harness(role: 'owner');
+    await tester.runAsync(() => h.state.reportSeedStore.save(
+        'https://example.test',
+        'acct_me',
+        Uint8List.fromList(List<int>.filled(32, 1))));
+    final good = jsonDecode(utf8.decode(ReportBody(
+      envelopeId: 'env_1',
+      conversationId: 'conv_1',
+      senderDeviceId: 'dev_sender',
+      actionId: 'a1',
+      payload: utf8.encode('{"type":"text","body":{"text":"new words"}}'),
+      frankKey: List<int>.filled(32, 7),
+      reason: ReportReason.spam,
+    ).encode())) as Map<String, Object?>;
+    h.api.rows.add(_sealedRow(
+        'row_bad', utf8.encode(jsonEncode({...good, 'reason': 10}))));
+    await tester.pumpWidget(_app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('new words'), findsNothing);
+    expect(find.text('Cannot open'), findsOneWidget);
+    await tester.tap(find.text('Cannot open'));
+    await tester.pumpAndSettle();
+    expect(find.text('This report is damaged or was not meant for you.'),
+        findsOneWidget);
+    expect(find.byKey(const Key('report-reason')), findsNothing);
+  });
 }
+
+/// A view tall enough that the report form (intro, preview, key codes, the
+/// nine reasons and Send) is built in one piece.
+void _tallView(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 2400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
+/// Scrolls [finder] into view, taps it and settles.
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// The reason the report form's radio group holds now.
+ReportReason? _selectedReason(WidgetTester tester) => tester
+    .widget<RadioGroup<ReportReason>>(find.byType(RadioGroup<ReportReason>))
+    .groupValue;
+
+/// The body sealed in the first copy of the last report the fake server
+/// got: [_FakeReportCrypto] "seals" as the 32-byte key then the plaintext.
+ReportBody _filedBody(_Api api) {
+  final sealed = base64Decode(api.lastCopies.first['sealed']! as String);
+  return ReportBody.decode(sealed.sublist(32));
+}
+
+/// A copy for this owner (`acct_me`, key 32 x 1) that the fake seal opens to
+/// [plaintext].
+ReportCopyRow _sealedRow(String id, List<int> plaintext) => ReportCopyRow(
+      id: id,
+      reportId: 'rep_$id',
+      inboxKind: 'instance_owner',
+      inboxId: 'acct_me',
+      keyRev: 1,
+      recipientPublicKey: List<int>.filled(32, 1),
+      conversationId: 'conv_1',
+      reporterAccountId: 'acct_reporter',
+      sealed: <int>[...List<int>.filled(32, 1), ...plaintext],
+      createdAt: DateTime.utc(2026, 11, 7),
+    );
 
 ReportCopyRow _row() => ReportCopyRow(
       id: 'row_1',

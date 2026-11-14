@@ -992,8 +992,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1004,8 +1005,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1016,8 +1018,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1028,8 +1031,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString used';
@@ -1384,16 +1388,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(
-      state,
-      {
-        'pending': 'pending',
-        'claimed': 'claimed',
-        'approved': 'approved',
-        'expired': 'expired',
-        'other': '$state',
-      },
-    );
+    String _temp0 = intl.Intl.selectLogic(state, {
+      'pending': 'pending',
+      'claimed': 'claimed',
+      'approved': 'approved',
+      'expired': 'expired',
+      'other': '$state',
+    });
     return '$_temp0';
   }
 
@@ -1645,8 +1646,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1654,8 +1656,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1665,7 +1668,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-            locale: localeName, decimalDigits: 1);
+      locale: localeName,
+      decimalDigits: 1,
+    );
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2399,8 +2404,9 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat =
-        intl.NumberFormat.decimalPattern(localeName);
+    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
+      localeName,
+    );
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -4132,6 +4138,41 @@ class AppLocalizationsEn extends AppLocalizations {
       'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.';
 
   @override
+  String get c6ReportReasonLabel => 'Why are you reporting it?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Only the people who get the report see the reason. It is sealed with the message.';
+
+  @override
+  String get c6ReportReasonSpam => 'Spam or scam';
+
+  @override
+  String get c6ReportReasonHarassment => 'Harassment or bullying';
+
+  @override
+  String get c6ReportReasonHate => 'Hate speech';
+
+  @override
+  String get c6ReportReasonViolence => 'Threats or violence';
+
+  @override
+  String get c6ReportReasonSexual => 'Sexual content';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Puts a child at risk';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Self-harm or suicide';
+
+  @override
+  String get c6ReportReasonPrivateInfo =>
+      'Shares someone\'s private information';
+
+  @override
+  String get c6ReportReasonOther => 'Something else';
+
+  @override
   String get c6ReportSend => 'Send report';
 
   @override
@@ -4298,6 +4339,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String c6ReportsReporter(String account) {
     return 'Reported by $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Reason given by the reporter: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'No reason given. It was sent by an older app.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'The check covers the message only, not the reason.';
 
   @override
   String c6ReportsSender(String account) {

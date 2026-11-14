@@ -96,7 +96,7 @@ abstract class AppLocalizations {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -6765,6 +6765,72 @@ abstract class AppLocalizations {
   /// **'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.'**
   String get c6ReportPreviewNoText;
 
+  /// C6 reports (U33): heading above the fixed list of reasons. A reason must be chosen before sending.
+  ///
+  /// In en, this message translates to:
+  /// **'Why are you reporting it?'**
+  String get c6ReportReasonLabel;
+
+  /// C6 reports (U33): under the reason list. The reason is sealed inside the report; the server cannot read it.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the people who get the report see the reason. It is sealed with the message.'**
+  String get c6ReportReasonNote;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Spam or scam'**
+  String get c6ReportReasonSpam;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Harassment or bullying'**
+  String get c6ReportReasonHarassment;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Hate speech'**
+  String get c6ReportReasonHate;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Threats or violence'**
+  String get c6ReportReasonViolence;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Sexual content'**
+  String get c6ReportReasonSexual;
+
+  /// C6 report reason (U33): child safety.
+  ///
+  /// In en, this message translates to:
+  /// **'Puts a child at risk'**
+  String get c6ReportReasonChildSafety;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Self-harm or suicide'**
+  String get c6ReportReasonSelfHarm;
+
+  /// C6 report reason (U33): doxxing.
+  ///
+  /// In en, this message translates to:
+  /// **'Shares someone\'s private information'**
+  String get c6ReportReasonPrivateInfo;
+
+  /// C6 report reason (U33): the last choice, for anything the list does not name.
+  ///
+  /// In en, this message translates to:
+  /// **'Something else'**
+  String get c6ReportReasonOther;
+
   /// C6 reports.
   ///
   /// In en, this message translates to:
@@ -7028,6 +7094,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reported by {account}'**
   String c6ReportsReporter(String account);
+
+  /// C6 reports (U33): the reporter's chosen reason, one of the c6ReportReason labels. It is the reporter's claim, not something the check proves.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason given by the reporter: {reason}'**
+  String c6ReportsReason(String reason);
+
+  /// C6 reports (U33): an opened report from before reasons existed.
+  ///
+  /// In en, this message translates to:
+  /// **'No reason given. It was sent by an older app.'**
+  String get c6ReportsReasonNone;
+
+  /// C6 reports (U33): under the reason. Must not suggest the franking check says anything about the reason.
+  ///
+  /// In en, this message translates to:
+  /// **'The check covers the message only, not the reason.'**
+  String get c6ReportsReasonNotChecked;
 
   /// C6 reports.
   ///
@@ -8689,8 +8773,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

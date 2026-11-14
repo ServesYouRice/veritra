@@ -314,7 +314,9 @@ void main() {
     expect(reveal.sealed, isTrue);
     // The plain form is kept as no designation.
     expect(reveal.designation ?? const <int>[], isEmpty);
-    expect(ReportBody.fromReveal(reveal).designation, isEmpty);
+    expect(
+        ReportBody.fromReveal(reveal, reason: ReportReason.other).designation,
+        isEmpty);
   }, skip: skip);
 
   // Fail safe: without a verified franking context (no listed key) the
@@ -638,11 +640,14 @@ void main() {
       final row =
           (await alice.history()).singleWhere((item) => item.body == text);
       final reveal = (await alice.store.loadFrankReveal(row.key))!;
-      // The reporter's body is version 2 and survives the seal round trip.
-      final body = ReportBody.decode(ReportBody.fromReveal(reveal).encode());
+      // The reporter's body is version 3 with the sealed pair (U33; version 2
+      // plus a reason) and survives the seal round trip.
+      final body = ReportBody.decode(
+          ReportBody.fromReveal(reveal, reason: ReportReason.other).encode());
       expect(body.sealed, isTrue);
       expect(body.senderAccountId, 'acct_bob');
-      expect(jsonDecode(utf8.decode(body.encode()))['v'], 2);
+      expect(jsonDecode(utf8.decode(body.encode()))['v'], 3);
+      expect(body.reason, ReportReason.other);
       return (body, sent, envelope);
     }
 
@@ -927,6 +932,7 @@ ReportBody _withBody(ReportBody body,
       frankKey: body.frankKey,
       senderAccountId: plain ? null : (senderAccountId ?? body.senderAccountId),
       designation: plain ? null : (designation ?? body.designation),
+      reason: body.reason,
     );
 
 List<Uint8List> _ownerSeeds = <Uint8List>[];

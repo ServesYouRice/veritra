@@ -174,6 +174,11 @@ class OpenedReport {
   final String? text;
 
   bool get isOpen => body != null;
+
+  /// The reporter's reason (U33): null when the report is not open, or was
+  /// sent as a body from before reasons (version 1 or 2). The reporter's
+  /// claim only; no check covers it.
+  ReportReason? get reason => body?.reason;
 }
 
 /// What checking a report against the server's record found.
@@ -403,9 +408,15 @@ class ReportsService {
   /// Looks the recipients up again and seals only to keys that equal their
   /// pins (owners) or their MLS announcements (moderators), so a key
   /// swapped after the person confirmed is refused.
+  ///
+  /// [reason] is sealed in every copy alike (report body v3). It never
+  /// changes who gets a copy, how many copies there are or when the report
+  /// is sent, since the server sees all of that, and this device does not
+  /// keep it.
   Future<void> file({
     required String conversationId,
     required String messageKey,
+    required ReportReason reason,
   }) async {
     final reveal = await store.loadFrankReveal(messageKey);
     if (reveal == null || reveal.conversationId != conversationId) {
@@ -431,7 +442,7 @@ class ReportsService {
       conversationId: conversationId,
       reportId: reportId,
       reporterAccountId: accountId,
-      body: ReportBody.fromReveal(reveal),
+      body: ReportBody.fromReveal(reveal, reason: reason),
     );
     await api.createReport(
       token,
