@@ -157,6 +157,60 @@ void main() {
       state.dispose();
     });
 
+    testWidgets('the copy clears itself after 90 seconds, once',
+        (tester) async {
+      phone(tester);
+      final state = signedIn();
+      await openShowStep(tester, state);
+      await tester.tap(find.byKey(const ValueKey<String>('recovery-key-copy')));
+      await tester.pump();
+      expect(copies, <String>[groups.join('-')]);
+      expect(find.textContaining('about a minute and a half'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 89));
+      expect(copies, <String>[groups.join('-')]);
+      await tester.pump(const Duration(seconds: 1));
+      expect(copies, <String>[groups.join('-'), '']);
+
+      // Continuing afterwards does not clear a second time.
+      await tester.tap(find.text('I have saved it'));
+      await tester.pumpAndSettle();
+      expect(copies, <String>[groups.join('-'), '']);
+      state.dispose();
+    });
+
+    testWidgets('continuing cancels the timer, and leaving does not re-clear',
+        (tester) async {
+      phone(tester);
+      final state = signedIn();
+      await openShowStep(tester, state);
+      await tester.tap(find.byKey(const ValueKey<String>('recovery-key-copy')));
+      await tester.pump();
+      await tester.tap(find.text('I have saved it'));
+      await tester.pump();
+      expect(copies, <String>[groups.join('-'), '']);
+
+      await tester.pump(const Duration(seconds: 120));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 120));
+      expect(copies, <String>[groups.join('-'), '']);
+      state.dispose();
+    });
+
+    testWidgets('leaving the screen clears at once and cancels the timer',
+        (tester) async {
+      phone(tester);
+      final state = signedIn();
+      await openShowStep(tester, state);
+      await tester.tap(find.byKey(const ValueKey<String>('recovery-key-copy')));
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      expect(copies, <String>[groups.join('-'), '']);
+      await tester.pump(const Duration(seconds: 120));
+      expect(copies, <String>[groups.join('-'), '']);
+      state.dispose();
+    });
+
     testWidgets('nothing is cleared when nothing was copied', (tester) async {
       phone(tester);
       final state = signedIn();

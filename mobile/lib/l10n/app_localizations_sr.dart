@@ -3386,7 +3386,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryKeyCopied =>
-      'Копирано. Налепите га сада у менаџер лозинки. Апликација га брише из оставе када наставите.';
+      'Копирано. Налепите га сада у менаџер лозинки. Апликација га брише из оставе када наставите или после отприлике минут и по.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Унесите кључ за опоравак';
@@ -8673,7 +8673,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryKeyCopied =>
-      'Kopirano. Nalepite ga sada u menadžer lozinki. Aplikacija ga briše iz ostave kada nastavite.';
+      'Kopirano. Nalepite ga sada u menadžer lozinki. Aplikacija ga briše iz ostave kada nastavite ili posle otprilike minut i po.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Unesite ključ za oporavak';

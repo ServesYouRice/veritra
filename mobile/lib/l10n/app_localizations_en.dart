@@ -3365,7 +3365,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryKeyCopied =>
-      'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.';
+      'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue, or after about a minute and a half.';
 
   @override
   String get recoveryKeyConfirmTitle => 'Type your recovery key';

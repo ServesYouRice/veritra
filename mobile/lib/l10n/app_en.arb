@@ -1267,7 +1267,7 @@
   "recoveryKeyShowDetail": "Write these 52 characters on paper, or save them in your password manager. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.",
   "recoveryKeyWritten": "I have saved it",
   "recoveryKeyCopy": "Copy for a password manager",
-  "recoveryKeyCopied": "Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.",
+  "recoveryKeyCopied": "Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue, or after about a minute and a half.",
   "recoveryKeyConfirmTitle": "Type your recovery key",
   "recoveryKeyConfirmDetail": "Type the whole key from your paper or password manager to check it. Dashes and spaces do not matter.",
   "recoveryKeyField": "Recovery key",

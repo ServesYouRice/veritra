@@ -5496,7 +5496,7 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyCopied.
   ///
   /// In en, this message translates to:
-  /// **'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue.'**
+  /// **'Copied. Paste it into your password manager now. The app clears it from the clipboard when you continue, or after about a minute and a half.'**
   String get recoveryKeyCopied;
 
   /// No description provided for @recoveryKeyConfirmTitle.

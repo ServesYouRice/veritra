@@ -69,6 +69,10 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
   /// U24: this screen put the key on the clipboard and has not cleared it.
   bool _onClipboard = false;
 
+  /// Clears the copy after [_clipboardLifetime] if the person never continues.
+  Timer? _clipboardTimer;
+  static const Duration _clipboardLifetime = Duration(seconds: 90);
+
   @override
   void initState() {
     super.initState();
@@ -156,6 +160,8 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
   Future<void> _copyForPasswordManager(String display) async {
     await Clipboard.setData(ClipboardData(text: groupRecoveryKey(display)));
     _onClipboard = true;
+    _clipboardTimer?.cancel();
+    _clipboardTimer = Timer(_clipboardLifetime, _clearClipboard);
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(context.l10n.recoveryKeyCopied)));
@@ -165,6 +171,8 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
   /// clipboard and the check that follows comes from the saved copy. It is
   /// not read first: reading would show a paste notice on iOS.
   void _clearClipboard() {
+    _clipboardTimer?.cancel();
+    _clipboardTimer = null;
     if (!_onClipboard) return;
     _onClipboard = false;
     unawaited(Clipboard.setData(const ClipboardData(text: '')));
