@@ -571,7 +571,6 @@ class AppState extends ChangeNotifier
   @visibleForTesting
   VerifiedRoleSource? debugInfoRoleSource;
   Set<String> starredMessages = {};
-  bool showArchivedChats = false;
 
   /// Conversation descriptors copied from another device (K2). Historical
   /// metadata only: never a live conversation, member list or permission.
@@ -793,10 +792,6 @@ class AppState extends ChangeNotifier
 
   bool canPinMessages(String id) => pinAllowed(
       kind: conversationKind(id), role: roleOf(id, session?.accountId ?? ''));
-  void toggleArchivedChats() {
-    showArchivedChats = !showArchivedChats;
-    notifyListeners();
-  }
 
   Future<void> setMentionsInMutedChats(bool value) async {
     mentionsInMutedChats = value;
@@ -9143,7 +9138,6 @@ class AppState extends ChangeNotifier
     conversationPrefs = {};
     _pins.clear();
     starredMessages = {};
-    showArchivedChats = false;
     _copiedHistory = {};
     _resetDeviceLinkState();
     communities = <Community>[];

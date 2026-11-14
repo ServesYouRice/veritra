@@ -407,7 +407,11 @@ void main() {
     await tester.pumpWidget(app(ChatListScreen(state: state)));
     await tester.pump();
 
-    expect(find.text('REQUESTS (1)'), findsOneWidget);
+    // One row holds every request; the stranger is behind it (U28).
+    expect(find.text('Requests (1)'), findsOneWidget);
+    expect(find.textContaining('stranger'), findsNothing);
+    await tester.tap(find.byKey(const Key('requests-row')));
+    await tester.pumpAndSettle();
     await tester.tap(find.textContaining('stranger'));
     await tester.pumpAndSettle();
     expect(find.text('Accept'), findsOneWidget);
@@ -422,8 +426,10 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
     expect(api.left, isEmpty);
+    // The last request is gone: its page closes and the row is gone too.
     expect(find.textContaining('stranger'), findsNothing);
-    expect(find.text('REQUESTS (1)'), findsNothing);
+    expect(find.text('Requests (1)'), findsNothing);
+    expect(find.byKey(const Key('requests-row')), findsNothing);
   });
 
   testWidgets('a request opened directly (search, wide pane) shows the request',

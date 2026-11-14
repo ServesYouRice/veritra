@@ -1431,6 +1431,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Start a direct message or create a group. Everything is end-to-end encrypted.';
 
   @override
+  String get chatListStartChat => 'Start a chat';
+
+  @override
+  String get chatListInviteSomeone => 'Invite someone';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'No archived chats';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Chats you archive are kept here, out of your main list.';
+
+  @override
   String get chatListUnmute => 'Unmute notifications';
 
   @override

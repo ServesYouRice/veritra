@@ -9,12 +9,14 @@ import '../../ui/avatar.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/photo_avatar.dart';
+import '../../ui/reauthenticate.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/listenable_selector.dart';
-import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
+import '../settings/invite_screen.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
 import 'copied_history_screen.dart';
@@ -25,9 +27,18 @@ import '../../ui/widgets/refresh_action.dart';
 import '../../l10n/l10n.dart';
 
 class ChatListScreen extends StatelessWidget {
-  const ChatListScreen({required this.state, this.embedded = false, super.key});
+  const ChatListScreen({
+    required this.state,
+    this.embedded = false,
+    this.archived = false,
+    super.key,
+  });
 
   final AppState state;
+
+  /// The page of archived chats, opened from the chat list with a Back button
+  /// (U28). The same rows, minus requests, in their own route.
+  final bool archived;
 
   /// When embedded in the wide-layout workspace the list is one pane of a
   /// master-detail view: tapping a row updates the detail pane instead of
@@ -49,27 +60,16 @@ class ChatListScreen extends StatelessWidget {
 
   Widget _build(BuildContext context) {
     final theme = Theme.of(context);
-    // No rows until the request state is read, so no stranger's chat shows as
-    // a normal one and none flashes into Requests (B8).
-    final loaded = state.requestStateLoaded;
-    // A community's shared group is opened per channel, from Communities.
-    final conversations = state.conversations
-        .where(
-          (c) =>
-              !c.isCommunityShared &&
-              (loaded
-                  ? state.requestBucket(c) != RequestBucket.hidden
-                  : state.requestBucket(c) == RequestBucket.chat),
-        )
-        .toList(growable: false);
-    // Strangers wait in a Requests section above the chats (B8).
-    final requests =
-        conversations.where(state.isMessageRequest).toList(growable: false);
+    final conversations = _visibleConversations(state);
+    // Strangers wait behind one Requests row above the chats (B8, U28); they
+    // never show in Archived.
+    final requests = archived
+        ? const <Conversation>[]
+        : conversations.where(state.isMessageRequest).toList(growable: false);
     final positions = {for (final (i, c) in conversations.indexed) c.id: i};
     final chats = conversations
         .where((c) =>
-            !state.isMessageRequest(c) &&
-            state.isArchived(c.id) == state.showArchivedChats)
+            !state.isMessageRequest(c) && state.isArchived(c.id) == archived)
         .toList()
       ..sort((a, b) {
         final ap = state.conversationPrefs[a.id]?.pinnedAt,
@@ -82,7 +82,7 @@ class ChatListScreen extends StatelessWidget {
         if (c != 0) return c;
         return positions[a.id]!.compareTo(positions[b.id]!);
       });
-    final requestRows = requests.isEmpty ? 0 : requests.length + 1;
+    final requestRows = requests.isEmpty ? 0 : 1;
     return Scaffold(
       appBar: AppBar(
         // A display-sized title is most of what stops the screen reading as
@@ -93,21 +93,26 @@ class ChatListScreen extends StatelessWidget {
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
         title: Text(
-          state.showArchivedChats
-              ? context.l10n.w8ArchivedChats
-              : context.l10n.navChats,
+          archived ? context.l10n.w8ArchivedChats : context.l10n.navChats,
           style: theme.textTheme.displaySmall,
         ),
         actions: <Widget>[
-          IconButton(
-              tooltip: state.showArchivedChats
-                  ? context.l10n.w8Chats
-                  : context.l10n.w8ArchivedChats,
-              onPressed: state.toggleArchivedChats,
-              icon: Icon(state.showArchivedChats
-                  ? Icons.chat_outlined
-                  : Icons.archive_outlined)),
-          if (state.historyOnlyConversations.isNotEmpty)
+          // New chat lives in the bar (U28) so nothing floats over a row. It
+          // is the one filled control here: Bone rations its accent to the
+          // primary action, active nav, unread count and focus ring.
+          if (!archived)
+            IconButton.filled(
+                tooltip: context.l10n.chatListNewChat,
+                onPressed: () => showNewConversationSheet(context, state),
+                icon: const Icon(Icons.add_comment_outlined)),
+          if (!archived)
+            IconButton(
+                tooltip: context.l10n.w8ArchivedChats,
+                onPressed: () => Navigator.of(context).push(
+                    sharedAxisRoute<void>((_) => ChatListScreen(
+                        state: state, embedded: embedded, archived: true))),
+                icon: const Icon(Icons.archive_outlined)),
+          if (!archived && state.historyOnlyConversations.isNotEmpty)
             IconButton(
                 tooltip: context.l10n.k2HistoryOnlyTitle,
                 onPressed: () => Navigator.of(context).push(
@@ -115,31 +120,22 @@ class ChatListScreen extends StatelessWidget {
                         (_) => CopiedHistoryListScreen(state: state))),
                 icon: const Icon(Icons.history)),
           RefreshAction(onRefresh: state.refreshConversations),
-          IconButton(
-            tooltip: context.l10n.chatListSearch,
-            onPressed: () => Navigator.of(context).push(
-              sharedAxisRoute<void>(
-                (_) => SearchScreen(state: state),
+          if (!archived)
+            IconButton(
+              tooltip: context.l10n.chatListSearch,
+              onPressed: () => Navigator.of(context).push(
+                sharedAxisRoute<void>(
+                  (_) => SearchScreen(state: state),
+                ),
               ),
+              icon: const Icon(Icons.search),
             ),
-            icon: const Icon(Icons.search),
-          ),
           const SizedBox(width: BoneSpacing.sm),
         ],
       ),
-      // The one accent moment on this screen. Bone rations its accent to the
-      // primary action, active nav, unread count and focus ring; everything
-      // else separates by tone.
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => showNewConversationSheet(context, state),
-        backgroundColor: theme.colorScheme.primary,
-        foregroundColor: theme.colorScheme.onPrimary,
-        icon: const Icon(Icons.add_comment_outlined),
-        label: Text(context.l10n.chatListNewChat),
-      ),
       body: RefreshIndicator(
         onRefresh: state.refreshConversations,
-        child: conversations.isEmpty
+        child: chats.isEmpty && requests.isEmpty
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: <Widget>[
@@ -148,11 +144,18 @@ class ChatListScreen extends StatelessWidget {
                   // state too early reads as "your data is gone".
                   if (!state.conversationsLoaded)
                     const Center(child: CircularProgressIndicator())
+                  else if (archived)
+                    EmptyState(
+                      icon: Icons.archive_outlined,
+                      title: context.l10n.chatListArchivedEmptyTitle,
+                      message: context.l10n.chatListArchivedEmptyMessage,
+                    )
                   else
                     EmptyState(
                       icon: Icons.chat_bubble_outline,
                       title: context.l10n.chatListEmptyTitle,
                       message: context.l10n.chatListEmptyMessage,
+                      action: _emptyActions(context),
                     ),
                 ],
               )
@@ -164,41 +167,29 @@ class ChatListScreen extends StatelessWidget {
                 // the list and it comes back (T49C-4). Per account, so a
                 // different account's list starts at the top.
                 key: PageStorageKey<String>(
-                  'chat-list:${state.session?.accountId}',
+                  '${archived ? 'chat-list-archived' : 'chat-list'}'
+                  ':${state.session?.accountId}',
                 ),
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(
                   BoneSpacing.sm,
                   BoneSpacing.sm,
                   BoneSpacing.sm,
-                  96,
+                  BoneSpacing.lg,
                 ),
                 itemCount: requestRows + chats.length,
                 itemBuilder: (context, index) {
-                  if (index == 0 && requests.isNotEmpty) {
-                    return SectionHeader(
-                      context.l10n.requestsSection(requests.length),
-                      padding: const EdgeInsets.fromLTRB(
-                        BoneSpacing.sm,
-                        BoneSpacing.xs,
-                        BoneSpacing.sm,
-                        BoneSpacing.xs,
-                      ),
-                    );
-                  }
                   if (index < requestRows) {
-                    final request = requests[index - 1];
-                    return _ConversationTile(
-                      conversation: request,
-                      profiles: state.profiles,
-                      // A stranger's chosen name is not shown until the
-                      // request is accepted; their photo is.
-                      showProfileName: false,
-                      muted: false,
-                      selected: false,
-                      hero: false,
-                      onActions: () {},
-                      onTap: () => _openRequest(context, request),
+                    return _RequestsTile(
+                      count: requests.length,
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => _RequestsScreen(
+                            state: state,
+                            embedded: embedded,
+                          ),
+                        ),
+                      ),
                     );
                   }
                   final conversation = chats[index - requestRows];
@@ -217,6 +208,9 @@ class ChatListScreen extends StatelessWidget {
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
                       if (embedded) {
+                        // The archive is its own page: leave it so the pane
+                        // beside the list shows the chat that was picked.
+                        if (archived) Navigator.of(context).pop();
                         return;
                       }
                       Navigator.of(context).push(
@@ -235,25 +229,35 @@ class ChatListScreen extends StatelessWidget {
     );
   }
 
-  /// A request opens its own screen, never the conversation: nothing is
-  /// loaded, read or acknowledged until the user accepts.
-  Future<void> _openRequest(BuildContext context, Conversation request) async {
-    final accepted = await Navigator.of(context).push<bool>(
-      sharedAxisRoute<bool>(
-        (_) => MessageRequestScreen(state: state, conversation: request),
-      ),
-    );
-    if (accepted != true || !context.mounted) {
-      return;
-    }
-    state.selectAndPrepare(request.id);
-    if (embedded) {
-      return;
-    }
-    await Navigator.of(context).push(
-      sharedAxisRoute<void>(
-        (_) => ChatScreen(state: state, conversationId: request.id),
-      ),
+  /// "Start a chat" and, for an admin, "Invite someone" (U28). Server invites
+  /// are minted by an owner or admin only, so no one else sees the button.
+  Widget _emptyActions(BuildContext context) {
+    final l10n = context.l10n;
+    final role = state.session?.role;
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: BoneSpacing.sm,
+      runSpacing: BoneSpacing.sm,
+      children: <Widget>[
+        FilledButton.icon(
+          onPressed: () => showNewConversationSheet(context, state),
+          icon: const Icon(Icons.add_comment_outlined),
+          label: Text(l10n.chatListStartChat),
+        ),
+        if (role == 'owner' || role == 'admin')
+          OutlinedButton.icon(
+            onPressed: () async {
+              if (await promptReauthenticate(context, state) &&
+                  context.mounted) {
+                await Navigator.of(context).push(
+                  sharedAxisRoute<void>((_) => InviteScreen(state: state)),
+                );
+              }
+            },
+            icon: const Icon(Icons.person_add_alt_outlined),
+            label: Text(l10n.chatListInviteSomeone),
+          ),
+      ],
     );
   }
 
@@ -350,6 +354,177 @@ class ChatListScreen extends StatelessWidget {
   }
 }
 
+/// The conversations the list may show. No rows until the request state is
+/// read, so no stranger's chat shows as a normal one and none flashes into
+/// Requests (B8). A community's shared group is opened per channel, from
+/// Communities.
+List<Conversation> _visibleConversations(AppState state) {
+  final loaded = state.requestStateLoaded;
+  return state.conversations
+      .where(
+        (c) =>
+            !c.isCommunityShared &&
+            (loaded
+                ? state.requestBucket(c) != RequestBucket.hidden
+                : state.requestBucket(c) == RequestBucket.chat),
+      )
+      .toList(growable: false);
+}
+
+/// A request opens its own screen, never the conversation: nothing is
+/// loaded, read or acknowledged until the user accepts. True once accepted.
+Future<bool> _openRequest(
+  BuildContext context,
+  AppState state,
+  Conversation request, {
+  required bool embedded,
+}) async {
+  final accepted = await Navigator.of(context).push<bool>(
+    sharedAxisRoute<bool>(
+      (_) => MessageRequestScreen(state: state, conversation: request),
+    ),
+  );
+  if (accepted != true || !context.mounted) {
+    return false;
+  }
+  state.selectAndPrepare(request.id);
+  if (embedded) {
+    return true;
+  }
+  await Navigator.of(context).push(
+    sharedAxisRoute<void>(
+      (_) => ChatScreen(state: state, conversationId: request.id),
+    ),
+  );
+  return true;
+}
+
+/// The one row at the top of the chat list that holds every message request
+/// (U28). Strangers stay behind it until the person opens it.
+class _RequestsTile extends StatelessWidget {
+  const _RequestsTile({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return MergeSemantics(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(BoneRadii.md),
+          child: InkWell(
+            key: const Key('requests-row'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(BoneRadii.md),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                minHeight: BoneSpacing.rowHeight,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: BoneSpacing.sm,
+                  vertical: BoneSpacing.sm,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    ExcludeSemantics(
+                      child: CircleAvatar(
+                        radius: 22,
+                        backgroundColor: scheme.surfaceContainerHigh,
+                        foregroundColor: scheme.onSurfaceVariant,
+                        child: const Icon(Icons.mark_chat_unread_outlined),
+                      ),
+                    ),
+                    const SizedBox(width: BoneSpacing.md),
+                    Expanded(
+                      child: Text(
+                        context.l10n.requestsSection(count),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The page behind the Requests row: each stranger as a row that opens its own
+/// request screen (B8). It closes itself once the last request is gone.
+class _RequestsScreen extends StatelessWidget {
+  const _RequestsScreen({required this.state, required this.embedded});
+
+  final AppState state;
+  final bool embedded;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) {
+        final requests = _visibleConversations(state)
+            .where(state.isMessageRequest)
+            .toList(growable: false);
+        if (requests.isEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted &&
+                (ModalRoute.of(context)?.isCurrent ?? false)) {
+              Navigator.of(context).pop();
+            }
+          });
+        }
+        return Scaffold(
+          appBar: LargeTitleBar(
+            title: context.l10n.requestsSection(requests.length),
+          ),
+          body: ListView.builder(
+            padding: const EdgeInsets.all(BoneSpacing.sm),
+            itemCount: requests.length,
+            itemBuilder: (context, index) {
+              final request = requests[index];
+              return _ConversationTile(
+                conversation: request,
+                profiles: state.profiles,
+                // A stranger's chosen name is not shown until the request is
+                // accepted; their photo is.
+                showProfileName: false,
+                muted: false,
+                selected: false,
+                hero: false,
+                onActions: () {},
+                onTap: () async {
+                  final accepted = await _openRequest(
+                    context,
+                    state,
+                    request,
+                    embedded: embedded,
+                  );
+                  // The pane beside the list shows the accepted chat.
+                  if (accepted && embedded && context.mounted) {
+                    Navigator.of(context).pop();
+                  }
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Everything [ChatListScreen] reads from [AppState] (T49C-1); the list
 /// rebuilds only when this changes. Lists and models compare by identity:
 /// AppState replaces them instead of editing them in place. A new read from
@@ -365,7 +540,7 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     for (final conversation in conversations) state.isMuted(conversation.id),
     state.requestStateLoaded,
     state.conversationPrefs,
-    state.showArchivedChats,
+    state.session?.role,
     for (final conversation in conversations) state.requestBucket(conversation),
     state.historyOnlyConversations.isNotEmpty,
     state.profiles?.revision,
@@ -490,6 +665,7 @@ class _ConversationTile extends StatelessWidget {
                                 // Compact on screen, spoken in full: `1d`
                                 // should not be read out as "one dee".
                                 StatusPill(
+                                  icon: Icons.timer_outlined,
                                   label: retentionChipLabel(l10n, retention),
                                   uppercase: false,
                                   semanticsLabel:

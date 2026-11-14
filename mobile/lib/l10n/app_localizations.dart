@@ -2463,6 +2463,30 @@ abstract class AppLocalizations {
   /// **'Start a direct message or create a group. Everything is end-to-end encrypted.'**
   String get chatListEmptyMessage;
 
+  /// No description provided for @chatListStartChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a chat'**
+  String get chatListStartChat;
+
+  /// No description provided for @chatListInviteSomeone.
+  ///
+  /// In en, this message translates to:
+  /// **'Invite someone'**
+  String get chatListInviteSomeone;
+
+  /// No description provided for @chatListArchivedEmptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No archived chats'**
+  String get chatListArchivedEmptyTitle;
+
+  /// No description provided for @chatListArchivedEmptyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats you archive are kept here, out of your main list.'**
+  String get chatListArchivedEmptyMessage;
+
   /// No description provided for @chatListUnmute.
   ///
   /// In en, this message translates to:

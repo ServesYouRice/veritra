@@ -166,7 +166,7 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('archived chats remain reachable through the archive switch',
+  testWidgets('archived chats open as a page with Back',
       (tester) async {
     final state = _state();
     await state.setConversationArchived('conv', true);
@@ -177,6 +177,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Team'), findsOneWidget);
     expect(find.text(englishL10n.w8ArchivedChats), findsOneWidget);
+    // The archive is a page with Back (U28), not a switch on the list.
+    expect(find.byType(BackButton), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Team'), findsNothing);
+    expect(find.text(englishL10n.navChats), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });

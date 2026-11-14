@@ -1441,6 +1441,19 @@ class AppLocalizationsSr extends AppLocalizations {
       'Започните директну поруку или направите групу. Све је шифровано с краја на крај.';
 
   @override
+  String get chatListStartChat => 'Започни ћаскање';
+
+  @override
+  String get chatListInviteSomeone => 'Позови некога';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Нема архивираних ћаскања';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ћаскања која архивирате чувају се овде, ван главне листе.';
+
+  @override
   String get chatListUnmute => 'Укључи обавештења';
 
   @override
@@ -6085,6 +6098,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatListEmptyMessage =>
       'Započnite direktnu poruku ili napravite grupu. Sve je šifrovano s kraja na kraj.';
+
+  @override
+  String get chatListStartChat => 'Započni ćaskanje';
+
+  @override
+  String get chatListInviteSomeone => 'Pozovi nekoga';
+
+  @override
+  String get chatListArchivedEmptyTitle => 'Nema arhiviranih ćaskanja';
+
+  @override
+  String get chatListArchivedEmptyMessage =>
+      'Ćaskanja koja arhivirate čuvaju se ovde, van glavne liste.';
 
   @override
   String get chatListUnmute => 'Uključi obaveštenja';
