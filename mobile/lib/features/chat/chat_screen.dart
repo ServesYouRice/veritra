@@ -1094,7 +1094,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'star') {
       await state.toggleMessageStar(message);
     } else if (action == 'hide') {
-      await state.deleteMessageForMe(message);
+      await _deleteForMe(message);
     } else if (action == 'report') {
       await Navigator.of(context).push<void>(MaterialPageRoute<void>(
         builder: (_) => ReportMessageScreen(
@@ -1213,6 +1213,41 @@ class _ChatScreenState extends State<ChatScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error)));
     }
+  }
+
+  /// U16 (D133): "Delete for me" hides the message at once and offers Undo.
+  /// When the snackbar closes any other way (its time is up, it is swiped
+  /// away, or the next one replaces it) the delete is final.
+  Future<void> _deleteForMe(LocalMessage message) async {
+    final state = widget.state;
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final hidden = await state.deleteMessageForMe(message);
+    if (!hidden) return;
+    // Clear the queue too, so a snackbar waiting behind the current one
+    // cannot take the place of the Undo window.
+    messenger.clearSnackBars();
+    final controller = messenger.showSnackBar(SnackBar(
+      key: const Key('delete-for-me-undo'),
+      content: Text(l10n.w8DeletedForMe),
+      persist: false,
+      duration: AppState.deleteForMeUndoShown,
+      action: SnackBarAction(
+        label: l10n.commonUndo,
+        onPressed: () async {
+          final restored = await state.undoDeleteForMe(message);
+          if (!restored) {
+            messenger.showSnackBar(
+                SnackBar(content: Text(l10n.w8DeleteForMeUndoFailed)));
+          }
+        },
+      ),
+    ));
+    unawaited(controller.closed.then((reason) {
+      if (reason != SnackBarClosedReason.action) {
+        return state.finishDeleteForMe(message.key);
+      }
+    }));
   }
 
   Future<String?> _editDialog(String current) {

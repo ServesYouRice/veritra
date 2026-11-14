@@ -5259,6 +5259,18 @@ abstract class AppLocalizations {
   /// **'Delete for me'**
   String get w8DeleteForMe;
 
+  /// No description provided for @w8DeletedForMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted on this device'**
+  String get w8DeletedForMe;
+
+  /// No description provided for @w8DeleteForMeUndoFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'This message could not be brought back.'**
+  String get w8DeleteForMeUndoFailed;
+
   /// No description provided for @w8Archive.
   ///
   /// In en, this message translates to:

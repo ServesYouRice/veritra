@@ -119,7 +119,9 @@ extension FrankRevealSql on EncryptedLocalDatabase {
     // message_key references the message row, so a purge, an expiry or a
     // history reset takes the reveal with it. The trigger below covers the
     // two ways a row stays but its content goes (delete for everyone, hide):
-    // those keep the row as a tombstone, so the cascade never fires.
+    // those keep the row as a tombstone, so the cascade never fires. Schema
+    // 44 (hide_undo_sql.dart) replaces the trigger: a reveal stays while a
+    // hide can still be undone, and goes when the hide is final.
     await customStatement(
       'CREATE TABLE IF NOT EXISTS local_frank_reveals ('
       'message_key TEXT PRIMARY KEY NOT NULL REFERENCES local_messages(key) ON DELETE CASCADE,'
@@ -188,7 +190,11 @@ extension FrankRevealSql on EncryptedLocalDatabase {
     final row = await customSelect(
       'SELECT message_key, conversation_id, envelope_id, frank_key, payload, '
       'designation, sender_account_id '
-      'FROM local_frank_reveals WHERE message_key = ?',
+      'FROM local_frank_reveals WHERE message_key = ? '
+      // Never while the message is hidden (an Undo window, U16) or deleted.
+      'AND NOT EXISTS (SELECT 1 FROM local_messages '
+      'WHERE local_messages.key = local_frank_reveals.message_key '
+      'AND (deleted_at IS NOT NULL OR hidden_at IS NOT NULL))',
       variables: [Variable.withString(messageKey)],
     ).getSingleOrNull();
     if (row == null) return null;

@@ -556,6 +556,52 @@ void main() {
     }
   });
 
+  group('U16: Delete for me offers Undo', () {
+    Future<(MemoryLocalStore, AppState)> open(WidgetTester tester) async {
+      final store = MemoryLocalStore(), state = _state();
+      state.localStoreOverride = store;
+      // Only the snackbar can close the window here, not the backstop.
+      state.deleteForMeUndoWindow = const Duration(hours: 1);
+      await _seed(store);
+      await state.refreshHistory('conv');
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: ChatScreen(state: state, conversationId: 'conv'))));
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('hello'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text(englishL10n.w8DeleteForMe));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(englishL10n.w8DeleteForMe));
+      await tester.pumpAndSettle();
+      return (store, state);
+    }
+
+    testWidgets('Undo brings the message back', (tester) async {
+      final (store, state) = await open(tester);
+      expect(find.text('hello'), findsNothing);
+      expect(find.text(englishL10n.w8DeletedForMe), findsOneWidget);
+      await tester.tap(find.text(englishL10n.commonUndo));
+      await tester.pumpAndSettle();
+      expect(find.text('hello'), findsOneWidget);
+      expect((await store.loadMessages('conv')).single.hiddenAt, isNull);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    testWidgets('when the snackbar goes, the delete is final', (tester) async {
+      final (store, state) = await open(tester);
+      await tester.pump(AppState.deleteForMeUndoShown);
+      await tester.pumpAndSettle();
+      expect(find.text(englishL10n.w8DeletedForMe), findsNothing);
+      expect(find.text('hello'), findsNothing);
+      expect(await store.unhideMessage('dev:t'), isFalse);
+      expect((await store.loadMessages('conv')).single.body, isNull);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+  });
+
   testWidgets('U7: a long-press on the message text opens the action sheet', (
     tester,
   ) async {

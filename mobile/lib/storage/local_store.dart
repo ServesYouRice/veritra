@@ -1137,7 +1137,24 @@ abstract class LocalStore {
   Future<List<LocalPin>> loadPins(String conversationId);
   Future<Set<String>> loadStarred();
   Future<void> setStarred(String key, bool starred);
-  Future<void> hideMessage(String conversationId, String key);
+
+  /// "Delete for me" (U16, D133). The row is hidden and scrubbed at once, so
+  /// no view, preview, search, notice or backup shows it again, and what the
+  /// scrub removed is kept aside for Undo until [finishHiddenMessages] runs.
+  /// Returns false, changing nothing, when there is no such visible row.
+  Future<bool> hideMessage(String conversationId, String key);
+
+  /// Undo of [hideMessage]: the message comes back as it was. Returns false,
+  /// and makes the hide final, when it cannot: the hide is final already, or
+  /// the message has since been changed, deleted for everyone or expired.
+  Future<bool> unhideMessage(String key);
+
+  /// Makes hides final, deleting what they kept aside. [only] limits it to
+  /// those messages; [except] leaves those (Undo still offered) alone. The
+  /// app runs it for all on every start, so a hide is final even when the
+  /// app was killed during its Undo window.
+  Future<void> finishHiddenMessages(
+      {Set<String>? only, Set<String> except = const <String>{}});
   Future<List<LocalConversationPref>> loadConversationPrefs();
   Future<void> saveConversationPref(LocalConversationPref pref);
   Future<void> discardPendingPin(String actionKey);
@@ -1804,7 +1821,10 @@ class MemoryLocalStore implements LocalStore {
     final reveal = _frankReveals[messageKey];
     if (reveal == null) return null;
     if (_liveMessage(messageKey) == null) {
-      _frankReveals.remove(messageKey);
+      // Kept while a hide of it can still be undone (U16).
+      if (!_history.hideKept.containsKey(messageKey)) {
+        _frankReveals.remove(messageKey);
+      }
       return null;
     }
     return reveal;
@@ -3116,9 +3136,26 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
-  Future<void> hideMessage(String conversationId, String key) async {
+  Future<bool> hideMessage(String conversationId, String key) async {
     final target = _history._messages[key];
-    if (target == null || target.conversationId != conversationId) return;
+    if (target == null ||
+        target.conversationId != conversationId ||
+        target.hiddenAt != null) return false;
+    _history.hideKept[key] = _HideKept(
+      body: target.body,
+      formatJson: target.formatJson,
+      replyTo: target.replyTo,
+      reactions: [
+        for (final r in _history._reactions.values)
+          if (r.targetKey == key) r
+      ],
+      pin: _history.pins[key],
+      pendingPins: [
+        for (final p in _history.pendingPins.values)
+          if (p.targetKey == key) p
+      ],
+      starredAt: _history.starred[key],
+    );
     _history._messages[key] = target.copyWith(
       hiddenAt: Value(DateTime.now().millisecondsSinceEpoch),
       body: const Value(null),
@@ -3129,6 +3166,56 @@ class MemoryLocalStore implements LocalStore {
     _history.pins.remove(key);
     _history.starred.remove(key);
     _history.pendingPins.removeWhere((_, p) => p.targetKey == key);
+    return true;
+  }
+
+  @override
+  Future<bool> unhideMessage(String key) async {
+    final kept = _history.hideKept.remove(key);
+    if (kept == null) return false;
+    final row = _history._messages[key];
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (row == null ||
+        row.hiddenAt == null ||
+        row.deletedAt != null ||
+        (row.expiresAt != null && row.expiresAt! <= nowMs)) {
+      if (row == null || row.hiddenAt != null) _frankReveals.remove(key);
+      return false;
+    }
+    _history._messages[key] = row.copyWith(
+        hiddenAt: const Value(null),
+        body: Value(kept.body),
+        formatJson: Value(kept.formatJson),
+        replyTo: Value(kept.replyTo));
+    for (final r in kept.reactions) {
+      _history._reactions
+          .putIfAbsent('${r.targetKey}\u0000${r.reactorAccountId}', () => r);
+    }
+    final pin = kept.pin;
+    if (pin != null && pin.expiresAt > nowMs) {
+      _history.pins.putIfAbsent(key, () => pin);
+      // Pins made during the window may have filled the chat.
+      _history.trimPins(pin.conversationId, pin.channelId);
+    }
+    for (final p in kept.pendingPins) {
+      _history.pendingPins.putIfAbsent(p.actionKey, () => p);
+    }
+    final starredAt = kept.starredAt;
+    if (starredAt != null) _history.starred.putIfAbsent(key, () => starredAt);
+    return true;
+  }
+
+  @override
+  Future<void> finishHiddenMessages(
+      {Set<String>? only, Set<String> except = const <String>{}}) async {
+    for (final key in (only ?? _history.hideKept.keys).toList()) {
+      if (except.contains(key)) continue;
+      _history.finishHide(key);
+      final row = _history._messages[key];
+      if (row == null || row.hiddenAt != null || row.deletedAt != null) {
+        _frankReveals.remove(key);
+      }
+    }
   }
 
   @override
@@ -3162,10 +3249,35 @@ class MemoryLocalStore implements LocalStore {
 
 /// In-memory twin of the database's decrypted history, with the same effect
 /// rules as `EncryptedLocalDatabase._applyMessageEffects`.
+/// What a "Delete for me" removed, kept for Undo (U16; schema 44 in the
+/// encrypted database).
+final class _HideKept {
+  const _HideKept({
+    required this.body,
+    required this.formatJson,
+    required this.replyTo,
+    required this.reactions,
+    required this.pin,
+    required this.pendingPins,
+    required this.starredAt,
+  });
+  final String? body, formatJson, replyTo;
+  final List<LocalMessageReaction> reactions;
+  final LocalPin? pin;
+  final List<LocalPendingPin> pendingPins;
+  final int? starredAt;
+}
+
 class _MemoryMessageHistory {
   final Map<String, LocalPin> pins = {};
   final Map<String, LocalPendingPin> pendingPins = {};
   final Map<String, int> starred = {};
+
+  /// Hides that can still be undone, by message key (U16).
+  final Map<String, _HideKept> hideKept = {};
+
+  /// Makes the hide of [key] final: what it kept aside goes.
+  void finishHide(String key) => hideKept.remove(key);
   final Map<String, LocalMessage> _messages = <String, LocalMessage>{};
   final Map<String, LocalMessageReaction> _reactions =
       <String, LocalMessageReaction>{};
@@ -3195,6 +3307,7 @@ class _MemoryMessageHistory {
     pins.clear();
     starred.clear();
     pendingPins.clear();
+    hideKept.clear();
     _messages.clear();
     _reactions.clear();
   }
@@ -3205,6 +3318,7 @@ class _MemoryMessageHistory {
     next.pins.addAll(pins);
     next.pendingPins.addAll(pendingPins);
     next.starred.addAll(starred);
+    next.hideKept.addAll(hideKept);
     return next;
   }
 
@@ -3214,6 +3328,21 @@ class _MemoryMessageHistory {
     String? accountId,
   }) {
     for (final effect in effects) {
+      // U16: a change to a message whose hide can be undone makes it final,
+      // as in the encrypted database.
+      if (hideKept.isNotEmpty) {
+        switch (effect) {
+          case EditMessageEffect(:final targetKey) ||
+                DeleteMessageEffect(:final targetKey) ||
+                ReactionEffect(:final targetKey) ||
+                PollVoteEffect(:final targetKey) ||
+                PollCloseEffect(:final targetKey) ||
+                PinMessageEffect(:final targetKey):
+            finishHide(targetKey);
+          default:
+            break;
+        }
+      }
       switch (effect) {
         case InsertMessageEffect():
           if (effect.expiresAt != null &&
@@ -3231,8 +3360,12 @@ class _MemoryMessageHistory {
             pins.remove(key);
             starred.remove(key);
             pendingPins.removeWhere((_, p) => p.targetKey == key);
+            finishHide(key);
           }
           if (merged.message == null) continue;
+          // A row the database replaces takes what its hide kept with it
+          // (the schema 44 reference cascades), so it stays hidden for good.
+          if (_messages.containsKey(effect.key)) finishHide(effect.key);
           _messages[effect.key] = merged.message!;
         case EditMessageEffect():
           final target = _messages[effect.targetKey];
@@ -3408,22 +3541,25 @@ class _MemoryMessageHistory {
             appliedOrder: order,
             expiresAt: expiry,
           );
-          final scoped = pins.values
-              .where(
-                (p) =>
-                    p.conversationId == effect.conversationId &&
-                    p.channelId == effect.channelId,
-              )
-              .toList()
-            ..sort((a, b) {
-              final t = b.pinnedAt.compareTo(a.pinnedAt);
-              return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
-            });
-          while (scoped.length > pinLimitPerChat) {
-            final oldest = scoped.removeLast();
-            pins.remove(oldest.targetKey);
-          }
+          trimPins(effect.conversationId, effect.channelId);
       }
+    }
+  }
+
+  /// Keeps the newest [pinLimitPerChat] pins of one chat or channel.
+  void trimPins(String conversationId, String? channelId) {
+    final scoped = pins.values
+        .where(
+          (p) => p.conversationId == conversationId && p.channelId == channelId,
+        )
+        .toList()
+      ..sort((a, b) {
+        final t = b.pinnedAt.compareTo(a.pinnedAt);
+        return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
+      });
+    while (scoped.length > pinLimitPerChat) {
+      final oldest = scoped.removeLast();
+      pins.remove(oldest.targetKey);
     }
   }
 
@@ -3476,6 +3612,7 @@ class _MemoryMessageHistory {
     pins.removeWhere((key, p) => removed.contains(key) || p.expiresAt <= nowMs);
     pendingPins.removeWhere((_, p) => removed.contains(p.targetKey));
     starred.removeWhere((key, _) => removed.contains(key));
+    hideKept.removeWhere((key, _) => removed.contains(key));
     return touched;
   }
 
@@ -4813,12 +4950,19 @@ class SecureLocalStore implements LocalStore {
   Future<void> setStarred(String key, bool starred) async => (await _database())
       .setStarred(key, starred, DateTime.now().millisecondsSinceEpoch);
   @override
-  Future<void> hideMessage(String conversationId, String key) async =>
+  Future<bool> hideMessage(String conversationId, String key) async =>
       (await _database()).hideMessage(
         conversationId,
         key,
         DateTime.now().millisecondsSinceEpoch,
       );
+  @override
+  Future<bool> unhideMessage(String key) async => (await _database())
+      .unhideMessage(key, DateTime.now().millisecondsSinceEpoch);
+  @override
+  Future<void> finishHiddenMessages(
+          {Set<String>? only, Set<String> except = const <String>{}}) async =>
+      (await _database()).finishHides(only: only, except: except);
   @override
   Future<List<LocalConversationPref>> loadConversationPrefs() async =>
       (await _database()).readConversationPrefs();
