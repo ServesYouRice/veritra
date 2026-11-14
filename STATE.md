@@ -7,6 +7,10 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-14.**
 
+2026-11-14 UI audit: 525 screen states measured; packages U1–U38 added to the
+[Build plan](#ui-audit-2026-11-14) in three columns (fix first, next, polish). Evidence:
+[`UI audit`](testing/evidence/UI-audit-2026-11-14.md).
+
 2026-11-14 board refresh: B5, B6, K1, W12, C3, C5, C6, C7 and L2 rows brought in line with rounds 6–8 on `main`; details and residuals in [`HANDOVER.md`](HANDOVER.md).
 
 2026-11-11 C3 independent review: own accepted removal commits now persist
@@ -409,6 +413,67 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Designed (#132, D93). 2026-11-09: S1–S6 implemented; PR #169 phone work ported and independently reviewed, with attachment-removal and push-handoff race fixes. S7 Windows Hello hand run, signed Android/iOS association and ceremony runs, and platform CI evidence remain open. See [`B7 evidence`](testing/evidence/B7-passkeys.md). |
 | B8 ✅ | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet — 2026-10-24, DMs and groups from strangers; acceptance is per device; Opus-reviewed |
 | B9 ✅ | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review — 2026-10-24; Opus-reviewed |
+
+### UI audit (2026-11-14)
+
+Packages from the screen-by-screen UI audit: 525 screen states rendered from the real app in dark and light,
+measured, and checked against the platform rules and published research. Method, numbers, word list and sources:
+[`UI audit evidence`](testing/evidence/UI-audit-2026-11-14.md). These change screens and wording only: no crypto, storage, sync or release-gate change.
+Three columns, in order. Everything starts as to-do. Paths are under `mobile/lib/features/` unless they start with
+`mobile/` or `docs/`; line numbers are from 2026-11-14, so confirm them against the code.
+
+**Fix first**
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| U1 | Community header fits a phone | At 360 dp a community you own shows its full name, its five actions sit behind one labelled menu, and the header is under 100 dp tall. A widget test at 360 dp pins it. Where: `communities/community_screen.dart:351-409` | Sonnet |
+| U2 | Large-text rows stack | At text scale 2.0 no row lays its text out narrower than 120 dp: a row with a trailing dropdown or switch puts the control under the text. `responsive_layout_test` covers the Link previews row. Where: `settings/link_preview_tile.dart:32-33` | Sonnet |
+| U3 | Device-approval warning in full | The warning "never use a code you were sent or read" shows whole, above the code field, at 360 dp and at scale 2.0. The code goes into eight boxes. Where: `settings/device_link_screen.dart:244` (`deviceLinkApproveHint`) | Opus review |
+| U4 | Errors stay on the community page | An owner or admin whose leave, revoke or remove fails still sees the message after the panels reload. A test reproduces today's cleared-in-one-frame case. Where: `communities/membership_screens.dart:730-744`, `mobile/lib/core/app_state.dart:11164` | Sonnet |
+| U5 | Moderation never guesses | If moderation data fails to load, the screen shows "Could not load" with Retry, and none of "Nobody is banned", "Off" or "Invitation links work normally". Where: `communities/moderation_screen.dart:213-216,278` | Sonnet |
+| U6 | Calls show the person | Incoming, outgoing and active call screens and the missed-call card show the chat's display name and photo. The missed-call card offers Call back. Each round call button has a spoken name. Where: `calls/call_host.dart:193,343` | Sonnet |
+| U7 | Hold a message, get its menu | A long-press anywhere on a bubble, text included, opens the action sheet. "Select text" is an action inside it. Where: `chat/formatted_message.dart:103`, `chat/chat_screen.dart:1938` | Sonnet |
+| U8 | Phone-width layout fixes | The QR-scanner permission text stays inside its frame and has "Open settings". The reports inbox has the 16 dp side gutter. The safety number is a fixed 4 × 3 grid. New channel is a full page with its error beside Create. "Invitations and join requests" fits its title bar. Field errors wrap to two lines. Where: `auth/qr_scan_screen.dart`, `reports/owner_reports_screen.dart:145`, `chat/safety_number_screen.dart`, `communities/create_channel_dialog.dart:195-198`, `auth/connect_screen.dart:222`, `settings/recovery_key_screen.dart:354` | Sonnet |
+| U9 | Words that mislead | Delete account uses one verb in its title and button and lists what is lost. Profile drops the "encryption identity pending" notice while editing works. "Pin for 1 day" is singular. "Lift timeout" shows only for a timed-out member. The recovery-key dialog button names its result. A wrong password keeps the re-auth dialog open with the error under the field. Where: `settingsDeleteAccountConfirm` and `w8PinDays` in `mobile/lib/l10n/app_en.arb`, `settings/profile_screen.dart:167-169`, `communities/membership_screens.dart:869`, `settings/auto_backup_screen.dart:350`, `mobile/lib/ui/reauthenticate.dart:44` | Owner first (delete or disable), then Sonnet |
+| U10 | Bigger type ramp | `BoneType` moves to body 16, label 16, caption 13.5, micro 12.5, and `docs/design.md` §1 agrees. A test finds no text under 12 on the golden fixtures. Goldens are regenerated and layouts still pass at 320 dp and scale 2.0. Where: `mobile/lib/ui/tokens.dart`, `docs/design.md` §1 | Sonnet |
+| U11 | Tabs and top bars have words | The three tabs show icon and word from 320 dp up to text scale 1.3. Top-bar actions carry a label where space allows. Where: `mobile/lib/ui/app_shell.dart:22-27,330` | Sonnet |
+| U12 | Last message on chat rows | Each row shows "sender: first words", read from the local store only. Attachments, polls and voice notes get a placeholder. A Settings switch hides previews. Push stays generic. Where: `chat/chat_list_screen.dart:636` (`conversationRowSubtitle`) | Owner first (previews on or off by default), then Opus review |
+| U13 | Say "encrypted" once | The chat header drops its ENCRYPTED line, bubbles drop the padlock, and one notice opens each chat. Exceptions (unverified sender, failed send) keep their marker. `docs/design.md` §2 is updated. Where: `chat/chat_screen.dart:2220,2321`, `chat/chat_list_screen.dart:624-643` | Sonnet |
+| U14 | Own bubbles get a tint | Own bubbles use a new colour token in both themes, with text contrast of at least 4.5:1 pinned in `chat_visuals_test`. The "sent bubbles stay on tone" rule in `docs/design.md` is updated. Where: `chat/chat_screen.dart:1930`, `mobile/lib/ui/tokens.dart` | Owner first (reverses a recorded design choice), then Sonnet |
+| U15 | Risky actions get words: devices and members | Device sign-out is a labelled button with a red confirmation that names the device. Removing a group or community member sits in a per-member menu. The role shows under the name. Where: `settings/settings_screen.dart:1235`, `chat/conversation_details_screen.dart`, `communities/membership_screens.dart` | Sonnet |
+| U16 | Risky actions get words: requests, links, blocks | Join requests show Decline and Approve. Invitation links have a labelled "Turn off" with a confirmation. Block from search or chat details confirms first. Unblock, Delete for me and Block offer Undo. Where: `communities/membership_screens.dart:374,475-491`, `search/search_screen.dart:670`, `chat/conversation_details_screen.dart:786`, `settings/blocked_accounts_screen.dart:116`, `chat/chat_screen.dart:1012` | Sonnet |
+| U17 | Calm colours, loud only for danger | Offline, "messages waiting", the hidden-message bubble and failed sends use neutral or amber. Several notices fold into one plus "N more". An account-recovery attempt is its own card with a filled "This is not me" button. Where: `mobile/lib/ui/widgets/connection_banner.dart`, `mobile/lib/ui/widgets/account_recovery_banner.dart`, `mobile/lib/ui/app_shell.dart:203-209`, `chat/chat_screen.dart` | Opus review |
+| U18 | Settings in eight groups | The Settings tab fits two viewports at 360 × 800. Every row that opens a page has an arrow. Account ID sits under Profile → Advanced. The "Coming soon" row is gone. Sign out is last and red. Notifications-off offers "Turn on". Where: `settings/settings_screen.dart` | Sonnet |
+| U19 | Plain words | The word list in the evidence file is applied to `app_en.arb`. Serbian is updated, or flagged for the native review already on the board. Where: `mobile/lib/l10n/app_en.arb`, `mobile/lib/l10n/app_sr.arb` | Sonnet |
+
+**Next**
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| U20 | Welcome and sign-in routing | The first screen offers "I have an invite" and "I already have an account". The second asks: new phone, signed in here before, or lost all devices. The big logo shows once. Where: `auth/connect_screen.dart`, `docs/design.md` §5 | Owner first (reverses design §5), then Sonnet |
+| U21 | Join with one invite link | One pasted or scanned link fills the server and the code. Step 2 asks for name and password. Join is visible without scrolling at 360 × 800. Errors sit under their field and clear on edit. Open question for the owner: drop "Confirm password". Where: `auth/connect_screen.dart`, `settings/invite_screen.dart`, `mobile/lib/core/app_state.dart:11192` | Owner first, then Opus designs (link format) |
+| U22 | Link a device in three steps | Both devices show scan, compare, done. Status updates by itself. The comparison number is the largest thing on the screen. The old device shows the QR first, with the typed code behind "Cannot scan?". Where: `auth/connect_screen.dart`, `settings/device_link_screen.dart` | Opus review |
+| U23 | Recovery in plain steps | Recovery start shows three points, with the fine print behind "How recovery works". The wait shows a countdown. Follow-up shows step n of 3 with Back. Password and key fields can be revealed. Where: `auth/account_recovery_screen.dart`, `auth/recovery_follow_up_screen.dart`, `settings/reauth_dialog.dart` | Opus review |
+| U24 | Recovery key, easier to copy and check | The key shows as 13 numbered groups. Typing it back ticks each correct group and names the wrong one. Print or password-manager export is a separate owner decision. Where: `settings/recovery_key_screen.dart` | Opus review |
+| U25 | Safety number, guided | The screen opens with one sentence of why. It offers "We are together" (scan) and "We are on a call" (read aloud). "Mark as verified" appears only after a compare step. Where: `chat/safety_number_screen.dart` | Opus review |
+| U26 | Sealed sender in plain words | The screen shows On or Off with one line of summary. A key change asks a question a person can answer, with the safe choice as the main button. Codes sit under "Technical details". Where: `settings/sealed_key_screen.dart` | Opus review |
+| U27 | New chat from people you know | The sheet lists people this device already shares chats with, from local data only. Search filters it. Tapping a person opens the chat. The button says Message. Where: `chat/new_conversation_sheet.dart`, `mobile/lib/ui/widgets/account_picker.dart` | Opus review |
+| U28 | Chat list tidy | Requests collapse into one row at the top and stay out of Archived. New chat moves to the top bar so nothing covers a row. The timer chip has an icon. The empty state offers "Start a chat" and "Invite someone". Archived opens as a page with Back. Where: `chat/chat_list_screen.dart` | Sonnet |
+| U29 | Chat screen tidy | A 12-character name fits beside the call buttons at 360 dp, and tapping it opens details. Star and info move into a menu. Sent, delivered and read ticks differ by shape. One + holds files and polls, and the mic turns into Send. A failed send shows "Not sent · Retry". Where: `chat/chat_screen.dart:423-471,2554-2669`, `chat/message_ticks.dart:71-74` | Sonnet |
+| U30 | Chat details, person first | The page leads with photo, name and Mute, Search, Call. Disappearing messages is one row that opens a sheet and says why when it is locked. IDs and the membership note sit under Advanced. One-to-one chats show no roles. Where: `chat/conversation_details_screen.dart` | Sonnet |
+| U31 | Communities tab and page | Tapping a community opens its page with Members, Invites and Requests tabs. Private channels show a padlock. Join and New are labelled top-bar actions. The empty state has both buttons. Removals confirm with Undo. Timed-out members are marked. Where: `communities/community_screen.dart`, `communities/membership_screens.dart` | Sonnet |
+| U32 | Channel dialogs | "History for new members" uses three short points that stay true to C7. Edit channel says why Save is disabled. Create and edit share one name limit. A pasted join link checks itself. Where: `communities/channel_history_warning.dart`, `communities/edit_info_dialog.dart:49,100,135`, `mobile/lib/ui/validation.dart` | Opus review (wording) |
+| U33 | Reports for people | A report shows a plain verdict with "Why not certain?". Reporter and sender appear by name, with the channel. A next step sits beside Dismiss. The inbox leads with reports. The report form offers reasons. Where: `reports/owner_reports_screen.dart`, `reports/report_message_screen.dart` | Opus review (wording stays true to C6) |
+| U34 | Admin screens | The audit log reads as sentences with names. Suspend lives on the person's page. An invite shares as one link and reads "3 of 5 used". Where: `settings/admin_screen.dart:318-326`, `settings/invite_screen.dart` | Sonnet |
+| U35 | Search results | A person row opens the person, with no inline Block. Headings replace per-row badges. Message results put the date on the name line. The tab reads "People". Where: `search/search_screen.dart` | Sonnet |
+
+**Polish**
+
+| ID | Package | Done when | Route |
+|---|---|---|---|
+| U36 | Small polish: chats | A message request shows what you share with the sender. An empty chat says "Only you two can read this". Group sender names get a colour each and normal small text. The call relay note moves to Settings. Chat actions also open by swipe. Avatar tints are an owner question. Where: `chat/`, `calls/call_host.dart`, `mobile/lib/ui/avatar.dart` | Sonnet |
+| U37 | Small polish: settings and communities | The active account is ticked. Passkey rows show one fact. Restore rows have arrows and say "Older copy". Recovery key offers "Check my key". Role changes confirm. Durations are written in words. Notices appear inside an open chat too. Where: `settings/`, `communities/`, `chat/roles_screen.dart` | Sonnet |
+| U38 | Screen photographs on demand | A test-only harness, off by default, renders every screen with real fonts in dark and light and writes the measurements used in this audit, so each U card can attach a before and after. Where: new, under `mobile/test/`; the audit's own harness was temporary and is not in the repo | Sonnet |
 
 ### Later
 
