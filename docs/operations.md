@@ -302,12 +302,17 @@ whole address no more than one account's budget; raise it for a large
 office. A refusal is 429 with `Retry-After`;
 `veritra_rate_limit_rejections_total` counts it by scope (`general`,
 `auth`, `enrollment`, `account`, `signed_in`). Realtime sockets have their
-own limits: 10 per account and 3 per device, 20 per address, and for IPv6 a
-separate cap on all addresses of one /64 (default 200,
-`PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or home
-network hands out many addresses, so the /64 cap is higher than the address
-cap). IPv4 clients behind one NAT share their address's 20. The server logs
-the resolved values at start (`rate_limits`, `admission_limits`).
+own limits: 10 per account and 3 per device, 20 per IPv6 address, a cap per
+IPv4 address (default 20, `PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV4_ADDRESS`,
+3-10,000), and for IPv6 a separate cap on all addresses of one /64 (default
+200, `PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX`, 20-10,000; an office or
+home network hands out many addresses, so the /64 cap is higher than the
+address cap). IPv4 clients behind one NAT share their address's cap: raise
+`SOCKETS_PER_IPV4_ADDRESS` for a carrier-grade or office NAT that puts many
+users behind one address, since the refusal (429 `realtime_connection_limit`)
+leaves those users without live updates until they reconnect. An IPv4-mapped
+IPv6 address counts as the IPv4 address. The server logs the resolved values
+at start (`rate_limits`, `admission_limits`).
 
 Login and reauthentication also use bounded backoff scopes: the first two
 failures are unauthorized responses, the third starts a 1-second delay that
@@ -1381,7 +1386,8 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |
-| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one address always gets at most 20) | 429 `realtime_connection_limit` |
+| `SOCKETS_PER_IPV6_PREFIX` | 200 | 20-10,000 | realtime sockets of all addresses in one IPv6 /64 (one IPv6 address always gets at most 20) | 429 `realtime_connection_limit` |
+| `SOCKETS_PER_IPV4_ADDRESS` | 20 | 3-10,000 | realtime sockets of one IPv4 address, shared by every client behind one NAT (the 10 per account and 3 per device caps still apply) | 429 `realtime_connection_limit` |
 
 Why these defaults: a realtime delivery costs the server 4-10 ms of CPU;
 one account at 1,000 a minute (17/s) is about a third of the 47/s tier S

@@ -188,7 +188,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	}
 	providers["unifiedpush"] = upProvider
 	pushProvider := push.NewRouter(providers)
-	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: cfg.Limits.WithDefaults().SocketsPerIPv6Prefix})
+	socketLimits := cfg.Limits.WithDefaults()
+	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: socketLimits.SocketsPerIPv6Prefix, PerIPv4Address: socketLimits.SocketsPerIPv4Address})
 	metrics := newHTTPMetrics()
 	metrics.realtimeConnections = hub.ConnectionCount
 	dataDir := cfg.DataDir
