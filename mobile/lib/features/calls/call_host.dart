@@ -65,6 +65,9 @@ class _CallHostState extends State<CallHost> {
     final session = state.session;
     final api = state.api;
     final crypto = state.cryptoService;
+    // The privacy setting follows the live service (D134); a call already
+    // connecting keeps the policy it started with.
+    _service?.allowDirectConnections = state.allowDirectCalls;
     final token = state.config.demo &&
             session != null &&
             api != null &&
@@ -79,7 +82,8 @@ class _CallHostState extends State<CallHost> {
         api: api!,
         token: token,
         crypto: crypto as MlsConversationCryptoService,
-        incoming: state.callSignals);
+        incoming: state.callSignals,
+        allowDirectConnections: state.allowDirectCalls);
     final controller = CallController(
         service: service,
         selfAccountId: session!.accountId,

@@ -285,7 +285,9 @@ class NativeCallService {
   /// candidates and only those are signalled, so the other side never
   /// learns this device's addresses. When true (a user setting that warns
   /// that the other side then sees their address), direct paths are allowed.
-  final bool allowDirectConnections;
+  /// Read when each call's connection is created, so a change applies to the
+  /// next call and never to one in progress.
+  bool allowDirectConnections;
 
   final Future<void> Function(Duration delay) _retryDelay;
   final Random _jitter = Random();

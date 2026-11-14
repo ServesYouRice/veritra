@@ -819,6 +819,17 @@ void _task021() {
       ]);
     });
 
+    test('switching the setting on applies to the next call (D134)', () async {
+      final h = _harness();
+      final call = await h.service.start('conv_1');
+      expect(h.media.peer.configuration['iceTransportPolicy'], 'relay');
+      h.service.allowDirectConnections = true;
+      await h.service.end(call.session.id);
+      await h.service.answer(callSession(id: 'call_2'), _offer);
+      expect(h.media.peers, hasLength(2));
+      expect(h.media.peers.last.configuration['iceTransportPolicy'], 'all');
+    });
+
     test('the direct-connection setting allows every candidate', () async {
       final h = _harness(allowDirectConnections: true);
       await h.service.start('conv_1');

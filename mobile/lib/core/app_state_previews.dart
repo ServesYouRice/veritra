@@ -1,5 +1,9 @@
 part of 'app_state.dart';
 
+/// The stored direct-calls switch (D56/D134). Only the exact value `true`
+/// turns it on, so a missing or odd value keeps calls relay-only.
+const String directCallsSetting = 'd134.direct_calls';
+
 /// The stored switch, read like `screen_guard_chats`.
 const String _chatPreviewsSetting = 'u12.chat_previews';
 

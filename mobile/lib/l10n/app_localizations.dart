@@ -651,17 +651,17 @@ abstract class AppLocalizations {
   /// **'1:1 audio/video'**
   String get settingsCallsComingSoonDetail;
 
-  /// No description provided for @settingsCallsRelayTitle.
+  /// No description provided for @settingsDirectCallsTitle.
   ///
   /// In en, this message translates to:
-  /// **'Calls'**
-  String get settingsCallsRelayTitle;
+  /// **'Direct calls'**
+  String get settingsDirectCallsTitle;
 
-  /// No description provided for @settingsCallsRelayNote.
+  /// No description provided for @settingsDirectCallsNote.
   ///
   /// In en, this message translates to:
-  /// **'Calls go through the server\'s relay, so the other side never sees your network address.'**
-  String get settingsCallsRelayNote;
+  /// **'Faster, but the other person sees your network address.'**
+  String get settingsDirectCallsNote;
 
   /// No description provided for @settingsDeleteAccount.
   ///

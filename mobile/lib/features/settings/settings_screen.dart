@@ -286,12 +286,15 @@ class SettingsScreen extends StatelessWidget {
                         onChanged: state.setScreenGuardChats,
                       ),
                     // How a call is routed, said once here rather than on
-                    // every call screen (U36).
-                    ListTile(
+                    // every call screen (U36). Relay-only unless switched on
+                    // (D56/D134).
+                    SwitchListTile(
                       key: const ValueKey<String>('settings-calls-relay'),
-                      leading: const Icon(Icons.call_outlined),
-                      title: Text(l10n.settingsCallsRelayTitle),
-                      subtitle: Text(l10n.settingsCallsRelayNote),
+                      secondary: const Icon(Icons.call_outlined),
+                      title: Text(l10n.settingsDirectCallsTitle),
+                      subtitle: Text(l10n.settingsDirectCallsNote),
+                      value: state.allowDirectCalls,
+                      onChanged: state.setAllowDirectCalls,
                     ),
                     ListTile(
                       leading: const Icon(Icons.block_outlined),

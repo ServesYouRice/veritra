@@ -320,11 +320,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsCallsComingSoonDetail => 'Аудио и видео позиви 1:1';
 
   @override
-  String get settingsCallsRelayTitle => 'Позиви';
+  String get settingsDirectCallsTitle => 'Директни позиви';
 
   @override
-  String get settingsCallsRelayNote =>
-      'Позиви иду преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
+  String get settingsDirectCallsNote =>
+      'Брже, али друга особа види вашу мрежну адресу.';
 
   @override
   String get settingsDeleteAccount => 'Избриши налог';
@@ -5655,11 +5655,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get settingsCallsComingSoonDetail => 'Audio i video pozivi 1:1';
 
   @override
-  String get settingsCallsRelayTitle => 'Pozivi';
+  String get settingsDirectCallsTitle => 'Direktni pozivi';
 
   @override
-  String get settingsCallsRelayNote =>
-      'Pozivi idu preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
+  String get settingsDirectCallsNote =>
+      'Brže, ali druga osoba vidi vašu mrežnu adresu.';
 
   @override
   String get settingsDeleteAccount => 'Izbriši nalog';

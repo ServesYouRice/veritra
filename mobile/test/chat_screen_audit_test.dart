@@ -378,7 +378,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.settings_outlined).first);
       await tester.pumpAndSettle();
-      final note = find.text(englishL10n.settingsCallsRelayNote);
+      final note = find.text(englishL10n.settingsDirectCallsNote);
       await tester.scrollUntilVisible(note, 300,
           scrollable: find.byType(Scrollable).first);
       expect(note, findsOneWidget);
