@@ -6,7 +6,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/features/communities/create_channel_dialog.dart';
+import 'package:private_messenger/features/communities/create_channel_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -106,16 +106,13 @@ void main() {
       home: Builder(builder: (context) {
         return Scaffold(
           body: TextButton(
-            onPressed: () => showDialog<bool>(
-              context: context,
-              barrierDismissible: false,
-              builder: (_) => CreateChannelDialog(
-                state: state,
-                community: Community(
-                    id: 'community',
-                    name: '',
-                    sharedConversationId: legacy ? null : 'shared'),
-              ),
+            onPressed: () => CreateChannelScreen.open(
+              context,
+              state,
+              Community(
+                  id: 'community',
+                  name: '',
+                  sharedConversationId: legacy ? null : 'shared'),
             ),
             child: const Text('open'),
           ),
@@ -142,7 +139,7 @@ void main() {
     expect(state.chosenKind, 'open');
     expect(state.chosenName, 'general');
     expect(state.adds, isEmpty);
-    expect(find.byType(CreateChannelDialog), findsNothing);
+    expect(find.byType(CreateChannelScreen), findsNothing);
   });
 
   testWidgets('private picker excludes self and adds only selected members',
@@ -184,7 +181,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(state.creates, 1);
     expect(state.adds, ['bob', 'carol', 'carol']);
-    expect(find.byType(CreateChannelDialog), findsNothing);
+    expect(find.byType(CreateChannelScreen), findsNothing);
   });
 
   testWidgets('failed roster can be retried; moderators cannot create',
@@ -220,17 +217,46 @@ void main() {
     await tester.pump();
     expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull);
-    expect(
-        tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Cancel'))
-            .onPressed,
-        isNull);
+    // The page cannot be left while saving.
+    await tester.tap(find.byType(CloseButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(CreateChannelScreen), findsOneWidget);
     state.saving!.complete();
     await tester.pumpAndSettle();
     expect(
         find.text('Could not create the channel. Try again.'), findsOneWidget);
     expect(find.text('general'), findsOneWidget);
     expect(state.adds, isEmpty);
+  });
+
+  testWidgets(
+      'U8: the private form is a full page and its error sits beside Create '
+      'on screen, however long the form', (tester) async {
+    // A short phone, so the private form is taller than the screen.
+    tester.view.physicalSize = const Size(360, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = _State()..createFails = true;
+    await open(tester, state);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(CreateChannelScreen), findsOneWidget);
+    await tester.tap(find.byType(SwitchListTile));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'general');
+    await tester.pump();
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    final error = find.byKey(const Key('create-channel-error'));
+    expect(error, findsOneWidget);
+    final screen = tester.getRect(find.byType(CreateChannelScreen));
+    final errorRect = tester.getRect(error);
+    final createRect = tester.getRect(find.byType(FilledButton));
+    expect(screen.contains(errorRect.center), isTrue,
+        reason: 'the error is on screen without scrolling');
+    expect(errorRect.right, lessThanOrEqualTo(createRect.left),
+        reason: 'beside Create, not under it');
+    expect((errorRect.center.dy - createRect.center.dy).abs(), lessThan(40));
   });
 
   testWidgets(

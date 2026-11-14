@@ -4,7 +4,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/features/communities/create_channel_dialog.dart';
+import 'package:private_messenger/features/communities/create_channel_screen.dart';
 import 'package:private_messenger/features/communities/edit_info_dialog.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -113,6 +113,12 @@ void main() {
         find.textContaining('can be proven to be its author'), findsOneWidget);
     expect(find.textContaining('Authors cannot deny their posts.'),
         findsOneWidget);
+    // U32: three short points, each a fact C7 states.
+    expect(find.text('New posts can be read by people who join later.'),
+        findsOneWidget);
+    expect(
+        find.text('Posts made before you turn this on stay hidden from them.'),
+        findsOneWidget);
     await tester.tap(find.text('Cancel').last);
     await tester.pumpAndSettle();
     expect(state.changes, isEmpty);
@@ -126,6 +132,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Authors cannot deny'), findsNothing);
     expect(find.textContaining("won't see earlier posts"), findsOneWidget);
+    expect(find.text('Members who already have earlier posts keep them.'),
+        findsOneWidget);
+    expect(find.textContaining('turn it back on later'), findsOneWidget);
   });
 
   testWidgets(
@@ -135,7 +144,7 @@ void main() {
     addTearDown(state.dispose);
     await _pump(
         tester,
-        CreateChannelDialog(
+        CreateChannelScreen(
             state: state,
             community: Community(
                 id: 'community', name: '', sharedConversationId: 'shared')));

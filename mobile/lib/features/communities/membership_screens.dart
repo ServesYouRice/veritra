@@ -50,6 +50,15 @@ class _InlineError extends StatelessWidget {
   }
 }
 
+/// The message a failed membership call left under [Ops.membership].
+///
+/// Every membership call clears that shared slot when it starts, and the
+/// panels on a page reload after each other's actions. A page that read the
+/// slot while drawing therefore lost its message within a frame (UI audit
+/// U4). Each widget copies the message into its own state right after its own
+/// action fails, and clears the copy only when its next action starts.
+String? _failureOf(AppState state) => state.errorFor(Ops.membership);
+
 Future<bool> _confirm(
   BuildContext context, {
   required String title,
@@ -121,6 +130,7 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
   }
 
   Future<void> _check() async {
+    _checked = _controller.text.trim();
     setState(() {
       _preview = null;
       _requested = false;
@@ -130,6 +140,30 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
     setState(() => _preview = result);
   }
 
+  /// The text the last check ran on, so one link is never checked twice.
+  String? _checked;
+  int _length = 0;
+
+  /// A pasted link checks itself: once the field holds a well-formed link of
+  /// this server, or a paste of text that is not one (which then says so under
+  /// the field). Typing by hand still waits for the button.
+  void _onChanged(String value) {
+    final pasted = value.length - _length > 8;
+    _length = value.length;
+    setState(() {
+      _preview = null;
+      _requested = false;
+    });
+    final text = value.trim();
+    // Not gated on busy: membership calls queue, and a paste right after
+    // the screen opens (its own request list is loading) must not be lost.
+    if (text.isEmpty || text == _checked) return;
+    final origin = state.api?.baseUrl;
+    final wellFormed = origin != null &&
+        MembershipInviteLink.tryParse(text, expectedOrigin: origin) != null;
+    if (wellFormed || pasted) unawaited(_check());
+  }
+
   Future<void> _request() async {
     final link = _preview?.link;
     if (link == null) return;
@@ -137,6 +171,8 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
     if (!mounted || request == null) return;
     // The secret is not needed any more: drop it from the field.
     _controller.clear();
+    _checked = null;
+    _length = 0;
     setState(() => _requested = true);
     await _loadRequests();
   }
@@ -194,10 +230,7 @@ class _JoinByLinkScreenState extends State<JoinByLinkScreen> {
                   labelText: l10n.joinLinkLabel,
                   hintText: l10n.joinLinkHint,
                 ),
-                onChanged: (_) => setState(() {
-                  _preview = null;
-                  _requested = false;
-                }),
+                onChanged: _onChanged,
                 onSubmitted: (_) {
                   if (!busy && _controller.text.trim().isNotEmpty) _check();
                 },
@@ -293,6 +326,9 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   List<MembershipInvite> _invites = const <MembershipInvite>[];
   String? _link;
 
+  /// This panel's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
 
   @override
@@ -304,13 +340,22 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   Future<void> _load() async {
     final invites =
         await state.loadMembershipInvites(widget.kind, widget.targetId);
-    if (!mounted || invites == null) return;
+    if (!mounted) return;
+    if (invites == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _invites = invites);
   }
 
   Future<void> _create() async {
+    setState(() => _error = null);
     final url = await state.createInviteLink(widget.kind, widget.targetId);
-    if (!mounted || url == null) return;
+    if (!mounted) return;
+    if (url == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _link = url);
     await _load();
   }
@@ -326,9 +371,14 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
       destructive: true,
     );
     if (!confirmed || !mounted) return;
-    if (await state.revokeMembershipInvite(invite.id)) {
-      await _load();
+    setState(() => _error = null);
+    final done = await state.revokeMembershipInvite(invite.id);
+    if (!mounted) return;
+    if (!done) {
+      setState(() => _error = _failureOf(state));
+      return;
     }
+    await _load();
   }
 
   void _copy(String link) {
@@ -344,7 +394,7 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
       animation: state,
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
+        final error = _error;
         final link = _link;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -434,6 +484,9 @@ class JoinRequestsPanel extends StatefulWidget {
 class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
   List<JoinRequest> _requests = const <JoinRequest>[];
 
+  /// This panel's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
 
   @override
@@ -444,14 +497,22 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
 
   Future<void> _load() async {
     final requests = await state.loadJoinRequests(widget.kind, widget.targetId);
-    if (!mounted || requests == null) return;
+    if (!mounted) return;
+    if (requests == null) {
+      setState(() => _error = _failureOf(state));
+      return;
+    }
     setState(() => _requests = requests);
   }
 
   Future<void> _decide(JoinRequest request, {required bool approve}) async {
+    setState(() => _error = null);
     final done = await state.decideJoinRequest(request, approve: approve);
     if (!mounted) return;
-    if (done) {
+    if (!done) {
+      // Keep the message: the reload below clears the shared slot.
+      setState(() => _error = _failureOf(state));
+    } else {
       final l10n = context.l10n;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
@@ -470,7 +531,7 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
       animation: state,
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
+        final error = _error;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -593,6 +654,9 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
   List<ConversationMember>? _members;
   bool _failed = false;
 
+  /// This page's own copy of the last failure (see [_failureOf]).
+  String? _error;
+
   AppState get state => widget.state;
   String get _communityId => widget.community.id;
 
@@ -618,12 +682,17 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     });
   }
 
+  /// This account's role in the community, from the last roster that loaded.
+  /// Kept across a failed reload so the Invites and Requests tabs (and the
+  /// panels in them) are not torn down and rebuilt.
+  String? _lastRole;
+
   String? get _myRole {
     final me = state.session?.accountId;
     for (final member in _members ?? const <ConversationMember>[]) {
-      if (member.accountId == me) return member.role;
+      if (member.accountId == me) return _lastRole = member.role;
     }
-    return null;
+    return _members == null ? _lastRole : null;
   }
 
   Future<void> _remove(ConversationMember member) async {
@@ -637,8 +706,11 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       destructive: true, // U15
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     if (await state.removeCommunityMember(_communityId, member.accountId)) {
       await _load();
+    } else if (mounted) {
+      setState(() => _error = _failureOf(state));
     }
   }
 
@@ -653,8 +725,11 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       destructive: true, // U15
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     if (await state.banCommunityMember(_communityId, member.accountId)) {
       await _load();
+    } else if (mounted) {
+      setState(() => _error = _failureOf(state));
     }
   }
 
@@ -670,7 +745,28 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
             label: (s) => durationWords(l10n, s),
           );
     if (seconds == null || !mounted) return;
-    await state.timeoutCommunityMember(_communityId, member.accountId, seconds);
+    setState(() => _error = null);
+    final done = await state.timeoutCommunityMember(
+        _communityId, member.accountId, seconds);
+    if (!mounted) return;
+    if (!done) {
+      setState(() => _error = _failureOf(state));
+    } else if (!lift) {
+      // A timeout is reversible, so it can say so: Undo lifts it. (A removal
+      // or ban is not offered Undo: nothing here can give the person back
+      // the access it ended.)
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(l10n.timeoutDone),
+          persist: false,
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(
+            label: l10n.commonUndo,
+            onPressed: () => unawaited(_timeout(member, lift: true)),
+          ),
+        ));
+    }
   }
 
   Future<void> _leave() async {
@@ -682,136 +778,228 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       confirmLabel: l10n.communityLeaveConfirm,
     );
     if (!confirmed || !mounted) return;
+    setState(() => _error = null);
     final done = await state.leaveCommunity(_communityId);
     if (!mounted) return;
     if (done) {
       Navigator.of(context).popUntil((route) => route.isFirst);
+    } else {
+      setState(() => _error = _failureOf(state));
     }
+  }
+
+  static const EdgeInsets _pagePadding = EdgeInsets.fromLTRB(
+    BoneSpacing.gutter,
+    BoneSpacing.sm,
+    BoneSpacing.gutter,
+    BoneSpacing.xl,
+  );
+
+  /// The shared record's timeout for [accountId], while it is running.
+  DateTime? _timedOutUntil(String accountId) {
+    final shared = widget.community.sharedConversationId;
+    if (shared == null) return null;
+    final until = state.governanceOf(shared)?.timeouts[accountId]?.untilMs;
+    if (until == null) return null;
+    final end = DateTime.fromMillisecondsSinceEpoch(until);
+    return end.isAfter(DateTime.now()) ? end : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final theme = Theme.of(context);
-    final muted = theme.textTheme.bodySmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-    );
     return AnimatedBuilder(
       animation: state,
       builder: (context, _) {
-        final busy = state.isBusy(Ops.membership);
-        final error = state.errorFor(Ops.membership);
-        final members = _members;
         final myRole = _myRole;
-        final me = state.session?.accountId;
-        final canManageMembers = myRole != null &&
-            const <String>{'owner', 'admin', 'moderator'}.contains(myRole);
         final canInvite =
             myRole != null && const <String>{'owner', 'admin'}.contains(myRole);
-        return Scaffold(
-          appBar: LargeTitleBar(
-              title: state.communityDisplayName(widget.community) ??
-                  context.l10n.communityPlaceholderName),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              BoneSpacing.gutter,
-              BoneSpacing.sm,
-              BoneSpacing.gutter,
-              BoneSpacing.xl,
-            ),
-            children: <Widget>[
-              SectionHeader(l10n.detailsSectionMembers),
-              TileGroup(
-                children: <Widget>[
-                  if (members == null && !_failed)
-                    ListTile(
-                      leading: const SizedBox.square(
-                        dimension: 24,
-                        child: Center(
-                          child: SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      ),
-                      title: Text(l10n.detailsLoadingMembers),
-                    )
-                  else if (members == null || members.isEmpty)
-                    ListTile(
-                      leading: const Icon(Icons.person_outline),
-                      title: Text(l10n.detailsMembersUnavailable),
-                      subtitle: Text(l10n.detailsMembersUnavailableDetail),
-                    )
-                  else
-                    for (final member in members)
-                      _MemberRow(
-                        member: member,
-                        isSelf: member.accountId == me,
-                        canRemove: canManageMembers &&
-                            member.accountId != me &&
-                            (_rank[myRole] ?? 0) > (_rank[member.role] ?? 0),
-                        busy: busy,
-                        onRemove: () => _remove(member),
-                        onBan: () => _ban(member),
-                        onTimeout: () => _timeout(member, lift: false),
-                        onLiftTimeout: () => _timeout(member, lift: true),
-                      ),
-                ],
-              ),
-              if (error != null) _InlineError(error),
-              const SizedBox(height: BoneSpacing.sm),
-              Text(l10n.detailsMembershipNote, style: muted),
-              if (canInvite) ...<Widget>[
-                MembershipInvitesPanel(
-                  state: state,
-                  kind: InviteTargetKind.community,
-                  targetId: _communityId,
-                ),
-                JoinRequestsPanel(
-                  state: state,
-                  kind: InviteTargetKind.community,
-                  targetId: _communityId,
-                  onApproved: _load,
-                ),
-              ],
-              if (canManageMembers) ...<Widget>[
-                const SizedBox(height: BoneSpacing.lg),
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.shield_outlined),
-                      title: Text(l10n.moderationTitle),
-                      subtitle: Text(l10n.moderationDetail),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ModerationScreen(
-                            state: state,
-                            community: widget.community,
-                            canManageInvites: canInvite,
-                          ),
-                        ),
-                      ),
-                    ),
+        final title = state.communityDisplayName(widget.community) ??
+            l10n.communityPlaceholderName;
+        // Members, Invites and Requests are tabs for owners and admins; a
+        // plain member or a moderator sees the member page alone.
+        if (!canInvite) {
+          return Scaffold(
+            appBar: LargeTitleBar(title: title),
+            body: _membersTab(context),
+          );
+        }
+        return DefaultTabController(
+          length: 3,
+          child: Scaffold(
+            appBar: LargeTitleBar(title: title),
+            body: Column(
+              children: <Widget>[
+                TabBar(
+                  tabs: <Widget>[
+                    Tab(text: l10n.detailsSectionMembers),
+                    Tab(text: l10n.communityTabInvites),
+                    Tab(text: l10n.communityTabRequests),
                   ],
                 ),
-              ],
-              const SizedBox(height: BoneSpacing.lg),
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    leading: const Icon(Icons.logout),
-                    title: Text(l10n.communityLeave),
-                    subtitle: Text(l10n.communityLeaveDetail),
-                    onTap: busy ? null : _leave,
+                Expanded(
+                  child: TabBarView(
+                    children: <Widget>[
+                      _membersTab(context),
+                      // Kept alive: leaving a tab must not rebuild its panel,
+                      // which would reload it and lose its message (U4).
+                      _KeepAlive(
+                        child: ListView(
+                          padding: _pagePadding,
+                          children: <Widget>[
+                            MembershipInvitesPanel(
+                              state: state,
+                              kind: InviteTargetKind.community,
+                              targetId: _communityId,
+                            ),
+                          ],
+                        ),
+                      ),
+                      _KeepAlive(
+                        child: ListView(
+                          padding: _pagePadding,
+                          children: <Widget>[
+                            JoinRequestsPanel(
+                              state: state,
+                              kind: InviteTargetKind.community,
+                              targetId: _communityId,
+                              onApproved: _load,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         );
       },
     );
+  }
+
+  /// The members, the moderation entry and leaving.
+  Widget _membersTab(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final busy = state.isBusy(Ops.membership);
+    final error = _error;
+    final members = _members;
+    final myRole = _myRole;
+    final me = state.session?.accountId;
+    final canManageMembers = myRole != null &&
+        const <String>{'owner', 'admin', 'moderator'}.contains(myRole);
+    final canInvite =
+        myRole != null && const <String>{'owner', 'admin'}.contains(myRole);
+    return _KeepAlive(
+      child: ListView(
+        padding: _pagePadding,
+        children: <Widget>[
+          SectionHeader(l10n.detailsSectionMembers),
+          TileGroup(
+            children: <Widget>[
+              if (members == null && !_failed)
+                ListTile(
+                  leading: const SizedBox.square(
+                    dimension: 24,
+                    child: Center(
+                      child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+                  title: Text(l10n.detailsLoadingMembers),
+                )
+              else if (members == null || members.isEmpty)
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(l10n.detailsMembersUnavailable),
+                  subtitle: Text(l10n.detailsMembersUnavailableDetail),
+                )
+              else
+                for (final member in members)
+                  _MemberRow(
+                    member: member,
+                    isSelf: member.accountId == me,
+                    timedOutUntil: _timedOutUntil(member.accountId),
+                    canRemove: canManageMembers &&
+                        member.accountId != me &&
+                        (_rank[myRole] ?? 0) > (_rank[member.role] ?? 0),
+                    busy: busy,
+                    onRemove: () => _remove(member),
+                    onBan: () => _ban(member),
+                    onTimeout: () => _timeout(member, lift: false),
+                    onLiftTimeout: () => _timeout(member, lift: true),
+                  ),
+            ],
+          ),
+          if (error != null) _InlineError(error),
+          const SizedBox(height: BoneSpacing.sm),
+          Text(l10n.detailsMembershipNote, style: muted),
+          if (canManageMembers) ...<Widget>[
+            const SizedBox(height: BoneSpacing.lg),
+            TileGroup(
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.shield_outlined),
+                  title: Text(l10n.moderationTitle),
+                  subtitle: Text(l10n.moderationDetail),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ModerationScreen(
+                        state: state,
+                        community: widget.community,
+                        canManageInvites: canInvite,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: BoneSpacing.lg),
+          TileGroup(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: Text(l10n.communityLeave),
+                subtitle: Text(l10n.communityLeaveDetail),
+                onTap: busy ? null : _leave,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Keeps a tab's page (and the state of what it holds) alive while another
+/// tab shows.
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
@@ -819,6 +1007,7 @@ class _MemberRow extends StatelessWidget {
   const _MemberRow({
     required this.member,
     required this.isSelf,
+    required this.timedOutUntil,
     required this.canRemove,
     required this.busy,
     required this.onRemove,
@@ -829,6 +1018,9 @@ class _MemberRow extends StatelessWidget {
 
   final ConversationMember member;
   final bool isSelf;
+
+  /// When a running timeout ends, from the verified role record; else null.
+  final DateTime? timedOutUntil;
   final bool canRemove;
   final bool busy;
   final VoidCallback onRemove;
@@ -847,6 +1039,8 @@ class _MemberRow extends StatelessWidget {
       if (isSelf) l10n.detailsYou,
       if (member.joinedAt != null)
         l10n.detailsJoined(formatDate(context, member.joinedAt!)),
+      if (timedOutUntil != null)
+        l10n.memberTimedOutUntil(formatDateTime(context, timedOutUntil!)),
     ];
     return MergeSemantics(
       child: ListTile(

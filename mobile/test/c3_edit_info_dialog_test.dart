@@ -325,8 +325,11 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: CommunityScreen(state: f.state)));
-    expect(find.byTooltip('Edit community'), findsOneWidget);
-    await tester.tap(find.byTooltip('Edit community'));
+    // U1: the edit action is in the card's one actions menu.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit community'), findsOneWidget);
+    await tester.tap(find.text('Edit community'));
     await tester.pumpAndSettle();
     expect(find.byType(EditInfoDialog), findsOneWidget);
     await tester.tap(find.text('Cancel'));
@@ -335,6 +338,12 @@ void main() {
         rev: 2, owner: 'bob', ownerRev: 1, joined: const {'alice': 1}));
     f.state.notifyListeners();
     await tester.pumpAndSettle();
-    expect(find.byTooltip('Edit community'), findsNothing);
+    // The menu may remain for other actions; the edit entry is gone.
+    final menu = find.byType(PopupMenuButton<String>);
+    if (menu.evaluate().isNotEmpty) {
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('Edit community'), findsNothing);
   }, skip: nativeCryptoSkip() != false);
 }

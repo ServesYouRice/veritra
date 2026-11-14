@@ -24,7 +24,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get commonRevoke => 'Опозови';
 
   @override
-  String get commonUndo => 'Опозови радњу';
+  String get commonUndo => 'Опозови';
 
   @override
   String get listTimeYesterday => 'Јуче';
@@ -34,6 +34,14 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get validationNameTooLong => 'Тај назив је предугачак.';
+
+  @override
+  String get validationNameInvalid =>
+      'Тај назив садржи знакове који нису дозвољени.';
+
+  @override
+  String get validationTopicInvalid =>
+      'Та тема је предугачка или садржи знакове који нису дозвољени.';
 
   @override
   String get validationGroupNameRequired => 'Унесите назив групе.';
@@ -1211,6 +1219,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNew => 'Нова заједница';
 
   @override
+  String get communityJoinAction => 'Придружи';
+
+  @override
+  String get communityNewAction => 'Нова';
+
+  @override
   String get communityEmptyTitle => 'Још нема заједница';
 
   @override
@@ -1257,6 +1271,11 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNewChannel => 'Нови канал';
 
   @override
+  String communityActionsTooltip(String community) {
+    return 'Радње за $community';
+  }
+
+  @override
   String get communityNoChannelsHint => 'Користите + да направите први.';
 
   @override
@@ -1286,6 +1305,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelSave => 'Сачувај';
+
+  @override
+  String get channelEditNotAllowed =>
+      'Овде више не можете да сачувате измене, јер се ваша улога или налог променио.';
 
   @override
   String get communityNotMember => 'Још нисте члан';
@@ -1851,6 +1874,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get detailsSectionMembers => 'Чланови';
+
+  @override
+  String get communityTabInvites => 'Позивнице';
+
+  @override
+  String get communityTabRequests => 'Захтеви';
 
   @override
   String get detailsLoadingMembers => 'Учитавање чланова…';
@@ -3762,6 +3791,9 @@ class AppLocalizationsSr extends AppLocalizations {
       'Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности';
 
   @override
+  String get moderationLoadFailed => 'Није могуће учитати';
+
+  @override
   String memberModerateTooltip(String username) {
     return 'Модерирај $username';
   }
@@ -3774,6 +3806,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get memberTimeoutLift => 'Укини утишавање';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Утишан/а до $time';
+  }
 
   @override
   String banTitle(String username) {
@@ -4781,12 +4818,24 @@ class AppLocalizationsSr extends AppLocalizations {
       'Нове објаве ће моћи да читају и људи који се придруже касније.';
 
   @override
+  String get channelHistoryOnEarlier =>
+      'Објаве направљене пре него што ово укључите остају скривене од њих.';
+
+  @override
   String get channelHistoryOffConfirm =>
-      'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
+      'Људи који се придруже касније неће видети раније објаве.';
+
+  @override
+  String get channelHistoryOffKept =>
+      'Чланови који већ имају раније објаве задржавају их.';
+
+  @override
+  String get channelHistoryOffAgain =>
+      'Ако га касније поново укључите, нови чланови ће видети само објаве направљене после тога.';
 
   @override
   String get channelHistoryProofConfirm =>
-      'Објаве у овом каналу се потписују да би људи који се придруже касније могли да провере ко их је написао. То значи да се може доказати ко је написао објаву: свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
+      'Објаве су потписане, па се може доказати ко је написао објаву. Свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
 
   @override
   String get channelHistoryProofLine =>
@@ -5002,7 +5051,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get commonRevoke => 'Opozovi';
 
   @override
-  String get commonUndo => 'Opozovi radnju';
+  String get commonUndo => 'Opozovi';
 
   @override
   String get listTimeYesterday => 'Juče';
@@ -5012,6 +5061,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get validationNameTooLong => 'Taj naziv je predugačak.';
+
+  @override
+  String get validationNameInvalid =>
+      'Taj naziv sadrži znakove koji nisu dozvoljeni.';
+
+  @override
+  String get validationTopicInvalid =>
+      'Ta tema je predugačka ili sadrži znakove koji nisu dozvoljeni.';
 
   @override
   String get validationGroupNameRequired => 'Unesite naziv grupe.';
@@ -6189,6 +6246,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get communityNew => 'Nova zajednica';
 
   @override
+  String get communityJoinAction => 'Pridruži';
+
+  @override
+  String get communityNewAction => 'Nova';
+
+  @override
   String get communityEmptyTitle => 'Još nema zajednica';
 
   @override
@@ -6235,6 +6298,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get communityNewChannel => 'Novi kanal';
 
   @override
+  String communityActionsTooltip(String community) {
+    return 'Radnje za $community';
+  }
+
+  @override
   String get communityNoChannelsHint => 'Koristite + da napravite prvi.';
 
   @override
@@ -6264,6 +6332,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelSave => 'Sačuvaj';
+
+  @override
+  String get channelEditNotAllowed =>
+      'Ovde više ne možete da sačuvate izmene, jer se vaša uloga ili nalog promenio.';
 
   @override
   String get communityNotMember => 'Još niste član';
@@ -6829,6 +6901,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get detailsSectionMembers => 'Članovi';
+
+  @override
+  String get communityTabInvites => 'Pozivnice';
+
+  @override
+  String get communityTabRequests => 'Zahtevi';
 
   @override
   String get detailsLoadingMembers => 'Učitavanje članova…';
@@ -8744,6 +8822,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti';
 
   @override
+  String get moderationLoadFailed => 'Nije moguće učitati';
+
+  @override
   String memberModerateTooltip(String username) {
     return 'Moderiraj $username';
   }
@@ -8756,6 +8837,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get memberTimeoutLift => 'Ukini utišavanje';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Utišan/a do $time';
+  }
 
   @override
   String banTitle(String username) {
@@ -9764,12 +9850,24 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nove objave će moći da čitaju i ljudi koji se pridruže kasnije.';
 
   @override
+  String get channelHistoryOnEarlier =>
+      'Objave napravljene pre nego što ovo uključite ostaju skrivene od njih.';
+
+  @override
   String get channelHistoryOffConfirm =>
-      'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+      'Ljudi koji se pridruže kasnije neće videti ranije objave.';
+
+  @override
+  String get channelHistoryOffKept =>
+      'Članovi koji već imaju ranije objave zadržavaju ih.';
+
+  @override
+  String get channelHistoryOffAgain =>
+      'Ako ga kasnije ponovo uključite, novi članovi će videti samo objave napravljene posle toga.';
 
   @override
   String get channelHistoryProofConfirm =>
-      'Objave u ovom kanalu se potpisuju da bi ljudi koji se pridruže kasnije mogli da provere ko ih je napisao. To znači da se može dokazati ko je napisao objavu: svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
+      'Objave su potpisane, pa se može dokazati ko je napisao objavu. Svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
 
   @override
   String get channelHistoryProofLine =>

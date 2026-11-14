@@ -6,6 +6,7 @@ import '../../crypto/crypto_service.dart' show C7ChannelView;
 import '../../crypto/community_info_codec.dart';
 import '../../crypto/profile_record_codec.dart';
 import '../../l10n/l10n.dart';
+import '../../ui/validation.dart';
 import 'channel_conversion.dart';
 import 'channel_history_warning.dart';
 
@@ -46,11 +47,16 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
       widget.state.mayEditCommunityInfo(widget.community.id,
           widget.channel == null ? infoKindCommunity : infoKindChannel);
 
-  bool get _valid =>
-      ProfileRecordCodec.validText(_name.text.trim(), max: infoNameMax) &&
-      (widget.channel == null ||
-          ProfileRecordCodec.validText(_topic.text.trim(),
-              max: infoTopicMax, allowEmpty: true));
+  /// The same name rule as creating ([infoNameError]).
+  String? _nameError(AppLocalizations l10n) =>
+      infoNameError(_name.text, l10n: l10n);
+
+  bool get _topicValid =>
+      widget.channel == null ||
+      ProfileRecordCodec.validText(_topic.text.trim(),
+          max: infoTopicMax, allowEmpty: true);
+
+  bool get _valid => infoNameError(_name.text) == null && _topicValid;
 
   Future<void> _save() async {
     if (_saving || !_allowed || !_valid) return;
@@ -97,12 +103,14 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                     controller: _name,
                     enabled: !_saving && _allowed,
                     autofocus: true,
-                    maxLength: infoNameMax,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                        labelText: widget.channel == null
-                            ? l10n.communityName
-                            : l10n.communityChannelName),
+                      labelText: widget.channel == null
+                          ? l10n.communityName
+                          : l10n.communityChannelName,
+                      // Always shown while it is what keeps Save off.
+                      errorText: _nameError(l10n),
+                    ),
                   ),
                   if (widget.channel != null)
                     TextField(
@@ -110,7 +118,11 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                       enabled: !_saving && _allowed,
                       maxLength: infoTopicMax,
                       onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(labelText: l10n.channelTopic),
+                      decoration: InputDecoration(
+                        labelText: l10n.channelTopic,
+                        errorText:
+                            _topicValid ? null : l10n.validationTopicInvalid,
+                      ),
                     ),
                   if (widget.channel != null &&
                       widget.channel!.isRouted &&
@@ -122,6 +134,18 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                       widget.state.mayConvertChannel(widget.channel!))
                     ChannelConversionAction(
                         state: widget.state, channel: widget.channel!),
+                  // Why Save is off, in words: a field error sits under its
+                  // field; this says so when the cause is not a field.
+                  if (!_allowed)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        l10n.channelEditNotAllowed,
+                        key: const Key('edit-not-allowed'),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error),
+                      ),
+                    ),
                   if (_failed) Text(l10n.communityInfoEditFailed),
                 ]),
               ),

@@ -214,7 +214,7 @@ void main() {
       (tester) async {
     final state = _connectedState(_FakeApi());
     await tester.pumpWidget(_app(CommunityScreen(state: state)));
-    await tester.tap(find.text('New community'));
+    await tester.tap(find.byTooltip('New community'));
     // The screen behind may show a spinner, so settle on the dialog only.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -229,7 +229,7 @@ void main() {
     expect(find.text('Enter a name.'), findsOneWidget);
     expect(create().onPressed, isNull);
 
-    await tester.enterText(find.byType(TextField), 'x' * 65);
+    await tester.enterText(find.byType(TextField), 'x' * 101);
     await tester.pump();
     expect(find.text('That name is too long.'), findsOneWidget);
     expect(create().onPressed, isNull);

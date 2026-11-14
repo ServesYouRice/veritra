@@ -87,6 +87,10 @@ class _ModerationScreenState extends State<ModerationScreen> {
   List<CommunityBan>? _bans;
   List<ModerationEvent>? _events;
   Map<String, String> _names = const <String, String>{};
+
+  /// True until the first read finishes, so no default ("Nobody is banned",
+  /// "Off", "Invitation links work normally") shows before the data is here.
+  bool _loading = true;
   bool _failed = false;
 
   AppState get state => widget.state;
@@ -99,6 +103,12 @@ class _ModerationScreenState extends State<ModerationScreen> {
   }
 
   Future<void> _load() async {
+    if (_failed) {
+      setState(() {
+        _failed = false;
+        _loading = true;
+      });
+    }
     final results = await Future.wait<Object?>(<Future<Object?>>[
       state.loadModerationState(_communityId),
       state.loadCommunityBans(_communityId),
@@ -113,7 +123,12 @@ class _ModerationScreenState extends State<ModerationScreen> {
       _moderation = results[0] as ModerationState?;
       _bans = results[1] as List<CommunityBan>?;
       _events = results[2] as List<ModerationEvent>?;
-      _failed = _moderation == null || _bans == null;
+      _loading = false;
+      // Any part that did not load fails the whole screen: a missing list
+      // must never read as an empty one.
+      _failed = _moderation == null ||
+          _bans == null ||
+          (widget.canManageInvites && _events == null);
       _names = <String, String>{
         for (final member in members ?? const <ConversationMember>[])
           member.accountId: accountLabel(member.accountId, member.username),
@@ -195,126 +210,165 @@ class _ModerationScreenState extends State<ModerationScreen> {
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
         final error = state.errorFor(Ops.membership);
-        final moderation = _moderation;
-        final paused = moderation?.invitesPausedUntil;
-        final channels =
-            state.channelsByCommunity[_communityId] ?? const <Channel>[];
-        final bans = _bans ?? const <CommunityBan>[];
-        final events = _events ?? const <ModerationEvent>[];
         return Scaffold(
           appBar: LargeTitleBar(title: l10n.moderationTitle),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              BoneSpacing.gutter,
-              BoneSpacing.sm,
-              BoneSpacing.gutter,
-              BoneSpacing.xl,
-            ),
-            children: <Widget>[
-              if (_failed)
-                ListTile(
-                  leading: const Icon(Icons.error_outline),
-                  title: Text(l10n.detailsMembersUnavailable),
-                ),
-              if (error != null)
-                Text(
-                  error,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              if (widget.canManageInvites) ...<Widget>[
-                SectionHeader(l10n.moderationSectionInvites),
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      leading: Icon(
-                        paused == null
-                            ? Icons.link
-                            : Icons.pause_circle_outline,
-                      ),
-                      title: Text(
-                        paused == null
-                            ? l10n.moderationInvitesOpen
-                            : l10n.moderationInvitesPaused(
-                                formatDateTime(context, paused.toLocal()),
-                              ),
-                      ),
-                    ),
-                    ListTile(
-                      leading: Icon(
-                        paused == null ? Icons.pause : Icons.play_arrow,
-                      ),
-                      title: Text(
-                        paused == null
-                            ? l10n.moderationPauseInvites
-                            : l10n.moderationResumeInvites,
-                      ),
-                      onTap: busy
-                          ? null
-                          : (paused == null ? _pauseInvites : _resumeInvites),
-                    ),
-                  ],
-                ),
-              ],
-              SectionHeader(l10n.moderationSectionSlow),
-              TileGroup(
-                children: <Widget>[
-                  for (final channel in channels)
-                    ListTile(
-                      leading: const Icon(Icons.speed_outlined),
-                      title: Text(_channelName(channel)),
-                      subtitle: Text(
-                        (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
-                            ? l10n.moderationSlowOff
-                            : l10n.moderationSlowEvery(durationWords(
-                                l10n, moderation!.slowModeSeconds[channel.id]!)),
-                      ),
-                      onTap: busy ? null : () => _setSlowMode(channel),
-                    ),
-                ],
-              ),
-              SectionHeader(l10n.moderationSectionBans),
-              TileGroup(
-                children: <Widget>[
-                  if (bans.isEmpty)
-                    ListTile(title: Text(l10n.moderationNoBans))
-                  else
-                    for (final ban in bans)
-                      ListTile(
-                        leading: const Icon(Icons.block),
-                        title: Text(_name(ban.accountId)),
-                        // The server lets admins and above lift bans.
-                        trailing: widget.canManageInvites
-                            ? IconButton(
-                                tooltip:
-                                    l10n.moderationUnban(_name(ban.accountId)),
-                                onPressed: busy ? null : () => _unban(ban),
-                                icon: const Icon(Icons.undo),
-                              )
-                            : null,
-                      ),
-                ],
-              ),
-              if (widget.canManageInvites) ...<Widget>[
-                SectionHeader(l10n.moderationSectionLog),
-                TileGroup(
-                  children: <Widget>[
-                    if (events.isEmpty)
-                      ListTile(title: Text(l10n.moderationNoEvents))
-                    else
-                      for (final e in events)
-                        ListTile(
-                          dense: true,
-                          title: Text(_eventText(l10n, e)),
-                          subtitle: Text(
-                              formatDateTime(context, e.createdAt.toLocal())),
-                        ),
-                  ],
-                ),
-              ],
-            ],
-          ),
+          body: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _failed
+                  ? _LoadFailed(onRetry: _load)
+                  : _content(context, l10n, busy: busy, error: error),
         );
       },
+    );
+  }
+
+  Widget _content(
+    BuildContext context,
+    AppLocalizations l10n, {
+    required bool busy,
+    required String? error,
+  }) {
+    final moderation = _moderation;
+    final paused = moderation?.invitesPausedUntil;
+    final channels =
+        state.channelsByCommunity[_communityId] ?? const <Channel>[];
+    final bans = _bans ?? const <CommunityBan>[];
+    final events = _events ?? const <ModerationEvent>[];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        BoneSpacing.gutter,
+        BoneSpacing.sm,
+        BoneSpacing.gutter,
+        BoneSpacing.xl,
+      ),
+      children: <Widget>[
+        if (error != null)
+          Text(
+            error,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        if (widget.canManageInvites) ...<Widget>[
+          SectionHeader(l10n.moderationSectionInvites),
+          TileGroup(
+            children: <Widget>[
+              ListTile(
+                leading: Icon(
+                  paused == null ? Icons.link : Icons.pause_circle_outline,
+                ),
+                title: Text(
+                  paused == null
+                      ? l10n.moderationInvitesOpen
+                      : l10n.moderationInvitesPaused(
+                          formatDateTime(context, paused.toLocal()),
+                        ),
+                ),
+              ),
+              ListTile(
+                leading: Icon(paused == null ? Icons.pause : Icons.play_arrow),
+                title: Text(
+                  paused == null
+                      ? l10n.moderationPauseInvites
+                      : l10n.moderationResumeInvites,
+                ),
+                onTap: busy
+                    ? null
+                    : (paused == null ? _pauseInvites : _resumeInvites),
+              ),
+            ],
+          ),
+        ],
+        SectionHeader(l10n.moderationSectionSlow),
+        TileGroup(
+          children: <Widget>[
+            for (final channel in channels)
+              ListTile(
+                leading: const Icon(Icons.speed_outlined),
+                title: Text(_channelName(channel)),
+                subtitle: Text(
+                  (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
+                      ? l10n.moderationSlowOff
+                      : l10n.moderationSlowEvery(
+                          durationWords(
+                            l10n,
+                            moderation!.slowModeSeconds[channel.id]!,
+                          ),
+                        ),
+                ),
+                onTap: busy ? null : () => _setSlowMode(channel),
+              ),
+          ],
+        ),
+        SectionHeader(l10n.moderationSectionBans),
+        TileGroup(
+          children: <Widget>[
+            if (bans.isEmpty)
+              ListTile(title: Text(l10n.moderationNoBans))
+            else
+              for (final ban in bans)
+                ListTile(
+                  leading: const Icon(Icons.block),
+                  title: Text(_name(ban.accountId)),
+                  // The server lets admins and above lift bans.
+                  trailing: widget.canManageInvites
+                      ? IconButton(
+                          tooltip: l10n.moderationUnban(_name(ban.accountId)),
+                          onPressed: busy ? null : () => _unban(ban),
+                          icon: const Icon(Icons.undo),
+                        )
+                      : null,
+                ),
+          ],
+        ),
+        if (widget.canManageInvites) ...<Widget>[
+          SectionHeader(l10n.moderationSectionLog),
+          TileGroup(
+            children: <Widget>[
+              if (events.isEmpty)
+                ListTile(title: Text(l10n.moderationNoEvents))
+              else
+                for (final e in events)
+                  ListTile(
+                    dense: true,
+                    title: Text(_eventText(l10n, e)),
+                    subtitle: Text(
+                      formatDateTime(context, e.createdAt.toLocal()),
+                    ),
+                  ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// What the screen shows when moderation data did not load: one message and
+/// Retry, in place of any default that would pass for real data.
+class _LoadFailed extends StatelessWidget {
+  const _LoadFailed({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(BoneSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.error_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: BoneSpacing.sm),
+            Text(l10n.moderationLoadFailed, textAlign: TextAlign.center),
+            const SizedBox(height: BoneSpacing.md),
+            FilledButton(onPressed: onRetry, child: Text(l10n.commonRetry)),
+          ],
+        ),
+      ),
     );
   }
 }
