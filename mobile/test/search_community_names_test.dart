@@ -141,7 +141,7 @@ Future<_SearchState> _openSearch(WidgetTester tester) async {
     supportedLocales: AppLocalizations.supportedLocales,
     home: SearchScreen(state: state),
   ));
-  await tester.tap(find.text('People and communities'));
+  await tester.tap(find.text('People'));
   await tester.pumpAndSettle();
   return state;
 }
@@ -166,7 +166,7 @@ void main() {
     final state = await _openSearch(tester);
     await _type(tester, 'chess club');
     expect(find.text('Chess Club'), findsOneWidget);
-    expect(find.text('COMMUNITY'), findsOneWidget);
+    expect(find.text('COMMUNITIES'), findsOneWidget);
     expect(state.serverQueries, isEmpty,
         reason: 'no account can match, so the name stays on this device');
   });
@@ -192,7 +192,7 @@ void main() {
     await _submit(tester, 'club');
     expect(find.text('Club General'), findsOneWidget);
     expect(find.text('Club Secrets'), findsOneWidget);
-    expect(find.text('COMMUNITY'), findsOneWidget);
+    expect(find.text('COMMUNITIES'), findsOneWidget);
     expect(find.byType(SnackBar), findsOneWidget);
   });
 
@@ -223,7 +223,7 @@ void main() {
     }
     expect(find.text('Club General'), findsOneWidget,
         reason: 'local names follow the typing');
-    expect(find.text('COMMUNITY'), findsOneWidget);
+    expect(find.text('COMMUNITIES'), findsOneWidget);
     expect(state.serverQueries, isEmpty,
         reason: 'no prefix of what is typed reaches the server');
     await _type(tester, 'secrets');
@@ -261,9 +261,9 @@ void main() {
   testWidgets('typing after a submit drops the account result', (tester) async {
     final state = await _openSearch(tester);
     await _submit(tester, 'club');
-    expect(find.text('ACCOUNT'), findsOneWidget);
+    expect(find.text('PEOPLE'), findsOneWidget);
     await _type(tester, 'clu');
-    expect(find.text('ACCOUNT'), findsNothing,
+    expect(find.text('PEOPLE'), findsNothing,
         reason: 'the account answered a query that is no longer typed');
     expect(find.text('Club General'), findsOneWidget);
     expect(state.serverQueries, <String>['club']);

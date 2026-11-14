@@ -63,7 +63,7 @@ import 'app_localizations_sr.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,17 +86,17 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-    delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-  ];
+        delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -1478,6 +1478,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Account'**
   String get searchTypeAccount;
+
+  /// Heading over community results in the People search.
+  ///
+  /// In en, this message translates to:
+  /// **'Communities'**
+  String get searchHeadingCommunities;
+
+  /// Heading over channel results in the People search.
+  ///
+  /// In en, this message translates to:
+  /// **'Channels'**
+  String get searchHeadingChannels;
+
+  /// Heading over conversation results in the People search.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversations'**
+  String get searchHeadingConversations;
 
   /// No description provided for @searchUnblockAccount.
   ///
@@ -4236,7 +4254,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchModePeople.
   ///
   /// In en, this message translates to:
-  /// **'People and communities'**
+  /// **'People'**
   String get searchModePeople;
 
   /// No description provided for @searchMessagesHint.
@@ -5571,6 +5589,12 @@ abstract class AppLocalizations {
   /// **'Dismiss'**
   String get callDismiss;
 
+  /// Button on the missed-call card: starts a voice call to the same chat.
+  ///
+  /// In en, this message translates to:
+  /// **'Call back'**
+  String get callBack;
+
   /// No description provided for @callNoticeMissed.
   ///
   /// In en, this message translates to:
@@ -6141,6 +6165,18 @@ abstract class AppLocalizations {
   /// **'Reported {when}'**
   String c6ReportsFiled(String when);
 
+  /// C6 reports: the second line of an inbox row.
+  ///
+  /// In en, this message translates to:
+  /// **'Reported by {reporter}, {when}'**
+  String c6ReportsFiledBy(String reporter, String when);
+
+  /// C6 reports: the chat or channel the reported message was in.
+  ///
+  /// In en, this message translates to:
+  /// **'In {place}'**
+  String c6ReportsWhere(String place);
+
   /// C6 reports.
   ///
   /// In en, this message translates to:
@@ -6180,13 +6216,13 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Reported by account {account}'**
+  /// **'Reported by {account}'**
   String c6ReportsReporter(String account);
 
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Sent by account {account}'**
+  /// **'Sent by {account}'**
   String c6ReportsSender(String account);
 
   /// C6 reports.
@@ -6206,6 +6242,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Checking tells the server which message this report is about.'**
   String get c6ReportsCheckNote;
+
+  /// C6 reports: opens the careful explanation under the verdict.
+  ///
+  /// In en, this message translates to:
+  /// **'Why not certain?'**
+  String get c6ReportsWhyNotCertain;
+
+  /// C6 reports: what a franking check can and cannot show. Must not claim more than C6 does.
+  ///
+  /// In en, this message translates to:
+  /// **'Even a match shows only that the server\'s record agrees this account sent this exact message in this conversation. It cannot show what came before or after it, or what was meant, and it is only as trustworthy as that record.'**
+  String get c6ReportsWhyNotCertainCommon;
+
+  /// C6 reports: next step beside Dismiss once a report holds up.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy message text'**
+  String get c6ReportsCopyText;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Message text copied.'**
+  String get c6ReportsCopied;
+
+  /// C6 reports: shown beside Dismiss when the check did not hold up.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing here backs this report up. You can dismiss it.'**
+  String get c6ReportsNothingBacksUp;
 
   /// C6 reports.
   ///
@@ -7681,8 +7747,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

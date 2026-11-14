@@ -11,7 +11,7 @@ import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
-import '../../ui/widgets/status_pill.dart';
+import '../../ui/widgets/section_header.dart';
 import '../chat/chat_list_screen.dart'
     show conversationAvatar, conversationTitle;
 import '../chat/chat_screen.dart';
@@ -360,19 +360,32 @@ class _SearchScreenState extends State<SearchScreen> {
                 ? const Icon(Icons.chat_bubble_outline)
                 : conversationAvatar(context, conversation,
                     radius: 20, profiles: widget.state.profiles),
-            title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            // The date sits on the name line, so the snippet gets the full
+            // width of the row below it.
+            title: Row(
+              children: <Widget>[
+                Expanded(
+                  child:
+                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: BoneSpacing.sm),
+                Text(
+                  formatDateTime(
+                    context,
+                    DateTime.fromMillisecondsSinceEpoch(hit.createdAt,
+                            isUtc: true)
+                        .toLocal(),
+                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
             subtitle: Text.rich(
               _snippetSpan(hit.snippet, theme.textTheme.bodyMedium),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-            ),
-            trailing: Text(
-              formatDateTime(
-                context,
-                DateTime.fromMillisecondsSinceEpoch(hit.createdAt, isUtc: true)
-                    .toLocal(),
-              ),
-              style: theme.textTheme.bodySmall,
             ),
             onTap: () => _openMessage(hit),
           ),
@@ -420,8 +433,6 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _peopleResults(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     return !searched
         ? EmptyState(
             icon: Icons.search,
@@ -434,77 +445,85 @@ class _SearchScreenState extends State<SearchScreen> {
                 title: context.l10n.searchNoResultsTitle,
                 message: context.l10n.searchNoResultsMessage,
               )
-            : ListView.builder(
+            : ListView(
                 padding: const EdgeInsets.symmetric(
                   horizontal: BoneSpacing.sm,
                   vertical: BoneSpacing.sm,
                 ),
-                itemCount: results.length,
-                itemBuilder: (context, index) {
-                  final result = results[index];
-                  final action = _actionFor(result);
-                  // While a conversation is being started, account rows wait.
-                  final startingThis =
-                      _startingAccountId != null && result.type == 'account';
-                  final reason = _inertReason(result);
-                  final colors = avatarColorsFor(context, result.id);
-                  return MergeSemantics(
-                    child: ListTile(
-                      leading: ExcludeSemantics(
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: colors.fill,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: colors.ring),
-                          ),
-                          child: Icon(
-                            _iconForType(result.type),
-                            size: 18,
-                            color: colors.glyph,
-                          ),
-                        ),
+                children: <Widget>[
+                  // A heading per kind replaces the badge each row used to
+                  // carry.
+                  for (final type in _resultOrder)
+                    if (results
+                        .any((result) => result.type == type)) ...<Widget>[
+                      SectionHeader(
+                        _headingForType(type),
+                        key: Key('search-heading-$type'),
                       ),
-                      title: Row(
-                        children: <Widget>[
-                          Flexible(
-                            child: Text(
-                              result.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: BoneSpacing.sm),
-                          StatusPill(label: _labelForType(result.type)),
-                        ],
-                      ),
-                      // Explains inert rows instead of leaving a dead tap
-                      // target unexplained; silent when the row works.
-                      subtitle: (reason ?? result.detail) == null
-                          ? null
-                          : Text(
-                              (reason ?? result.detail)!,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                      // Blocking from search is the quickest path away from
-                      // unwanted contact, so it lives beside the result.
-                      trailing: result.type == 'account'
-                          ? _AccountResultActions(
-                              state: widget.state,
-                              accountId: result.id,
-                              label: result.label,
-                            )
-                          : null,
-                      enabled: action != null && !startingThis,
-                      onTap: startingThis ? null : action,
-                    ),
-                  );
-                },
+                      for (final result
+                          in results.where((result) => result.type == type))
+                        _resultRow(context, result),
+                    ],
+                ],
               );
+  }
+
+  /// The order of the headings in the People list.
+  static const List<String> _resultOrder = <String>[
+    'account',
+    'community',
+    'channel',
+    'conversation',
+  ];
+
+  Widget _resultRow(BuildContext context, MetadataSearchResult result) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final action = _actionFor(result);
+    // While a conversation is being started, account rows wait.
+    final startingThis = _startingAccountId != null && result.type == 'account';
+    final reason = _inertReason(result);
+    final colors = avatarColorsFor(context, result.id);
+    return MergeSemantics(
+      child: ListTile(
+        leading: ExcludeSemantics(
+          child: Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: colors.fill,
+              shape: BoxShape.circle,
+              border: Border.all(color: colors.ring),
+            ),
+            child: Icon(
+              _iconForType(result.type),
+              size: 18,
+              color: colors.glyph,
+            ),
+          ),
+        ),
+        title: Text(
+          result.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        // Explains inert rows instead of leaving a dead tap target
+        // unexplained; silent when the row works.
+        subtitle: (reason ?? result.detail) == null
+            ? null
+            : Text(
+                (reason ?? result.detail)!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+        // A person row opens the person (their chat, where Block lives in
+        // the details); there is no inline Block.
+        enabled: action != null && !startingThis,
+        onTap: startingThis ? null : action,
+      ),
+    );
   }
 
   VoidCallback? _actionFor(MetadataSearchResult result) {
@@ -626,62 +645,18 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  String _labelForType(String type) {
+  String _headingForType(String type) {
     switch (type) {
       case 'conversation':
-        return context.l10n.searchTypeConversation;
+        return context.l10n.searchHeadingConversations;
       case 'community':
-        return context.l10n.searchTypeCommunity;
+        return context.l10n.searchHeadingCommunities;
       case 'channel':
-        return context.l10n.searchTypeChannel;
+        return context.l10n.searchHeadingChannels;
       case 'account':
-        return context.l10n.searchTypeAccount;
+        return context.l10n.searchModePeople;
       default:
         return type;
     }
-  }
-}
-
-/// Block/unblock straight from an account result.
-class _AccountResultActions extends StatelessWidget {
-  const _AccountResultActions({
-    required this.state,
-    required this.accountId,
-    required this.label,
-  });
-
-  final AppState state;
-  final String accountId;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final blocked = state.isBlocked(accountId);
-    final l10n = context.l10n;
-    return IconButton(
-      tooltip: blocked
-          ? l10n.searchUnblockAccount(label)
-          : l10n.searchBlockAccount(label),
-      icon: Icon(blocked ? Icons.person_off : Icons.block),
-      onPressed: state.isBusy(Ops.blocks)
-          ? null
-          : () async {
-              final ok = blocked
-                  ? await state.unblockAccount(accountId)
-                  : await state.blockAccount(accountId);
-              if (!context.mounted) {
-                return;
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(ok
-                      ? (blocked
-                          ? l10n.blockedUnblocked(label)
-                          : l10n.searchBlocked(label))
-                      : state.errorFor(Ops.blocks) ?? l10n.searchBlockFailed),
-                ),
-              );
-            },
-    );
   }
 }
