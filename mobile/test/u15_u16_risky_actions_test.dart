@@ -59,22 +59,28 @@ AppState _stateWithDevices() {
   return state;
 }
 
-Future<void> _show(WidgetTester tester, AppState state,
-    {double scale = 1.0}) async {
+Future<void> _show(
+  WidgetTester tester,
+  AppState state, {
+  double scale = 1.0,
+}) async {
   tester.view.physicalSize = const Size(360, 4000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(MaterialApp(
-    theme: veritraLightTheme(),
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    builder: (context, child) => MediaQuery(
-      data:
-          MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-      child: child!,
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: veritraLightTheme(),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(scale)),
+        child: child!,
+      ),
+      home: Scaffold(body: SettingsScreen(state: state)),
     ),
-    home: Scaffold(body: SettingsScreen(state: state)),
-  ));
+  );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 200));
 }
@@ -88,26 +94,35 @@ void main() {
         'the device', (tester) async {
       await _show(tester, _stateWithDevices());
 
-      final button =
-          find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
+      final button = find.byKey(
+        const ValueKey<String>('device-sign-out-dev_old'),
+      );
       expect(button, findsOneWidget);
       expect(
-          find.descendant(
-              of: button,
-              matching: find.text(l10n.settingsSignOutDeviceButton)),
-          findsOneWidget);
+        find.descendant(
+          of: button,
+          matching: find.text(l10n.settingsSignOutDeviceButton),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(button);
       await tester.pumpAndSettle();
       final dialog = find.byType(AlertDialog);
       expect(
-          find.descendant(
-              of: dialog, matching: find.text('Sign out "Old tablet"?')),
-          findsOneWidget);
+        find.descendant(
+          of: dialog,
+          matching: find.text('Sign out "Old tablet"?'),
+        ),
+        findsOneWidget,
+      );
       final confirm = tester.widget<FilledButton>(
-          find.descendant(of: dialog, matching: find.byType(FilledButton)));
-      expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
-          Theme.of(tester.element(dialog)).colorScheme.error);
+        find.descendant(of: dialog, matching: find.byType(FilledButton)),
+      );
+      expect(
+        confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
+        Theme.of(tester.element(dialog)).colorScheme.error,
+      );
     });
 
     testWidgets(
@@ -117,41 +132,49 @@ void main() {
       expect(tester.takeException(), isNull);
       final name = tester.getSize(find.text('Old tablet'));
       expect(name.width, greaterThanOrEqualTo(120));
-      final button =
-          find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
-      expect(tester.getTopLeft(button).dy,
-          greaterThan(tester.getBottomLeft(find.text('Old tablet')).dy));
+      final button = find.byKey(
+        const ValueKey<String>('device-sign-out-dev_old'),
+      );
+      expect(
+        tester.getTopLeft(button).dy,
+        greaterThan(tester.getBottomLeft(find.text('Old tablet')).dy),
+      );
     });
   });
 
   group('U16 block and unblock', () {
-    Future<_BlockState> pumpButton(WidgetTester tester,
-        {required bool blocked}) async {
+    Future<_BlockState> pumpButton(
+      WidgetTester tester, {
+      required bool blocked,
+    }) async {
       final state = _BlockState();
       addTearDown(state.dispose);
-      await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => TextButton(
-              onPressed: () => toggleBlock(
-                context,
-                state,
-                accountId: 'acct_sam',
-                label: '@sam',
-                blocked: blocked,
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => toggleBlock(
+                  context,
+                  state,
+                  accountId: 'acct_sam',
+                  label: '@sam',
+                  blocked: blocked,
+                ),
+                child: const Text('go'),
               ),
-              child: const Text('go'),
             ),
           ),
         ),
-      ));
+      );
       return state;
     }
 
-    testWidgets('blocking asks first; cancelling sends nothing',
-        (tester) async {
+    testWidgets('blocking asks first; cancelling sends nothing', (
+      tester,
+    ) async {
       final state = await pumpButton(tester, blocked: false);
       await tester.tap(find.text('go'));
       await tester.pumpAndSettle();
@@ -162,8 +185,9 @@ void main() {
       expect(find.text('Undo'), findsNothing);
     });
 
-    testWidgets('a confirmed block offers Undo, which unblocks',
-        (tester) async {
+    testWidgets('a confirmed block offers Undo, which unblocks', (
+      tester,
+    ) async {
       final state = await pumpButton(tester, blocked: false);
       await tester.tap(find.text('go'));
       await tester.pumpAndSettle();
@@ -175,8 +199,9 @@ void main() {
       expect(state.calls, <String>['block:acct_sam', 'unblock:acct_sam']);
     });
 
-    testWidgets('unblocking needs no question and offers Undo, which blocks',
-        (tester) async {
+    testWidgets('unblocking needs no question and offers Undo, which blocks', (
+      tester,
+    ) async {
       final state = await pumpButton(tester, blocked: true);
       await tester.tap(find.text('go'));
       await tester.pumpAndSettle();

@@ -83,8 +83,10 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                     itemCount: blocks.length,
                     itemBuilder: (context, index) {
                       final block = blocks[index];
-                      final label =
-                          accountLabel(block.accountId, block.username);
+                      final label = accountLabel(
+                        block.accountId,
+                        block.username,
+                      );
                       final colors = avatarColorsFor(context, block.accountId);
                       return MergeSemantics(
                         child: ListTile(
@@ -106,19 +108,18 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                             ),
                           ),
                           title: Text(label),
-                          subtitle: Text(block.createdAt == null
-                              ? context.l10n.blockedLabel
-                              : context.l10n.blockedOn(
-                                  formatDate(context, block.createdAt!),
-                                )),
+                          subtitle: Text(
+                            block.createdAt == null
+                                ? context.l10n.blockedLabel
+                                : context.l10n.blockedOn(
+                                    formatDate(context, block.createdAt!),
+                                  ),
+                          ),
                           trailing: TextButton(
                             onPressed: state.isBusy(Ops.blocks)
                                 ? null
-                                : () => _unblock(
-                                      context,
-                                      block.accountId,
-                                      label,
-                                    ),
+                                : () =>
+                                    _unblock(context, block.accountId, label),
                             child: Text(context.l10n.blockedUnblock),
                           ),
                         ),
@@ -132,11 +133,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
   }
 
   // U16: the snackbar offers Undo, which blocks them again.
-  Future<void> _unblock(
-    BuildContext context,
-    String accountId,
-    String label,
-  ) =>
+  Future<void> _unblock(BuildContext context, String accountId, String label) =>
       toggleBlock(
         context,
         widget.state,

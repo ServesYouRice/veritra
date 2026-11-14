@@ -125,39 +125,46 @@ String benchKey(ReceivedMessageEnvelope envelope) =>
 
 String _benchText(int index) {
   final words = 4 + (index * 7) % 23;
-  return List<String>.generate(words, (word) => 'word${(index + word) % 97}')
-      .join(' ');
+  return List<String>.generate(
+    words,
+    (word) => 'word${(index + word) % 97}',
+  ).join(' ');
 }
 
 /// Decrypted history for [envelopes]: text for each, a reply on every tenth
 /// and a reaction on every sixth.
 List<MessageEffect> benchHistoryEffects(
-    List<ReceivedMessageEnvelope> envelopes) {
+  List<ReceivedMessageEnvelope> envelopes,
+) {
   final oldestFirst = envelopes.reversed.toList(growable: false);
   final effects = <MessageEffect>[];
   for (var i = 0; i < oldestFirst.length; i++) {
     final envelope = oldestFirst[i];
-    effects.add(InsertMessageEffect(
-      key: benchKey(envelope),
-      serverMessageId: envelope.id,
-      conversationId: envelope.conversationId,
-      senderAccountId: envelope.senderAccountId,
-      senderDeviceId: envelope.senderDeviceId,
-      kind: LocalMessageKind.text,
-      body: _benchText(i),
-      replyTo: i > 0 && i % 10 == 0 ? benchKey(oldestFirst[i - 1]) : null,
-      createdAt: envelope.createdAt.millisecondsSinceEpoch,
-      state: envelope.senderDeviceId == benchSession.deviceId
-          ? LocalMessageState.sent
-          : LocalMessageState.received,
-    ));
+    effects.add(
+      InsertMessageEffect(
+        key: benchKey(envelope),
+        serverMessageId: envelope.id,
+        conversationId: envelope.conversationId,
+        senderAccountId: envelope.senderAccountId,
+        senderDeviceId: envelope.senderDeviceId,
+        kind: LocalMessageKind.text,
+        body: _benchText(i),
+        replyTo: i > 0 && i % 10 == 0 ? benchKey(oldestFirst[i - 1]) : null,
+        createdAt: envelope.createdAt.millisecondsSinceEpoch,
+        state: envelope.senderDeviceId == benchSession.deviceId
+            ? LocalMessageState.sent
+            : LocalMessageState.received,
+      ),
+    );
     if (i % 6 == 0) {
-      effects.add(ReactionEffect(
-        targetKey: benchKey(envelope),
-        reactorAccountId: benchMemberAccount(1 + i % 3),
-        reaction: '👍',
-        at: envelope.createdAt.millisecondsSinceEpoch + 1000,
-      ));
+      effects.add(
+        ReactionEffect(
+          targetKey: benchKey(envelope),
+          reactorAccountId: benchMemberAccount(1 + i % 3),
+          reaction: '👍',
+          at: envelope.createdAt.millisecondsSinceEpoch + 1000,
+        ),
+      );
     }
   }
   return effects;
@@ -181,20 +188,22 @@ Future<void> seedHistory(
     await store.saveCryptoState(state, 0);
   }
   final cursor = await store.loadSyncCursor();
-  await store.commitMlsTransition(MlsStateTransition(
-    messageId: 'seed:${cursor + 1}',
-    conversationId: conversationId,
-    expectedCounter: state.counter,
-    expectedCursor: cursor,
-    state: StoredCryptoState(
-      counter: state.counter + 1,
-      stateKey: state.stateKey,
-      sealedState: state.sealedState,
+  await store.commitMlsTransition(
+    MlsStateTransition(
+      messageId: 'seed:${cursor + 1}',
+      conversationId: conversationId,
+      expectedCounter: state.counter,
+      expectedCursor: cursor,
+      state: StoredCryptoState(
+        counter: state.counter + 1,
+        stateKey: state.stateKey,
+        sealedState: state.sealedState,
+      ),
+      cursor: cursor + 1,
+      upsertedEnvelopes: envelopes,
+      messageEffects: effects,
     ),
-    cursor: cursor + 1,
-    upsertedEnvelopes: envelopes,
-    messageEffects: effects,
-  ));
+  );
 }
 
 /// An inline `message.envelope.created` event, as the server sends it.
@@ -228,7 +237,8 @@ class BenchMlsCrypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       null;
 
   @override
@@ -253,32 +263,34 @@ class BenchMlsCrypto implements MlsConversationCryptoService {
     final previous = (await store.loadCryptoState())!;
     final cursor = await store.loadSyncCursor();
     final text = 'Incoming ${envelope.id}';
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: marker,
-      conversationId: envelope.conversationId,
-      expectedCounter: previous.counter,
-      expectedCursor: cursor,
-      state: StoredCryptoState(
-        counter: previous.counter + 1,
-        stateKey: previous.stateKey,
-        sealedState: previous.sealedState,
-      ),
-      cursor: syncEventId,
-      upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-      messageEffects: <MessageEffect>[
-        InsertMessageEffect(
-          key: benchKey(envelope),
-          serverMessageId: envelope.id,
-          conversationId: envelope.conversationId,
-          senderAccountId: envelope.senderAccountId,
-          senderDeviceId: envelope.senderDeviceId,
-          kind: LocalMessageKind.text,
-          body: text,
-          createdAt: envelope.createdAt.millisecondsSinceEpoch,
-          state: LocalMessageState.received,
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: marker,
+        conversationId: envelope.conversationId,
+        expectedCounter: previous.counter,
+        expectedCursor: cursor,
+        state: StoredCryptoState(
+          counter: previous.counter + 1,
+          stateKey: previous.stateKey,
+          sealedState: previous.sealedState,
         ),
-      ],
-    ));
+        cursor: syncEventId,
+        upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+        messageEffects: <MessageEffect>[
+          InsertMessageEffect(
+            key: benchKey(envelope),
+            serverMessageId: envelope.id,
+            conversationId: envelope.conversationId,
+            senderAccountId: envelope.senderAccountId,
+            senderDeviceId: envelope.senderDeviceId,
+            kind: LocalMessageKind.text,
+            body: text,
+            createdAt: envelope.createdAt.millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+          ),
+        ],
+      ),
+    );
     applied++;
     return utf8.encode(text);
   }
@@ -365,7 +377,9 @@ class BenchApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const ConversationMute(muted: false);
 
   @override
@@ -400,7 +414,9 @@ class BenchApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<ReceivedMessageEnvelope> message(
-          String token, String messageId) async =>
+    String token,
+    String messageId,
+  ) async =>
       throw ApiException(404, '{"error":"not_found"}');
 
   @override
@@ -493,7 +509,9 @@ class FrameStats {
   double _at(double fraction) => _sorted.isEmpty
       ? 0
       : _sorted[math.min(
-              _sorted.length - 1, (_sorted.length * fraction).floor())] /
+            _sorted.length - 1,
+            (_sorted.length * fraction).floor(),
+          )] /
           1000;
   double get medianMs => _at(0.5);
   double get p90Ms => _at(0.9);

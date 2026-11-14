@@ -17,10 +17,12 @@ const double _realisticWidthScale = 0.55;
 
 Future<void> _openSettings(WidgetTester tester, {Size size = phoneSize}) async {
   setWindowSize(tester, size);
-  await tester.pumpWidget(veritraTestApp(
-    state: await connectedState(),
-    textScale: _realisticWidthScale,
-  ));
+  await tester.pumpWidget(
+    veritraTestApp(
+      state: await connectedState(),
+      textScale: _realisticWidthScale,
+    ),
+  );
   await tester.pumpAndSettle();
   await tester.tap(find.byIcon(Icons.settings_outlined));
   await tester.pumpAndSettle();
@@ -59,8 +61,9 @@ void main() {
     );
   });
 
-  testWidgets('groups, arrows, no Coming soon, Sign out last and red',
-      (tester) async {
+  testWidgets('groups, arrows, no Coming soon, Sign out last and red', (
+    tester,
+  ) async {
     // Tall, so the lazy list builds every row.
     await _openSettings(tester, size: const Size(360, 4000));
 
@@ -72,16 +75,23 @@ void main() {
     ]) {
       // SectionHeader upper-cases its title.
       expect(
-          find.text(header.toUpperCase(), skipOffstage: false), findsOneWidget,
-          reason: header);
+        find.text(header.toUpperCase(), skipOffstage: false),
+        findsOneWidget,
+        reason: header,
+      );
     }
     expect(
-        find.text(l10n.settingsSectionComingSoon.toUpperCase(),
-            skipOffstage: false),
-        findsNothing);
+      find.text(
+        l10n.settingsSectionComingSoon.toUpperCase(),
+        skipOffstage: false,
+      ),
+      findsNothing,
+    );
     // Account ID is no longer a Settings row.
     expect(
-        find.text(l10n.settingsAccountId, skipOffstage: false), findsNothing);
+      find.text(l10n.settingsAccountId, skipOffstage: false),
+      findsNothing,
+    );
 
     // Rows that open a page carry an arrow.
     final blocked = find.ancestor(
@@ -117,15 +127,20 @@ void main() {
       matching: find.byType(ListTile),
       skipOffstage: false,
     );
-    expect(tester.widget<ListTile>(tiles.last).key,
-        const ValueKey<String>('settings-sign-out'));
-    final title = tester.widget<Text>(find.descendant(
-      of: signOut,
-      matching: find.text(l10n.settingsSignOut),
-      skipOffstage: false,
-    ));
-    final scheme =
-        Theme.of(tester.element(find.byType(SettingsScreen))).colorScheme;
+    expect(
+      tester.widget<ListTile>(tiles.last).key,
+      const ValueKey<String>('settings-sign-out'),
+    );
+    final title = tester.widget<Text>(
+      find.descendant(
+        of: signOut,
+        matching: find.text(l10n.settingsSignOut),
+        skipOffstage: false,
+      ),
+    );
+    final scheme = Theme.of(
+      tester.element(find.byType(SettingsScreen)),
+    ).colorScheme;
     expect(title.style?.color, scheme.error);
   });
 
@@ -135,7 +150,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ProfileScreen), findsOneWidget);
     expect(
-        find.text(l10n.profileSectionAdvanced.toUpperCase()), findsOneWidget);
+      find.text(l10n.profileSectionAdvanced.toUpperCase()),
+      findsOneWidget,
+    );
     expect(find.text(l10n.settingsAccountId.toUpperCase()), findsOneWidget);
   });
 }

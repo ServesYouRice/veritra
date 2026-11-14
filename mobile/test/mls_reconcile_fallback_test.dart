@@ -19,11 +19,12 @@ import 'package:private_messenger/sync/sync_service.dart';
 
 const _origin = 'https://example.test';
 const _session = Session(
-    baseUrl: _origin,
-    token: 'token',
-    accountId: 'alice',
-    deviceId: 'dev_alice',
-    deviceSecret: 'secret');
+  baseUrl: _origin,
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'dev_alice',
+  deviceSecret: 'secret',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -33,16 +34,21 @@ void main() {
     final store = MemoryLocalStore();
     await store.saveSession(_session);
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List.filled(32, 1),
+        sealedState: [1],
+      ),
+      0,
+    );
     final api = _Api();
     final crypto = _Crypto();
     final state = AppState(
-        apiClientFactory: (_) => api,
-        cryptoService: crypto,
-        localStore: store,
-        syncServiceFactory: (_, __) => _QuietSync());
+      apiClientFactory: (_) => api,
+      cryptoService: crypto,
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+    );
     addTearDown(state.dispose);
     state.reconcileFallback = const Duration(milliseconds: 500);
     state.handleAppLifecycleState(AppLifecycleState.resumed);
@@ -76,8 +82,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
   @override
   void close() {}
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const [];
   @override
   Future<List<MlsRevocation>> mlsRevocations(String token) async => const [];
@@ -86,26 +95,31 @@ class _Api extends ApiClient with LegacySyncPageFake {
     reads++;
     return [
       MlsPendingChange(
-          conversationId: 'conv-a',
-          epoch: 3,
-          add: const [(accountId: 'bob', deviceId: 'dev_bob')],
-          remove: const [],
-          coordinatorDeviceId: 'dev_other'),
+        conversationId: 'conv-a',
+        epoch: 3,
+        add: const [(accountId: 'bob', deviceId: 'dev_bob')],
+        remove: const [],
+        coordinatorDeviceId: 'dev_other',
+      ),
     ];
   }
 
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String conversationId, List<String> deviceIds) async {
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
     claims.add(conversationId);
     return [
       DeviceKeyPackage(
-          id: 'kp-$conversationId',
-          deviceId: 'dev_bob',
-          accountId: 'bob',
-          keyPackage: const [1],
-          ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
-          expiresAt: DateTime.now().toUtc().add(const Duration(days: 1)))
+        id: 'kp-$conversationId',
+        deviceId: 'dev_bob',
+        accountId: 'bob',
+        keyPackage: const [1],
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+      ),
     ];
   }
 
@@ -118,12 +132,15 @@ class _Crypto implements MlsConversationCryptoService {
   final List<String> staged = [];
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 3, pending: false);
   @override
-  Future<void> stageMembershipChange(String conversationId,
-      {List<DeviceKeyPackage> adds = const [],
-      List<MlsDeviceRef> removes = const []}) async {
+  Future<void> stageMembershipChange(
+    String conversationId, {
+    List<DeviceKeyPackage> adds = const [],
+    List<MlsDeviceRef> removes = const [],
+  }) async {
     staged.add(conversationId);
   }
 

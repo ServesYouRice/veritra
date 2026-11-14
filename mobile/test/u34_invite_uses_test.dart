@@ -46,12 +46,14 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: InviteScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: InviteScreen(state: state),
+      ),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 

@@ -53,77 +53,87 @@ void main() {
     }
   }
 
-  test('I30: replayed and repeated sync events are never applied twice',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(_alice);
-    final api = _SessionApi()
-      ..pages[_alice.token] = <List<SyncEvent>>[
-        <SyncEvent>[_event(1), _event(2), _event(3)],
-      ];
-    final state = stateFor(store, api);
-    await state.tryRestoreSession();
-    await waitFor(() async => await store.loadSyncCursor() == 3);
-    final refreshes = api.conversationCalls;
+  test(
+    'I30: replayed and repeated sync events are never applied twice',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(_alice);
+      final api = _SessionApi()
+        ..pages[_alice.token] = <List<SyncEvent>>[
+          <SyncEvent>[_event(1), _event(2), _event(3)],
+        ];
+      final state = stateFor(store, api);
+      await state.tryRestoreSession();
+      await waitFor(() async => await store.loadSyncCursor() == 3);
+      final refreshes = api.conversationCalls;
 
-    // The server replays events at or below the cursor: nothing is applied,
-    // the cursor stays, and the failure is retried rather than recorded.
-    api.pages[_alice.token]!
-      ..add(<SyncEvent>[_event(2), _event(3), _event(4)])
-      ..add(<SyncEvent>[_event(5), _event(5)]);
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await waitFor(() => api.syncCalls[_alice.token]! >= 2);
-    await settle();
-    expect(await store.loadSyncCursor(), 3);
-    expect(api.conversationCalls, refreshes);
-    expect(state.syncRecovery, isNull);
-    expect(await store.loadSyncRecovery(), isNull);
+      // The server replays events at or below the cursor: nothing is applied,
+      // the cursor stays, and the failure is retried rather than recorded.
+      api.pages[_alice.token]!
+        ..add(<SyncEvent>[_event(2), _event(3), _event(4)])
+        ..add(<SyncEvent>[_event(5), _event(5)]);
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await waitFor(() => api.syncCalls[_alice.token]! >= 2);
+      await settle();
+      expect(await store.loadSyncCursor(), 3);
+      expect(api.conversationCalls, refreshes);
+      expect(state.syncRecovery, isNull);
+      expect(await store.loadSyncRecovery(), isNull);
 
-    // A page that repeats one event id is refused the same way.
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await waitFor(() => api.syncCalls[_alice.token]! >= 3);
-    await settle();
-    expect(await store.loadSyncCursor(), 3);
-    expect(api.conversationCalls, refreshes);
+      // A page that repeats one event id is refused the same way.
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await waitFor(() => api.syncCalls[_alice.token]! >= 3);
+      await settle();
+      expect(await store.loadSyncCursor(), 3);
+      expect(api.conversationCalls, refreshes);
 
-    // Once the server is sane again sync carries on from the kept cursor.
-    api.pages[_alice.token]!.add(<SyncEvent>[_event(4)]);
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await waitFor(() async => await store.loadSyncCursor() == 4);
-    expect(api.afterSeen[_alice.token]!.last, 3);
-    expect(await store.hasProcessedMlsMessage('sync:4'), isTrue);
-    state.dispose();
-  });
+      // Once the server is sane again sync carries on from the kept cursor.
+      api.pages[_alice.token]!.add(<SyncEvent>[_event(4)]);
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await waitFor(() async => await store.loadSyncCursor() == 4);
+      expect(api.afterSeen[_alice.token]!.last, 3);
+      expect(await store.hasProcessedMlsMessage('sync:4'), isTrue);
+      state.dispose();
+    },
+  );
 
-  test('I32: restoring a session never shows a ready, signed-out state',
-      () async {
-    final store = _GatedStore();
-    await store.saveSession(_alice);
-    final api = _SessionApi()..conversationGate = Completer<void>();
-    final state = stateFor(store, api);
-    final seen = <String>[];
-    state.addListener(() {
-      seen.add('${state.lifecycle.name}:${state.session != null}');
-    });
+  test(
+    'I32: restoring a session never shows a ready, signed-out state',
+    () async {
+      final store = _GatedStore();
+      await store.saveSession(_alice);
+      final api = _SessionApi()..conversationGate = Completer<void>();
+      final state = stateFor(store, api);
+      final seen = <String>[];
+      state.addListener(() {
+        seen.add('${state.lifecycle.name}:${state.session != null}');
+      });
 
-    final restore = state.tryRestoreSession();
-    await settle();
-    expect(state.lifecycle, SessionLifecycle.initializing);
-    expect(state.session, isNull);
+      final restore = state.tryRestoreSession();
+      await settle();
+      expect(state.lifecycle, SessionLifecycle.initializing);
+      expect(state.session, isNull);
 
-    store.sessionGate.complete();
-    await waitFor(() => api.conversationCalls > 0);
-    expect(state.lifecycle, SessionLifecycle.initializing,
-        reason: 'ready before the restore finished');
+      store.sessionGate.complete();
+      await waitFor(() => api.conversationCalls > 0);
+      expect(
+        state.lifecycle,
+        SessionLifecycle.initializing,
+        reason: 'ready before the restore finished',
+      );
 
-    api.conversationGate!.complete();
-    await restore;
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.session?.accountId, _alice.accountId);
-    expect(seen, isNot(contains('ready:false')),
-        reason: 'a signed-in user briefly looked logged out: $seen');
-    state.dispose();
-  });
+      api.conversationGate!.complete();
+      await restore;
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(state.session?.accountId, _alice.accountId);
+      expect(
+        seen,
+        isNot(contains('ready:false')),
+        reason: 'a signed-in user briefly looked logged out: $seen',
+      );
+      state.dispose();
+    },
+  );
 
   test(
       'I30/I32: a page held across logout and account switch never writes '
@@ -157,8 +167,11 @@ void main() {
     await settle();
     expect(await store.loadSyncCursor(), 0);
     expect(await store.hasProcessedMlsMessage('sync:1'), isFalse);
-    expect(api.conversationCallsFor[_alice.token] ?? 0, aliceCallsAtLogout,
-        reason: 'the held page refreshed state after logout');
+    expect(
+      api.conversationCallsFor[_alice.token] ?? 0,
+      aliceCallsAtLogout,
+      reason: 'the held page refreshed state after logout',
+    );
     expect(state.conversations, isEmpty);
 
     // Bob signs in on the same device: his sync starts from his own cursor
@@ -171,8 +184,11 @@ void main() {
     expect(await store.hasProcessedMlsMessage('sync:2'), isFalse);
     expect(state.session?.accountId, _bob.accountId);
     expect(state.conversations.map((item) => item.id), <String>['conv_bob']);
-    expect(api.syncCalls[_alice.token], 1,
-        reason: 'Alice was synced again after she signed out');
+    expect(
+      api.syncCalls[_alice.token],
+      1,
+      reason: 'Alice was synced again after she signed out',
+    );
     state.dispose();
   });
 }
@@ -222,7 +238,9 @@ class _SessionApi extends ApiClient with LegacySyncPageFake {
     if (gate != null && !gate.isCompleted) await gate.future;
     return <Conversation>[
       Conversation(
-          id: token == _bob.token ? 'conv_bob' : 'conv_alice', kind: 'group'),
+        id: token == _bob.token ? 'conv_bob' : 'conv_alice',
+        kind: 'group',
+      ),
     ];
   }
 

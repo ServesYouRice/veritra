@@ -33,7 +33,9 @@ void restrictDirectoryToOwner(Directory directory) {
   try {
     if (chmod(path, _ownerOnlyMode) != 0) {
       throw FileSystemException(
-          'Cannot make the folder private to its owner', directory.path);
+        'Cannot make the folder private to its owner',
+        directory.path,
+      );
     }
   } finally {
     malloc.free(path);

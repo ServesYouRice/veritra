@@ -15,5 +15,7 @@ abstract final class PlatformBackupExclusion {
   static const channel = MethodChannel('org.veritra.private_messenger/storage');
 
   static Future<void> exclude(List<String> paths) => channel.invokeMethod<void>(
-      'excludeFromBackup', <String, Object?>{'paths': paths});
+        'excludeFromBackup',
+        <String, Object?>{'paths': paths},
+      );
 }

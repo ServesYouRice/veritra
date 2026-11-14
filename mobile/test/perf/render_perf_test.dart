@@ -40,8 +40,12 @@ Future<_Bench> _connected({
 }) async {
   final store = MemoryLocalStore();
   await store.saveSession(benchSession);
-  final envelopes =
-      benchEnvelopes(longConversationId, 0, messages, senders: members);
+  final envelopes = benchEnvelopes(
+    longConversationId,
+    0,
+    messages,
+    senders: members,
+  );
   await seedHistory(store, benchHistoryEffects(envelopes));
   final list = benchConversations(conversations);
   final api = BenchApi(
@@ -80,8 +84,9 @@ Future<FrameStats> _scrollFrames(
   final frames = <int>[];
   for (var i = 1; i <= steps; i++) {
     final position = _position(tester, scrollable);
-    position
-        .jumpTo((position.pixels + step).clamp(0.0, position.maxScrollExtent));
+    position.jumpTo(
+      (position.pixels + step).clamp(0.0, position.maxScrollExtent),
+    );
     frames.add(await timedPump(tester));
   }
   return FrameStats(frames);
@@ -111,16 +116,19 @@ Finder get _chatListScrollable => find
 Finder get _chatScrollable => find
     .descendant(
       of: find.byWidgetPredicate(
-          (widget) => widget.runtimeType.toString() == '_MessageList'),
+        (widget) => widget.runtimeType.toString() == '_MessageList',
+      ),
       matching: find.byType(Scrollable),
     )
     .first;
 
 /// Taps a destination in whichever navigation the layout shows.
 Future<void> _tapNav(WidgetTester tester, IconData icon) async {
-  final nav = find.byWidgetPredicate((widget) =>
-      widget is NavigationRail ||
-      widget.runtimeType.toString() == '_FloatingNav');
+  final nav = find.byWidgetPredicate(
+    (widget) =>
+        widget is NavigationRail ||
+        widget.runtimeType.toString() == '_FloatingNav',
+  );
   await tester.tap(find.descendant(of: nav, matching: find.byIcon(icon)));
 }
 
@@ -128,13 +136,14 @@ Future<void> _tapNav(WidgetTester tester, IconData icon) async {
 /// on screen.
 Future<void> _openLongConversation(WidgetTester tester, _Bench bench) async {
   bench.state.selectAndPrepare(longConversationId);
-  unawaited(Navigator.of(tester.element(find.byType(ChatListScreen)))
-      .push(MaterialPageRoute<void>(
-    builder: (_) => ChatScreen(
-      state: bench.state,
-      conversationId: longConversationId,
+  unawaited(
+    Navigator.of(tester.element(find.byType(ChatListScreen))).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            ChatScreen(state: bench.state, conversationId: longConversationId),
+      ),
     ),
-  )));
+  );
   await tester.pumpAndSettle();
   expect(find.byType(ChatScreen), findsOneWidget);
 }
@@ -142,7 +151,10 @@ Future<void> _openLongConversation(WidgetTester tester, _Bench bench) async {
 /// Delivers one new message through the realtime poke and sync catch-up,
 /// pumping frames until the app is idle again. Returns the frame times.
 Future<FrameStats> _deliverOne(
-    WidgetTester tester, _Bench bench, int index) async {
+  WidgetTester tester,
+  _Bench bench,
+  int index,
+) async {
   final envelope = benchEnvelope(longConversationId, index);
   bench.api.events = <SyncEvent>[
     ...bench.api.events,
@@ -210,8 +222,9 @@ void main() {
     bench.state.dispose();
   });
 
-  testWidgets('one new message and one bare notification: what rebuilds',
-      (tester) async {
+  testWidgets('one new message and one bare notification: what rebuilds', (
+    tester,
+  ) async {
     final bench = await _connected(conversations: 200, messages: 2000);
     await _start(tester, bench);
 
@@ -292,8 +305,9 @@ void main() {
     bench.state.dispose();
   });
 
-  testWidgets('tab switching keeps the selection, list offset and draft',
-      (tester) async {
+  testWidgets('tab switching keeps the selection, list offset and draft', (
+    tester,
+  ) async {
     final bench = await _connected(conversations: 1000, messages: 200);
     await _start(tester, bench);
     _position(tester, _chatListScrollable).jumpTo(3000);
@@ -359,21 +373,28 @@ void main() {
       await _start(tester, bench);
       await _openLongConversation(tester, bench);
       final counter = RebuildCounter()..start();
-      final stats =
-          await _scrollFrames(tester, _chatScrollable, steps: 40, step: 400);
+      final stats = await _scrollFrames(
+        tester,
+        _chatScrollable,
+        steps: 40,
+        step: 400,
+      );
       counter.stop();
       final bubbles = counter.of('_MessageBubble');
-      final timelineMicros =
-          medianMicros(20, () => bench.state.timelineFor(longConversationId));
+      final timelineMicros = medianMicros(
+        20,
+        () => bench.state.timelineFor(longConversationId),
+      );
       benchReport(
-          'chat scroll, ${size.conversations} conversations, '
-          '${size.members} members',
-          <String, Object>{
-            ...stats.fields,
-            'bubbles_built': bubbles,
-            'bubbles_per_frame': bubbles / stats.count,
-            'timelineFor_us': timelineMicros,
-          });
+        'chat scroll, ${size.conversations} conversations, '
+        '${size.members} members',
+        <String, Object>{
+          ...stats.fields,
+          'bubbles_built': bubbles,
+          'bubbles_per_frame': bubbles / stats.count,
+          'timelineFor_us': timelineMicros,
+        },
+      );
       expect(bubbles, greaterThan(0));
       bench.state.dispose();
     });

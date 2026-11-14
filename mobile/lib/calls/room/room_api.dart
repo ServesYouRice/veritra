@@ -114,12 +114,14 @@ class ApiClientRoomApi implements RoomApi {
     required Uint8List signature,
     required int expiresAt,
   }) =>
-      _guard(() => client.sendRoomOffer(token(), callId, {
-            'nonce': nonce,
-            'key_package': base64Encode(keyPackage),
-            'signature': base64Encode(signature),
-            'expires_at': expiresAt,
-          }));
+      _guard(
+        () => client.sendRoomOffer(token(), callId, {
+          'nonce': nonce,
+          'key_package': base64Encode(keyPackage),
+          'signature': base64Encode(signature),
+          'expires_at': expiresAt,
+        }),
+      );
 
   @override
   Future<void> leave(String callId) =>

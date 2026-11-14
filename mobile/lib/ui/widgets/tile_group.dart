@@ -33,12 +33,14 @@ class TileGroup extends StatelessWidget {
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i++) {
       if (i > 0) {
-        rows.add(Divider(
-          height: 1,
-          thickness: 1,
-          indent: dividerIndent,
-          color: scheme.outlineVariant,
-        ));
+        rows.add(
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: dividerIndent,
+            color: scheme.outlineVariant,
+          ),
+        );
       }
       rows.add(children[i]);
     }

@@ -77,8 +77,11 @@ class CommunityInfoEvent {
   /// evicted.
   final int? epoch;
 
-  CommunityInfoEvent _withSeq(int value,
-          {bool evictKey = false, int? lowerEpoch}) =>
+  CommunityInfoEvent _withSeq(
+    int value, {
+    bool evictKey = false,
+    int? lowerEpoch,
+  }) =>
       CommunityInfoEvent(
         kind: kind,
         subjectKind: subjectKind,
@@ -163,8 +166,10 @@ class AcceptedCommunityInfo {
 /// Tombstone count grows with distinct received keys, rather than key replays.
 /// A repeat is ignored; requests instead move to their latest arrival.
 List<CommunityInfoEvent> addCommunityInfoEvent(
-    List<CommunityInfoEvent> rows, CommunityInfoEvent event,
-    {Set<String> protectedKeyIds = const <String>{}}) {
+  List<CommunityInfoEvent> rows,
+  CommunityInfoEvent event, {
+  Set<String> protectedKeyIds = const <String>{},
+}) {
   if (!event.isStorable) return rows;
   // Numbers are never reused, as with SQLite's AUTOINCREMENT: taken before
   // a repeated request's old row goes.
@@ -181,8 +186,11 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
       return [
         for (final row in rows)
           row.ident == event.ident
-              ? row._withSeq(row.seq!,
-                  evictKey: row.key == null, lowerEpoch: event.epoch)
+              ? row._withSeq(
+                  row.seq!,
+                  evictKey: row.key == null,
+                  lowerEpoch: event.epoch,
+                )
               : row,
       ];
     }
@@ -191,14 +199,16 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
   }
   final next = [...rows, event._withSeq(top + 1)];
   final same = next
-      .where((r) =>
-          r.kind == event.kind &&
-          r.subjectKind == event.subjectKind &&
-          r.subjectId == event.subjectId &&
-          r.conversationId == event.conversationId &&
-          r.senderAccountId == event.senderAccountId &&
-          !(r.kind == CommunityInfoEventKind.key &&
-              (r.key == null || protectedKeyIds.contains(r.keyId))))
+      .where(
+        (r) =>
+            r.kind == event.kind &&
+            r.subjectKind == event.subjectKind &&
+            r.subjectId == event.subjectId &&
+            r.conversationId == event.conversationId &&
+            r.senderAccountId == event.senderAccountId &&
+            !(r.kind == CommunityInfoEventKind.key &&
+                (r.key == null || protectedKeyIds.contains(r.keyId))),
+      )
       .toList();
   final drop = same.length - event._limit;
   if (drop <= 0) return next;
@@ -237,24 +247,29 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
   static const tables = ['local_info_events', 'local_info_records'];
 
   Future<void> _createCommunityInfo() async {
-    await customStatement('CREATE TABLE IF NOT EXISTS local_info_events ('
-        'seq INTEGER PRIMARY KEY AUTOINCREMENT,'
-        'ident TEXT NOT NULL UNIQUE,'
-        "kind TEXT NOT NULL CHECK(kind IN ('key','keyRequest','update')),"
-        'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
-        'conversation_id TEXT NOT NULL, sender_account_id TEXT NOT NULL,'
-        'sender_device_id TEXT NOT NULL,'
-        'key_id TEXT, info_key BLOB CHECK(info_key IS NULL OR length(info_key)=32),'
-        'revision INTEGER, record_sha256 TEXT, epoch INTEGER)');
     await customStatement(
-        'CREATE INDEX IF NOT EXISTS local_info_events_subject ON local_info_events '
-        '(subject_kind, subject_id, kind, seq)');
-    await customStatement('CREATE TABLE IF NOT EXISTS local_info_records ('
-        'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
-        'revision INTEGER NOT NULL CHECK(revision>=1),'
-        'key_id TEXT NOT NULL CHECK(length(key_id)=32),'
-        'blob BLOB NOT NULL,'
-        'PRIMARY KEY(subject_kind, subject_id))');
+      'CREATE TABLE IF NOT EXISTS local_info_events ('
+      'seq INTEGER PRIMARY KEY AUTOINCREMENT,'
+      'ident TEXT NOT NULL UNIQUE,'
+      "kind TEXT NOT NULL CHECK(kind IN ('key','keyRequest','update')),"
+      'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
+      'conversation_id TEXT NOT NULL, sender_account_id TEXT NOT NULL,'
+      'sender_device_id TEXT NOT NULL,'
+      'key_id TEXT, info_key BLOB CHECK(info_key IS NULL OR length(info_key)=32),'
+      'revision INTEGER, record_sha256 TEXT, epoch INTEGER)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS local_info_events_subject ON local_info_events '
+      '(subject_kind, subject_id, kind, seq)',
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_info_records ('
+      'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
+      'revision INTEGER NOT NULL CHECK(revision>=1),'
+      'key_id TEXT NOT NULL CHECK(length(key_id)=32),'
+      'blob BLOB NOT NULL,'
+      'PRIMARY KEY(subject_kind, subject_id))',
+    );
   }
 
   /// Schema 35: the authenticated MLS epoch of each info row (key
@@ -264,72 +279,80 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
   /// retried upgrade) does not fail on the existing column.
   Future<void> _addCommunityInfoEpoch() async {
     final columns = await customSelect(
-            "SELECT name FROM pragma_table_info('local_info_events')")
-        .get();
+      "SELECT name FROM pragma_table_info('local_info_events')",
+    ).get();
     if (columns.any((row) => row.read<String>('name') == 'epoch')) return;
     await customStatement(
-        'ALTER TABLE local_info_events ADD COLUMN epoch INTEGER');
+      'ALTER TABLE local_info_events ADD COLUMN epoch INTEGER',
+    );
   }
 
   /// Stores [events] inside the caller's transaction (the MLS commit that
   /// consumed them). An event that is not storable is skipped, never thrown
   /// on, so a bad payload cannot roll back the ratchet.
   Future<void> _writeCommunityInfoInTransaction(
-      List<CommunityInfoEvent> events) async {
+    List<CommunityInfoEvent> events,
+  ) async {
     for (final event in events) {
       if (!event.isStorable) continue;
       // A repeated key keeps its first arrival (seq) and the lowest epoch
       // seen for it; any other repeat changes nothing.
       await customStatement(
-          '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT'} INTO local_info_events '
-          '(ident, kind, subject_kind, subject_id, conversation_id, '
-          'sender_account_id, sender_device_id, key_id, info_key, revision, '
-          'record_sha256, epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-          '${event.kind == CommunityInfoEventKind.keyRequest ? '' : _lowerEpochOnRepeat}',
-          <Object?>[
-            event.ident,
-            event.kind.name,
-            event.subjectKind,
-            event.subjectId,
-            event.conversationId,
-            event.senderAccountId,
-            event.senderDeviceId,
-            event.keyId,
-            event.key == null ? null : Uint8List.fromList(event.key!),
-            event.revision,
-            event.recordSha256,
-            event.epoch,
-          ]);
+        '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT'} INTO local_info_events '
+        '(ident, kind, subject_kind, subject_id, conversation_id, '
+        'sender_account_id, sender_device_id, key_id, info_key, revision, '
+        'record_sha256, epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        '${event.kind == CommunityInfoEventKind.keyRequest ? '' : _lowerEpochOnRepeat}',
+        <Object?>[
+          event.ident,
+          event.kind.name,
+          event.subjectKind,
+          event.subjectId,
+          event.conversationId,
+          event.senderAccountId,
+          event.senderDeviceId,
+          event.keyId,
+          event.key == null ? null : Uint8List.fromList(event.key!),
+          event.revision,
+          event.recordSha256,
+          event.epoch,
+        ],
+      );
       await customStatement(
-          '${event.kind == CommunityInfoEventKind.key ? 'UPDATE local_info_events SET info_key = NULL' : 'DELETE FROM local_info_events'} WHERE kind = ?1 AND subject_kind = ?2 '
-          'AND subject_id = ?3 AND conversation_id = ?4 '
-          'AND sender_account_id = ?5 AND $_unprotected '
-          'AND seq NOT IN (SELECT seq FROM local_info_events '
-          'WHERE kind = ?1 AND subject_kind = ?2 AND subject_id = ?3 '
-          'AND conversation_id = ?4 AND sender_account_id = ?5 '
-          'AND $_unprotected ORDER BY seq DESC LIMIT ?6)',
-          <Object?>[
-            event.kind.name,
-            event.subjectKind,
-            event.subjectId,
-            event.conversationId,
-            event.senderAccountId,
-            event._limit,
-          ]);
+        '${event.kind == CommunityInfoEventKind.key ? 'UPDATE local_info_events SET info_key = NULL' : 'DELETE FROM local_info_events'} WHERE kind = ?1 AND subject_kind = ?2 '
+        'AND subject_id = ?3 AND conversation_id = ?4 '
+        'AND sender_account_id = ?5 AND $_unprotected '
+        'AND seq NOT IN (SELECT seq FROM local_info_events '
+        'WHERE kind = ?1 AND subject_kind = ?2 AND subject_id = ?3 '
+        'AND conversation_id = ?4 AND sender_account_id = ?5 '
+        'AND $_unprotected ORDER BY seq DESC LIMIT ?6)',
+        <Object?>[
+          event.kind.name,
+          event.subjectKind,
+          event.subjectId,
+          event.conversationId,
+          event.senderAccountId,
+          event._limit,
+        ],
+      );
     }
   }
 
   /// The received events of [kind] for one subject, oldest first.
   Future<List<CommunityInfoEvent>> readCommunityInfoEvents(
-      CommunityInfoEventKind kind, String subjectKind, String subjectId) async {
+    CommunityInfoEventKind kind,
+    String subjectKind,
+    String subjectId,
+  ) async {
     final rows = await customSelect(
-        'SELECT * FROM local_info_events WHERE kind = ? AND subject_kind = ? '
-        'AND subject_id = ? ORDER BY seq',
-        variables: [
-          Variable.withString(kind.name),
-          Variable.withString(subjectKind),
-          Variable.withString(subjectId),
-        ]).get();
+      'SELECT * FROM local_info_events WHERE kind = ? AND subject_kind = ? '
+      'AND subject_id = ? ORDER BY seq',
+      variables: [
+        Variable.withString(kind.name),
+        Variable.withString(subjectKind),
+        Variable.withString(subjectId),
+      ],
+    ).get();
     return [
       for (final row in rows)
         CommunityInfoEvent(
@@ -355,13 +378,16 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
       transaction(() => _writeCommunityInfoInTransaction(events));
 
   Future<AcceptedCommunityInfo?> readAcceptedCommunityInfo(
-      String subjectKind, String subjectId) async {
+    String subjectKind,
+    String subjectId,
+  ) async {
     final row = await customSelect(
-        'SELECT * FROM local_info_records WHERE subject_kind = ? AND subject_id = ?',
-        variables: [
-          Variable.withString(subjectKind),
-          Variable.withString(subjectId),
-        ]).getSingleOrNull();
+      'SELECT * FROM local_info_records WHERE subject_kind = ? AND subject_id = ?',
+      variables: [
+        Variable.withString(subjectKind),
+        Variable.withString(subjectId),
+      ],
+    ).getSingleOrNull();
     if (row == null) return null;
     return AcceptedCommunityInfo(
       subjectKind: subjectKind,
@@ -373,19 +399,22 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
   }
 
   /// Replaces the accepted record, but never with a lower revision.
-  Future<void> writeAcceptedCommunityInfo(AcceptedCommunityInfo info) =>
+  Future<void> writeAcceptedCommunityInfo(
+    AcceptedCommunityInfo info,
+  ) =>
       customStatement(
-          'INSERT INTO local_info_records (subject_kind, subject_id, revision, key_id, blob) '
-          'VALUES (?, ?, ?, ?, ?) ON CONFLICT(subject_kind, subject_id) DO UPDATE SET '
-          'revision = excluded.revision, key_id = excluded.key_id, blob = excluded.blob '
-          'WHERE excluded.revision >= local_info_records.revision',
-          <Object?>[
-            info.subjectKind,
-            info.subjectId,
-            info.revision,
-            info.keyId,
-            Uint8List.fromList(info.blob),
-          ]);
+        'INSERT INTO local_info_records (subject_kind, subject_id, revision, key_id, blob) '
+        'VALUES (?, ?, ?, ?, ?) ON CONFLICT(subject_kind, subject_id) DO UPDATE SET '
+        'revision = excluded.revision, key_id = excluded.key_id, blob = excluded.blob '
+        'WHERE excluded.revision >= local_info_records.revision',
+        <Object?>[
+          info.subjectKind,
+          info.subjectId,
+          info.revision,
+          info.keyId,
+          Uint8List.fromList(info.blob),
+        ],
+      );
 
   Future<void> _clearCommunityInfo() async {
     await customStatement('DELETE FROM local_info_events');

@@ -34,16 +34,18 @@ void main() {
       await tester.runAsync(() => state.setChatPinned('conv_$i', true));
     }
 
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: const <LocalizationsDelegate<Object>>[
-        AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: ChatListScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const <LocalizationsDelegate<Object>>[
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ChatListScreen(state: state),
+      ),
+    );
     await tester.pump();
 
     await tester.longPress(find.text('Group 6'));

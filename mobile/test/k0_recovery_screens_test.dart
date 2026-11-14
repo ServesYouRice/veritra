@@ -43,15 +43,19 @@ void main() {
   Future<void> confirmPassword(WidgetTester tester) async {
     expect(find.text('Confirm your password'), findsOneWidget);
     await tester.enterText(
-        find.descendant(
-            of: find.byType(AlertDialog), matching: find.byType(TextField)),
-        'pw');
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'pw',
+    );
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
   }
 
-  testWidgets('R3: create, write down, type back, confirm the password',
-      (tester) async {
+  testWidgets('R3: create, write down, type back, confirm the password', (
+    tester,
+  ) async {
     tall(tester);
     final state = signedIn();
     await tester.pumpWidget(app(RecoveryKeyScreen(state: state)));
@@ -63,30 +67,39 @@ void main() {
     expect(find.text('Write down your recovery key'), findsOneWidget);
     // U24: 13 numbered groups.
     expect(
-        tester
-            .widget<Text>(
-                find.byKey(const ValueKey<String>('recovery-key-group-1')))
-            .data,
-        'ABCD');
-    expect(find.byKey(const ValueKey<String>('recovery-key-group-13')),
-        findsOneWidget);
+      tester
+          .widget<Text>(
+            find.byKey(const ValueKey<String>('recovery-key-group-1')),
+          )
+          .data,
+      'ABCD',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('recovery-key-group-13')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('I have saved it'));
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byKey(const ValueKey<String>('recovery-key-confirm-field')),
-        'ABCD-WRONG');
+      find.byKey(const ValueKey<String>('recovery-key-confirm-field')),
+      'ABCD-WRONG',
+    );
     await tester.tap(find.text('Save recovery key'));
     await tester.pumpAndSettle();
     expect(
-        find.text('That is not the key shown. Check your paper and try '
-            'again.'),
-        findsOneWidget);
+      find.text(
+        'That is not the key shown. Check your paper and try '
+        'again.',
+      ),
+      findsOneWidget,
+    );
     expect(server.puts, isEmpty);
 
     await tester.enterText(
-        find.byKey(const ValueKey<String>('recovery-key-confirm-field')),
-        'abcd efgh jkmn pqrs\ttvwx yz01 2345 6789\nabcd efgh jkmn pqrs tvwx');
+      find.byKey(const ValueKey<String>('recovery-key-confirm-field')),
+      'abcd efgh jkmn pqrs\ttvwx yz01 2345 6789\nabcd efgh jkmn pqrs tvwx',
+    );
     await tester.tap(find.text('Save recovery key'));
     await tester.pumpAndSettle();
     // The server wants the password again before it takes the key.
@@ -103,34 +116,47 @@ void main() {
   testWidgets('R3: replacing names the old key and its effect', (tester) async {
     tall(tester);
     server.status = RecoveryKeyStatus(
-        available: true, configured: true, setAt: DateTime.utc(2026, 10, 1));
+      available: true,
+      configured: true,
+      setAt: DateTime.utc(2026, 10, 1),
+    );
     final state = signedIn();
     await tester.pumpWidget(app(RecoveryKeyScreen(state: state)));
     await tester.pumpAndSettle();
     expect(find.text('Replace the recovery key'), findsOneWidget);
-    expect(find.textContaining('cancels any recovery that is waiting'),
-        findsOneWidget);
+    expect(
+      find.textContaining('cancels any recovery that is waiting'),
+      findsOneWidget,
+    );
     state.dispose();
   });
 
   testWidgets('R3: a server with recovery off offers no setup', (tester) async {
     tall(tester);
-    server.status =
-        const RecoveryKeyStatus(available: false, configured: false);
+    server.status = const RecoveryKeyStatus(
+      available: false,
+      configured: false,
+    );
     final state = signedIn();
     await tester.pumpWidget(app(RecoveryKeyScreen(state: state)));
     await tester.pumpAndSettle();
-    expect(find.text('This server has account recovery turned off'),
-        findsOneWidget);
-    final button = tester.widget<FilledButton>(find.ancestor(
+    expect(
+      find.text('This server has account recovery turned off'),
+      findsOneWidget,
+    );
+    final button = tester.widget<FilledButton>(
+      find.ancestor(
         of: find.text('Create a recovery key'),
-        matching: find.byWidgetPredicate((w) => w is FilledButton)));
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      ),
+    );
     expect(button.onPressed, isNull);
     state.dispose();
   });
 
-  testWidgets('sign-in offers "I lost all my devices" only with the engine',
-      (tester) async {
+  testWidgets('sign-in offers "I lost all my devices" only with the engine', (
+    tester,
+  ) async {
     tall(tester);
     // U20: the choice sits behind "I already have an account".
     Future<void> openChoices() async {
@@ -151,46 +177,62 @@ void main() {
     ]) {
       final state = k0App(server, store, closed);
       // A new screen, not the previous one rebuilt on its third step.
-      await tester
-          .pumpWidget(app(ConnectScreen(key: ObjectKey(state), state: state)));
+      await tester.pumpWidget(
+        app(ConnectScreen(key: ObjectKey(state), state: state)),
+      );
       await openChoices();
       expect(find.text('I lost all my devices'), findsNothing);
       state.dispose();
     }
   });
 
-  testWidgets('R4: the recovery form claims and leaves for the wait',
-      (tester) async {
+  testWidgets('R4: the recovery form claims and leaves for the wait', (
+    tester,
+  ) async {
     tall(tester);
     final state = k0App(server, store, crypto);
-    await tester.pumpWidget(app(Builder(
-      builder: (context) => TextButton(
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => AccountRecoveryStartScreen(
-                state: state, initialServer: k0Origin))),
-        child: const Text('open'),
+    await tester.pumpWidget(
+      app(
+        Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => AccountRecoveryStartScreen(
+                  state: state,
+                  initialServer: k0Origin,
+                ),
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
       ),
-    )));
+    );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(find.text('Recover your account'), findsOneWidget);
     // U23: the wait is one of three points; the full text is behind
     // "How recovery works".
     expect(find.textContaining('you wait 7 days'), findsOneWidget);
-    expect(find.textContaining('this device joins only after 7 days'),
-        findsNothing);
+    expect(
+      find.textContaining('this device joins only after 7 days'),
+      findsNothing,
+    );
     await tester.tap(find.text('How recovery works'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('this device joins only after 7 days'),
-        findsOneWidget);
+    expect(
+      find.textContaining('this device joins only after 7 days'),
+      findsOneWidget,
+    );
 
     final fields = find.byType(TextFormField);
     await tester.enterText(fields.at(1), 'alice');
     await tester.enterText(fields.at(2), 'pw');
     await tester.enterText(
-        find.byKey(const ValueKey<String>('recovery-key-field')),
-        'ABCD–EFGH–JKMN–PQRS–TVWX–YZ01–2345'
-        '–6789–ABCD–EFGH–JKMN–PQRS–TVWX');
+      find.byKey(const ValueKey<String>('recovery-key-field')),
+      'ABCD–EFGH–JKMN–PQRS–TVWX–YZ01–2345'
+      '–6789–ABCD–EFGH–JKMN–PQRS–TVWX',
+    );
     await tester.tap(find.text('Start recovery'));
     await tester.pumpAndSettle();
     expect(server.claims, hasLength(1));
@@ -200,44 +242,55 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('R4: a refused claim stays on the form with the reason',
-      (tester) async {
+  testWidgets('R4: a refused claim stays on the form with the reason', (
+    tester,
+  ) async {
     tall(tester);
     server.claimFailure = k0Error(401, 'invalid_credentials');
     final state = k0App(server, store, crypto);
     await tester.pumpWidget(
-        app(AccountRecoveryStartScreen(state: state, initialServer: k0Origin)));
+      app(AccountRecoveryStartScreen(state: state, initialServer: k0Origin)),
+    );
     final fields = find.byType(TextFormField);
     await tester.enterText(fields.at(1), 'alice');
     await tester.enterText(fields.at(2), 'wrong');
     await tester.enterText(
-        find.byKey(const ValueKey<String>('recovery-key-field')), k0Display);
+      find.byKey(const ValueKey<String>('recovery-key-field')),
+      k0Display,
+    );
     await tester.tap(find.text('Start recovery'));
     await tester.pumpAndSettle();
     expect(
-        find.text('The password or recovery key is wrong, the server '
-            'address differs from the one you wrote down, or this account '
-            'cannot be recovered.'),
-        findsOneWidget);
+      find.text(
+        'The password or recovery key is wrong, the server '
+        'address differs from the one you wrote down, or this account '
+        'cannot be recovered.',
+      ),
+      findsOneWidget,
+    );
     expect(state.pendingAccountRecovery, isNull);
     state.dispose();
   });
 
-  testWidgets('R4: the wait shows ready_at, checks, and can be stopped',
-      (tester) async {
+  testWidgets('R4: the wait shows ready_at, checks, and can be stopped', (
+    tester,
+  ) async {
     tall(tester);
     final state = k0App(server, store, crypto);
     await state.startAccountRecovery(
-        baseUrl: k0Origin,
-        username: 'alice',
-        password: 'pw',
-        recoveryKey: k0Display);
+      baseUrl: k0Origin,
+      username: 'alice',
+      password: 'pw',
+      recoveryKey: k0Display,
+    );
     await tester.pumpWidget(app(AccountRecoveryWaitingScreen(state: state)));
     await tester.pumpAndSettle();
     expect(find.text('Recovery is waiting'), findsOneWidget);
     expect(find.text('Account: alice'), findsOneWidget);
-    expect(find.textContaining('This device joins your account after'),
-        findsOneWidget);
+    expect(
+      find.textContaining('This device joins your account after'),
+      findsOneWidget,
+    );
 
     final polls = server.recoveryPolls;
     await tester.tap(find.text('Check now'));
@@ -247,8 +300,12 @@ void main() {
     await tester.tap(find.text('Stop recovery'));
     await tester.pumpAndSettle();
     expect(find.text('Stop recovery on this device?'), findsOneWidget);
-    await tester.tap(find.descendant(
-        of: find.byType(AlertDialog), matching: find.text('Stop recovery')));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Stop recovery'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(state.pendingAccountRecovery, isNull);
     expect(crypto.abandons, 1);
@@ -259,14 +316,18 @@ void main() {
     tall(tester);
     final state = k0App(server, store, crypto);
     await state.startAccountRecovery(
-        baseUrl: k0Origin,
-        username: 'alice',
-        password: 'pw',
-        recoveryKey: k0Display);
-    server.statusAnswers.add(const AccountRecoveryStatus(
+      baseUrl: k0Origin,
+      username: 'alice',
+      password: 'pw',
+      recoveryKey: k0Display,
+    );
+    server.statusAnswers.add(
+      const AccountRecoveryStatus(
         phase: AccountRecoveryPhase.completedWithoutToken,
         accountId: 'acct_me',
-        deviceId: 'dev_new'));
+        deviceId: 'dev_new',
+      ),
+    );
     await state.checkAccountRecovery();
     await tester.pumpWidget(app(AccountRecoveryWaitingScreen(state: state)));
     await tester.pumpAndSettle();
@@ -298,28 +359,36 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('follow-up: skipping the restore warns, then moves on',
-      (tester) async {
+  testWidgets('follow-up: skipping the restore warns, then moves on', (
+    tester,
+  ) async {
     tall(tester);
     final state = signedIn()..recoveryFollowUp = RecoveryFollowUpStep.restore;
     await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('follow-up-restore')),
-        findsOneWidget);
-    await tester
-        .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
+    expect(
+      find.byKey(const ValueKey<String>('follow-up-restore')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('follow-up-restore-skip')),
+    );
     await tester.pumpAndSettle();
     expect(
-        find.textContaining('older backups become unusable'), findsOneWidget);
+      find.textContaining('older backups become unusable'),
+      findsOneWidget,
+    );
     // Cancel keeps the step.
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
-    await tester
-        .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('follow-up-restore-skip')),
+    );
     await tester.pumpAndSettle();
     await tester.tap(
-        find.byKey(const ValueKey<String>('follow-up-restore-skip-confirm')));
+      find.byKey(const ValueKey<String>('follow-up-restore-skip-confirm')),
+    );
     await tester.pumpAndSettle();
     expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
     state.dispose();
@@ -332,44 +401,58 @@ void main() {
     await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
     await tester.pumpAndSettle();
     expect(
-        find.textContaining('replace your recovery key and then your '
-            'password'),
-        findsOneWidget);
+      find.textContaining(
+        'replace your recovery key and then your '
+        'password',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Create a recovery key'), findsOneWidget);
     state.dispose();
   });
 
-  testWidgets('a waiting recovery shows on other devices and can be cancelled',
-      (tester) async {
-    tall(tester);
-    final state = signedIn()
-      ..recoveryKeyStatus = RecoveryKeyStatus(
-        available: true,
-        configured: true,
-        pending: PendingRecoveryRequest(
+  testWidgets(
+    'a waiting recovery shows on other devices and can be cancelled',
+    (tester) async {
+      tall(tester);
+      final state = signedIn()
+        ..recoveryKeyStatus = RecoveryKeyStatus(
+          available: true,
+          configured: true,
+          pending: PendingRecoveryRequest(
             id: 'arr_9',
             deviceName: 'Unknown phone',
-            readyAt: DateTime.utc(2099, 11, 8, 10)),
+            readyAt: DateTime.utc(2099, 11, 8, 10),
+          ),
+        );
+      await tester.pumpWidget(
+        app(Scaffold(body: AccountRecoveryBanner(state: state))),
       );
-    await tester
-        .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
-    await tester.pumpAndSettle();
-    expect(
-        find.textContaining('Someone is recovering your account on '
-            '“Unknown phone”'),
-        findsOneWidget);
-    await tester.tap(find.text('Cancel recovery'));
-    await tester.pumpAndSettle();
-    expect(find.text('Cancel this recovery?'), findsOneWidget);
-    await tester.tap(find.descendant(
-        of: find.byType(AlertDialog), matching: find.text('Cancel recovery')));
-    await tester.pumpAndSettle();
-    await confirmPassword(tester);
-    expect(server.cancels, <String>['arr_9']);
-    expect(find.text('Recovery cancelled.'), findsOneWidget);
-    expect(find.textContaining('Someone is recovering'), findsNothing);
-    state.dispose();
-  });
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(
+          'Someone is recovering your account on '
+          '“Unknown phone”',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel recovery'));
+      await tester.pumpAndSettle();
+      expect(find.text('Cancel this recovery?'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Cancel recovery'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await confirmPassword(tester);
+      expect(server.cancels, <String>['arr_9']);
+      expect(find.text('Recovery cancelled.'), findsOneWidget);
+      expect(find.textContaining('Someone is recovering'), findsNothing);
+      state.dispose();
+    },
+  );
 
   testWidgets('the leaked-password warning can be dismissed', (tester) async {
     tall(tester);
@@ -378,18 +461,24 @@ void main() {
     const scope = '$k0Origin\u0000acct_me\u0000';
     await store.saveSetting('k0.password_leak_day', '$scope$today');
     await state.refreshRecoveryNotices();
-    await tester
-        .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
+    await tester.pumpWidget(
+      app(Scaffold(body: AccountRecoveryBanner(state: state))),
+    );
     await tester.pumpAndSettle();
     expect(
-        find.text('Your password was used with a wrong recovery key many '
-            'times. Change your password.'),
-        findsOneWidget);
+      find.text(
+        'Your password was used with a wrong recovery key many '
+        'times. Change your password.',
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Dismiss'));
     await tester.pumpAndSettle();
     expect(find.textContaining('wrong recovery key'), findsNothing);
     expect(
-        await store.loadSetting('k0.password_leak_dismissed'), '$scope$today');
+      await store.loadSetting('k0.password_leak_dismissed'),
+      '$scope$today',
+    );
     state.dispose();
   });
 }

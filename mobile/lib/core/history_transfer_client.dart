@@ -209,7 +209,9 @@ abstract interface class HistoryTransferTransport {
   });
 
   Future<HistoryTransferReceipt> status(
-      String linkId, HistoryTransferAuth auth);
+    String linkId,
+    HistoryTransferAuth auth,
+  );
 
   Future<int> download({
     required String linkId,
@@ -234,11 +236,11 @@ class HistoryTransferClient implements HistoryTransferTransport {
   /// [transport] decides which origins may receive a session or claim token:
   /// HTTPS only unless the demo entry point passes its loopback policy. A
   /// refused origin fails here, before any request exists.
-  HistoryTransferClient(
-      {required String baseUrl,
-      HttpClient? httpClient,
-      TransportPolicy transport = TransportPolicy.production})
-      : baseUrl = _allowedOrigin(baseUrl, transport),
+  HistoryTransferClient({
+    required String baseUrl,
+    HttpClient? httpClient,
+    TransportPolicy transport = TransportPolicy.production,
+  })  : baseUrl = _allowedOrigin(baseUrl, transport),
         _http = httpClient ?? HttpClient() {
     _http.connectionTimeout = const Duration(seconds: 15);
   }
@@ -263,11 +265,15 @@ class HistoryTransferClient implements HistoryTransferTransport {
       throw ArgumentError('invalid link id');
     }
     return Uri.parse(baseUrl).resolve(
-        '/api/v1/device-links/v3/${Uri.encodeComponent(linkId)}/history$suffix');
+      '/api/v1/device-links/v3/${Uri.encodeComponent(linkId)}/history$suffix',
+    );
   }
 
-  Future<HttpClientRequest> _open(String method, Uri uri,
-      [HistoryTransferAuth? auth]) async {
+  Future<HttpClientRequest> _open(
+    String method,
+    Uri uri, [
+    HistoryTransferAuth? auth,
+  ]) async {
     final request = await _http.openUrl(method, uri).timeout(_timeout);
     request.followRedirects = false;
     auth?._apply(request);
@@ -300,26 +306,33 @@ class HistoryTransferClient implements HistoryTransferTransport {
       if (e.statusCode != HttpStatus.notFound) rethrow;
     }
     final boundary = 'veritra-${_randomHex(16)}';
-    final head = utf8.encode('--$boundary\r\n'
-        'Content-Disposition: form-data; name="metadata"\r\n'
-        'Content-Type: application/json\r\n\r\n'
-        '${jsonEncode(metadata.toJson())}\r\n'
-        '--$boundary\r\n'
-        'Content-Disposition: form-data; name="ciphertext"\r\n'
-        'Content-Type: application/octet-stream\r\n\r\n');
+    final head = utf8.encode(
+      '--$boundary\r\n'
+      'Content-Disposition: form-data; name="metadata"\r\n'
+      'Content-Type: application/json\r\n\r\n'
+      '${jsonEncode(metadata.toJson())}\r\n'
+      '--$boundary\r\n'
+      'Content-Disposition: form-data; name="ciphertext"\r\n'
+      'Content-Type: application/octet-stream\r\n\r\n',
+    );
     final tail = utf8.encode('\r\n--$boundary--\r\n');
     final request = await _open('POST', _uri(linkId), auth);
-    request.headers.set(HttpHeaders.contentTypeHeader,
-        'multipart/form-data; boundary=$boundary');
+    request.headers.set(
+      HttpHeaders.contentTypeHeader,
+      'multipart/form-data; boundary=$boundary',
+    );
     request.contentLength = head.length + metadata.sizeBytes + tail.length;
     request.add(head);
     var sent = 0;
     await request
-        .addStream(ciphertext().map((chunk) {
-          sent += chunk.length;
-          if (sent > metadata.sizeBytes) throw const HistoryTransferMismatch();
-          return chunk;
-        }))
+        .addStream(
+          ciphertext().map((chunk) {
+            sent += chunk.length;
+            if (sent > metadata.sizeBytes)
+              throw const HistoryTransferMismatch();
+            return chunk;
+          }),
+        )
         .timeout(_uploadTimeout);
     if (sent != metadata.sizeBytes) {
       request.abort(const HistoryTransferMismatch());
@@ -335,11 +348,16 @@ class HistoryTransferClient implements HistoryTransferTransport {
   /// Receipt and, for the exact recipient while active, the opaque handoff.
   @override
   Future<HistoryTransferReceipt> status(
-          String linkId, HistoryTransferAuth auth) async =>
-      HistoryTransferReceipt.fromJson(await _json(
+    String linkId,
+    HistoryTransferAuth auth,
+  ) async =>
+      HistoryTransferReceipt.fromJson(
+        await _json(
           await (await _open('GET', _uri(linkId), auth))
               .close()
-              .timeout(_timeout)));
+              .timeout(_timeout),
+        ),
+      );
 
   /// Recipient only: downloads the ciphertext into [target], resuming from
   /// its current length when the server still serves the same body
@@ -362,11 +380,12 @@ class HistoryTransferClient implements HistoryTransferTransport {
     required Future<bool> Function(File complete) verifyDigest,
   }) async {
     final length = await _fetch(
-        linkId: linkId,
-        auth: auth,
-        expectedSha256: expectedSha256,
-        expectedSize: expectedSize,
-        target: target);
+      linkId: linkId,
+      auth: auth,
+      expectedSha256: expectedSha256,
+      expectedSize: expectedSize,
+      target: target,
+    );
     // The file goes only when the check answers false (an authentication or
     // digest failure). A check that throws (I/O, a missing record, a native
     // library error) says nothing about the bytes, so the file stays.
@@ -429,8 +448,9 @@ class HistoryTransferClient implements HistoryTransferTransport {
       await _discard(target);
       throw const HistoryTransferMismatch();
     }
-    final file =
-        await target.open(mode: offset == 0 ? FileMode.write : FileMode.append);
+    final file = await target.open(
+      mode: offset == 0 ? FileMode.write : FileMode.append,
+    );
     var written = offset;
     try {
       await for (final chunk in response.timeout(_timeout)) {
@@ -469,13 +489,16 @@ class HistoryTransferClient implements HistoryTransferTransport {
     }
     final request = await _open('POST', _uri(linkId, '/ack'), auth);
     request.headers.contentType = ContentType.json;
-    request.write(jsonEncode({
-      'protocol_version': historyTransferProtocol,
-      'transfer_id': transferId,
-      'ciphertext_sha256': ciphertextSha256,
-    }));
+    request.write(
+      jsonEncode({
+        'protocol_version': historyTransferProtocol,
+        'transfer_id': transferId,
+        'ciphertext_sha256': ciphertextSha256,
+      }),
+    );
     final receipt = HistoryTransferReceipt.fromJson(
-        await _json(await request.close().timeout(_timeout)));
+      await _json(await request.close().timeout(_timeout)),
+    );
     if (receipt.transferId != transferId ||
         receipt.ciphertextSha256 != ciphertextSha256 ||
         receipt.state != 'acknowledged') {
@@ -488,9 +511,15 @@ class HistoryTransferClient implements HistoryTransferTransport {
   /// unlinks or revokes a device.
   @override
   Future<void> cancel(String linkId, HistoryTransferAuth auth) async {
-    await _json(await (await _open('DELETE', _uri(linkId), auth))
-        .close()
-        .timeout(_timeout));
+    await _json(
+      await (await _open(
+        'DELETE',
+        _uri(linkId),
+        auth,
+      ))
+          .close()
+          .timeout(_timeout),
+    );
   }
 
   void close() => _http.close(force: true);
@@ -524,10 +553,12 @@ class HistoryTransferClient implements HistoryTransferTransport {
       bytes.add(chunk);
     }
     return ApiException(
-        response.statusCode,
-        utf8.decode(bytes.takeBytes(), allowMalformed: true),
-        ApiException.parseRetryAfter(
-            response.headers.value(HttpHeaders.retryAfterHeader)));
+      response.statusCode,
+      utf8.decode(bytes.takeBytes(), allowMalformed: true),
+      ApiException.parseRetryAfter(
+        response.headers.value(HttpHeaders.retryAfterHeader),
+      ),
+    );
   }
 
   static Future<void> _discard(File target) async {
@@ -543,7 +574,7 @@ String _randomHex(int bytes) {
   final random = Random.secure();
   return [
     for (var i = 0; i < bytes; i++)
-      random.nextInt(256).toRadixString(16).padLeft(2, '0')
+      random.nextInt(256).toRadixString(16).padLeft(2, '0'),
   ].join();
 }
 

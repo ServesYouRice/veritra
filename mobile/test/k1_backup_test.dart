@@ -35,9 +35,10 @@ class K1Crypto extends K0Crypto implements BackupSealCryptoService {
   Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async {
     final base = await super.deriveRecoveryKey(value);
     return RecoveryKeyValues(
-        rkPub: nextRkPub == null ? base.rkPub : Uint8List.fromList(nextRkPub!),
-        rkId: nextRkId ?? base.rkId,
-        rkAuthPub: base.rkAuthPub);
+      rkPub: nextRkPub == null ? base.rkPub : Uint8List.fromList(nextRkPub!),
+      rkId: nextRkId ?? base.rkId,
+      rkAuthPub: base.rkAuthPub,
+    );
   }
 
   @override
@@ -84,17 +85,24 @@ class K1Api extends K0Api {
   static Completer<void>? gate;
 
   @override
-  Future<RecoveryKeyStatus> putRecoveryKey(String token,
-      {required List<int> rkAuthPub,
-      required List<int> rkId,
-      List<int>? deviceList}) async {
-    await super.putRecoveryKey(token,
-        rkAuthPub: rkAuthPub, rkId: rkId, deviceList: deviceList);
+  Future<RecoveryKeyStatus> putRecoveryKey(
+    String token, {
+    required List<int> rkAuthPub,
+    required List<int> rkId,
+    List<int>? deviceList,
+  }) async {
+    await super.putRecoveryKey(
+      token,
+      rkAuthPub: rkAuthPub,
+      rkId: rkId,
+      deviceList: deviceList,
+    );
     server.status = RecoveryKeyStatus(
-        available: true,
-        configured: true,
-        setAt: DateTime.utc(2026, 11, 1),
-        rkId: Uint8List.fromList(rkId));
+      available: true,
+      configured: true,
+      setAt: DateTime.utc(2026, 11, 1),
+      rkId: Uint8List.fromList(rkId),
+    );
     return server.status;
   }
 
@@ -102,13 +110,18 @@ class K1Api extends K0Api {
   Future<void> deleteAccount(String token) async {}
 
   @override
-  Future<void> uploadK1Backup(String token, Uint8List ciphertext,
-      {required List<int> rkId, required int counter}) async {
+  Future<void> uploadK1Backup(
+    String token,
+    Uint8List ciphertext, {
+    required List<int> rkId,
+    required int counter,
+  }) async {
     final wait = gate;
     if (wait != null) await wait.future;
     if (failures.isNotEmpty) throw failures.removeAt(0);
-    uploads
-        .add(K1Upload(List<int>.of(ciphertext), List<int>.of(rkId), counter));
+    uploads.add(
+      K1Upload(List<int>.of(ciphertext), List<int>.of(rkId), counter),
+    );
   }
 }
 
@@ -169,98 +182,116 @@ void main() {
     await settle();
   }
 
-  test('saving the key stores rk_pub and backs up at once, then daily',
-      () async {
-    await signIn();
-    expect(state.k1BackupSupported, isTrue);
-    expect(state.k1BackupView, K1BackupView.noKey);
-    expect(state.k1ShouldOfferRecoveryKey, isTrue);
-    await saveKey();
+  test(
+    'saving the key stores rk_pub and backs up at once, then daily',
+    () async {
+      await signIn();
+      expect(state.k1BackupSupported, isTrue);
+      expect(state.k1BackupView, K1BackupView.noKey);
+      expect(state.k1ShouldOfferRecoveryKey, isTrue);
+      await saveKey();
 
-    expect(state.k1BackupView, K1BackupView.on);
-    expect(state.k1ShouldOfferRecoveryKey, isFalse);
-    expect(uploads, hasLength(1));
-    expect(uploads.single.counter, 1);
-    expect(uploads.single.rkId, _rkId);
-    final seal = crypto.k1Seals.single;
-    expect(seal['account'], 'acct_me');
-    expect(seal['device'], 'dev_old');
-    expect(seal['rk_pub'], List<int>.filled(32, 0xC3));
-    // The plaintext is the history snapshot, and it is wiped after sealing;
-    // so is the ciphertext once uploaded.
-    expect(jsonDecode(seal['plain']! as String)['version'], 1);
-    expect(crypto.plaintexts.single, everyElement(0));
-    expect(crypto.ciphertexts.single, everyElement(0));
-    expect(state.k1BackupState!.lastSuccessAt, now);
+      expect(state.k1BackupView, K1BackupView.on);
+      expect(state.k1ShouldOfferRecoveryKey, isFalse);
+      expect(uploads, hasLength(1));
+      expect(uploads.single.counter, 1);
+      expect(uploads.single.rkId, _rkId);
+      final seal = crypto.k1Seals.single;
+      expect(seal['account'], 'acct_me');
+      expect(seal['device'], 'dev_old');
+      expect(seal['rk_pub'], List<int>.filled(32, 0xC3));
+      // The plaintext is the history snapshot, and it is wiped after sealing;
+      // so is the ciphertext once uploaded.
+      expect(jsonDecode(seal['plain']! as String)['version'], 1);
+      expect(crypto.plaintexts.single, everyElement(0));
+      expect(crypto.ciphertexts.single, everyElement(0));
+      expect(state.k1BackupState!.lastSuccessAt, now);
 
-    // Stored, scoped to this account and device; a reload reads it back.
-    final saved = K1BackupState.decode(await store
-        .loadSetting(k1BackupSettingName(k0Origin, 'acct_me', 'dev_old')))!;
-    expect(saved.belongsTo(k0Origin, 'acct_me', 'dev_old'), isTrue);
-    expect(saved.rkPub, List<int>.filled(32, 0xC3));
-    expect(saved.counter, 1);
+      // Stored, scoped to this account and device; a reload reads it back.
+      final saved = K1BackupState.decode(
+        await store.loadSetting(
+          k1BackupSettingName(k0Origin, 'acct_me', 'dev_old'),
+        ),
+      )!;
+      expect(saved.belongsTo(k0Origin, 'acct_me', 'dev_old'), isTrue);
+      expect(saved.rkPub, List<int>.filled(32, 0xC3));
+      expect(saved.counter, 1);
 
-    // Not due within a day, even on every open.
-    now = now.add(const Duration(hours: 23));
-    expect(await state.runK1BackupIfDue(), isFalse);
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await settle();
-    expect(uploads, hasLength(1));
-    // Due after a day; the counter goes up.
-    now = now.add(const Duration(hours: 1));
-    expect(await state.runK1BackupIfDue(), isTrue);
-    expect(uploads.last.counter, 2);
-    // "Back up now" runs regardless.
-    expect(await state.runK1BackupIfDue(force: true), isTrue);
-    expect(uploads.last.counter, 3);
-  });
+      // Not due within a day, even on every open.
+      now = now.add(const Duration(hours: 23));
+      expect(await state.runK1BackupIfDue(), isFalse);
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await settle();
+      expect(uploads, hasLength(1));
+      // Due after a day; the counter goes up.
+      now = now.add(const Duration(hours: 1));
+      expect(await state.runK1BackupIfDue(), isTrue);
+      expect(uploads.last.counter, 2);
+      // "Back up now" runs regardless.
+      expect(await state.runK1BackupIfDue(force: true), isTrue);
+      expect(uploads.last.counter, 3);
+    },
+  );
 
-  test('a changed key pauses backups until the new key is typed here',
-      () async {
-    await signIn();
-    await saveKey();
-    // Another device replaced the key.
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _otherRkId);
-    now = now.add(const Duration(days: 1));
-    expect(await state.runK1BackupIfDue(), isFalse);
-    expect(uploads, hasLength(1));
-    expect(state.k1BackupState!.lastError, K1BackupError.keyChanged);
-    expect(state.k1BackupView, K1BackupView.needsKeyHere);
-    // It waits for the user, not the clock.
-    now = now.add(const Duration(days: 2));
-    expect(await state.runK1BackupIfDue(), isFalse);
+  test(
+    'a changed key pauses backups until the new key is typed here',
+    () async {
+      await signIn();
+      await saveKey();
+      // Another device replaced the key.
+      server.status = RecoveryKeyStatus(
+        available: true,
+        configured: true,
+        rkId: _otherRkId,
+      );
+      now = now.add(const Duration(days: 1));
+      expect(await state.runK1BackupIfDue(), isFalse);
+      expect(uploads, hasLength(1));
+      expect(state.k1BackupState!.lastError, K1BackupError.keyChanged);
+      expect(state.k1BackupView, K1BackupView.needsKeyHere);
+      // It waits for the user, not the clock.
+      now = now.add(const Duration(days: 2));
+      expect(await state.runK1BackupIfDue(), isFalse);
 
-    // A key that is not the account's is refused, without saying why.
-    expect(await state.enableK1BackupsWithKey('not a key'), isFalse);
-    // The fake derives rk_id B2, which is no longer the account's key.
-    expect(await state.enableK1BackupsWithKey(k0Display), isFalse);
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _rkId);
-    expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
-    await settle();
-    expect(state.k1BackupView, K1BackupView.on);
-    expect(uploads, hasLength(2));
-    expect(uploads.last.counter, 2);
-    // The typed key's entropy was wiped.
-    expect(crypto.handedOut.last, everyElement(0));
-  });
+      // A key that is not the account's is refused, without saying why.
+      expect(await state.enableK1BackupsWithKey('not a key'), isFalse);
+      // The fake derives rk_id B2, which is no longer the account's key.
+      expect(await state.enableK1BackupsWithKey(k0Display), isFalse);
+      server.status = RecoveryKeyStatus(
+        available: true,
+        configured: true,
+        rkId: _rkId,
+      );
+      expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
+      await settle();
+      expect(state.k1BackupView, K1BackupView.on);
+      expect(uploads, hasLength(2));
+      expect(uploads.last.counter, 2);
+      // The typed key's entropy was wiped.
+      expect(crypto.handedOut.last, everyElement(0));
+    },
+  );
 
-  test('another device of the account backs up nothing until the key is typed',
-      () async {
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _rkId);
-    await signIn();
-    await settle();
-    expect(state.k1BackupView, K1BackupView.needsKeyHere);
-    expect(state.k1ShouldOfferRecoveryKey, isFalse);
-    expect(state.k1BackupNeedsAttention, isTrue);
-    expect(await state.runK1BackupIfDue(force: true), isFalse);
-    expect(uploads, isEmpty);
-    expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
-    await settle();
-    expect(uploads.single.counter, 1);
-  });
+  test(
+    'another device of the account backs up nothing until the key is typed',
+    () async {
+      server.status = RecoveryKeyStatus(
+        available: true,
+        configured: true,
+        rkId: _rkId,
+      );
+      await signIn();
+      await settle();
+      expect(state.k1BackupView, K1BackupView.needsKeyHere);
+      expect(state.k1ShouldOfferRecoveryKey, isFalse);
+      expect(state.k1BackupNeedsAttention, isTrue);
+      expect(await state.runK1BackupIfDue(force: true), isFalse);
+      expect(uploads, isEmpty);
+      expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
+      await settle();
+      expect(uploads.single.counter, 1);
+    },
+  );
 
   test('failures back off 1 h, 4 h, then a day, and keep their kind', () async {
     await signIn();
@@ -302,19 +333,21 @@ void main() {
     expect(state.k1BackupNeedsAttention, isTrue);
   });
 
-  test('a device that never succeeds warns a week after its key was set',
-      () async {
-    await signIn();
-    failures.add(ApiException(503, ''));
-    await saveKey();
-    for (var day = 1; day <= 7; day++) {
-      now = now.add(const Duration(days: 1));
+  test(
+    'a device that never succeeds warns a week after its key was set',
+    () async {
+      await signIn();
       failures.add(ApiException(503, ''));
-      await state.runK1BackupIfDue();
-    }
-    expect(state.k1BackupState!.lastSuccessAt, isNull);
-    expect(state.k1BackupStale, isTrue);
-  });
+      await saveKey();
+      for (var day = 1; day <= 7; day++) {
+        now = now.add(const Duration(days: 1));
+        failures.add(ApiException(503, ''));
+        await state.runK1BackupIfDue();
+      }
+      expect(state.k1BackupState!.lastSuccessAt, isNull);
+      expect(state.k1BackupStale, isTrue);
+    },
+  );
 
   test('an export or seal failure is recorded with backoff', () async {
     await signIn();
@@ -338,8 +371,11 @@ void main() {
     // The user replaces the key on this device mid-upload (new rk_id 0x77).
     crypto.nextRkId = _otherRkId;
     crypto.nextRkPub = Uint8List.fromList(List<int>.filled(32, 0xD4));
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _otherRkId);
+    server.status = RecoveryKeyStatus(
+      available: true,
+      configured: true,
+      rkId: _otherRkId,
+    );
     expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
     K1Api.gate!.complete();
     K1Api.gate = null;
@@ -374,31 +410,33 @@ void main() {
     expect(state.k1BackupState, isNull);
   });
 
-  test('a full wipe while a run is exporting leaves no k1 state behind',
-      () async {
-    final gated = _GatedStore();
-    final wiping = app(gated);
-    addTearDown(wiping.dispose);
-    await gated.saveSession(k0SignedIn);
-    await wiping.tryRestoreSession();
-    final draft = await wiping.createRecoveryKeyDraft();
-    gated.gate = Completer<void>();
-    expect(await wiping.saveRecoveryKey(draft), RecoveryActionResult.done);
-    draft.dispose();
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    expect(wiping.k1BackupRunning, isTrue);
-    final name = k1BackupSettingName(k0Origin, 'acct_me', 'dev_old');
-    // The account is deleted (a full wipe) while the export waits.
-    final wipe = wiping.deleteAccount();
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    gated.gate!.complete();
-    await wipe;
-    for (var i = 0; i < 50 && wiping.k1BackupRunning; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 2));
-    }
-    expect(await gated.loadSetting(name), isNull);
-    expect(uploads, isEmpty);
-  });
+  test(
+    'a full wipe while a run is exporting leaves no k1 state behind',
+    () async {
+      final gated = _GatedStore();
+      final wiping = app(gated);
+      addTearDown(wiping.dispose);
+      await gated.saveSession(k0SignedIn);
+      await wiping.tryRestoreSession();
+      final draft = await wiping.createRecoveryKeyDraft();
+      gated.gate = Completer<void>();
+      expect(await wiping.saveRecoveryKey(draft), RecoveryActionResult.done);
+      draft.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect(wiping.k1BackupRunning, isTrue);
+      final name = k1BackupSettingName(k0Origin, 'acct_me', 'dev_old');
+      // The account is deleted (a full wipe) while the export waits.
+      final wipe = wiping.deleteAccount();
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      gated.gate!.complete();
+      await wipe;
+      for (var i = 0; i < 50 && wiping.k1BackupRunning; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(await gated.loadSetting(name), isNull);
+      expect(uploads, isEmpty);
+    },
+  );
 
   test('uploads go out in 64 KiB slices', () async {
     final bytes = Uint8List(200 * 1024 + 5);
@@ -465,13 +503,19 @@ void main() {
 
   test('the state of another account or device is never used', () async {
     await store.saveSetting(
-        k1BackupSettingName(k0Origin, 'acct_other', 'dev_old'),
-        (K1BackupState(
-                baseUrl: k0Origin, accountId: 'acct_other', deviceId: 'dev_old')
-              ..setKey(Uint8List(32), _rkId))
-            .encode());
-    server.status =
-        RecoveryKeyStatus(available: true, configured: true, rkId: _rkId);
+      k1BackupSettingName(k0Origin, 'acct_other', 'dev_old'),
+      (K1BackupState(
+        baseUrl: k0Origin,
+        accountId: 'acct_other',
+        deviceId: 'dev_old',
+      )..setKey(Uint8List(32), _rkId))
+          .encode(),
+    );
+    server.status = RecoveryKeyStatus(
+      available: true,
+      configured: true,
+      rkId: _rkId,
+    );
     await signIn();
     await settle();
     expect(state.k1BackupView, K1BackupView.needsKeyHere);
@@ -483,8 +527,9 @@ void main() {
     await saveKey();
     final rkPub = base64.encode(List<int>.filled(32, 0xC3));
     final snapshot = utf8.decode(await store.exportHistorySnapshot());
-    final k1Snapshot =
-        utf8.decode(await store.exportHistorySnapshot(omitDisappearing: true));
+    final k1Snapshot = utf8.decode(
+      await store.exportHistorySnapshot(omitDisappearing: true),
+    );
     for (final text in <String>[snapshot, k1Snapshot]) {
       expect(text, isNot(contains(k1SettingPrefix)));
       expect(text, isNot(contains(rkPub)));
@@ -504,7 +549,11 @@ void main() {
     test('encode and decode round trip; garbage reads as null', () {
       final at = DateTime.utc(2026, 11, 1);
       final original = K1BackupState(
-          baseUrl: k0Origin, accountId: 'a', deviceId: 'd', counter: 7)
+        baseUrl: k0Origin,
+        accountId: 'a',
+        deviceId: 'd',
+        counter: 7,
+      )
         ..setKey(Uint8List(32)..[0] = 1, _rkId)
         ..recordFailure(K1BackupError.spaceFull, at)
         ..keyPromptSnoozedUntil = at;
@@ -535,16 +584,23 @@ void main() {
     });
 
     test('views', () {
-      final withKey =
-          K1BackupState(baseUrl: k0Origin, accountId: 'a', deviceId: 'd')
-            ..setKey(Uint8List(32), _rkId);
-      K1BackupView view(bool? available, bool? configured, List<int>? id,
-              K1BackupState? s) =>
+      final withKey = K1BackupState(
+        baseUrl: k0Origin,
+        accountId: 'a',
+        deviceId: 'd',
+      )..setKey(Uint8List(32), _rkId);
+      K1BackupView view(
+        bool? available,
+        bool? configured,
+        List<int>? id,
+        K1BackupState? s,
+      ) =>
           computeK1BackupView(
-              serverAvailable: available,
-              accountConfigured: configured,
-              accountRkId: id,
-              state: s);
+            serverAvailable: available,
+            accountConfigured: configured,
+            accountRkId: id,
+            state: s,
+          );
       expect(view(null, null, null, null), K1BackupView.unknown);
       expect(view(null, null, null, withKey), K1BackupView.on);
       expect(view(false, true, _rkId, withKey), K1BackupView.serverOff);
@@ -558,38 +614,45 @@ void main() {
   group('snapshot for a backup', () {
     final at = DateTime.now().millisecondsSinceEpoch;
     LocalMessage message(String key, {int? expires}) => LocalMessage(
-        key: 'source:$key',
-        conversationId: 'conv',
-        senderAccountId: 'bob',
-        senderDeviceId: 'source',
-        kind: 'text',
-        body: 'body $key',
-        createdAt: at - 1000,
-        state: 'received',
-        expiresAt: expires,
-        senderHidden: false);
+          key: 'source:$key',
+          conversationId: 'conv',
+          senderAccountId: 'bob',
+          senderDeviceId: 'source',
+          kind: 'text',
+          body: 'body $key',
+          createdAt: at - 1000,
+          state: 'received',
+          expiresAt: expires,
+          senderHidden: false,
+        );
 
     HistorySnapshot capture({required bool omit}) => captureHistory(
-        session: const Session(
+          session: const Session(
             baseUrl: k0Origin,
             token: 't',
             accountId: 'alice',
-            deviceId: 'source'),
-        namespace: HistoryNamespace(),
-        conversations: [Conversation(id: 'conv', kind: 'dm', title: 't')],
-        messages: [message('kept'), message('vanishing', expires: at + 60000)],
-        reactions: [
-          const LocalMessageReaction(
+            deviceId: 'source',
+          ),
+          namespace: HistoryNamespace(),
+          conversations: [Conversation(id: 'conv', kind: 'dm', title: 't')],
+          messages: [
+            message('kept'),
+            message('vanishing', expires: at + 60000),
+          ],
+          reactions: [
+            const LocalMessageReaction(
               targetKey: 'source:vanishing',
               reactorAccountId: 'bob',
               reaction: 'x',
-              updatedAt: 1)
-        ],
-        pins: const [],
-        starred: {'source:vanishing': 1},
-        preferences: const [],
-        now: at,
-        omitDisappearing: omit);
+              updatedAt: 1,
+            ),
+          ],
+          pins: const [],
+          starred: {'source:vanishing': 1},
+          preferences: const [],
+          now: at,
+          omitDisappearing: omit,
+        );
 
     test('leaves out every disappearing message and what points at it', () {
       final k1 = capture(omit: true);
@@ -630,8 +693,9 @@ class _GatedStore extends MemoryLocalStore {
   }
 
   @override
-  Future<List<int>> exportHistorySnapshot(
-      {bool omitDisappearing = false}) async {
+  Future<List<int>> exportHistorySnapshot({
+    bool omitDisappearing = false,
+  }) async {
     final wait = gate;
     if (wait != null) await wait.future;
     return super.exportHistorySnapshot(omitDisappearing: omitDisappearing);

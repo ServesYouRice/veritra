@@ -25,27 +25,29 @@ class MessageNoticeCandidate {
 /// Metadata accompanying a committed authenticated local row. This is not
 /// cryptographic proof by itself, and contains no ciphertext or manifest.
 class NoticeMessageContext {
-  const NoticeMessageContext(
-      {required this.serverMessageId,
-      required this.conversationId,
-      required this.senderAccountId,
-      required this.senderDeviceId,
-      required this.messageKey,
-      required this.createdAt,
-      this.expiresAt,
-      this.editedAt,
-      this.deletedAt});
+  const NoticeMessageContext({
+    required this.serverMessageId,
+    required this.conversationId,
+    required this.senderAccountId,
+    required this.senderDeviceId,
+    required this.messageKey,
+    required this.createdAt,
+    this.expiresAt,
+    this.editedAt,
+    this.deletedAt,
+  });
   factory NoticeMessageContext.fromEnvelope(ReceivedMessageEnvelope envelope) =>
       NoticeMessageContext(
-          serverMessageId: envelope.id,
-          conversationId: envelope.conversationId,
-          senderAccountId: envelope.senderAccountId,
-          senderDeviceId: envelope.senderDeviceId,
-          messageKey: '${envelope.senderDeviceId}:${envelope.idempotencyKey}',
-          createdAt: envelope.createdAt,
-          expiresAt: envelope.expiresAt,
-          editedAt: envelope.editedAt,
-          deletedAt: envelope.deletedAt);
+        serverMessageId: envelope.id,
+        conversationId: envelope.conversationId,
+        senderAccountId: envelope.senderAccountId,
+        senderDeviceId: envelope.senderDeviceId,
+        messageKey: '${envelope.senderDeviceId}:${envelope.idempotencyKey}',
+        createdAt: envelope.createdAt,
+        expiresAt: envelope.expiresAt,
+        editedAt: envelope.editedAt,
+        deletedAt: envelope.deletedAt,
+      );
   final String serverMessageId,
       conversationId,
       senderAccountId,
@@ -66,14 +68,15 @@ MessageNoticeCandidate? messageNoticeCandidate({
   bool includeGenericAttachments = false,
 }) =>
     messageNoticeCandidateForContext(
-        session: session,
-        envelope: NoticeMessageContext.fromEnvelope(envelope),
-        message: message,
-        now: now,
-        blocked: blocked,
-        conversationAccepted: conversationAccepted,
-        freshness: freshness,
-        includeGenericAttachments: includeGenericAttachments);
+      session: session,
+      envelope: NoticeMessageContext.fromEnvelope(envelope),
+      message: message,
+      now: now,
+      blocked: blocked,
+      conversationAccepted: conversationAccepted,
+      freshness: freshness,
+      includeGenericAttachments: includeGenericAttachments,
+    );
 
 MessageNoticeCandidate? messageNoticeCandidateForContext({
   required Session session,
@@ -123,7 +126,10 @@ MessageNoticeCandidate? messageNoticeCandidateForContext({
     // The phone path may show the fixed generic notice for a fresh committed
     // attachment. Its manifest is never rendered as a notification preview.
     return const MessageNoticeCandidate(
-        text: '', mentionsAccount: false, concealsSpoiler: false);
+      text: '',
+      mentionsAccount: false,
+      concealsSpoiler: false,
+    );
   }
   // Revalidate ranges as well as account IDs. Raw @name text and malformed
   // backup decoration cannot turn a muted message into a mention notice.

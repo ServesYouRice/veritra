@@ -79,9 +79,7 @@ class ConnectionBanner extends StatelessWidget {
         color: background,
         child: Container(
           decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: scheme.outlineVariant),
-            ),
+            border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
           ),
           padding: const EdgeInsets.symmetric(
             horizontal: BoneSpacing.gutter,
@@ -161,8 +159,11 @@ class _SyncRecoveryBanner extends StatelessWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Icon(Icons.sync_problem_outlined,
-                      size: 18, color: scheme.onErrorContainer),
+                  Icon(
+                    Icons.sync_problem_outlined,
+                    size: 18,
+                    color: scheme.onErrorContainer,
+                  ),
                   const SizedBox(width: BoneSpacing.md),
                   Expanded(
                     child: Text(
@@ -180,8 +181,9 @@ class _SyncRecoveryBanner extends StatelessWidget {
                         recovery.kind == SyncFailureKind.recordLimit
                     ? context.l10n.syncErrorRecordLimitNamed(leaveTitle)
                     : recovery.localizedMessage(context.l10n),
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.onErrorContainer),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onErrorContainer,
+                ),
               ),
               Wrap(
                 spacing: BoneSpacing.sm,
@@ -193,9 +195,11 @@ class _SyncRecoveryBanner extends StatelessWidget {
                       onPressed: state.busy
                           ? null
                           : () => _confirmLeave(context, leaveTitle),
-                      child: Text(leaveTitle == null
-                          ? context.l10n.detailsLeave
-                          : context.l10n.bannerLeaveNamed(leaveTitle)),
+                      child: Text(
+                        leaveTitle == null
+                            ? context.l10n.detailsLeave
+                            : context.l10n.bannerLeaveNamed(leaveTitle),
+                      ),
                     ),
                   if (choices.contains(SyncRecoveryChoice.retry))
                     TextButton(
@@ -234,9 +238,11 @@ class _SyncRecoveryBanner extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(title == null
-            ? context.l10n.detailsLeaveTitle
-            : context.l10n.bannerLeaveNamedTitle(title)),
+        title: Text(
+          title == null
+              ? context.l10n.detailsLeaveTitle
+              : context.l10n.bannerLeaveNamedTitle(title),
+        ),
         content: Text(context.l10n.detailsLeaveMessage),
         actions: <Widget>[
           TextButton(
@@ -251,12 +257,14 @@ class _SyncRecoveryBanner extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-    final left =
-        await state.leaveConversationAfterSyncRecovery(confirmed: true);
+    final left = await state.leaveConversationAfterSyncRecovery(
+      confirmed: true,
+    );
     final error = state.errorFor(Ops.members);
     if (!left && error != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 

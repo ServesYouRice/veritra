@@ -28,17 +28,21 @@ void main() {
     ]) {
       test('one ${kind.name} still decrypts the message', () async {
         final faults = _FaultyBindings(
-            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+        );
         final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
         final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
         await _startConversation(alice, bob);
-        final sent = await bob
-            .send(AppPayloadType.text, <String, Object?>{'text': 'kept'});
+        final sent = await bob.send(AppPayloadType.text, <String, Object?>{
+          'text': 'kept',
+        });
 
         faults.decryptFaults.add(kind);
         final event = alice.nextEvent();
-        await alice.service
-            .processApplicationMessage(alice.envelopeFrom(bob, sent), event);
+        await alice.service.processApplicationMessage(
+          alice.envelopeFrom(bob, sent),
+          event,
+        );
 
         expect(faults.decryptFaults, isEmpty);
         expect(await alice.store.loadSyncCursor(), event);
@@ -46,8 +50,9 @@ void main() {
         expect(history.map((row) => row.body), <String?>['kept']);
         expect(history.single.kind, isNot(LocalMessageKind.invalid));
         // The handle the fault left behind was replaced: the group works.
-        final next = await bob
-            .send(AppPayloadType.text, <String, Object?>{'text': 'on'});
+        final next = await bob.send(AppPayloadType.text, <String, Object?>{
+          'text': 'on',
+        });
         await alice.receive(bob, next);
         expect((await alice.history()).last.body, 'on');
       }, skip: skip);
@@ -55,27 +60,34 @@ void main() {
 
     test('a second failure of the same kind gives the placeholder', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
-      final sent =
-          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'x'});
+      final sent = await bob.send(AppPayloadType.text, <String, Object?>{
+        'text': 'x',
+      });
 
-      faults.decryptFaults.addAll(
-          [NativeCryptoError.invalidOutput, NativeCryptoError.nativePanic]);
+      faults.decryptFaults.addAll([
+        NativeCryptoError.invalidOutput,
+        NativeCryptoError.nativePanic,
+      ]);
       final envelope = alice.envelopeFrom(bob, sent);
       final event = alice.nextEvent();
-      expect(await alice.service.processApplicationMessage(envelope, event),
-          isNull);
+      expect(
+        await alice.service.processApplicationMessage(envelope, event),
+        isNull,
+      );
 
       expect(await alice.store.loadSyncCursor(), event);
       final row = (await alice.history()).single;
       expect(row.key, 'undecryptable:$event:${envelope.id}');
       expect(row.kind, LocalMessageKind.invalid);
       expect(row.body, isNull);
-      final next =
-          await bob.send(AppPayloadType.text, <String, Object?>{'text': 'on'});
+      final next = await bob.send(AppPayloadType.text, <String, Object?>{
+        'text': 'on',
+      });
       await alice.receive(bob, next);
       expect((await alice.history()).last.body, 'on');
     }, skip: skip);
@@ -86,12 +98,14 @@ void main() {
     ]) {
       test('${kind.name} stops sync with nothing consumed (I33)', () async {
         final faults = _FaultyBindings(
-            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+        );
         final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
         final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
         await _startConversation(alice, bob);
-        final sent = await bob
-            .send(AppPayloadType.text, <String, Object?>{'text': 'later'});
+        final sent = await bob.send(AppPayloadType.text, <String, Object?>{
+          'text': 'later',
+        });
         final cursor = await alice.store.loadSyncCursor();
         final counter = (await alice.store.loadCryptoState())!.counter;
 
@@ -99,9 +113,15 @@ void main() {
         final envelope = alice.envelopeFrom(bob, sent);
         final event = alice.nextEvent();
         await expectLater(
-            alice.service.processApplicationMessage(envelope, event),
-            throwsA(isA<NativeCryptoException>()
-                .having((error) => error.kind, 'kind', kind)));
+          alice.service.processApplicationMessage(envelope, event),
+          throwsA(
+            isA<NativeCryptoException>().having(
+              (error) => error.kind,
+              'kind',
+              kind,
+            ),
+          ),
+        );
         expect(await alice.store.loadSyncCursor(), cursor);
         expect((await alice.store.loadCryptoState())!.counter, counter);
         expect(await alice.history(), isEmpty);
@@ -114,65 +134,79 @@ void main() {
 
     test('a call signal survives one operationFailed', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
       final signal = await bob.service.encryptCallSignal(
-          'conv_1', <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+        'conv_1',
+        <String, Object?>{'type': 'offer', 'sdp': 'v=0'},
+      );
 
       faults.decryptFaults.add(NativeCryptoError.operationFailed);
       final event = alice.nextEvent();
       expect(
-          await alice.service.processCallSignal(_call(signal.metadata), event),
-          <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+        await alice.service.processCallSignal(_call(signal.metadata), event),
+        <String, Object?>{'type': 'offer', 'sdp': 'v=0'},
+      );
       expect(await alice.store.loadSyncCursor(), event);
     }, skip: skip);
 
     test('a call signal with invalidArgument stops sync (I33)', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
       final signal = await bob.service.encryptCallSignal(
-          'conv_1', <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+        'conv_1',
+        <String, Object?>{'type': 'offer', 'sdp': 'v=0'},
+      );
       final cursor = await alice.store.loadSyncCursor();
 
       faults.decryptFaults.add(NativeCryptoError.invalidArgument);
       final event = alice.nextEvent();
       await expectLater(
-          alice.service.processCallSignal(_call(signal.metadata), event),
-          throwsA(isA<NativeCryptoException>()));
+        alice.service.processCallSignal(_call(signal.metadata), event),
+        throwsA(isA<NativeCryptoException>()),
+      );
       expect(await alice.store.loadSyncCursor(), cursor);
       expect(
-          await alice.service.processCallSignal(_call(signal.metadata), event),
-          <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+        await alice.service.processCallSignal(_call(signal.metadata), event),
+        <String, Object?>{'type': 'offer', 'sdp': 'v=0'},
+      );
     }, skip: skip);
   });
 
   group('groupEpoch', () {
     test('a poisoned handle is replaced, not read as "no group"', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       await _startConversation(alice, bob);
 
       faults.epochFaults.add(NativeCryptoError.nativePanic);
-      expect(
-          await alice.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
+      expect(await alice.service.groupEpoch('conv_1'), (
+        epoch: 1,
+        pending: false,
+      ));
       expect(faults.epochFaults, isEmpty);
       // The next operation runs on the fresh handle.
-      final sent = await alice
-          .send(AppPayloadType.text, <String, Object?>{'text': 'ok'});
+      final sent = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'ok',
+      });
       await bob.receive(alice, sent);
       expect((await bob.history()).single.body, 'ok');
     }, skip: skip);
 
     test('a group this device does not hold is still null', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final restores = faults.restores;
       expect(await alice.service.groupEpoch('conv_none'), isNull);
@@ -182,19 +216,24 @@ void main() {
 
     test('a missing group restores when the stored state moved', () async {
       final faults = _FaultyBindings(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
       final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
       // A second service on Alice's store holds a handle from before conv_1,
       // so the store moves on without it: the state a backup restore leaves.
-      final stale =
-          TestNativeCryptoService(bindings: faults, localStore: alice.store);
-      await stale.activateSession(Session(
-        baseUrl: 'https://localhost:8443',
-        token: 'token',
-        accountId: alice.accountId,
-        deviceId: alice.deviceId,
-      ));
+      final stale = TestNativeCryptoService(
+        bindings: faults,
+        localStore: alice.store,
+      );
+      await stale.activateSession(
+        Session(
+          baseUrl: 'https://localhost:8443',
+          token: 'token',
+          accountId: alice.accountId,
+          deviceId: alice.deviceId,
+        ),
+      );
       await _startConversation(alice, bob);
 
       final restores = faults.restores;
@@ -205,41 +244,57 @@ void main() {
 
   test('a failed restore leaves no closed handle in use', () async {
     final faults = _FaultyBindings(
-        NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+      NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+    );
     final alice = await _Client.enroll(faults, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(faults, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
-    final sent =
-        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'x'});
+    final sent = await bob.send(AppPayloadType.text, <String, Object?>{
+      'text': 'x',
+    });
     final cursor = await alice.store.loadSyncCursor();
     final counter = (await alice.store.loadCryptoState())!.counter;
 
     faults.decryptFaults.add(NativeCryptoError.operationFailed);
     // Both the retry's restore and the rollback's restore fail.
-    faults.restoreFaults.addAll(
-        [NativeCryptoError.operationFailed, NativeCryptoError.operationFailed]);
+    faults.restoreFaults.addAll([
+      NativeCryptoError.operationFailed,
+      NativeCryptoError.operationFailed,
+    ]);
     await expectLater(
-        alice.service.processApplicationMessage(
-            alice.envelopeFrom(bob, sent), alice.nextEvent()),
-        throwsA(isA<NativeCryptoException>()));
+      alice.service.processApplicationMessage(
+        alice.envelopeFrom(bob, sent),
+        alice.nextEvent(),
+      ),
+      throwsA(isA<NativeCryptoException>()),
+    );
     expect(await alice.store.loadSyncCursor(), cursor);
     expect((await alice.store.loadCryptoState())!.counter, counter);
 
     // Callers fail closed on "no device", never on a closed handle.
     await expectLater(
-        alice.service.groupEpoch('conv_1'),
-        throwsA(isA<StateError>().having((error) => error.message, 'message',
-            'native MLS device is not active')));
-    await alice.service.activateExistingSessionBounded(
-        Session(
-          baseUrl: 'https://localhost:8443',
-          token: 'token',
-          accountId: alice.accountId,
-          deviceId: alice.deviceId,
+      alice.service.groupEpoch('conv_1'),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'native MLS device is not active',
         ),
-        checkCanCommit: () {});
-    expect(
-        await alice.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
+      ),
+    );
+    await alice.service.activateExistingSessionBounded(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: alice.accountId,
+        deviceId: alice.deviceId,
+      ),
+      checkCanCommit: () {},
+    );
+    expect(await alice.service.groupEpoch('conv_1'), (
+      epoch: 1,
+      pending: false,
+    ));
   }, skip: skip);
 
   group('mlsMessageEpoch reads the group ID as the bindings send it', () {
@@ -255,8 +310,10 @@ void main() {
         final wire = Uint8List.fromList(groupId.codeUnits);
         expect(mlsMessageEpoch(header(wire, 7), groupId), 7);
         if (groupId.codeUnits.any((unit) => unit > 0x7f)) {
-          expect(mlsMessageEpoch(header(utf8.encode(groupId), 7), groupId),
-              isNull);
+          expect(
+            mlsMessageEpoch(header(utf8.encode(groupId), 7), groupId),
+            isNull,
+          );
         }
       });
     }
@@ -270,10 +327,13 @@ void main() {
       final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
       await _startConversation(alice, bob);
 
-      await alice.service.stageMembershipChange('conv_1',
-          adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()],
+      );
       final add = MlsCommitBundle.decode(
-          (await alice.store.pendingMlsMessages()).single.payload);
+        (await alice.store.pendingMlsMessages()).single.payload,
+      );
       expect(mlsMessageEpoch(add.commit, 'conv_1'), add.epoch);
       expect(add.epoch, 1);
       expect(mlsMessageEpoch(add.commit, 'conv_2'), isNull);
@@ -283,7 +343,8 @@ void main() {
 
       await bob.service.stageSelfUpdate('conv_1');
       final update = MlsCommitBundle.decode(
-          (await bob.store.pendingMlsMessages()).single.payload);
+        (await bob.store.pendingMlsMessages()).single.payload,
+      );
       expect(mlsMessageEpoch(update.commit, 'conv_1'), update.epoch);
       expect(update.epoch, 2);
     }, skip: skip);
@@ -300,12 +361,18 @@ void main() {
       await alice.service.completeCommitBundle(item);
       expect(await alice.store.pendingMlsMessages(), isEmpty);
 
-      final echo =
-          _commit(alice, from: alice, item: item, payload: bundle.commit);
+      final echo = _commit(
+        alice,
+        from: alice,
+        item: item,
+        payload: bundle.commit,
+      );
       await alice.service.processMlsMessage(echo);
       expect(await alice.store.loadSyncCursor(), echo.syncEventId);
-      expect(
-          await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+      expect(await alice.service.groupEpoch('conv_1'), (
+        epoch: 2,
+        pending: false,
+      ));
     }, skip: skip);
 
     test('a commit this device never merged stops sync', () async {
@@ -323,50 +390,73 @@ void main() {
       final counter = (await alice.store.loadCryptoState())!.counter;
 
       await expectLater(
-          alice.service.processMlsMessage(
-              _commit(alice, from: alice, item: item, payload: bundle.commit)),
-          throwsA(isA<StateError>().having((error) => error.message, 'message',
-              'own MLS commit was never merged here')));
+        alice.service.processMlsMessage(
+          _commit(alice, from: alice, item: item, payload: bundle.commit),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'own MLS commit was never merged here',
+          ),
+        ),
+      );
       expect(await alice.store.loadSyncCursor(), cursor);
       expect((await alice.store.loadCryptoState())!.counter, counter);
       // Bytes that are not a commit of this group are refused too.
       await expectLater(
-          alice.service.processMlsMessage(
-              _commit(alice, from: alice, item: item, payload: <int>[1, 2, 3])),
-          throwsA(isA<StateError>()));
+        alice.service.processMlsMessage(
+          _commit(alice, from: alice, item: item, payload: <int>[1, 2, 3]),
+        ),
+        throwsA(isA<StateError>()),
+      );
       expect(await alice.store.loadSyncCursor(), cursor);
     }, skip: skip);
   });
 
-  test('abandoning a bundle that lost its epoch keeps a newer staged commit',
-      () async {
-    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
-    await _startConversation(alice, bob);
-    await alice.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    await bob.service.stageSelfUpdate('conv_1');
-    final lost = (await bob.store.pendingMlsMessages()).single;
+  test(
+    'abandoning a bundle that lost its epoch keeps a newer staged commit',
+    () async {
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()],
+      );
+      await bob.service.stageSelfUpdate('conv_1');
+      final lost = (await bob.store.pendingMlsMessages()).single;
 
-    // Alice's commit wins epoch 1; sync drops Bob's staged commit but the
-    // entry stays queued until the server refuses it.
-    await _accept(alice, <_Client>[carol], <_Client>[bob]);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    // A newer commit is staged on epoch 2 before the refusal arrives.
-    await bob.service.stageSelfUpdate('conv_1');
-    final newer = (await bob.store.pendingMlsMessages())
-        .singleWhere((item) => item.idempotencyKey != lost.idempotencyKey);
+      // Alice's commit wins epoch 1; sync drops Bob's staged commit but the
+      // entry stays queued until the server refuses it.
+      await _accept(alice, <_Client>[carol], <_Client>[bob]);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 2,
+        pending: false,
+      ));
+      // A newer commit is staged on epoch 2 before the refusal arrives.
+      await bob.service.stageSelfUpdate('conv_1');
+      final newer = (await bob.store.pendingMlsMessages()).singleWhere(
+        (item) => item.idempotencyKey != lost.idempotencyKey,
+      );
 
-    await bob.service.abandonCommitBundle(lost);
+      await bob.service.abandonCommitBundle(lost);
 
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
-    expect((await bob.store.pendingMlsMessages()).single.idempotencyKey,
-        newer.idempotencyKey);
-    await bob.service.completeCommitBundle(newer);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
-  }, skip: skip);
+      expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+      expect(
+        (await bob.store.pendingMlsMessages()).single.idempotencyKey,
+        newer.idempotencyKey,
+      );
+      await bob.service.completeCommitBundle(newer);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 3,
+        pending: false,
+      ));
+    },
+    skip: skip,
+  );
 }
 
 /// Wraps the real bindings so a test can make the next native `decrypt` or
@@ -391,21 +481,28 @@ class _FaultyBindings implements NativeCryptoBindings {
 
   @override
   ({NativeCryptoDevice device, int generation}) restoreRecords(
-      String accountId,
-      String deviceId,
-      List<int> stateKey,
-      int minimumGeneration,
-      List<int> root,
-      Iterable<List<int>> records) {
+    String accountId,
+    String deviceId,
+    List<int> stateKey,
+    int minimumGeneration,
+    List<int> root,
+    Iterable<List<int>> records,
+  ) {
     restores++;
     if (restoreFaults.isNotEmpty) {
       throw NativeCryptoException(restoreFaults.removeAt(0));
     }
     final restored = real.restoreRecords(
-        accountId, deviceId, stateKey, minimumGeneration, root, records);
+      accountId,
+      deviceId,
+      stateKey,
+      minimumGeneration,
+      root,
+      records,
+    );
     return (
       device: _FaultyDevice(this, restored.device),
-      generation: restored.generation
+      generation: restored.generation,
     );
   }
 
@@ -418,11 +515,12 @@ class _FaultyBindings implements NativeCryptoBindings {
     required Uint8List payload,
   }) =>
       real.frankCommit(
-          key: key,
-          conversationId: conversationId,
-          senderDeviceId: senderDeviceId,
-          actionId: actionId,
-          payload: payload);
+        key: key,
+        conversationId: conversationId,
+        senderDeviceId: senderDeviceId,
+        actionId: actionId,
+        payload: payload,
+      );
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -440,7 +538,7 @@ class _FaultyDevice implements NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
@@ -468,13 +566,21 @@ class _FaultyDevice implements NativeCryptoDevice {
       _call(const <NativeCryptoError>[], operation);
 
   @override
-  List<int> decrypt(String groupId, List<int> ciphertext,
-          {required String senderAccountId, required String senderDeviceId}) =>
+  List<int> decrypt(
+    String groupId,
+    List<int> ciphertext, {
+    required String senderAccountId,
+    required String senderDeviceId,
+  }) =>
       _call(
-          faults.decryptFaults,
-          () => real.decrypt(groupId, ciphertext,
-              senderAccountId: senderAccountId,
-              senderDeviceId: senderDeviceId));
+        faults.decryptFaults,
+        () => real.decrypt(
+          groupId,
+          ciphertext,
+          senderAccountId: senderAccountId,
+          senderDeviceId: senderDeviceId,
+        ),
+      );
 
   @override
   ({int epoch, bool pending}) groupEpoch(String groupId) =>
@@ -512,7 +618,8 @@ class _FaultyDevice implements NativeCryptoDevice {
 
   @override
   ({List<int> commit, List<int> welcome, int epoch}) stageSelfUpdate(
-          String groupId) =>
+    String groupId,
+  ) =>
       _plain(() => real.stageSelfUpdate(groupId));
 
   @override
@@ -556,13 +663,19 @@ class _FaultyDevice implements NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
   }) =>
-      _plain(() => real.stageCommitWithRoles(groupId,
-          record: record, adds: adds, removes: removes));
+      _plain(
+        () => real.stageCommitWithRoles(
+          groupId,
+          record: record,
+          adds: adds,
+          removes: removes,
+        ),
+      );
 
   @override
   IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
@@ -600,10 +713,12 @@ CallSession _call(Map<String, Object?> metadata) => CallSession(
       createdAt: DateTime.now().toUtc(),
     );
 
-MlsMessage _commit(_Client to,
-        {required _Client from,
-        required PendingMlsMessage item,
-        required List<int> payload}) =>
+MlsMessage _commit(
+  _Client to, {
+  required _Client from,
+  required PendingMlsMessage item,
+  required List<int> payload,
+}) =>
     MlsMessage(
       id: 'mls_${++_serverIds}',
       conversationId: 'conv_1',
@@ -616,10 +731,12 @@ MlsMessage _commit(_Client to,
       createdAt: DateTime.now().toUtc(),
     );
 
-MlsMessage _welcome(_Client to,
-        {required _Client from,
-        required String idempotencyKey,
-        required MlsCommitBundle payload}) =>
+MlsMessage _welcome(
+  _Client to, {
+  required _Client from,
+  required String idempotencyKey,
+  required MlsCommitBundle payload,
+}) =>
     MlsMessage(
       id: 'mls_${++_serverIds}',
       conversationId: 'conv_1',
@@ -634,25 +751,36 @@ MlsMessage _welcome(_Client to,
     );
 
 Future<void> _startConversation(_Client alice, _Client bob) async {
-  await alice.service.initializeConversation(
-      'conv_1', <DeviceKeyPackage>[await bob.keyPackage()]);
+  await alice.service.initializeConversation('conv_1', <DeviceKeyPackage>[
+    await bob.keyPackage(),
+  ]);
   await _accept(alice, <_Client>[bob], const <_Client>[]);
 }
 
 /// Plays the server accepting [from]'s queued commit bundle: [from] merges
 /// it, [joiners] get the Welcome and [members] the commit.
 Future<void> _accept(
-    _Client from, List<_Client> joiners, List<_Client> members) async {
+  _Client from,
+  List<_Client> joiners,
+  List<_Client> members,
+) async {
   final item = (await from.store.pendingMlsMessages()).single;
   final bundle = MlsCommitBundle.decode(item.payload);
   await from.service.completeCommitBundle(item);
   for (final member in members) {
     await member.service.processMlsMessage(
-        _commit(member, from: from, item: item, payload: bundle.commit));
+      _commit(member, from: from, item: item, payload: bundle.commit),
+    );
   }
   for (final joiner in joiners) {
-    await joiner.service.processMlsMessage(_welcome(joiner,
-        from: from, idempotencyKey: item.idempotencyKey, payload: bundle));
+    await joiner.service.processMlsMessage(
+      _welcome(
+        joiner,
+        from: from,
+        idempotencyKey: item.idempotencyKey,
+        payload: bundle,
+      ),
+    );
   }
 }
 
@@ -666,22 +794,31 @@ class _Client {
   int _events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final local = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: local);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
-    await service.activateSession(Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: accountId,
-      deviceId: deviceId,
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: local,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
+    await service.activateSession(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: accountId,
+        deviceId: deviceId,
+      ),
+    );
     return _Client(service, local, accountId, deviceId);
   }
 
@@ -700,7 +837,9 @@ class _Client {
   Future<List<LocalMessage>> history() => store.loadMessages('conv_1');
 
   Future<MessageEnvelope> send(
-      AppPayloadType type, Map<String, Object?> body) async {
+    AppPayloadType type,
+    Map<String, Object?> body,
+  ) async {
     final envelope = await service.encryptPayload('conv_1', type, body);
     await store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;

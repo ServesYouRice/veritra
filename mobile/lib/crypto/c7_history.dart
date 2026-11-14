@@ -753,16 +753,20 @@ Uint8List c7HistoryChangeInnerJson({
   required String channelId,
   required List<int> compactRecord,
 }) =>
-    Uint8List.fromList(utf8.encode(jsonEncode(<String, Object?>{
-      'v': 2,
-      'type': 'history_change',
-      'conversation_id': conversationId,
-      'sender_device_id': senderDeviceId,
-      'action_id': actionId,
-      'channel_id': channelId,
-      'hidden': true,
-      'body': <String, Object?>{'r': base64Encode(compactRecord)},
-    })));
+    Uint8List.fromList(
+      utf8.encode(
+        jsonEncode(<String, Object?>{
+          'v': 2,
+          'type': 'history_change',
+          'conversation_id': conversationId,
+          'sender_device_id': senderDeviceId,
+          'action_id': actionId,
+          'channel_id': channelId,
+          'hidden': true,
+          'body': <String, Object?>{'r': base64Encode(compactRecord)},
+        }),
+      ),
+    );
 
 /// The wrap a narrowing move of a `full` channel carries in its 128-byte
 /// field (decision 11): the old group's current generation, `u64 E_prev |

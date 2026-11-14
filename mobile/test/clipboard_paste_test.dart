@@ -34,8 +34,9 @@ void main() {
 
   test('an image alone is attached as a temporary file', () async {
     final result = await _read(image: _image);
-    expect(
-        result.files.map((file) => file.path), <String>['/cache/pasted.png']);
+    expect(result.files.map((file) => file.path), <String>[
+      '/cache/pasted.png',
+    ]);
     expect(result.temporary, <String>{'/cache/pasted.png'});
   });
 
@@ -45,8 +46,10 @@ void main() {
       text: 'a.pdf',
       image: _image,
     );
-    expect(result.files.map((file) => file.path),
-        <String>['/home/me/a.pdf', '/home/me/b.pdf']);
+    expect(result.files.map((file) => file.path), <String>[
+      '/home/me/a.pdf',
+      '/home/me/b.pdf',
+    ]);
     expect(result.temporary, isEmpty);
   });
 

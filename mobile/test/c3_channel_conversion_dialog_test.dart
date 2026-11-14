@@ -39,8 +39,11 @@ class _State extends AppState {
   /// Channel history on, and the channel's setting as this device holds
   /// it.
   var c7 = true;
-  C7ChannelView? view =
-      const C7ChannelView(full: true, status: 'ok', pending: false);
+  C7ChannelView? view = const C7ChannelView(
+    full: true,
+    status: 'ok',
+    pending: false,
+  );
 
   @override
   bool get channelHistoryAvailable => c7;
@@ -52,11 +55,20 @@ class _State extends AppState {
   Future<List<ConversationMember>> Function() readers =
       () async => <ConversationMember>[
             ConversationMember(
-                accountId: 'acct_bob', role: 'member', username: 'bob'),
+              accountId: 'acct_bob',
+              role: 'member',
+              username: 'bob',
+            ),
             ConversationMember(
-                accountId: 'acct_carol', role: 'member', username: 'carol'),
+              accountId: 'acct_carol',
+              role: 'member',
+              username: 'carol',
+            ),
             ConversationMember(
-                accountId: 'acct_dave', role: 'member', username: 'dave'),
+              accountId: 'acct_dave',
+              role: 'member',
+              username: 'dave',
+            ),
           ];
 
   @override
@@ -66,10 +78,12 @@ class _State extends AppState {
   }
 
   @override
-  Future<bool> convertChannel(Channel channel,
-      {required bool toPrivate,
-      List<String> members = const <String>[],
-      String? requestId}) async {
+  Future<bool> convertChannel(
+    Channel channel, {
+    required bool toPrivate,
+    List<String> members = const <String>[],
+    String? requestId,
+  }) async {
     conversions.add((channel.id, toPrivate, members.join(',')));
     channelConversionNotAdded = <String>[
       for (final member in members)
@@ -80,32 +94,38 @@ class _State extends AppState {
 }
 
 Channel _channel(String kind) => Channel(
-    id: 'chan_$kind',
-    communityId: 'community',
-    name: '',
-    kind: kind,
-    conversationId: kind == 'private' ? 'conv_private' : 'conv_shared',
-    layoutGeneration: 1);
+      id: 'chan_$kind',
+      communityId: 'community',
+      name: '',
+      kind: kind,
+      conversationId: kind == 'private' ? 'conv_private' : 'conv_shared',
+      layoutGeneration: 1,
+    );
 
 /// The action inside a dialog, as in the channel's settings.
 Future<void> _open(WidgetTester tester, _State state, Channel channel) async {
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(
-      body: Builder(
-        builder: (context) => TextButton(
-          onPressed: () => showDialog<bool>(
-            context: context,
-            builder: (_) => AlertDialog(
-                content:
-                    ChannelConversionAction(state: state, channel: channel)),
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => showDialog<bool>(
+              context: context,
+              builder: (_) => AlertDialog(
+                content: ChannelConversionAction(
+                  state: state,
+                  channel: channel,
+                ),
+              ),
+            ),
+            child: const Text('settings'),
           ),
-          child: const Text('settings'),
         ),
       ),
     ),
-  ));
+  );
   await tester.tap(find.text('settings'));
   await tester.pumpAndSettle();
 }
@@ -121,9 +141,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Make this channel open?'), findsOneWidget);
     expect(
-        find.textContaining('Earlier posts in this channel will become '
-            'visible to everyone who can read the open channel'),
-        findsOneWidget);
+      find.textContaining(
+        'Earlier posts in this channel will become '
+        'visible to everyone who can read the open channel',
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(state.conversions, isEmpty);
@@ -142,68 +165,78 @@ void main() {
       'its full history',
       true,
       const C7ChannelView(full: true, status: 'ok', pending: false),
-      true
+      true,
     ),
     ('channel history off', false, null, false),
     (
       'a channel that keeps posts from each join',
       true,
       const C7ChannelView(full: false, status: 'ok', pending: false),
-      false
+      false,
     ),
     (
       'its setting changing',
       true,
       const C7ChannelView(full: false, status: 'ok', pending: true),
-      true
+      true,
     ),
     ('its setting unknown', true, null, true),
   ]) {
     testWidgets(
-        'the warning before making a private channel open says whether its '
-        'earlier posts open for everyone: $name (review INFO)', (tester) async {
-      final state = _State()
-        ..c7 = c7
-        ..view = view;
-      addTearDown(state.dispose);
-      await _open(tester, state, _channel('private'));
-      await tester.tap(find.text('Make this channel open'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('will become visible to everyone'),
-          open ? findsOneWidget : findsNothing);
-      expect(find.textContaining('stay with the people who already had them'),
-          open ? findsNothing : findsOneWidget);
-    });
+      'the warning before making a private channel open says whether its '
+      'earlier posts open for everyone: $name (review INFO)',
+      (tester) async {
+        final state = _State()
+          ..c7 = c7
+          ..view = view;
+        addTearDown(state.dispose);
+        await _open(tester, state, _channel('private'));
+        await tester.tap(find.text('Make this channel open'));
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('will become visible to everyone'),
+          open ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.textContaining('stay with the people who already had them'),
+          open ? findsNothing : findsOneWidget,
+        );
+      },
+    );
   }
 
   testWidgets(
-      'making an open channel private lists its readers all ticked; only '
-      'the ones left ticked are added', (tester) async {
-    final state = _State();
-    addTearDown(state.dispose);
-    await _open(tester, state, _channel('open'));
-    await tester.tap(find.text('Make this channel private'));
-    await tester.pumpAndSettle();
-    expect(find.text('Make this channel private?'), findsOneWidget);
-    final boxes = find.byType(CheckboxListTile);
-    expect(boxes, findsNWidgets(3));
-    for (final name in ['@bob', '@carol', '@dave']) {
-      final tile = find.widgetWithText(CheckboxListTile, name);
-      expect(tester.widget<CheckboxListTile>(tile).value, isTrue);
-    }
-    await tester.tap(find.text('@carol'));
-    await tester.pumpAndSettle();
-    expect(
+    'making an open channel private lists its readers all ticked; only '
+    'the ones left ticked are added',
+    (tester) async {
+      final state = _State();
+      addTearDown(state.dispose);
+      await _open(tester, state, _channel('open'));
+      await tester.tap(find.text('Make this channel private'));
+      await tester.pumpAndSettle();
+      expect(find.text('Make this channel private?'), findsOneWidget);
+      final boxes = find.byType(CheckboxListTile);
+      expect(boxes, findsNWidgets(3));
+      for (final name in ['@bob', '@carol', '@dave']) {
+        final tile = find.widgetWithText(CheckboxListTile, name);
+        expect(tester.widget<CheckboxListTile>(tile).value, isTrue);
+      }
+      await tester.tap(find.text('@carol'));
+      await tester.pumpAndSettle();
+      expect(
         tester
             .widget<CheckboxListTile>(
-                find.widgetWithText(CheckboxListTile, '@carol'))
+              find.widgetWithText(CheckboxListTile, '@carol'),
+            )
             .value,
-        isFalse);
-    await tester.tap(find.text('Make private'));
-    await tester.pumpAndSettle();
-    expect(state.conversions, [('chan_open', true, 'acct_bob,acct_dave')]);
-    expect(find.byType(ChannelConversionAction), findsNothing);
-  });
+        isFalse,
+      );
+      await tester.tap(find.text('Make private'));
+      await tester.pumpAndSettle();
+      expect(state.conversions, [('chan_open', true, 'acct_bob,acct_dave')]);
+      expect(find.byType(ChannelConversionAction), findsNothing);
+    },
+  );
 
   testWidgets(
       'ticked readers the server refused are named before the settings '
@@ -216,8 +249,9 @@ void main() {
     expect(state.readerLoads, 1);
     await tester.tap(find.text('Make private'));
     await tester.pumpAndSettle();
-    expect(state.conversions,
-        [('chan_open', true, 'acct_bob,acct_carol,acct_dave')]);
+    expect(state.conversions, [
+      ('chan_open', true, 'acct_bob,acct_carol,acct_dave'),
+    ]);
     expect(find.byType(ChannelConversionAction), findsNothing);
     expect(find.textContaining('could not be added: @dave.'), findsOneWidget);
   });
@@ -235,17 +269,20 @@ void main() {
   });
 
   testWidgets(
-      'a reader list that fails to load cannot be accepted as an empty one',
-      (tester) async {
-    final state = _State()..readers = () async => throw StateError('down');
-    addTearDown(state.dispose);
-    await _open(tester, state, _channel('open'));
-    await tester.tap(find.text('Make this channel private'));
-    await tester.pumpAndSettle();
-    expect(find.text("Could not load who reads this channel. Try again."),
-        findsOneWidget);
-    await tester.tap(find.text('Make private'));
-    await tester.pumpAndSettle();
-    expect(state.conversions, isEmpty);
-  });
+    'a reader list that fails to load cannot be accepted as an empty one',
+    (tester) async {
+      final state = _State()..readers = () async => throw StateError('down');
+      addTearDown(state.dispose);
+      await _open(tester, state, _channel('open'));
+      await tester.tap(find.text('Make this channel private'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text("Could not load who reads this channel. Try again."),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Make private'));
+      await tester.pumpAndSettle();
+      expect(state.conversions, isEmpty);
+    },
+  );
 }

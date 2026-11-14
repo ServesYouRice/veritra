@@ -107,8 +107,9 @@ class _FakeSyncService implements SyncService {
 }
 
 void main() {
-  testWidgets('lists accounts, suspends after reauth, shows the audit log',
-      (tester) async {
+  testWidgets('lists accounts, suspends after reauth, shows the audit log', (
+    tester,
+  ) async {
     final api = _AdminApi();
     final state = AppState(
       apiClientFactory: (_) => api,
@@ -269,13 +270,17 @@ void main() {
 
       await tester.tap(find.text('Audit log'));
       await tester.pumpAndSettle();
-      expect(find.text(unreachable), findsOneWidget,
-          reason: 'the audit tab still says its load failed');
+      expect(
+        find.text(unreachable),
+        findsOneWidget,
+        reason: 'the audit tab still says its load failed',
+      );
       expect(find.text(englishL10n.adminNoEvents), findsNothing);
     });
 
-    testWidgets('an accounts error is not shown on the audit tab',
-        (tester) async {
+    testWidgets('an accounts error is not shown on the audit tab', (
+      tester,
+    ) async {
       final api = _AdminApi()..failAccounts = true;
       await openWith(tester, api);
       expect(find.text(unreachable), findsOneWidget);
@@ -289,8 +294,9 @@ void main() {
       expect(find.text(unreachable), findsNothing);
     });
 
-    testWidgets('a successful audit refresh clears the audit error',
-        (tester) async {
+    testWidgets('a successful audit refresh clears the audit error', (
+      tester,
+    ) async {
       final api = _AdminApi()..failEvents = true;
       await openWith(tester, api);
       await tester.tap(find.text('Audit log'));

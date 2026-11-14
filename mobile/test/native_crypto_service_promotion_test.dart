@@ -35,7 +35,8 @@ class _LostOutcomeStore extends MemoryLocalStore {
 
   @override
   Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
-      EnrollmentPromotion promotion) async {
+    EnrollmentPromotion promotion,
+  ) async {
     final outcome = await super.promotePendingEnrollment(promotion);
     if (lose) {
       lose = false;
@@ -46,17 +47,21 @@ class _LostOutcomeStore extends MemoryLocalStore {
 }
 
 Future<StoredCryptoState> _enroll(
-    NativeCryptoService service, LocalStore store) async {
+  NativeCryptoService service,
+  LocalStore store,
+) async {
   await service.createEnrollmentCredential(_reservation);
   final sealed = await service.sealPendingEnrollment();
-  await store.savePendingEnrollment(PendingEnrollment(
-    kind: PendingEnrollment.kindDeviceLinkV3,
-    origin: _origin,
-    accountId: 'acct_me',
-    deviceId: 'dev_new',
-    payloadJson: jsonEncode({'claim_token': 'claim'}),
-    state: sealed,
-  ));
+  await store.savePendingEnrollment(
+    PendingEnrollment(
+      kind: PendingEnrollment.kindDeviceLinkV3,
+      origin: _origin,
+      accountId: 'acct_me',
+      deviceId: 'dev_new',
+      payloadJson: jsonEncode({'claim_token': 'claim'}),
+      state: sealed,
+    ),
+  );
   return sealed;
 }
 
@@ -67,9 +72,13 @@ void main() {
     final service = NativeCryptoService(bindings: bindings, localStore: store);
     await _enroll(service, store);
     expect(
-        await service.promotePendingEnrollment(_session,
-            kind: PendingEnrollment.kindDeviceLinkV3, promotionId: 'digest-1'),
-        EnrollmentPromotionOutcome.promoted);
+      await service.promotePendingEnrollment(
+        _session,
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        promotionId: 'digest-1',
+      ),
+      EnrollmentPromotionOutcome.promoted,
+    );
     expect((await store.loadCryptoState())!.counter, 1);
     expect(await store.loadPendingEnrollment(), isNull);
     // The device in memory is the stored one: the next commit follows it.
@@ -80,54 +89,74 @@ void main() {
 
   // K0's real order (AppState._finishRecoveredSession): a later process
   // reopens the stored claim's frozen state, then promotes it.
-  test('a K0 claim resumed in a new process promotes and commits', () async {
-    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    final store = MemoryLocalStore();
-    var service = NativeCryptoService(bindings: bindings, localStore: store);
-    await service.createEnrollmentCredential(_reservation);
-    final sealed = await service.sealPendingEnrollment();
-    await store.savePendingEnrollment(PendingEnrollment(
-      kind: PendingEnrollment.kindAccountRecovery,
-      origin: _origin,
-      accountId: 'acct_me',
-      deviceId: 'dev_new',
-      payloadJson: jsonEncode({'request_id': 'req_1'}),
-      state: sealed,
-    ));
-    await service.dispose();
-    // A signed-out device of the same account is still stored.
-    await store.saveSession(const Session(
-        baseUrl: _origin,
-        token: '',
+  test(
+    'a K0 claim resumed in a new process promotes and commits',
+    () async {
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+      final store = MemoryLocalStore();
+      var service = NativeCryptoService(bindings: bindings, localStore: store);
+      await service.createEnrollmentCredential(_reservation);
+      final sealed = await service.sealPendingEnrollment();
+      await store.savePendingEnrollment(
+        PendingEnrollment(
+          kind: PendingEnrollment.kindAccountRecovery,
+          origin: _origin,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          payloadJson: jsonEncode({'request_id': 'req_1'}),
+          state: sealed,
+        ),
+      );
+      await service.dispose();
+      // A signed-out device of the same account is still stored.
+      await store.saveSession(
+        const Session(
+          baseUrl: _origin,
+          token: '',
+          accountId: 'acct_me',
+          deviceId: 'dev_old',
+          deviceSecret: 'secret_old',
+        ),
+      );
+
+      service = NativeCryptoService(bindings: bindings, localStore: store);
+      final stored = (await store.loadPendingEnrollment())!.state!;
+      await service.resumePendingEnrollment(
         accountId: 'acct_me',
-        deviceId: 'dev_old',
-        deviceSecret: 'secret_old'));
+        deviceId: 'dev_new',
+        state: stored,
+      );
+      expect(
+        await service.promotePendingEnrollment(
+          _session,
+          kind: PendingEnrollment.kindAccountRecovery,
+          promotionId: 'req_1',
+        ),
+        EnrollmentPromotionOutcome.promoted,
+      );
+      expect((await store.loadSession())!.deviceId, 'dev_new');
+      expect(await store.loadPendingEnrollment(), isNull);
+      await service.createReplenishmentKeyPackages(count: 1);
+      expect((await store.loadCryptoState())!.counter, 2);
+      await service.dispose();
 
-    service = NativeCryptoService(bindings: bindings, localStore: store);
-    final stored = (await store.loadPendingEnrollment())!.state!;
-    await service.resumePendingEnrollment(
-        accountId: 'acct_me', deviceId: 'dev_new', state: stored);
-    expect(
-        await service.promotePendingEnrollment(_session,
-            kind: PendingEnrollment.kindAccountRecovery, promotionId: 'req_1'),
-        EnrollmentPromotionOutcome.promoted);
-    expect((await store.loadSession())!.deviceId, 'dev_new');
-    expect(await store.loadPendingEnrollment(), isNull);
-    await service.createReplenishmentKeyPackages(count: 1);
-    expect((await store.loadCryptoState())!.counter, 2);
-    await service.dispose();
-
-    // The next start opens the stored state, never the frozen one.
-    service = NativeCryptoService(bindings: bindings, localStore: store);
-    await service.activateSession(_session);
-    await service.createReplenishmentKeyPackages(count: 1);
-    expect((await store.loadCryptoState())!.counter, 3);
-    await expectLater(
+      // The next start opens the stored state, never the frozen one.
+      service = NativeCryptoService(bindings: bindings, localStore: store);
+      await service.activateSession(_session);
+      await service.createReplenishmentKeyPackages(count: 1);
+      expect((await store.loadCryptoState())!.counter, 3);
+      await expectLater(
         service.resumePendingEnrollment(
-            accountId: 'acct_me', deviceId: 'dev_new', state: stored),
-        throwsA(isA<StateError>()));
-    await service.dispose();
-  }, skip: nativeCryptoSkip());
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          state: stored,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await service.dispose();
+    },
+    skip: nativeCryptoSkip(),
+  );
 
   test('a lost outcome is retried onto the stored state', () async {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
@@ -135,13 +164,21 @@ void main() {
     final service = NativeCryptoService(bindings: bindings, localStore: store);
     await _enroll(service, store);
     await expectLater(
-        service.promotePendingEnrollment(_session,
-            kind: PendingEnrollment.kindDeviceLinkV3, promotionId: 'digest-1'),
-        throwsA(isA<StateError>()));
+      service.promotePendingEnrollment(
+        _session,
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        promotionId: 'digest-1',
+      ),
+      throwsA(isA<StateError>()),
+    );
     expect(
-        await service.promotePendingEnrollment(_session,
-            kind: PendingEnrollment.kindDeviceLinkV3, promotionId: 'digest-1'),
-        EnrollmentPromotionOutcome.alreadyPromoted);
+      await service.promotePendingEnrollment(
+        _session,
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        promotionId: 'digest-1',
+      ),
+      EnrollmentPromotionOutcome.alreadyPromoted,
+    );
     await service.createReplenishmentKeyPackages(count: 1);
     expect((await store.loadCryptoState())!.counter, 2);
     await service.dispose();

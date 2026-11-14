@@ -125,18 +125,20 @@ void main() {
       final settings = UpdateSettings(store);
       await settings.load();
 
-      final updatePayload = utf8.encode(jsonEncode({
-        'version': '0.2.0',
-        'build': 2,
-        'platform': 'windows',
-        'arch': 'x64',
-        'issued_at': '2026-11-10T12:00:00Z',
-        'expires_at': '2026-11-20T12:00:00Z',
-        'url':
-            'https://github.com/ServesYouRice/veritra/releases/download/v0.2.0/Veritra-Setup-0.2.0-x64.exe',
-        'sha256': 'a' * 64,
-        'notes': 'New release notes',
-      }));
+      final updatePayload = utf8.encode(
+        jsonEncode({
+          'version': '0.2.0',
+          'build': 2,
+          'platform': 'windows',
+          'arch': 'x64',
+          'issued_at': '2026-11-10T12:00:00Z',
+          'expires_at': '2026-11-20T12:00:00Z',
+          'url':
+              'https://github.com/ServesYouRice/veritra/releases/download/v0.2.0/Veritra-Setup-0.2.0-x64.exe',
+          'sha256': 'a' * 64,
+          'notes': 'New release notes',
+        }),
+      );
 
       final client = MemoryUpdateClient(
         responseBytes: Uint8List.fromList(updatePayload),
@@ -187,24 +189,27 @@ void main() {
       expect(find.textContaining('Version 0.2.0 is available'), findsOneWidget);
     });
 
-    testWidgets('manual check reports upToDate and displays localized string',
-        (tester) async {
+    testWidgets('manual check reports upToDate and displays localized string', (
+      tester,
+    ) async {
       final store = MemoryUpdateSettingsStore(true);
       final settings = UpdateSettings(store);
       await settings.load();
 
-      final updatePayload = utf8.encode(jsonEncode({
-        'version': '0.1.0',
-        'build': 1,
-        'platform': 'windows',
-        'arch': 'x64',
-        'issued_at': '2026-11-10T12:00:00Z',
-        'expires_at': '2026-11-20T12:00:00Z',
-        'url':
-            'https://github.com/ServesYouRice/veritra/releases/download/v0.1.0/Veritra-Setup-0.1.0-x64.exe',
-        'sha256': 'a' * 64,
-        'notes': '',
-      }));
+      final updatePayload = utf8.encode(
+        jsonEncode({
+          'version': '0.1.0',
+          'build': 1,
+          'platform': 'windows',
+          'arch': 'x64',
+          'issued_at': '2026-11-10T12:00:00Z',
+          'expires_at': '2026-11-20T12:00:00Z',
+          'url':
+              'https://github.com/ServesYouRice/veritra/releases/download/v0.1.0/Veritra-Setup-0.1.0-x64.exe',
+          'sha256': 'a' * 64,
+          'notes': '',
+        }),
+      );
 
       final client = MemoryUpdateClient(
         responseBytes: Uint8List.fromList(updatePayload),
@@ -254,8 +259,9 @@ void main() {
       expect(find.text('Veritra is up to date'), findsOneWidget);
     });
 
-    testWidgets('manual check error displays error localized string',
-        (tester) async {
+    testWidgets('manual check error displays error localized string', (
+      tester,
+    ) async {
       final store = MemoryUpdateSettingsStore(true);
       final settings = UpdateSettings(store);
       await settings.load();

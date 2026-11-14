@@ -45,7 +45,9 @@ void main() {
 
   group('report aad (condition G4)', () {
     final aadVector = jsonDecode(
-      File('../testing/vectors/c6-report-aad-v2.json').readAsStringSync(),
+      File(
+        '../testing/vectors/c6-report-aad-v2.json',
+      ).readAsStringSync(),
     ) as Map<String, dynamic>;
 
     Uint8List build(Map<String, dynamic> c) => reportAad(
@@ -94,7 +96,8 @@ void main() {
       );
       expect(
         () => build(
-            Map<String, dynamic>.of(base)..['recipient_key_hex'] = 'ab' * 31),
+          Map<String, dynamic>.of(base)..['recipient_key_hex'] = 'ab' * 31,
+        ),
         throwsFormatException,
       );
       // The Rust core takes at most 1024 bytes of aad.

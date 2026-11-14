@@ -84,7 +84,9 @@ class _Api extends ApiClient {
 
   @override
   Future<ReportInbox> getReportInbox(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ReportInbox(kind: kind, recipients: recipients);
 
   @override
@@ -92,7 +94,10 @@ class _Api extends ApiClient {
       published.isEmpty
           ? null
           : ReportInboxRecipient(
-              inboxId: 'acct_me', publicKey: published.last, keyRev: 1);
+              inboxId: 'acct_me',
+              publicKey: published.last,
+              keyRev: 1,
+            );
 
   @override
   Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
@@ -101,8 +106,11 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<List<ReportCopyRow>> listOwnerReports(String token,
-          {String? afterId, int limit = 50}) async =>
+  Future<List<ReportCopyRow>> listOwnerReports(
+    String token, {
+    String? afterId,
+    int limit = 50,
+  }) async =>
       rows;
 
   /// What the server's record of an envelope answers; null is "gone" (404).
@@ -110,7 +118,10 @@ class _Api extends ApiClient {
 
   @override
   Future<ReportEnvelopeRecord> getReportEnvelope(
-      String token, String reportId, String envelopeId) async {
+    String token,
+    String reportId,
+    String envelopeId,
+  ) async {
     final found = record;
     if (found == null) throw ApiException(404, '{"error":"not_found"}');
     return found;
@@ -182,22 +193,31 @@ class _Store extends MemoryLocalStore {
 }
 
 void main() {
-  testWidgets('owner screen: no key, create it, community inbox unavailable',
-      (tester) async {
+  testWidgets('owner screen: no key, create it, community inbox unavailable', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
-    await tester.pumpWidget(_app(
-        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('No reports'), findsOneWidget);
     expect(
-        find.textContaining('This device has no report key'), findsOneWidget);
+      find.textContaining('This device has no report key'),
+      findsOneWidget,
+    );
     // Community reports go to each community's moderators (C6, one sealed
     // copy per verified moderator), not to this inbox.
     expect(
-        find.text('Reports about a community go to its moderators. '
-            'A moderator opens them from the community.'),
-        findsOneWidget);
+      find.text(
+        'Reports about a community go to its moderators. '
+        'A moderator opens them from the community.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Create report key'));
     await tester.pumpAndSettle();
@@ -208,16 +228,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(h.api.published, hasLength(1));
-    expect(find.textContaining('This device holds your report key'),
-        findsOneWidget);
+    expect(
+      find.textContaining('This device holds your report key'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Code: 0101-0101'), findsOneWidget);
   });
 
-  testWidgets('owner screen: a refused reauthentication publishes nothing',
-      (tester) async {
+  testWidgets('owner screen: a refused reauthentication publishes nothing', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
-    await tester.pumpWidget(_app(OwnerReportsScreen(
-        state: h.state, reauthenticate: (_) async => false)));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => false),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Create report key'));
     await tester.pumpAndSettle();
@@ -226,36 +252,50 @@ void main() {
     expect(h.api.published, isEmpty);
     expect(h.state.reportSeedStore, isA<MemoryReportSeedStore>());
     expect(
-        await h.state.reportSeedStore.load('https://example.test', 'acct_me'),
-        isNull);
+      await h.state.reportSeedStore.load('https://example.test', 'acct_me'),
+      isNull,
+    );
   });
 
-  testWidgets('report screen: community conversations are unavailable',
-      (tester) async {
+  testWidgets('report screen: community conversations are unavailable', (
+    tester,
+  ) async {
     final h = _harness(role: 'member');
     h.api.kind = 'community';
-    await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state, conversationId: 'conv_1', messageKey: 'dev:a')));
+    await tester.pumpWidget(
+      _app(
+        ReportMessageScreen(
+          state: h.state,
+          conversationId: 'conv_1',
+          messageKey: 'dev:a',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     // Without a verified role record (C4) the app cannot tell who the
     // moderators are, so nothing can be sealed.
     expect(
-        find.text('This community has no verified roles, so the app can\'t '
-            'tell who its moderators are.'),
-        findsOneWidget);
+      find.text(
+        'This community has no verified roles, so the app can\'t '
+        'tell who its moderators are.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Send report'), findsNothing);
     expect(h.api.filed, 0);
   });
 
-  testWidgets('report screen: shows the key code, trusts it, then sends',
-      (tester) async {
+  testWidgets('report screen: shows the key code, trusts it, then sends', (
+    tester,
+  ) async {
     _tallView(tester);
     final h = _harness(role: 'member');
     h.api.recipients = [
       ReportInboxRecipient(
-          inboxId: 'acct_owner',
-          publicKey: List<int>.filled(32, 0xab),
-          keyRev: 1),
+        inboxId: 'acct_owner',
+        publicKey: List<int>.filled(32, 0xab),
+        keyRev: 1,
+      ),
     ];
     h.store.reveal = FrankReveal(
       messageKey: 'dev_sender:a1',
@@ -264,10 +304,15 @@ void main() {
       frankKey: List<int>.filled(32, 7),
       payload: utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
     );
-    await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state,
-        conversationId: 'conv_1',
-        messageKey: 'dev_sender:a1')));
+    await tester.pumpWidget(
+      _app(
+        ReportMessageScreen(
+          state: h.state,
+          conversationId: 'conv_1',
+          messageKey: 'dev_sender:a1',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
     // What is sent is shown, and nothing is sent before the key is trusted.
@@ -283,7 +328,9 @@ void main() {
     await _tapVisible(tester, find.text('Trust and continue'));
     expect(find.text('Send report'), findsOneWidget);
     expect(
-        find.textContaining('Server owners who get a copy: 1'), findsOneWidget);
+      find.textContaining('Server owners who get a copy: 1'),
+      findsOneWidget,
+    );
     expect(_selectedReason(tester), ReportReason.harassment);
 
     await _tapVisible(tester, find.text('Send report'));
@@ -296,8 +343,9 @@ void main() {
   });
 
   // U33: the form offers a fixed list of reasons, and Send waits for one.
-  testWidgets('report screen: send waits for a reason from the fixed list',
-      (tester) async {
+  testWidgets('report screen: send waits for a reason from the fixed list', (
+    tester,
+  ) async {
     _tallView(tester);
     final h = _harness(role: 'member');
     final key = List<int>.filled(32, 0xab);
@@ -305,8 +353,11 @@ void main() {
       ReportInboxRecipient(inboxId: 'acct_owner', publicKey: key, keyRev: 1),
     ];
     // Already trusted, so Send shows at once.
-    await tester.runAsync(() => h.state.reportsService!.pins.pin(
-        ReportRecipientKey(inboxId: 'acct_owner', publicKey: key, keyRev: 1)));
+    await tester.runAsync(
+      () => h.state.reportsService!.pins.pin(
+        ReportRecipientKey(inboxId: 'acct_owner', publicKey: key, keyRev: 1),
+      ),
+    );
     h.store.reveal = FrankReveal(
       messageKey: 'dev_sender:a1',
       conversationId: 'conv_1',
@@ -314,10 +365,15 @@ void main() {
       frankKey: List<int>.filled(32, 7),
       payload: utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
     );
-    await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state,
-        conversationId: 'conv_1',
-        messageKey: 'dev_sender:a1')));
+    await tester.pumpWidget(
+      _app(
+        ReportMessageScreen(
+          state: h.state,
+          conversationId: 'conv_1',
+          messageKey: 'dev_sender:a1',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
     for (final label in [
@@ -353,8 +409,9 @@ void main() {
 
   // L2-3, owner decision 2026-11-12 ("Keep reports manual"): a key pinned
   // on first use for sealed-message proofs does not skip the comparison.
-  testWidgets('report screen: a key pinned on first use still shows the code',
-      (tester) async {
+  testWidgets('report screen: a key pinned on first use still shows the code', (
+    tester,
+  ) async {
     _tallView(tester);
     final h = _harness(role: 'member');
     final key = List<int>.filled(32, 0xab);
@@ -370,21 +427,33 @@ void main() {
     );
     await tester.runAsync(() async {
       expect(
-          await OwnerKeyWatch(h.store, 'https://example.test').observe(
-              ReportInbox(
-                  kind: reportInboxInstanceOwner,
-                  recipients: h.api.recipients)),
-          isTrue);
+        await OwnerKeyWatch(h.store, 'https://example.test').observe(
+          ReportInbox(
+            kind: reportInboxInstanceOwner,
+            recipients: h.api.recipients,
+          ),
+        ),
+        isTrue,
+      );
       expect(
-          (await OwnerProofPins(h.store, 'https://example.test').effective())
-              .single
-              .publicKey,
-          key);
+        (await OwnerProofPins(
+          h.store,
+          'https://example.test',
+        ).effective())
+            .single
+            .publicKey,
+        key,
+      );
     });
-    await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state,
-        conversationId: 'conv_1',
-        messageKey: 'dev_sender:a1')));
+    await tester.pumpWidget(
+      _app(
+        ReportMessageScreen(
+          state: h.state,
+          conversationId: 'conv_1',
+          messageKey: 'dev_sender:a1',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('ABAB-ABAB'), findsOneWidget);
@@ -398,20 +467,27 @@ void main() {
     expect(h.api.filed, 1);
   });
 
-  testWidgets('report screen: a message with no proof is not reportable',
-      (tester) async {
+  testWidgets('report screen: a message with no proof is not reportable', (
+    tester,
+  ) async {
     _tallView(tester);
     final h = _harness(role: 'member');
     h.api.recipients = [
       ReportInboxRecipient(
-          inboxId: 'acct_owner',
-          publicKey: List<int>.filled(32, 0xab),
-          keyRev: 1),
+        inboxId: 'acct_owner',
+        publicKey: List<int>.filled(32, 0xab),
+        keyRev: 1,
+      ),
     ];
-    await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state,
-        conversationId: 'conv_1',
-        messageKey: 'dev_sender:none')));
+    await tester.pumpWidget(
+      _app(
+        ReportMessageScreen(
+          state: h.state,
+          conversationId: 'conv_1',
+          messageKey: 'dev_sender:none',
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     await _tapVisible(tester, find.text('Trust and continue'));
     await _tapVisible(tester, find.text('Something else'));
@@ -420,19 +496,25 @@ void main() {
     expect(h.api.filed, 0);
   });
 
-  test('signing out deletes the report seed, and the warning knows of it',
-      () async {
-    final h = _harness(role: 'owner');
-    expect(await h.state.holdsReportSeed(), isFalse);
-    await h.state.reportSeedStore.save('https://example.test', 'acct_me',
-        Uint8List.fromList(List<int>.filled(32, 3)));
-    expect(await h.state.holdsReportSeed(), isTrue);
-    await h.state.logout();
-    expect(
+  test(
+    'signing out deletes the report seed, and the warning knows of it',
+    () async {
+      final h = _harness(role: 'owner');
+      expect(await h.state.holdsReportSeed(), isFalse);
+      await h.state.reportSeedStore.save(
+        'https://example.test',
+        'acct_me',
+        Uint8List.fromList(List<int>.filled(32, 3)),
+      );
+      expect(await h.state.holdsReportSeed(), isTrue);
+      await h.state.logout();
+      expect(
         await h.state.reportSeedStore.load('https://example.test', 'acct_me'),
-        isNull);
-    expect(await h.state.holdsReportSeed(), isFalse);
-  });
+        isNull,
+      );
+      expect(await h.state.holdsReportSeed(), isFalse);
+    },
+  );
 
   test('a build without the reviewed engine offers no reporting', () {
     final locked = AppState(
@@ -454,12 +536,16 @@ void main() {
 
   // U33 / U8: the inbox leads with the reports, has the 16 dp gutter and
   // names the reporter.
-  testWidgets('owner inbox: reports first, 16 dp gutter, reporter in the row',
-      (tester) async {
+  testWidgets('owner inbox: reports first, 16 dp gutter, reporter in the row', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
     h.api.rows.add(_row());
-    await tester.pumpWidget(_app(
-        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true),
+      ),
+    );
     await tester.pumpAndSettle();
 
     final reports = tester.getTopLeft(find.text('REPORTS')).dy;
@@ -476,15 +562,23 @@ void main() {
 
   // U33: names, the channel, a plain verdict with "Why not certain?" and the
   // next step beside Dismiss. The wording never claims more than C6.
-  testWidgets('report detail: names, verdict, why not certain, next step',
-      (tester) async {
+  testWidgets('report detail: names, verdict, why not certain, next step', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
     h.state.conversations = <Conversation>[
       Conversation(id: 'conv_1', kind: 'group', title: 'Team'),
     ];
     final service = h.state.reportsService!;
-    await tester.pumpWidget(_app(OwnerReportDetailScreen(
-        service: service, state: h.state, report: _opened())));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportDetailScreen(
+          service: service,
+          state: h.state,
+          report: _opened(),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Reported by '), findsOneWidget);
@@ -506,19 +600,24 @@ void main() {
     await tester.tap(find.text('Why not certain?'));
     await tester.pumpAndSettle();
     expect(find.textContaining('no longer has this message'), findsOneWidget);
-    expect(find.textContaining('only as trustworthy as that record'),
-        findsOneWidget);
+    expect(
+      find.textContaining('only as trustworthy as that record'),
+      findsOneWidget,
+    );
     // A gone record proves nothing either way, so the report is not called
     // unbacked. The next step is gone, Dismiss stays.
-    expect(find.text('Nothing here backs this report up. You can dismiss it.'),
-        findsNothing);
+    expect(
+      find.text('Nothing here backs this report up. You can dismiss it.'),
+      findsNothing,
+    );
     expect(find.byKey(const Key('report-next-copy')), findsNothing);
     expect(dismiss, findsOneWidget);
   });
 
   // U33: only a record that contradicts the report says nothing backs it up.
-  testWidgets('report detail: a mismatch says nothing backs the report up',
-      (tester) async {
+  testWidgets('report detail: a mismatch says nothing backs the report up', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
     h.api.record = ReportEnvelopeRecord(
       envelopeId: 'env_1',
@@ -528,13 +627,22 @@ void main() {
       frankCommit: List<int>.filled(32, 1),
       createdAt: DateTime.utc(2026, 11, 7),
     );
-    await tester.pumpWidget(_app(OwnerReportDetailScreen(
-        service: h.state.reportsService!, state: h.state, report: _opened())));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportDetailScreen(
+          service: h.state.reportsService!,
+          state: h.state,
+          report: _opened(),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('report-next-check')));
     await tester.pumpAndSettle();
-    expect(find.text('Nothing here backs this report up. You can dismiss it.'),
-        findsOneWidget);
+    expect(
+      find.text('Nothing here backs this report up. You can dismiss it.'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('report-next-copy')), findsNothing);
     expect(find.byKey(const Key('report-dismiss')), findsOneWidget);
   });
@@ -542,13 +650,17 @@ void main() {
   // U33: the inbox shows the reporter's reason, opened through the real
   // open and decode path, and says the check does not cover it. A body
   // written before reasons (literal v1 bytes) still opens.
-  testWidgets('owner inbox: shows the reason, and an old body has none',
-      (tester) async {
+  testWidgets('owner inbox: shows the reason, and an old body has none', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
-    await tester.runAsync(() => h.state.reportSeedStore.save(
+    await tester.runAsync(
+      () => h.state.reportSeedStore.save(
         'https://example.test',
         'acct_me',
-        Uint8List.fromList(List<int>.filled(32, 1))));
+        Uint8List.fromList(List<int>.filled(32, 1)),
+      ),
+    );
     final v3 = ReportBody(
       envelopeId: 'env_1',
       conversationId: 'conv_1',
@@ -558,78 +670,110 @@ void main() {
       frankKey: List<int>.filled(32, 7),
       reason: ReportReason.privateInfo,
     ).encode();
-    final v1 = utf8.encode('{"v":1,"envelope_id":"env_2",'
-        '"conversation_id":"conv_1","sender_device_id":"dev_sender",'
-        '"action_id":"a2","payload":"${base64Encode(utf8.encode('{"type":"text","body":{"text":"old words"}}'))}",'
-        '"frank_key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}');
+    final v1 = utf8.encode(
+      '{"v":1,"envelope_id":"env_2",'
+      '"conversation_id":"conv_1","sender_device_id":"dev_sender",'
+      '"action_id":"a2","payload":"${base64Encode(utf8.encode('{"type":"text","body":{"text":"old words"}}'))}",'
+      '"frank_key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}',
+    );
     h.api.rows
       ..add(_sealedRow('row_new', v3))
       ..add(_sealedRow('row_old', v1));
-    await tester.pumpWidget(_app(
-        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true),
+      ),
+    );
     await tester.pumpAndSettle();
 
     // The row leads its second line with the reason.
     expect(
-        find.textContaining(
-            "Reporter's reason: Shares someone's private information\n"),
-        findsOneWidget);
+      find.textContaining(
+        "Reporter's reason: Shares someone's private information\n",
+      ),
+      findsOneWidget,
+    );
     expect(find.text('old words'), findsOneWidget);
 
     await tester.tap(find.text('new words'));
     await tester.pumpAndSettle();
     expect(
-        find.text("Reason given by the reporter: Shares someone's private "
-            'information'),
-        findsOneWidget);
-    expect(find.text('The check covers the message only, not the reason.'),
-        findsOneWidget);
+      find.text(
+        "Reason given by the reporter: Shares someone's private "
+        'information',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('The check covers the message only, not the reason.'),
+      findsOneWidget,
+    );
     // The reason sits with the reporter, above the message and the verdict.
-    expect(tester.getTopLeft(find.byKey(const Key('report-reason'))).dy,
-        lessThan(tester.getTopLeft(find.text('new words')).dy));
+    expect(
+      tester.getTopLeft(find.byKey(const Key('report-reason'))).dy,
+      lessThan(tester.getTopLeft(find.text('new words')).dy),
+    );
     await tester.pageBack();
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('old words'));
     await tester.pumpAndSettle();
     expect(
-        find.text(
-            'No reason given. Reports from older app versions carry none.'),
-        findsOneWidget);
-    expect(find.text('The check covers the message only, not the reason.'),
-        findsNothing);
+      find.text('No reason given. Reports from older app versions carry none.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('The check covers the message only, not the reason.'),
+      findsNothing,
+    );
   });
 
   // U33: a v3 body naming a reason outside the list is refused whole, never
   // shown with a guessed reason.
-  testWidgets('owner inbox: an unknown reason makes the report unreadable',
-      (tester) async {
+  testWidgets('owner inbox: an unknown reason makes the report unreadable', (
+    tester,
+  ) async {
     final h = _harness(role: 'owner');
-    await tester.runAsync(() => h.state.reportSeedStore.save(
+    await tester.runAsync(
+      () => h.state.reportSeedStore.save(
         'https://example.test',
         'acct_me',
-        Uint8List.fromList(List<int>.filled(32, 1))));
-    final good = jsonDecode(utf8.decode(ReportBody(
-      envelopeId: 'env_1',
-      conversationId: 'conv_1',
-      senderDeviceId: 'dev_sender',
-      actionId: 'a1',
-      payload: utf8.encode('{"type":"text","body":{"text":"new words"}}'),
-      frankKey: List<int>.filled(32, 7),
-      reason: ReportReason.spam,
-    ).encode())) as Map<String, Object?>;
-    h.api.rows.add(_sealedRow(
-        'row_bad', utf8.encode(jsonEncode({...good, 'reason': 10}))));
-    await tester.pumpWidget(_app(
-        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true)));
+        Uint8List.fromList(List<int>.filled(32, 1)),
+      ),
+    );
+    final good = jsonDecode(
+      utf8.decode(
+        ReportBody(
+          envelopeId: 'env_1',
+          conversationId: 'conv_1',
+          senderDeviceId: 'dev_sender',
+          actionId: 'a1',
+          payload: utf8.encode(
+            '{"type":"text","body":{"text":"new words"}}',
+          ),
+          frankKey: List<int>.filled(32, 7),
+          reason: ReportReason.spam,
+        ).encode(),
+      ),
+    ) as Map<String, Object?>;
+    h.api.rows.add(
+      _sealedRow('row_bad', utf8.encode(jsonEncode({...good, 'reason': 10}))),
+    );
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('new words'), findsNothing);
     expect(find.text('Cannot open'), findsOneWidget);
     await tester.tap(find.text('Cannot open'));
     await tester.pumpAndSettle();
-    expect(find.text('This report is damaged or was not meant for you.'),
-        findsOneWidget);
+    expect(
+      find.text('This report is damaged or was not meant for you.'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('report-reason')), findsNothing);
   });
 }

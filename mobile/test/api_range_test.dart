@@ -71,11 +71,9 @@ void main() {
       const _Reply(206, contentRange: 'bytes 100-109/500'),
     );
     expect(
-      await _read(client.recoverEncryptedBackup(
-        _token,
-        startOffset: 100,
-        endOffset: 109,
-      )),
+      await _read(
+        client.recoverEncryptedBackup(_token, startOffset: 100, endOffset: 109),
+      ),
       10,
     );
     expect(ranges, <String?>['bytes=100-109']);
@@ -93,26 +91,44 @@ void main() {
 
   group('is rejected before any byte is returned', () {
     final cases = <String, _Reply>{
-      'the first byte is not the requested offset':
-          const _Reply(206, contentRange: 'bytes 0-9/500'),
-      'the range starts after the requested offset':
-          const _Reply(206, contentRange: 'bytes 101-110/500'),
-      'it runs past the requested end offset':
-          const _Reply(206, contentRange: 'bytes 100-120/500'),
+      'the first byte is not the requested offset': const _Reply(
+        206,
+        contentRange: 'bytes 0-9/500',
+      ),
+      'the range starts after the requested offset': const _Reply(
+        206,
+        contentRange: 'bytes 101-110/500',
+      ),
+      'it runs past the requested end offset': const _Reply(
+        206,
+        contentRange: 'bytes 100-120/500',
+      ),
       'Content-Range is missing': const _Reply(206),
-      'the range is unsatisfied (bytes */500)':
-          const _Reply(206, contentRange: 'bytes */500'),
+      'the range is unsatisfied (bytes */500)': const _Reply(
+        206,
+        contentRange: 'bytes */500',
+      ),
       'the dash is missing': const _Reply(206, contentRange: 'bytes 100/500'),
-      'a field is not a number':
-          const _Reply(206, contentRange: 'bytes 100-1x9/500'),
-      'the last byte is before the first':
-          const _Reply(206, contentRange: 'bytes 100-99/500'),
-      'the complete length ends before the range':
-          const _Reply(206, contentRange: 'bytes 100-109/105'),
-      'the unit is not bytes':
-          const _Reply(206, contentRange: 'items 100-109/500'),
-      'trailing text follows the range':
-          const _Reply(206, contentRange: 'bytes 100-109/500 extra'),
+      'a field is not a number': const _Reply(
+        206,
+        contentRange: 'bytes 100-1x9/500',
+      ),
+      'the last byte is before the first': const _Reply(
+        206,
+        contentRange: 'bytes 100-99/500',
+      ),
+      'the complete length ends before the range': const _Reply(
+        206,
+        contentRange: 'bytes 100-109/105',
+      ),
+      'the unit is not bytes': const _Reply(
+        206,
+        contentRange: 'items 100-109/500',
+      ),
+      'trailing text follows the range': const _Reply(
+        206,
+        contentRange: 'bytes 100-109/500 extra',
+      ),
     };
     for (final entry in cases.entries) {
       test('a 206 where ${entry.key}', () async {
@@ -140,15 +156,17 @@ void main() {
     );
   });
 
-  test('a 200 to a ranged request is never returned as the offset bytes',
-      () async {
-    final (client, ranges) = await _client(const _Reply(200));
-    await expectLater(
-      client.recoverEncryptedBackup(_token, startOffset: 100),
-      throwsA(isA<RangeNotHonoredException>()),
-    );
-    expect(ranges, <String?>['bytes=100-']);
-  });
+  test(
+    'a 200 to a ranged request is never returned as the offset bytes',
+    () async {
+      final (client, ranges) = await _client(const _Reply(200));
+      await expectLater(
+        client.recoverEncryptedBackup(_token, startOffset: 100),
+        throwsA(isA<RangeNotHonoredException>()),
+      );
+      expect(ranges, <String?>['bytes=100-']);
+    },
+  );
 
   test('a 200 answers a request without an offset', () async {
     final (client, ranges) = await _client(const _Reply(200));
@@ -195,8 +213,12 @@ void main() {
       }
 
       socket.listen((_) {}, onDone: end, onError: (_) => end());
-      socket.add(ascii.encode('HTTP/1.1 200 OK\r\n'
-          'content-length: 1048576\r\n\r\n'));
+      socket.add(
+        ascii.encode(
+          'HTTP/1.1 200 OK\r\n'
+          'content-length: 1048576\r\n\r\n',
+        ),
+      );
       socket.add(Uint8List(1024));
     });
     addTearDown(() => server.close());

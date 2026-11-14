@@ -73,7 +73,8 @@ extension ChatPreviews on AppState {
             reactions: const [],
           );
           row = history.latestForPreview(
-              nowMs: DateTime.now().millisecondsSinceEpoch);
+            nowMs: DateTime.now().millisecondsSinceEpoch,
+          );
         } catch (_) {
           // A failed read is a row without a preview, not a failed list.
         }

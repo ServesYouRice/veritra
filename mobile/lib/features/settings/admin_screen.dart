@@ -244,9 +244,9 @@ class _AdminScreenState extends State<AdminScreen> {
 
   void _showError(Object err) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(describeError(err, context.l10n))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(describeError(err, context.l10n))));
   }
 
   @override

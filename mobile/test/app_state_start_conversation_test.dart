@@ -41,7 +41,9 @@ class _Api extends ApiClient {
 
   @override
   Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     claims.add(conversationId);
     return const <DeviceKeyPackage>[];
   }
@@ -54,14 +56,17 @@ class _Mls implements MlsConversationCryptoService {
 
   @override
   Future<void> initializeConversation(
-      String conversationId, List<DeviceKeyPackage> claimedPackages) async {
+    String conversationId,
+    List<DeviceKeyPackage> claimedPackages,
+  ) async {
     initialized.add(conversationId);
     groups.add(conversationId);
   }
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       groups.contains(conversationId) ? (epoch: 1, pending: false) : null;
 
   @override
@@ -131,8 +136,10 @@ void main() {
     addTearDown(state.dispose);
     api.created = _dm('acct_peer');
 
-    final result = await state
-        .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
+    final result = await state.startConversation(
+      kind: 'dm',
+      memberAccountIds: <String>['acct_peer'],
+    );
 
     expect(result?.id, 'dm_1');
     expect(api.claims, isEmpty, reason: 'claimed key packages again');
@@ -142,25 +149,29 @@ void main() {
     expect(state.isMessageRequestId('dm_1'), isFalse);
   });
 
-  test('a returned DM already listed is not added twice and keeps messages',
-      () async {
-    final (state, api, mls) = await _start();
-    addTearDown(state.dispose);
-    // Listed without its peer, so the local reuse check missed it.
-    state.conversations = <Conversation>[_dm('acct_peer', peer: null)];
-    state.messagesByConversation['dm_1'] = <ReceivedMessageEnvelope>[
-      _message('m1'),
-    ];
-    api.created = _dm('acct_peer');
+  test(
+    'a returned DM already listed is not added twice and keeps messages',
+    () async {
+      final (state, api, mls) = await _start();
+      addTearDown(state.dispose);
+      // Listed without its peer, so the local reuse check missed it.
+      state.conversations = <Conversation>[_dm('acct_peer', peer: null)];
+      state.messagesByConversation['dm_1'] = <ReceivedMessageEnvelope>[
+        _message('m1'),
+      ];
+      api.created = _dm('acct_peer');
 
-    await state
-        .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
+      await state.startConversation(
+        kind: 'dm',
+        memberAccountIds: <String>['acct_peer'],
+      );
 
-    expect(state.conversations.where((c) => c.id == 'dm_1'), hasLength(1));
-    expect(state.conversations.single.peerAccountId, 'acct_peer');
-    expect(state.messagesFor('dm_1').map((m) => m.id), <String>['m1']);
-    expect(mls.initialized, isEmpty);
-  });
+      expect(state.conversations.where((c) => c.id == 'dm_1'), hasLength(1));
+      expect(state.conversations.single.peerAccountId, 'acct_peer');
+      expect(state.messagesFor('dm_1').map((m) => m.id), <String>['m1']);
+      expect(mls.initialized, isEmpty);
+    },
+  );
 
   test('an own DM whose group this device has is not set up again', () async {
     final (state, api, mls) = await _start();
@@ -168,8 +179,10 @@ void main() {
     mls.groups.add('dm_1');
     api.created = _dm('acct_me');
 
-    await state
-        .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
+    await state.startConversation(
+      kind: 'dm',
+      memberAccountIds: <String>['acct_peer'],
+    );
 
     expect(api.claims, isEmpty);
     expect(mls.initialized, isEmpty);
@@ -180,8 +193,10 @@ void main() {
     addTearDown(state.dispose);
     api.created = _dm('acct_me');
 
-    await state
-        .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
+    await state.startConversation(
+      kind: 'dm',
+      memberAccountIds: <String>['acct_peer'],
+    );
 
     expect(api.claims, <String>['dm_1']);
     expect(mls.initialized, <String>['dm_1']);

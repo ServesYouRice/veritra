@@ -48,14 +48,20 @@ const bool _demoBuild = bool.fromEnvironment('VERITRA_DEMO');
 /// `--dart-define=VERITRA_PHONE_NOTICES=false` turns it off. Native reads the
 /// same define at build time and decides on its own; this only lets the bridge
 /// accept native's answer. Release (`main.dart`) has no such path.
-const bool _phoneNotices =
-    bool.fromEnvironment('VERITRA_PHONE_NOTICES', defaultValue: true);
+const bool _phoneNotices = bool.fromEnvironment(
+  'VERITRA_PHONE_NOTICES',
+  defaultValue: true,
+);
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!_demoBuild) {
-    runApp(const _Message('This is the demo entry point. Build it with '
-        '--dart-define=VERITRA_DEMO=true, or use lib/main.dart.'));
+    runApp(
+      const _Message(
+        'This is the demo entry point. Build it with '
+        '--dart-define=VERITRA_DEMO=true, or use lib/main.dart.',
+      ),
+    );
     return;
   }
   final String? profile;
@@ -68,8 +74,10 @@ Future<void> main(List<String> args) async {
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   usePastedImageProfile(namespace);
   final kv = SecureSlotKeyValue();
-  final registryStore =
-      AccountRegistryStore(storage: kv, primaryNamespace: namespace);
+  final registryStore = AccountRegistryStore(
+    storage: kv,
+    primaryNamespace: namespace,
+  );
   // A cold wake may open only the protected registry's active slot. The
   // native profile is checked against it by WakeLaunchCoordinator.
   final startupSlot = await activeAccountSlotForWake(registryStore);
@@ -90,13 +98,18 @@ Future<void> main(List<String> args) async {
     await store?.close();
   }
 
-  Future<AccountRuntime> buildRuntime(String slot,
-      {required bool background}) async {
+  Future<AccountRuntime> buildRuntime(
+    String slot, {
+    required bool background,
+  }) async {
     final existing = liveState;
     if (liveSlot == slot && existing != null) {
       if (!background) liveStore?.allowForegroundInitialization();
       return AccountRuntime(
-          namespace: slot, state: existing, closeStore: closeLive);
+        namespace: slot,
+        state: existing,
+        closeStore: closeLive,
+      );
     }
     final scope = ProfileScope(namespace: slot, primaryNamespace: namespace);
     usePastedImageProfile(scope.pasteScope);
@@ -108,16 +121,16 @@ Future<void> main(List<String> args) async {
     final state = AppState(
       apiClientFactory: (baseUrl) =>
           ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo),
-      cryptoService: NativeCryptoService(
-        bindings: bindings,
-        localStore: store,
-      ),
+      cryptoService: NativeCryptoService(bindings: bindings, localStore: store),
       localStore: store,
       reportSeedStore: SecureReportSeedStore(scope: scope),
-      attachmentService: AttachmentCryptoService(bindings,
-          directoryProvider: () => slotWorkingDirectory(scope)),
-      receiptPreferences:
-          ReceiptPreferences(SecureReceiptPreferenceStore(scope: scope)),
+      attachmentService: AttachmentCryptoService(
+        bindings,
+        directoryProvider: () => slotWorkingDirectory(scope),
+      ),
+      receiptPreferences: ReceiptPreferences(
+        SecureReceiptPreferenceStore(scope: scope),
+      ),
       syncServiceFactory: (baseUrl, token) =>
           WebSocketSyncService(baseUrl: baseUrl, token: token),
       passkeyClient: PlatformPasskeyClient(),
@@ -139,11 +152,7 @@ Future<void> main(List<String> args) async {
     liveStore = store;
     liveState = state;
     liveSlot = slot;
-    return AccountRuntime(
-      namespace: slot,
-      state: state,
-      closeStore: closeLive,
-    );
+    return AccountRuntime(namespace: slot, state: state, closeStore: closeLive);
   }
 
   BackgroundWakeRunner? runner;
@@ -169,7 +178,10 @@ Future<void> main(List<String> args) async {
       await bridge.uninstall(slot);
     };
     final installed = await bridge.install(
-        profile: slot, onRun: worker.run, onCancel: worker.cancel);
+      profile: slot,
+      onRun: worker.run,
+      onCancel: worker.cancel,
+    );
     if (installed && bridge.canOptIn) return true;
     // Native did not allow phone notices (a build without them): no worker
     // may stay bound, so warm runs cannot catch up either.
@@ -204,9 +216,12 @@ Future<void> main(List<String> args) async {
       final host = AccountHost(
         registryStore: registryStore,
         eraser: SlotEraser(
-            storage: kv,
-            scope: ProfileScope(
-                namespace: namespace, primaryNamespace: namespace)),
+          storage: kv,
+          scope: ProfileScope(
+            namespace: namespace,
+            primaryNamespace: namespace,
+          ),
+        ),
         build: (slot) async {
           final runtime = await buildRuntime(slot, background: false);
           if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
@@ -218,13 +233,18 @@ Future<void> main(List<String> args) async {
           return runtime;
         },
         primaryNamespace: namespace,
-        desktopFactory: (state) => DesktopServices.startIfSupported(state,
-            scope: ProfileScope(
-                namespace: (state.localStore as SecureLocalStore).namespace,
-                primaryNamespace: namespace)),
+        desktopFactory: (state) => DesktopServices.startIfSupported(
+          state,
+          scope: ProfileScope(
+            namespace: (state.localStore as SecureLocalStore).namespace,
+            primaryNamespace: namespace,
+          ),
+        ),
         inspect: slotInspectorFor(namespace),
-        revoke: slotRevokerFor((baseUrl) =>
-            ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo)),
+        revoke: slotRevokerFor(
+          (baseUrl) =>
+              ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo),
+        ),
         // The permit follows the active slot; uninstall fences stale wakes
         // before another runtime can install a new permit.
         beforeLeave: (runtime) async {
@@ -279,7 +299,8 @@ String? demoProfileFromArgs(List<String> args) {
   if (value == null) return null;
   if (!RegExp(r'^[a-z0-9]{1,20}$').hasMatch(value)) {
     throw const FormatException(
-        'Profile names are 1-20 lowercase letters or digits.');
+      'Profile names are 1-20 lowercase letters or digits.',
+    );
   }
   return value;
 }

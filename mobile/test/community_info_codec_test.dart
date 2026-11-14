@@ -25,7 +25,9 @@ String _id(String prefix, int n) =>
     '${prefix}_${n.toRadixString(16).padLeft(32, '0')}';
 
 Matcher _fails(ProfileRecordFailure failure) => throwsA(
-    isA<ProfileRecordException>().having((e) => e.failure, 'failure', failure));
+      isA<ProfileRecordException>()
+          .having((e) => e.failure, 'failure', failure),
+    );
 
 void main() {
   final skip = nativeCryptoSkip();
@@ -75,22 +77,32 @@ void main() {
     final records = <String, CommunityInfoRecord>{
       'community': communityRecord(),
       'category': CommunityInfoRecord(
-          kind: infoKindCategory, subjectId: cat, revision: 1, name: 'Games'),
+        kind: infoKindCategory,
+        subjectId: cat,
+        revision: 1,
+        name: 'Games',
+      ),
       'channel': CommunityInfoRecord(
-          kind: infoKindChannel,
-          subjectId: chan,
-          revision: 2,
-          name: 'general',
-          topic: 'Say hi'),
+        kind: infoKindChannel,
+        subjectId: chan,
+        revision: 2,
+        name: 'general',
+        topic: 'Say hi',
+      ),
     };
     final digests = <String, String>{};
     for (final entry in records.entries) {
-      final blob =
-          codec().seal(key: key, record: entry.value, noncePrefix: nonce);
+      final blob = codec().seal(
+        key: key,
+        record: entry.value,
+        noncePrefix: nonce,
+      );
       expect(blob.length, 4 + 8 + profileSmallBucket + 16);
       // Same inputs, same bytes.
-      expect(codec().seal(key: key, record: entry.value, noncePrefix: nonce),
-          blob);
+      expect(
+        codec().seal(key: key, record: entry.value, noncePrefix: nonce),
+        blob,
+      );
       digests[entry.key] = CommunityInfoCodec.recordSha256(blob);
       final opened = codec().open(
         key: key,
@@ -119,8 +131,11 @@ void main() {
       servedVersion: 1,
       kind: infoKindCommunity,
       subjectId: community,
-      blob:
-          codec().seal(key: key, record: communityRecord(), noncePrefix: nonce),
+      blob: codec().seal(
+        key: key,
+        record: communityRecord(),
+        noncePrefix: nonce,
+      ),
     );
     expect(opened.categories, [cat]);
     expect(opened.channels, [
@@ -160,32 +175,42 @@ void main() {
       kind: infoKindChannel,
       subjectId: chan,
       blob: codec().seal(
-          key: key,
-          record: CommunityInfoRecord(
-              kind: infoKindChannel, subjectId: chan, revision: 2)),
+        key: key,
+        record: CommunityInfoRecord(
+          kind: infoKindChannel,
+          subjectId: chan,
+          revision: 2,
+        ),
+      ),
     );
     expect(tomb.isTombstone, isTrue);
     // A tombstone with a topic or icon left is not one.
     expect(
-        () => codec().seal(
-            key: key,
-            record: CommunityInfoRecord(
-                kind: infoKindChannel,
-                subjectId: chan,
-                revision: 2,
-                topic: 'x')),
-        _fails(ProfileRecordFailure.badName));
+      () => codec().seal(
+        key: key,
+        record: CommunityInfoRecord(
+          kind: infoKindChannel,
+          subjectId: chan,
+          revision: 2,
+          topic: 'x',
+        ),
+      ),
+      _fails(ProfileRecordFailure.badName),
+    );
     // A community is never a tombstone.
     expect(
-        () => codec().seal(
-            key: key,
-            record: CommunityInfoRecord(
-                kind: infoKindCommunity,
-                subjectId: community,
-                revision: 2,
-                categories: const [],
-                channels: const [])),
-        _fails(ProfileRecordFailure.badFraming));
+      () => codec().seal(
+        key: key,
+        record: CommunityInfoRecord(
+          kind: infoKindCommunity,
+          subjectId: community,
+          revision: 2,
+          categories: const [],
+          channels: const [],
+        ),
+      ),
+      _fails(ProfileRecordFailure.badFraming),
+    );
   }, skip: skip);
 
   test('a big community goes into the large bucket', () {
@@ -197,18 +222,22 @@ void main() {
       categories: [for (var i = 0; i < infoMaxCategories; i++) _id('cat', i)],
       channels: [
         for (var i = 0; i < infoMaxChannels; i++)
-          InfoChannelPlace(channelId: _id('chan', i), categoryId: _id('cat', 0))
+          InfoChannelPlace(
+            channelId: _id('chan', i),
+            categoryId: _id('cat', 0),
+          ),
       ],
     );
     final blob = codec().seal(key: key, record: big);
     expect(blob.length, 4 + 8 + profileLargeBucket + 16);
     final opened = codec().open(
-        key: key,
-        servedKeyId: keyId,
-        servedVersion: 1,
-        kind: infoKindCommunity,
-        subjectId: community,
-        blob: blob);
+      key: key,
+      servedKeyId: keyId,
+      servedVersion: 1,
+      kind: infoKindCommunity,
+      subjectId: community,
+      blob: blob,
+    );
     expect(opened.channels!.length, infoMaxChannels);
   }, skip: skip);
 
@@ -216,90 +245,113 @@ void main() {
     final blob = codec().seal(key: key, record: communityRecord(revision: 3));
     // Wrong key id, wrong subject, wrong kind, wrong version, rollback.
     expect(
-        () => codec().open(
-            key: key,
-            servedKeyId: '0' * 32,
-            servedVersion: 3,
-            kind: infoKindCommunity,
-            subjectId: community,
-            blob: blob),
-        _fails(ProfileRecordFailure.keyMismatch));
+      () => codec().open(
+        key: key,
+        servedKeyId: '0' * 32,
+        servedVersion: 3,
+        kind: infoKindCommunity,
+        subjectId: community,
+        blob: blob,
+      ),
+      _fails(ProfileRecordFailure.keyMismatch),
+    );
     expect(
-        () => codec().open(
-            key: key,
-            servedKeyId: keyId,
-            servedVersion: 3,
-            kind: infoKindCommunity,
-            subjectId: _id('comm', 9),
-            blob: blob),
-        _fails(ProfileRecordFailure.authFailed));
+      () => codec().open(
+        key: key,
+        servedKeyId: keyId,
+        servedVersion: 3,
+        kind: infoKindCommunity,
+        subjectId: _id('comm', 9),
+        blob: blob,
+      ),
+      _fails(ProfileRecordFailure.authFailed),
+    );
     expect(
-        () => codec().open(
-            key: key,
-            servedKeyId: keyId,
-            servedVersion: 4,
-            kind: infoKindCommunity,
-            subjectId: community,
-            blob: blob),
-        _fails(ProfileRecordFailure.revisionMismatch));
+      () => codec().open(
+        key: key,
+        servedKeyId: keyId,
+        servedVersion: 4,
+        kind: infoKindCommunity,
+        subjectId: community,
+        blob: blob,
+      ),
+      _fails(ProfileRecordFailure.revisionMismatch),
+    );
     expect(
-        () => codec().open(
-            key: key,
-            servedKeyId: keyId,
-            servedVersion: 3,
-            kind: infoKindCommunity,
-            subjectId: community,
-            blob: blob,
-            cachedRevision: 4),
-        _fails(ProfileRecordFailure.rollback));
+      () => codec().open(
+        key: key,
+        servedKeyId: keyId,
+        servedVersion: 3,
+        kind: infoKindCommunity,
+        subjectId: community,
+        blob: blob,
+        cachedRevision: 4,
+      ),
+      _fails(ProfileRecordFailure.rollback),
+    );
     // Content rules, checked before sealing too.
     void refuses(CommunityInfoRecord r, ProfileRecordFailure f) =>
         expect(() => codec().seal(key: key, record: r), _fails(f));
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindCategory,
-            subjectId: cat,
-            revision: 1,
-            name: 'a' * (infoNameMax + 1)),
-        ProfileRecordFailure.badName);
+      CommunityInfoRecord(
+        kind: infoKindCategory,
+        subjectId: cat,
+        revision: 1,
+        name: 'a' * (infoNameMax + 1),
+      ),
+      ProfileRecordFailure.badName,
+    );
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindChannel,
-            subjectId: chan,
-            revision: 1,
-            name: 'x',
-            topic: 'line\nbreak'),
-        ProfileRecordFailure.badName);
+      CommunityInfoRecord(
+        kind: infoKindChannel,
+        subjectId: chan,
+        revision: 1,
+        name: 'x',
+        topic: 'line\nbreak',
+      ),
+      ProfileRecordFailure.badName,
+    );
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindCommunity,
-            subjectId: community,
-            revision: 1,
-            name: 'x',
-            categories: const [],
-            channels: [InfoChannelPlace(channelId: chan, categoryId: cat)]),
-        ProfileRecordFailure.badFraming);
+      CommunityInfoRecord(
+        kind: infoKindCommunity,
+        subjectId: community,
+        revision: 1,
+        name: 'x',
+        categories: const [],
+        channels: [InfoChannelPlace(channelId: chan, categoryId: cat)],
+      ),
+      ProfileRecordFailure.badFraming,
+    );
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindCommunity,
-            subjectId: community,
-            revision: 1,
-            name: 'x',
-            categories: [cat, cat],
-            channels: const []),
-        ProfileRecordFailure.badFraming);
+      CommunityInfoRecord(
+        kind: infoKindCommunity,
+        subjectId: community,
+        revision: 1,
+        name: 'x',
+        categories: [cat, cat],
+        channels: const [],
+      ),
+      ProfileRecordFailure.badFraming,
+    );
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindCategory, subjectId: chan, revision: 1, name: 'x'),
-        ProfileRecordFailure.badInput);
+      CommunityInfoRecord(
+        kind: infoKindCategory,
+        subjectId: chan,
+        revision: 1,
+        name: 'x',
+      ),
+      ProfileRecordFailure.badInput,
+    );
     refuses(
-        CommunityInfoRecord(
-            kind: infoKindChannel,
-            subjectId: chan,
-            revision: 1,
-            name: 'x',
-            icon: ProfilePhoto(png: _png(300, 300), width: 300, height: 300)),
-        ProfileRecordFailure.badPhoto);
+      CommunityInfoRecord(
+        kind: infoKindChannel,
+        subjectId: chan,
+        revision: 1,
+        name: 'x',
+        icon: ProfilePhoto(png: _png(300, 300), width: 300, height: 300),
+      ),
+      ProfileRecordFailure.badPhoto,
+    );
   }, skip: skip);
 
   test('unknown keys are ignored; keys of another kind are refused', () {
@@ -312,27 +364,43 @@ void main() {
           ...extra,
         };
     expect(
-        CommunityInfoCodec.checkContent(category({'later_field': 1}),
-                kind: infoKindCategory, subjectId: cat)
-            .name,
-        'Games');
+      CommunityInfoCodec.checkContent(
+        category({'later_field': 1}),
+        kind: infoKindCategory,
+        subjectId: cat,
+      ).name,
+      'Games',
+    );
     expect(
-        () => CommunityInfoCodec.checkContent(category({'topic': 'x'}),
-            kind: infoKindCategory, subjectId: cat),
-        _fails(ProfileRecordFailure.badFraming));
+      () => CommunityInfoCodec.checkContent(
+        category({'topic': 'x'}),
+        kind: infoKindCategory,
+        subjectId: cat,
+      ),
+      _fails(ProfileRecordFailure.badFraming),
+    );
     expect(
-        () => CommunityInfoCodec.checkContent(category({'v': 2}),
-            kind: infoKindCategory, subjectId: cat),
-        _fails(ProfileRecordFailure.badFraming));
+      () => CommunityInfoCodec.checkContent(
+        category({'v': 2}),
+        kind: infoKindCategory,
+        subjectId: cat,
+      ),
+      _fails(ProfileRecordFailure.badFraming),
+    );
     // A channel record must say its topic and icon, even as null.
     expect(
-        () => CommunityInfoCodec.checkContent({
-              'v': 1,
-              'kind': infoKindChannel,
-              'subject_id': chan,
-              'revision': 1,
-              'name': 'general',
-            }, kind: infoKindChannel, subjectId: chan),
-        _fails(ProfileRecordFailure.badFraming));
+      () => CommunityInfoCodec.checkContent(
+        {
+          'v': 1,
+          'kind': infoKindChannel,
+          'subject_id': chan,
+          'revision': 1,
+          'name': 'general',
+        },
+        kind: infoKindChannel,
+        subjectId: chan,
+      ),
+      _fails(ProfileRecordFailure.badFraming),
+    );
   });
 }

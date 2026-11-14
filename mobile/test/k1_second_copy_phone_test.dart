@@ -38,24 +38,26 @@ class _PhoneCrypto extends K1Crypto implements BackupOpenCryptoService {
     required Uint8List plaintext,
   }) async {
     final sealed = await super.sealK1Backup(
-        accountId: accountId,
-        sourceDeviceId: sourceDeviceId,
-        createdAtMs: createdAtMs,
-        counter: counter,
-        rkPub: rkPub,
-        plaintext: plaintext);
+      accountId: accountId,
+      sourceDeviceId: sourceDeviceId,
+      createdAtMs: createdAtMs,
+      counter: counter,
+      rkPub: rkPub,
+      plaintext: plaintext,
+    );
     return Uint8List(600)..setAll(0, sealed);
   }
 
   @override
   BackupHeaderInfo peekK1Backup(Uint8List prefix) => BackupHeaderInfo(
-      accountId: peekAccount,
-      sourceDeviceId: peekDevice,
-      createdAtMs: 1731000000000,
-      counter: peekCounter ?? prefix[4],
-      rkId: peekRkId ?? _storedRkId!,
-      plaintextVersion: 1,
-      paddedSize: 1 << 20);
+        accountId: peekAccount,
+        sourceDeviceId: peekDevice,
+        createdAtMs: 1731000000000,
+        counter: peekCounter ?? prefix[4],
+        rkId: peekRkId ?? _storedRkId!,
+        plaintextVersion: 1,
+        paddedSize: 1 << 20,
+      );
 
   Uint8List? _storedRkId;
 
@@ -78,8 +80,10 @@ class _PhoneApi extends K1Api {
   int? listedCounter;
 
   @override
-  Future<List<Map<String, Object?>>> listBackups(String token,
-          {int limit = 100}) async =>
+  Future<List<Map<String, Object?>>> listBackups(
+    String token, {
+    int limit = 100,
+  }) async =>
       <Map<String, Object?>>[
         for (final upload in uploads)
           <String, Object?>{
@@ -88,9 +92,9 @@ class _PhoneApi extends K1Api {
             'device_name': 'This phone',
             'device_revoked': false,
             'kind': 1,
-            'ciphertext_sha256': sha256(upload.bytes)
-                .map((b) => b.toRadixString(16).padLeft(2, '0'))
-                .join(),
+            'ciphertext_sha256': sha256(
+              upload.bytes,
+            ).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
             'size_bytes': upload.bytes.length,
             'created_at': '2026-11-08T09:00:00Z',
             'counter': listedCounter ?? upload.counter,
@@ -100,10 +104,15 @@ class _PhoneApi extends K1Api {
       ];
 
   @override
-  Future<Stream<List<int>>> downloadBackup(String token, String id,
-      {int? start, int? end}) async {
+  Future<Stream<List<int>>> downloadBackup(
+    String token,
+    String id, {
+    int? start,
+    int? end,
+  }) async {
     final upload = uploads.lastWhere(
-        (u) => 'backup_${u.counter.toRadixString(16).padLeft(32, '0')}' == id);
+      (u) => 'backup_${u.counter.toRadixString(16).padLeft(32, '0')}' == id,
+    );
     return Stream<List<int>>.value(served ?? upload.bytes);
   }
 }
@@ -158,11 +167,15 @@ void main() {
 
   test('the mode follows the platform: phones are no longer server-only', () {
     expect(
-        k1SecondCopyModeFor(TargetPlatform.android), K1SecondCopyMode.folder);
+      k1SecondCopyModeFor(TargetPlatform.android),
+      K1SecondCopyMode.folder,
+    );
     expect(k1SecondCopyModeFor(TargetPlatform.iOS), K1SecondCopyMode.export);
     expect(k1SecondCopyModeFor(TargetPlatform.linux), K1SecondCopyMode.folder);
     expect(
-        k1SecondCopyModeFor(TargetPlatform.windows), K1SecondCopyMode.folder);
+      k1SecondCopyModeFor(TargetPlatform.windows),
+      K1SecondCopyMode.folder,
+    );
     expect(k1SecondCopyModeFor(TargetPlatform.macOS), K1SecondCopyMode.folder);
     expect(k1SecondCopyModeFor(TargetPlatform.fuchsia), K1SecondCopyMode.none);
     expect(state.k1SecondCopyWriter, isA<PlatformK1SecondCopyWriter>());
@@ -195,24 +208,26 @@ void main() {
       expect(reread.secondCopyPath, _tree);
     });
 
-    test('a failed write is its own warning and never fails the backup',
-        () async {
-      picks();
-      await state.pickK1SecondCopyFolder();
-      await _until(() => state.k1BackupState?.secondCopyAt != null);
-      answer = (call) => call.method == 'write'
-          ? PlatformException(code: 'write_failed')
-          : null;
-      final before = uploads.length;
-      expect(await state.runK1BackupIfDue(force: true), isTrue);
-      expect(uploads, hasLength(before + 1));
-      expect(state.k1BackupState!.secondCopyFailed, isTrue);
-      expect(state.k1BackupState!.lastError, isNull);
-      // The next good write clears the warning.
-      answer = (_) => null;
-      expect(await state.runK1BackupIfDue(force: true), isTrue);
-      expect(state.k1BackupState!.secondCopyFailed, isFalse);
-    });
+    test(
+      'a failed write is its own warning and never fails the backup',
+      () async {
+        picks();
+        await state.pickK1SecondCopyFolder();
+        await _until(() => state.k1BackupState?.secondCopyAt != null);
+        answer = (call) => call.method == 'write'
+            ? PlatformException(code: 'write_failed')
+            : null;
+        final before = uploads.length;
+        expect(await state.runK1BackupIfDue(force: true), isTrue);
+        expect(uploads, hasLength(before + 1));
+        expect(state.k1BackupState!.secondCopyFailed, isTrue);
+        expect(state.k1BackupState!.lastError, isNull);
+        // The next good write clears the warning.
+        answer = (_) => null;
+        expect(await state.runK1BackupIfDue(force: true), isTrue);
+        expect(state.k1BackupState!.secondCopyFailed, isFalse);
+      },
+    );
 
     test('a cancelled or failed pick changes nothing', () async {
       answer = (_) => null;
@@ -220,8 +235,11 @@ void main() {
       answer = (_) => PlatformException(code: 'no_picker');
       expect(await state.pickK1SecondCopyFolder(), K1SecondCopyPick.failed);
       answer = (_) => <String, Object?>{'tree': '/sdcard/Backups'};
-      expect(await state.pickK1SecondCopyFolder(), K1SecondCopyPick.failed,
-          reason: 'only a document tree is taken');
+      expect(
+        await state.pickK1SecondCopyFolder(),
+        K1SecondCopyPick.failed,
+        reason: 'only a document tree is taken',
+      );
       expect(state.k1BackupState!.secondCopyPath, isNull);
       expect(calls.where((c) => c.method == 'write'), isEmpty);
     });
@@ -235,16 +253,18 @@ void main() {
           : null;
       await state.pickK1SecondCopyFolder();
       expect(
-          calls
-              .where((c) => c.method == 'release')
-              .map((c) => (c.arguments as Map)['tree']),
-          [_tree]);
+        calls
+            .where((c) => c.method == 'release')
+            .map((c) => (c.arguments as Map)['tree']),
+        [_tree],
+      );
       await state.setK1SecondCopyFolder(null);
       expect(
-          calls
-              .where((c) => c.method == 'release')
-              .map((c) => (c.arguments as Map)['tree']),
-          [_tree, other]);
+        calls
+            .where((c) => c.method == 'release')
+            .map((c) => (c.arguments as Map)['tree']),
+        [_tree, other],
+      );
       expect(state.k1BackupState!.secondCopyLabel, isNull);
     });
   });
@@ -267,35 +287,37 @@ void main() {
       expect(state.k1BackupState!.secondCopyAt, isNull);
     });
 
-    test('a copy that is not the one this device uploaded is never exported',
-        () async {
-      answer = (call) => call.method == 'export' ? true : null;
-      // Bytes that do not match the row.
-      api.served = Uint8List(600);
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
-      api.served = null;
-      // A header for another device, an older counter, another key.
-      crypto.peekDevice = 'dev_other';
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
-      crypto.peekDevice = 'dev_old';
-      crypto.peekCounter = 0;
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
-      crypto.peekCounter = null;
-      crypto.peekRkId = Uint8List(16);
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
-      crypto.peekRkId = null;
-      // A row whose counter is not this device's last one: nothing to save.
-      api.listedCounter = 99;
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.noCopy);
-      api.listedCounter = null;
-      expect(calls.where((c) => c.method == 'export'), isEmpty);
-      expect(state.k1BackupState!.secondCopyAt, isNull);
-      // A channel failure (no screen, picker busy) is a failure, not a save.
-      answer = (call) =>
-          call.method == 'export' ? PlatformException(code: 'busy') : null;
-      expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
-      expect(state.k1BackupState!.secondCopyAt, isNull);
-    });
+    test(
+      'a copy that is not the one this device uploaded is never exported',
+      () async {
+        answer = (call) => call.method == 'export' ? true : null;
+        // Bytes that do not match the row.
+        api.served = Uint8List(600);
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
+        api.served = null;
+        // A header for another device, an older counter, another key.
+        crypto.peekDevice = 'dev_other';
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
+        crypto.peekDevice = 'dev_old';
+        crypto.peekCounter = 0;
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
+        crypto.peekCounter = null;
+        crypto.peekRkId = Uint8List(16);
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
+        crypto.peekRkId = null;
+        // A row whose counter is not this device's last one: nothing to save.
+        api.listedCounter = 99;
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.noCopy);
+        api.listedCounter = null;
+        expect(calls.where((c) => c.method == 'export'), isEmpty);
+        expect(state.k1BackupState!.secondCopyAt, isNull);
+        // A channel failure (no screen, picker busy) is a failure, not a save.
+        answer = (call) =>
+            call.method == 'export' ? PlatformException(code: 'busy') : null;
+        expect(await state.exportK1SecondCopy(), K1SecondCopyExport.failed);
+        expect(state.k1BackupState!.secondCopyAt, isNull);
+      },
+    );
   });
 }
 

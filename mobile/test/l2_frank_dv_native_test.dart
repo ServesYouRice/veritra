@@ -36,8 +36,10 @@ void main() {
 
   test('the Dart key id is the vector key id', () {
     for (final owner in owners) {
-      expect(_toHex(frankDesignationKid(_hex(owner['report_public']))),
-          owner['kid']);
+      expect(
+        _toHex(frankDesignationKid(_hex(owner['report_public']))),
+        owner['kid'],
+      );
     }
     for (final designation
         in (vector['designations'] as List).cast<Map<String, dynamic>>()) {
@@ -46,9 +48,11 @@ void main() {
       // Every usable owner key is named; a refused one is skipped.
       for (final key in (designation['owner_public_keys'] as List)) {
         final refused = refusedKeys.contains(key);
-        expect(designationNames(d, frankDesignationKid(_hex(key as String))),
-            !refused,
-            reason: '${designation['name']}: $key');
+        expect(
+          designationNames(d, frankDesignationKid(_hex(key as String))),
+          !refused,
+          reason: '${designation['name']}: $key',
+        );
       }
     }
   });
@@ -111,30 +115,36 @@ void main() {
       // A flipped tag bit fails for its owner.
       final bent = Uint8List.fromList(d)..[20] ^= 1;
       final first = d.sublist(0, 16);
-      final bentOwner = owners.firstWhere((o) =>
-          _toHex(frankDesignationKid(_hex(o['report_public']))) ==
-          _toHex(first));
+      final bentOwner = owners.firstWhere(
+        (o) =>
+            _toHex(frankDesignationKid(_hex(o['report_public']))) ==
+            _toHex(first),
+      );
       expect(verdict(bentOwner, designation: bent), 0);
       // A key other than the listed one is refused; a refused owner key is
       // skipped, and only refused keys give the plain form (empty).
       final wrong = Uint8List.fromList(own)..[0] ^= 1;
       expect(
-          () => device.l2FrankDesignate(
-              conversationId: 'conv_dv_dart',
-              commit: commit,
-              listedKey: wrong,
-              ownerKeys: keys),
-          throwsA(isA<NativeCryptoException>()));
+        () => device.l2FrankDesignate(
+          conversationId: 'conv_dv_dart',
+          commit: commit,
+          listedKey: wrong,
+          ownerKeys: keys,
+        ),
+        throwsA(isA<NativeCryptoException>()),
+      );
       final refused = (vector['refused_public_keys'] as List)
           .map((k) => _hex((k as Map<String, dynamic>)['key'] as String))
           .toList();
       expect(
-          device.l2FrankDesignate(
-              conversationId: 'conv_dv_dart',
-              commit: commit,
-              listedKey: own,
-              ownerKeys: refused.take(16).toList()),
-          isEmpty);
+        device.l2FrankDesignate(
+          conversationId: 'conv_dv_dart',
+          commit: commit,
+          listedKey: own,
+          ownerKeys: refused.take(16).toList(),
+        ),
+        isEmpty,
+      );
     }, skip: skip);
   });
 }

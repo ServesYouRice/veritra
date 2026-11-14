@@ -44,24 +44,28 @@ void main() {
     });
 
     test('the compact form expands to the full form', () {
-      final compact =
-          C7CompactRecord.decode(hex(outputs['record_compact_hex']));
+      final compact = C7CompactRecord.decode(
+        hex(outputs['record_compact_hex']),
+      );
       final full = C7Record.decode(hex(outputs['record_full_hex']));
-      final expanded = compact.expand(C7RecordContext(
-        communityId: full.communityId,
-        channelId: full.channelId,
-        groupId: full.groupId,
-        epoch: full.epoch,
-        actorDeviceId: full.actorDeviceId,
-      ));
+      final expanded = compact.expand(
+        C7RecordContext(
+          communityId: full.communityId,
+          channelId: full.channelId,
+          groupId: full.groupId,
+          epoch: full.epoch,
+          actorDeviceId: full.actorDeviceId,
+        ),
+      );
       expect(expanded.encode(), full.encode());
       expect(expanded.opensKey, isTrue);
       expect(toHex(expanded.chkCommit), outputs['chk_commit_hex']);
     });
 
     test('a move carries the old group and a wrap', () {
-      final compact =
-          C7CompactRecord.decode(hex(outputs['record_move_compact_hex']));
+      final compact = C7CompactRecord.decode(
+        hex(outputs['record_move_compact_hex']),
+      );
       expect(compact.reason, c7ReasonMove);
       expect(utf8.decode(compact.closeGroupId!), inputs['old_group_id']);
       expect(compact.wrap, hasLength(c7MoveWrapBytes));
@@ -186,16 +190,20 @@ void main() {
         final exp = next['expect'] as Map<String, dynamic>;
         final result = state.apply(
           entryOf(next['record'] as Map<String, dynamic>),
-          source: C7Source.values.firstWhere((s) =>
-              (s == C7Source.proposalLive ? 'proposal_live' : 'report') ==
-              next['source']),
+          source: C7Source.values.firstWhere(
+            (s) =>
+                (s == C7Source.proposalLive ? 'proposal_live' : 'report') ==
+                next['source'],
+          ),
           keyGiven: next['key_given'] as bool,
         );
         expect(result.row.number, exp['row']);
         expect(result.state.status.name, exp['status']);
         expect(result.state.mode == c7ModeFull, exp['mode'] == 'full');
-        expect(result.state.sealsUnderHistoryKey,
-            exp['seals_under_history_key'] ?? false);
+        expect(
+          result.state.sealsUnderHistoryKey,
+          exp['seals_under_history_key'] ?? false,
+        );
       }
     });
   });
@@ -210,7 +218,9 @@ void main() {
       final c = raw as Map<String, dynamic>;
       test('highest ${c['highest']}, seq ${c['seq']}', () {
         expect(
-            c7SeqWithinCap(c['seq'] as int, c['highest'] as int), c['valid']);
+          c7SeqWithinCap(c['seq'] as int, c['highest'] as int),
+          c['valid'],
+        );
       });
     }
   });

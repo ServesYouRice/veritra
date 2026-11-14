@@ -28,8 +28,12 @@ const t0 = 1700000000000;
 const tenMinutes = 600000;
 const timeout = MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + tenMinutes);
 
-GovernanceCheck check(GovernanceState prev, GovernanceState next, String by,
-        {int? epoch = 12}) =>
+GovernanceCheck check(
+  GovernanceState prev,
+  GovernanceState next,
+  String by, {
+  int? epoch = 12,
+}) =>
     validateCommit(prev, next, by, before: roster, after: roster, epoch: epoch);
 
 GovernanceState withTimeout(GovernanceState s, String who, MemberTimeout t) =>
@@ -49,14 +53,22 @@ void main() {
 
     test('nobody times out an equal, a superior, themselves or the owner', () {
       final prev = base();
-      expect(check(prev, withTimeout(prev, admin, timeout), mod).reject,
-          GovernanceReject.hierarchy);
-      expect(check(prev, withTimeout(prev, mod, timeout), mod).reject,
-          GovernanceReject.notAllowed);
-      expect(check(prev, withTimeout(prev, owner, timeout), admin).reject,
-          GovernanceReject.hierarchy);
-      expect(check(prev, withTimeout(prev, carol, timeout), bob).reject,
-          GovernanceReject.notAllowed);
+      expect(
+        check(prev, withTimeout(prev, admin, timeout), mod).reject,
+        GovernanceReject.hierarchy,
+      );
+      expect(
+        check(prev, withTimeout(prev, mod, timeout), mod).reject,
+        GovernanceReject.notAllowed,
+      );
+      expect(
+        check(prev, withTimeout(prev, owner, timeout), admin).reject,
+        GovernanceReject.hierarchy,
+      );
+      expect(
+        check(prev, withTimeout(prev, carol, timeout), bob).reject,
+        GovernanceReject.notAllowed,
+      );
     });
 
     test('a member cannot lift its own timeout or another', () {
@@ -70,28 +82,43 @@ void main() {
       final prev = base();
       final set = withTimeout(prev, bob, timeout);
       expect(
-          check(prev, set, mod, epoch: 13).reject, GovernanceReject.badShape);
+        check(prev, set, mod, epoch: 13).reject,
+        GovernanceReject.badShape,
+      );
       expect(
-          check(prev, set, mod, epoch: null).reject, GovernanceReject.badShape);
+        check(prev, set, mod, epoch: null).reject,
+        GovernanceReject.badShape,
+      );
     });
 
-    test('a timeout longer than 28 days or ending before it starts is refused',
-        () {
-      final prev = base();
-      final long = MemberTimeout(
-          epoch: 12, fromMs: t0, untilMs: t0 + maxTimeoutMillis + 1);
-      final backwards = MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0);
-      expect(check(prev, withTimeout(prev, bob, long), mod).reject,
-          GovernanceReject.badShape);
-      expect(check(prev, withTimeout(prev, bob, backwards), mod).reject,
-          GovernanceReject.badShape);
-    });
+    test(
+      'a timeout longer than 28 days or ending before it starts is refused',
+      () {
+        final prev = base();
+        final long = MemberTimeout(
+          epoch: 12,
+          fromMs: t0,
+          untilMs: t0 + maxTimeoutMillis + 1,
+        );
+        final backwards = MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0);
+        expect(
+          check(prev, withTimeout(prev, bob, long), mod).reject,
+          GovernanceReject.badShape,
+        );
+        expect(
+          check(prev, withTimeout(prev, bob, backwards), mod).reject,
+          GovernanceReject.badShape,
+        );
+      },
+    );
 
     test('equality sees a timeout-only edit, so it is never waved through', () {
       final set = withTimeout(base(), bob, timeout);
-      final edited = set.copyWith(timeouts: {
-        bob: const MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + 1)
-      });
+      final edited = set.copyWith(
+        timeouts: {
+          bob: const MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + 1),
+        },
+      );
       expect(edited == set, isFalse);
       // The same rev with a changed timeout is neither required nor a change.
       expect(check(set, edited, bob).ok, isFalse);
@@ -103,8 +130,9 @@ void main() {
       final required = requiredRecord(set, carol, before: roster, after: after);
       expect(required.timeouts, isEmpty);
       expect(
-          validateCommit(set, set, carol, before: roster, after: after).reject,
-          GovernanceReject.notPruned);
+        validateCommit(set, set, carol, before: roster, after: after).reject,
+        GovernanceReject.notPruned,
+      );
     });
 
     test('a timeout entry for an account outside the roster is refused', () {
@@ -128,34 +156,66 @@ void main() {
   group('commands', () {
     test('setTimeout records the server times at the next epoch', () {
       final commands = GovernanceCommands(
-          state: base(), actor: mod, members: roster, epoch: 12);
-      final next =
-          commands.setTimeout(bob, fromMs: t0, untilMs: t0 + tenMinutes);
+        state: base(),
+        actor: mod,
+        members: roster,
+        epoch: 12,
+      );
+      final next = commands.setTimeout(
+        bob,
+        fromMs: t0,
+        untilMs: t0 + tenMinutes,
+      );
       expect(next.timeouts[bob], timeout);
       expect(next.rev, base().rev + 1);
       final lifted = GovernanceCommands(
-              state: next, actor: mod, members: roster, epoch: 13)
-          .liftTimeout(bob);
+        state: next,
+        actor: mod,
+        members: roster,
+        epoch: 13,
+      ).liftTimeout(bob);
       expect(lifted.timeouts, isEmpty);
     });
 
     test('refuses without an epoch, against a superior, or with no entry', () {
       expect(
-          () => GovernanceCommands(state: base(), actor: mod, members: roster)
-              .setTimeout(bob, fromMs: t0, untilMs: t0 + 1),
-          throwsA(isA<GovernanceCommandException>()
-              .having((e) => e.reason, 'reason', 'no_epoch')));
+        () => GovernanceCommands(
+          state: base(),
+          actor: mod,
+          members: roster,
+        ).setTimeout(bob, fromMs: t0, untilMs: t0 + 1),
+        throwsA(
+          isA<GovernanceCommandException>().having(
+            (e) => e.reason,
+            'reason',
+            'no_epoch',
+          ),
+        ),
+      );
       expect(
-          () => GovernanceCommands(
-                  state: base(), actor: mod, members: roster, epoch: 12)
-              .setTimeout(admin, fromMs: t0, untilMs: t0 + 1),
-          throwsA(isA<GovernanceCommandException>()));
+        () => GovernanceCommands(
+          state: base(),
+          actor: mod,
+          members: roster,
+          epoch: 12,
+        ).setTimeout(admin, fromMs: t0, untilMs: t0 + 1),
+        throwsA(isA<GovernanceCommandException>()),
+      );
       expect(
-          () => GovernanceCommands(
-                  state: base(), actor: mod, members: roster, epoch: 12)
-              .liftTimeout(bob),
-          throwsA(isA<GovernanceCommandException>()
-              .having((e) => e.reason, 'reason', 'no_change')));
+        () => GovernanceCommands(
+          state: base(),
+          actor: mod,
+          members: roster,
+          epoch: 12,
+        ).liftTimeout(bob),
+        throwsA(
+          isA<GovernanceCommandException>().having(
+            (e) => e.reason,
+            'reason',
+            'no_change',
+          ),
+        ),
+      );
     });
   });
 
@@ -180,21 +240,25 @@ void main() {
       expect(drop(t0 + tenMinutes), isFalse);
       expect(drop(t0 + 1, who: carol), isFalse);
       expect(
-          shouldDropTimedOutPost(
-              record: null,
-              sender: bob,
-              serverTime: at(t0),
-              receivedAt: at(t0)),
-          isFalse);
+        shouldDropTimedOutPost(
+          record: null,
+          sender: bob,
+          serverTime: at(t0),
+          receivedAt: at(t0),
+        ),
+        isFalse,
+      );
     });
 
-    test('a post made before the timeout began is not hidden when read later',
-        () {
-      // An older post, fetched long after: its epoch is before the timeout's.
-      expect(drop(t0 - 1, receivedMs: t0 + 5000, epoch: 11), isFalse);
-      // A private channel post (no comparable epoch) before the start too.
-      expect(drop(t0 - 1, receivedMs: t0 + 5000), isFalse);
-    });
+    test(
+      'a post made before the timeout began is not hidden when read later',
+      () {
+        // An older post, fetched long after: its epoch is before the timeout's.
+        expect(drop(t0 - 1, receivedMs: t0 + 5000, epoch: 11), isFalse);
+        // A private channel post (no comparable epoch) before the start too.
+        expect(drop(t0 - 1, receivedMs: t0 + 5000), isFalse);
+      },
+    );
 
     test('a post backdated before the start is hidden by its epoch', () {
       expect(drop(t0 - 60000, receivedMs: t0 + 1000, epoch: 12), isTrue);
@@ -205,28 +269,37 @@ void main() {
       // A day-long timeout, a post stamped after its end but delivered at
       // its start: judged at this device's time plus the tolerance, inside.
       const day = 24 * 60 * 60 * 1000;
-      final long = withTimeout(base(), bob,
-          const MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + day));
+      final long = withTimeout(
+        base(),
+        bob,
+        const MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + day),
+      );
       expect(
-          shouldDropTimedOutPost(
-              record: long,
-              sender: bob,
-              serverTime: at(t0 + day + 1),
-              receivedAt: at(t0)),
-          isTrue);
+        shouldDropTimedOutPost(
+          record: long,
+          sender: bob,
+          serverTime: at(t0 + day + 1),
+          receivedAt: at(t0),
+        ),
+        isTrue,
+      );
       // Delivered after the end, it shows (the residual: a server may hold a
       // timed-out post back until the timeout is over).
       expect(
-          shouldDropTimedOutPost(
-              record: long,
-              sender: bob,
-              serverTime: at(t0 + day + 1),
-              receivedAt: at(t0 + day + 1)),
-          isFalse);
+        shouldDropTimedOutPost(
+          record: long,
+          sender: bob,
+          serverTime: at(t0 + day + 1),
+          receivedAt: at(t0 + day + 1),
+        ),
+        isFalse,
+      );
       // A modest skew within the tolerance near the end keeps honest posts.
       final skew = timeoutClockTolerance.inMilliseconds - 1000;
       expect(
-          drop(t0 + tenMinutes, receivedMs: t0 + tenMinutes - skew), isFalse);
+        drop(t0 + tenMinutes, receivedMs: t0 + tenMinutes - skew),
+        isFalse,
+      );
     });
 
     test('control payloads are never judged by a timeout', () {

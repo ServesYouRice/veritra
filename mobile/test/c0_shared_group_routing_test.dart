@@ -8,38 +8,43 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 const _owner = Session(
-    baseUrl: 'https://example.test',
-    token: 'token',
-    accountId: 'alice',
-    deviceId: 'dev');
+  baseUrl: 'https://example.test',
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'dev',
+);
 const _elsewhere = Session(
-    baseUrl: 'https://example.test',
-    token: 'other-token',
-    accountId: 'bob',
-    deviceId: 'other');
+  baseUrl: 'https://example.test',
+  token: 'other-token',
+  accountId: 'bob',
+  deviceId: 'other',
+);
 
 Channel _channel(String id, String kind, {int generation = 1}) => Channel(
-    id: id,
-    communityId: 'comm',
-    name: id,
-    kind: kind,
-    conversationId: kind == 'private' ? 'private_conv' : 'shared',
-    layoutGeneration: generation);
+      id: id,
+      communityId: 'comm',
+      name: id,
+      kind: kind,
+      conversationId: kind == 'private' ? 'private_conv' : 'shared',
+      layoutGeneration: generation,
+    );
 
 AppState _state(_Mls crypto) {
   final state = AppState(
-      apiClientFactory: (_) => _Api(),
-      syncServiceFactory: (_, __) => _QuietSync(),
-      localStore: MemoryLocalStore(),
-      cryptoService: crypto);
+    apiClientFactory: (_) => _Api(),
+    syncServiceFactory: (_, __) => _QuietSync(),
+    localStore: MemoryLocalStore(),
+    cryptoService: crypto,
+  );
   state.session = _owner;
   state.api = _Api();
   state.conversations = [
     Conversation(
-        id: 'shared',
-        kind: 'community_shared',
-        communityId: 'comm',
-        createdBy: 'alice'),
+      id: 'shared',
+      kind: 'community_shared',
+      communityId: 'comm',
+      createdBy: 'alice',
+    ),
     Conversation(id: 'group', kind: 'group', createdBy: 'alice'),
   ];
   state.channelsByCommunity = {
@@ -67,8 +72,10 @@ void main() {
         'shared_conversation_id': 'conv_shared',
       });
       expect(shared.sharedConversationId, 'conv_shared');
-      final legacy =
-          Community.fromJson(<String, Object?>{'id': 'c', 'name': 'Old'});
+      final legacy = Community.fromJson(<String, Object?>{
+        'id': 'c',
+        'name': 'Old',
+      });
       expect(legacy.sharedConversationId, isNull);
     });
 
@@ -95,24 +102,32 @@ void main() {
     });
 
     test('the shared group reads as a channel conversation', () {
-      final shared =
-          Conversation(id: 'c', kind: 'community_shared', createdBy: 'a');
+      final shared = Conversation(
+        id: 'c',
+        kind: 'community_shared',
+        createdBy: 'a',
+      );
       expect(shared.isCommunityShared, isTrue);
       expect(shared.isChannel, isTrue);
-      final legacy =
-          Conversation(id: 'c', kind: 'community_channel', createdBy: 'a');
+      final legacy = Conversation(
+        id: 'c',
+        kind: 'community_channel',
+        createdBy: 'a',
+      );
       expect(legacy.isCommunityShared, isFalse);
       expect(legacy.isChannel, isTrue);
     });
   });
 
-  test('C7 hands over the shared group\'s routed channels, never a private one',
-      () {
-    final state = _state(_Mls());
-    expect(state.c7Channels('shared'), ['chan_a', 'chan_b']);
-    expect(state.c7Channels('private_conv'), isEmpty);
-    expect(state.c7Channels('group'), isEmpty);
-  });
+  test(
+    'C7 hands over the shared group\'s routed channels, never a private one',
+    () {
+      final state = _state(_Mls());
+      expect(state.c7Channels('shared'), ['chan_a', 'chan_b']);
+      expect(state.c7Channels('private_conv'), isEmpty);
+      expect(state.c7Channels('group'), isEmpty);
+    },
+  );
 
   group('sending into a shared group', () {
     test('nothing is sent until a channel is chosen', () async {
@@ -130,8 +145,11 @@ void main() {
       addTearDown(state.dispose);
       state.selectChannel('shared', 'chan_a');
       await state.sendMessageTo('shared', 'hello');
-      expect(crypto.plain, isEmpty,
-          reason: 'a shared group never uses the channel-less call');
+      expect(
+        crypto.plain,
+        isEmpty,
+        reason: 'a shared group never uses the channel-less call',
+      );
       expect(crypto.routed, [('shared', 'chan_a', 1)]);
     });
 
@@ -140,37 +158,41 @@ void main() {
       final state = _state(crypto);
       addTearDown(state.dispose);
       state.channelsByCommunity = {
-        'comm': [_channel('chan_b', 'announcement', generation: 3)]
+        'comm': [_channel('chan_b', 'announcement', generation: 3)],
       };
       state.selectChannel('shared', 'chan_b');
       await state.sendMessageTo('shared', 'news');
       expect(crypto.routed, [('shared', 'chan_b', 3)]);
     });
 
-    test('a private or unknown channel is never posted to through the group',
-        () async {
-      final crypto = _Mls();
-      final state = _state(crypto);
-      addTearDown(state.dispose);
-      for (final channel in ['chan_p', 'chan_missing']) {
-        state.selectChannel('shared', channel);
-        expect(await state.sendMessageTo('shared', 'hello'), false);
-      }
-      expect(crypto.routed, isEmpty);
-      expect(crypto.plain, isEmpty);
-    });
+    test(
+      'a private or unknown channel is never posted to through the group',
+      () async {
+        final crypto = _Mls();
+        final state = _state(crypto);
+        addTearDown(state.dispose);
+        for (final channel in ['chan_p', 'chan_missing']) {
+          state.selectChannel('shared', channel);
+          expect(await state.sendMessageTo('shared', 'hello'), false);
+        }
+        expect(crypto.routed, isEmpty);
+        expect(crypto.plain, isEmpty);
+      },
+    );
 
-    test('leaving for another channel does not redirect a send already made',
-        () async {
-      final crypto = _Mls();
-      final state = _state(crypto);
-      addTearDown(state.dispose);
-      state.selectChannel('shared', 'chan_a');
-      final sent = state.sendMessageTo('shared', 'hello');
-      state.selectChannel('shared', 'chan_b');
-      await sent;
-      expect(crypto.routed, [('shared', 'chan_a', 1)]);
-    });
+    test(
+      'leaving for another channel does not redirect a send already made',
+      () async {
+        final crypto = _Mls();
+        final state = _state(crypto);
+        addTearDown(state.dispose);
+        state.selectChannel('shared', 'chan_a');
+        final sent = state.sendMessageTo('shared', 'hello');
+        state.selectChannel('shared', 'chan_b');
+        await sent;
+        expect(crypto.routed, [('shared', 'chan_a', 1)]);
+      },
+    );
 
     test('other conversations keep the channel-less call', () async {
       final crypto = _Mls();
@@ -202,10 +224,16 @@ void main() {
       final state = _state(_Mls());
       addTearDown(state.dispose);
       state.messagesByConversation = {
-        'shared': [post('m1', 'chan_a'), post('m2', 'chan_b'), post('m3', null)]
+        'shared': [
+          post('m1', 'chan_a'),
+          post('m2', 'chan_b'),
+          post('m3', null),
+        ],
       };
-      expect(state.timelineFor('shared').map((e) => e.id),
-          unorderedEquals(['m1', 'm2', 'm3']));
+      expect(
+        state.timelineFor('shared').map((e) => e.id),
+        unorderedEquals(['m1', 'm2', 'm3']),
+      );
       state.selectChannel('shared', 'chan_a');
       expect(state.timelineFor('shared').map((e) => e.id), ['m1']);
       state.selectChannel('shared', 'chan_b');
@@ -241,15 +269,20 @@ class _Mls implements MlsConversationCryptoService, ChannelRoutedCryptoService {
   void Function()? afterEncrypt;
 
   MessageEnvelope _envelope(String conversationId) => MessageEnvelope(
-      conversationId: conversationId,
-      idempotencyKey: 'action-${plain.length + routed.length}',
-      ciphertext: [1],
-      cryptoProtocol: 'test');
+        conversationId: conversationId,
+        idempotencyKey: 'action-${plain.length + routed.length}',
+        ciphertext: [1],
+        cryptoProtocol: 'test',
+      );
 
   @override
   Future<MessageEnvelope> encryptPayload(
-      String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {List<String> attachmentRefs = const [], String? draftText}) async {
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const [],
+    String? draftText,
+  }) async {
     plain.add(conversationId);
     afterEncrypt?.call();
     return _envelope(conversationId);
@@ -257,11 +290,14 @@ class _Mls implements MlsConversationCryptoService, ChannelRoutedCryptoService {
 
   @override
   Future<MessageEnvelope> encryptChannelPayload(
-      String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {required String channelId,
-      required int layoutGeneration,
-      List<String> attachmentRefs = const [],
-      String? draftText}) async {
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required String channelId,
+    required int layoutGeneration,
+    List<String> attachmentRefs = const [],
+    String? draftText,
+  }) async {
     routed.add((conversationId, channelId, layoutGeneration));
     afterEncrypt?.call();
     return _envelope(conversationId);

@@ -31,24 +31,26 @@ class _ClosingCrypto extends TestOnlyCryptoService
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('switch teardown waits until native crypto handles are closed',
-      () async {
-    final crypto = _ClosingCrypto();
-    final state = AppState(
-      apiClientFactory: (_) => throw StateError('unused'),
-      cryptoService: crypto,
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => PkQuietSync(),
-    );
-    var closed = false;
-    final leaving = state.closeForSwitch().then((_) => closed = true);
-    await crypto.closing.future;
-    await Future<void>.delayed(Duration.zero);
-    expect(closed, isFalse);
-    crypto.release.complete();
-    await leaving;
-    expect(closed, isTrue);
-  });
+  test(
+    'switch teardown waits until native crypto handles are closed',
+    () async {
+      final crypto = _ClosingCrypto();
+      final state = AppState(
+        apiClientFactory: (_) => throw StateError('unused'),
+        cryptoService: crypto,
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => PkQuietSync(),
+      );
+      var closed = false;
+      final leaving = state.closeForSwitch().then((_) => closed = true);
+      await crypto.closing.future;
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, isFalse);
+      crypto.release.complete();
+      await leaving;
+      expect(closed, isTrue);
+    },
+  );
 
   Future<PkHarness> signedIn() async {
     final h = PkHarness();
@@ -85,12 +87,14 @@ void main() {
     final a = PkHarness();
     await a.enrolled();
     final gate = a.api.syncGate = Completer<void>();
-    a.api.events.add(SyncEvent(
-      id: 1,
-      type: 'account.passkey_added',
-      createdAt: DateTime.utc(2026, 11, 8),
-      payload: <String, Object?>{'passkey_id': 'pk_late'},
-    ));
+    a.api.events.add(
+      SyncEvent(
+        id: 1,
+        type: 'account.passkey_added',
+        createdAt: DateTime.utc(2026, 11, 8),
+        payload: <String, Object?>{'passkey_id': 'pk_late'},
+      ),
+    );
     final b = await signedIn();
     addTearDown(b.dispose);
     // A signs in; its first sync page is requested and held.
@@ -111,25 +115,33 @@ void main() {
     await signing;
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(await a.store.loadSyncCursor(), 0,
-        reason: 'the late page must not commit');
+    expect(
+      await a.store.loadSyncCursor(),
+      0,
+      reason: 'the late page must not commit',
+    );
     expect(a.state.passkeyNotice, isNull);
     expect(b.state.passkeyNotice, isNull);
     expect(await b.store.loadSyncCursor(), 0);
   });
 
-  test('push of A is taken down before A is closed, and B starts clean',
-      () async {
-    final a = await signedIn();
-    final b = await signedIn();
-    addTearDown(b.dispose);
-    expect(await a.state.prepareToLeave(), isTrue,
-        reason: 'nothing registered means nothing to fail');
-    expect(a.state.pushConfigured, isFalse);
-    await a.state.closeForSwitch();
-    expect(b.state.session?.accountId, 'acct_owner');
-    expect(b.state.pushConfigured, isFalse);
-  });
+  test(
+    'push of A is taken down before A is closed, and B starts clean',
+    () async {
+      final a = await signedIn();
+      final b = await signedIn();
+      addTearDown(b.dispose);
+      expect(
+        await a.state.prepareToLeave(),
+        isTrue,
+        reason: 'nothing registered means nothing to fail',
+      );
+      expect(a.state.pushConfigured, isFalse);
+      await a.state.closeForSwitch();
+      expect(b.state.session?.accountId, 'acct_owner');
+      expect(b.state.pushConfigured, isFalse);
+    },
+  );
 
   group('push on the way out', () {
     Future<PkHarness> withPush() async {
@@ -168,13 +180,15 @@ void main() {
     test('a pending server registration is removed before leaving', () async {
       final a = await withPush();
       final gate = a.api.registerPushGate = Completer<void>();
-      a.push.endpointEvents.add(const PushEndpointEvent(
-        instance: 'acct_owner:dev_owner',
-        provider: 'fcm',
-        endpoint: 'opaque-token',
-        publicKey: '',
-        authSecret: '',
-      ));
+      a.push.endpointEvents.add(
+        const PushEndpointEvent(
+          instance: 'acct_owner:dev_owner',
+          provider: 'fcm',
+          endpoint: 'opaque-token',
+          publicKey: '',
+          authSecret: '',
+        ),
+      );
       for (var i = 0; i < 200 && a.api.pushRegisterRequests == 0; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 2));
       }
@@ -193,31 +207,35 @@ void main() {
       await a.state.closeForSwitch();
     });
 
-    test('timed-out registration is reported and cleaned after disposal',
-        () async {
-      final a = await withPush();
-      final gate = a.api.registerPushGate = Completer<void>();
-      a.push.endpointEvents.add(const PushEndpointEvent(
-        instance: 'acct_owner:dev_owner',
-        provider: 'fcm',
-        endpoint: 'opaque-token',
-        publicKey: '',
-        authSecret: '',
-      ));
-      for (var i = 0; i < 200 && a.api.pushRegisterRequests == 0; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 2));
-      }
-      expect(a.api.pushRegisterRequests, 1);
-      // The handoff is bounded; callers must ask before accepting this risk.
-      expect(await a.state.prepareToLeave(), isFalse);
-      await a.state.closeForSwitch();
-      gate.complete();
-      for (var i = 0; i < 200 && a.api.disabledPush.isEmpty; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 2));
-      }
-      expect(a.api.disabledPush, contains('sub-late'));
-      expect(a.state.pushRegistered, isFalse);
-    });
+    test(
+      'timed-out registration is reported and cleaned after disposal',
+      () async {
+        final a = await withPush();
+        final gate = a.api.registerPushGate = Completer<void>();
+        a.push.endpointEvents.add(
+          const PushEndpointEvent(
+            instance: 'acct_owner:dev_owner',
+            provider: 'fcm',
+            endpoint: 'opaque-token',
+            publicKey: '',
+            authSecret: '',
+          ),
+        );
+        for (var i = 0; i < 200 && a.api.pushRegisterRequests == 0; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 2));
+        }
+        expect(a.api.pushRegisterRequests, 1);
+        // The handoff is bounded; callers must ask before accepting this risk.
+        expect(await a.state.prepareToLeave(), isFalse);
+        await a.state.closeForSwitch();
+        gate.complete();
+        for (var i = 0; i < 200 && a.api.disabledPush.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 2));
+        }
+        expect(a.api.disabledPush, contains('sub-late'));
+        expect(a.state.pushRegistered, isFalse);
+      },
+    );
 
     test('a pending push start cannot register after leaving', () async {
       final a = PkHarness();

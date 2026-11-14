@@ -48,23 +48,31 @@ void main() {
     });
 
     test('an entry for another conversation is refused', () {
-      expect(AttachmentEntry.tryParse(_entry(), conversationId: 'conv_other'),
-          isNull);
+      expect(
+        AttachmentEntry.tryParse(_entry(), conversationId: 'conv_other'),
+        isNull,
+      );
     });
 
     test('malformed sizes, ids and bodies are refused', () {
       expect(AttachmentEntry.tryParse(_entry(plain: 0)), isNull);
       expect(
-          AttachmentEntry.tryParse(
-              _entry(plain: maxPlaintextAttachmentBytes + 1)),
-          isNull);
+        AttachmentEntry.tryParse(
+          _entry(plain: maxPlaintextAttachmentBytes + 1),
+        ),
+        isNull,
+      );
       expect(AttachmentEntry.tryParse(_entry(cipher: 10, plain: 10)), isNull);
-      expect(AttachmentEntry.tryParse(<String, Object?>{..._entry(), 'id': ''}),
-          isNull);
+      expect(
+        AttachmentEntry.tryParse(<String, Object?>{..._entry(), 'id': ''}),
+        isNull,
+      );
       expect(AttachmentEntry.tryParse('not a map'), isNull);
       expect(AttachmentEntry.listFromBody('{not json'), isEmpty);
-      expect(AttachmentEntry.listFromBody(jsonEncode(<Object?>[_entry(), 3])),
-          hasLength(1));
+      expect(
+        AttachmentEntry.listFromBody(jsonEncode(<Object?>[_entry(), 3])),
+        hasLength(1),
+      );
     });
 
     test('media types come from the picker or a known extension', () {
@@ -94,8 +102,10 @@ void main() {
     );
     final row = effects.single as InsertMessageEffect;
     expect(row.kind, LocalMessageKind.attachment);
-    expect(AttachmentEntry.listFromBody(row.body, conversationId: 'conv_1'),
-        hasLength(1));
+    expect(
+      AttachmentEntry.listFromBody(row.body, conversationId: 'conv_1'),
+      hasLength(1),
+    );
   });
 
   test('sending uploads ciphertext only and sends the key over MLS', () async {
@@ -106,8 +116,12 @@ void main() {
     final source = File('${tempDir.path}/photo.png')
       ..writeAsBytesSync(List<int>.filled(40, 7));
 
-    final sent = await state.sendAttachment('conv_1',
-        path: source.path, fileName: 'photo.png', mediaType: 'image/png');
+    final sent = await state.sendAttachment(
+      'conv_1',
+      path: source.path,
+      fileName: 'photo.png',
+      mediaType: 'image/png',
+    );
 
     expect(sent, isTrue);
     expect(api.uploadedBytes, crypto.ciphertext);
@@ -133,8 +147,11 @@ void main() {
     final state = _state(api, mls, crypto);
     final source = File('${tempDir.path}/big.bin')..writeAsBytesSync(<int>[1]);
 
-    final sent = await state.sendAttachment('conv_1',
-        path: source.path, fileName: 'big.bin');
+    final sent = await state.sendAttachment(
+      'conv_1',
+      path: source.path,
+      fileName: 'big.bin',
+    );
 
     expect(sent, isFalse);
     expect(mls.type, isNull);
@@ -143,77 +160,97 @@ void main() {
     state.dispose();
   });
 
-  test('loading stages the decrypted file, reads it back and removes it',
-      () async {
-    final api = _AttachmentApi();
-    final crypto = _FakeAttachmentCrypto(tempDir);
-    final state = _state(api, _FakeMls(), crypto);
-    final entry = AttachmentEntry.tryParse(
-        _entry(cipher: api.download.length, plain: 5))!;
+  test(
+    'loading stages the decrypted file, reads it back and removes it',
+    () async {
+      final api = _AttachmentApi();
+      final crypto = _FakeAttachmentCrypto(tempDir);
+      final state = _state(api, _FakeMls(), crypto);
+      final entry = AttachmentEntry.tryParse(
+        _entry(cipher: api.download.length, plain: 5),
+      )!;
 
-    final bytes = await state.loadAttachment(entry, conversationId: 'conv_1');
+      final bytes = await state.loadAttachment(entry, conversationId: 'conv_1');
 
-    expect(bytes, <int>[104, 101, 108, 108, 111]);
-    expect(crypto.decryptedCiphertext, api.download);
-    expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
-        isEmpty);
-    state.dispose();
-  });
+      expect(bytes, <int>[104, 101, 108, 108, 111]);
+      expect(crypto.decryptedCiphertext, api.download);
+      expect(
+        tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+        isEmpty,
+      );
+      state.dispose();
+    },
+  );
 
   test('a download of the wrong size is refused before decryption', () async {
     final api = _AttachmentApi();
     final crypto = _FakeAttachmentCrypto(tempDir);
     final state = _state(api, _FakeMls(), crypto);
     final entry = AttachmentEntry.tryParse(
-        _entry(cipher: api.download.length + 1, plain: 5))!;
+      _entry(cipher: api.download.length + 1, plain: 5),
+    )!;
 
-    await expectLater(state.loadAttachment(entry, conversationId: 'conv_1'),
-        throwsFormatException);
+    await expectLater(
+      state.loadAttachment(entry, conversationId: 'conv_1'),
+      throwsFormatException,
+    );
     expect(crypto.decryptedCiphertext, isNull);
-    expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
-        isEmpty);
+    expect(
+      tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+      isEmpty,
+    );
     state.dispose();
   });
 
-  test('a decryption that fails after writing part of the file leaves none',
-      () async {
-    final api = _AttachmentApi();
-    final crypto = _FakeAttachmentCrypto(tempDir)..failAfterPartialWrite = true;
-    final state = _state(api, _FakeMls(), crypto);
-    final entry = AttachmentEntry.tryParse(
-        _entry(cipher: api.download.length, plain: 5))!;
+  test(
+    'a decryption that fails after writing part of the file leaves none',
+    () async {
+      final api = _AttachmentApi();
+      final crypto = _FakeAttachmentCrypto(tempDir)
+        ..failAfterPartialWrite = true;
+      final state = _state(api, _FakeMls(), crypto);
+      final entry = AttachmentEntry.tryParse(
+        _entry(cipher: api.download.length, plain: 5),
+      )!;
 
-    await expectLater(state.loadAttachment(entry, conversationId: 'conv_1'),
-        throwsFormatException);
-    // The fake really wrote plaintext before throwing.
-    expect(crypto.partialDestinationPath, isNotNull);
-    expect(File(crypto.partialDestinationPath!).existsSync(), isFalse);
-    expect(tempDir.listSync().where((item) => item.path.contains('.veritra-')),
-        isEmpty);
-    state.dispose();
-  });
+      await expectLater(
+        state.loadAttachment(entry, conversationId: 'conv_1'),
+        throwsFormatException,
+      );
+      // The fake really wrote plaintext before throwing.
+      expect(crypto.partialDestinationPath, isNotNull);
+      expect(File(crypto.partialDestinationPath!).existsSync(), isFalse);
+      expect(
+        tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+        isEmpty,
+      );
+      state.dispose();
+    },
+  );
 
-  test('the start-up sweep removes stale staged plaintext and nothing else',
-      () async {
-    final crypto = _FakeAttachmentCrypto(tempDir);
-    final state = _state(_AttachmentApi(), _FakeMls(), crypto);
-    final old = DateTime.now().subtract(const Duration(hours: 3));
-    final stale = File('${tempDir.path}/.veritra-attachment-0a1b2c.plaintext')
-      ..writeAsStringSync('left by a crash')
-      ..setLastModifiedSync(old);
-    final unrelated = File('${tempDir.path}/notes.plaintext')
-      ..writeAsStringSync('keep')
-      ..setLastModifiedSync(old);
+  test(
+    'the start-up sweep removes stale staged plaintext and nothing else',
+    () async {
+      final crypto = _FakeAttachmentCrypto(tempDir);
+      final state = _state(_AttachmentApi(), _FakeMls(), crypto);
+      final old = DateTime.now().subtract(const Duration(hours: 3));
+      final stale = File('${tempDir.path}/.veritra-attachment-0a1b2c.plaintext')
+        ..writeAsStringSync('left by a crash')
+        ..setLastModifiedSync(old);
+      final unrelated = File('${tempDir.path}/notes.plaintext')
+        ..writeAsStringSync('keep')
+        ..setLastModifiedSync(old);
 
-    state.startAttachmentOrphanSweep();
-    for (var i = 0; i < 50 && stale.existsSync(); i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
+      state.startAttachmentOrphanSweep();
+      for (var i = 0; i < 50 && stale.existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
 
-    expect(stale.existsSync(), isFalse);
-    expect(unrelated.existsSync(), isTrue);
-    state.dispose();
-  });
+      expect(stale.existsSync(), isFalse);
+      expect(unrelated.existsSync(), isTrue);
+      state.dispose();
+    },
+  );
 
   test('without the attachment service nothing is offered', () {
     final state = AppState(
@@ -249,7 +286,10 @@ Map<String, Object?> _entry({
     };
 
 AppState _state(
-        _AttachmentApi api, _FakeMls mls, _FakeAttachmentCrypto crypto) =>
+  _AttachmentApi api,
+  _FakeMls mls,
+  _FakeAttachmentCrypto crypto,
+) =>
     AppState(
       apiClientFactory: (_) => api,
       cryptoService: mls,
@@ -299,9 +339,13 @@ class _AttachmentApi extends ApiClient {
 
   @override
   Future<Stream<List<int>>> downloadEncryptedAttachment(
-          String token, String attachmentId) async =>
-      Stream<List<int>>.fromIterable(
-          <List<int>>[download.sublist(0, 10), download.sublist(10)]);
+    String token,
+    String attachmentId,
+  ) async =>
+      Stream<List<int>>.fromIterable(<List<int>>[
+        download.sublist(0, 10),
+        download.sublist(10),
+      ]);
 
   @override
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {}

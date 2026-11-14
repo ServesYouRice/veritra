@@ -120,26 +120,32 @@ extension FrankRevealSql on EncryptedLocalDatabase {
     // history reset takes the reveal with it. The trigger below covers the
     // two ways a row stays but its content goes (delete for everyone, hide):
     // those keep the row as a tombstone, so the cascade never fires.
-    await customStatement('CREATE TABLE IF NOT EXISTS local_frank_reveals ('
-        'message_key TEXT PRIMARY KEY NOT NULL REFERENCES local_messages(key) ON DELETE CASCADE,'
-        'conversation_id TEXT NOT NULL, envelope_id TEXT NOT NULL,'
-        'frank_key BLOB NOT NULL CHECK(length(frank_key)=$frankRevealKeyBytes),'
-        'payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND $frankRevealMaxPayloadBytes),'
-        'stored_at INTEGER NOT NULL)');
     await customStatement(
-        'CREATE INDEX IF NOT EXISTS local_frank_reveals_conversation ON local_frank_reveals '
-        '(conversation_id)');
+      'CREATE TABLE IF NOT EXISTS local_frank_reveals ('
+      'message_key TEXT PRIMARY KEY NOT NULL REFERENCES local_messages(key) ON DELETE CASCADE,'
+      'conversation_id TEXT NOT NULL, envelope_id TEXT NOT NULL,'
+      'frank_key BLOB NOT NULL CHECK(length(frank_key)=$frankRevealKeyBytes),'
+      'payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND $frankRevealMaxPayloadBytes),'
+      'stored_at INTEGER NOT NULL)',
+    );
     await customStatement(
-        'CREATE TRIGGER IF NOT EXISTS local_frank_reveals_tombstone '
-        'AFTER UPDATE OF deleted_at, hidden_at ON local_messages '
-        'WHEN NEW.deleted_at IS NOT NULL OR NEW.hidden_at IS NOT NULL '
-        'BEGIN DELETE FROM local_frank_reveals WHERE message_key = NEW.key; END');
-    await customStatement('CREATE TABLE IF NOT EXISTS local_report_key_pins ('
-        'origin TEXT NOT NULL, owner_account_id TEXT NOT NULL,'
-        'public_key BLOB NOT NULL CHECK(length(public_key)=32),'
-        'key_rev INTEGER NOT NULL CHECK(key_rev>=1),'
-        'pinned_at INTEGER NOT NULL,'
-        'PRIMARY KEY(origin, owner_account_id))');
+      'CREATE INDEX IF NOT EXISTS local_frank_reveals_conversation ON local_frank_reveals '
+      '(conversation_id)',
+    );
+    await customStatement(
+      'CREATE TRIGGER IF NOT EXISTS local_frank_reveals_tombstone '
+      'AFTER UPDATE OF deleted_at, hidden_at ON local_messages '
+      'WHEN NEW.deleted_at IS NOT NULL OR NEW.hidden_at IS NOT NULL '
+      'BEGIN DELETE FROM local_frank_reveals WHERE message_key = NEW.key; END',
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_report_key_pins ('
+      'origin TEXT NOT NULL, owner_account_id TEXT NOT NULL,'
+      'public_key BLOB NOT NULL CHECK(length(public_key)=32),'
+      'key_rev INTEGER NOT NULL CHECK(key_rev>=1),'
+      'pinned_at INTEGER NOT NULL,'
+      'PRIMARY KEY(origin, owner_account_id))',
+    );
   }
 
   /// Stores [reveals] inside the caller's transaction. A reveal is kept only
@@ -148,40 +154,43 @@ extension FrankRevealSql on EncryptedLocalDatabase {
   /// expired was never stored, so each of those writes nothing (and never
   /// fails the commit that carries it).
   Future<void> _writeFrankRevealsInTransaction(
-      List<FrankReveal> reveals) async {
+    List<FrankReveal> reveals,
+  ) async {
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
     for (final reveal in reveals) {
       if (!reveal.isStorable) continue;
       await customStatement(
-          'INSERT OR IGNORE INTO local_frank_reveals '
-          '(message_key, conversation_id, envelope_id, frank_key, payload, stored_at, '
-          'designation, sender_account_id) '
-          'SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS ('
-          'SELECT 1 FROM local_messages WHERE key = ? '
-          'AND deleted_at IS NULL AND hidden_at IS NULL)',
-          <Object?>[
-            reveal.messageKey,
-            reveal.conversationId,
-            reveal.envelopeId,
-            Uint8List.fromList(reveal.frankKey),
-            Uint8List.fromList(reveal.payload),
-            now,
-            reveal.designation == null
-                ? null
-                : Uint8List.fromList(reveal.designation!),
-            reveal.senderAccountId,
-            reveal.messageKey,
-          ]);
+        'INSERT OR IGNORE INTO local_frank_reveals '
+        '(message_key, conversation_id, envelope_id, frank_key, payload, stored_at, '
+        'designation, sender_account_id) '
+        'SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS ('
+        'SELECT 1 FROM local_messages WHERE key = ? '
+        'AND deleted_at IS NULL AND hidden_at IS NULL)',
+        <Object?>[
+          reveal.messageKey,
+          reveal.conversationId,
+          reveal.envelopeId,
+          Uint8List.fromList(reveal.frankKey),
+          Uint8List.fromList(reveal.payload),
+          now,
+          reveal.designation == null
+              ? null
+              : Uint8List.fromList(reveal.designation!),
+          reveal.senderAccountId,
+          reveal.messageKey,
+        ],
+      );
     }
   }
 
   /// The reveal kept for the message [messageKey], or null.
   Future<FrankReveal?> readFrankReveal(String messageKey) async {
     final row = await customSelect(
-        'SELECT message_key, conversation_id, envelope_id, frank_key, payload, '
-        'designation, sender_account_id '
-        'FROM local_frank_reveals WHERE message_key = ?',
-        variables: [Variable.withString(messageKey)]).getSingleOrNull();
+      'SELECT message_key, conversation_id, envelope_id, frank_key, payload, '
+      'designation, sender_account_id '
+      'FROM local_frank_reveals WHERE message_key = ?',
+      variables: [Variable.withString(messageKey)],
+    ).getSingleOrNull();
     if (row == null) return null;
     return FrankReveal(
       messageKey: row.read<String>('message_key'),
@@ -210,22 +219,26 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       );
 
   Future<ReportKeyPin?> readReportKeyPin(
-      String origin, String ownerAccountId) async {
+    String origin,
+    String ownerAccountId,
+  ) async {
     final row = await customSelect(
-        'SELECT origin, owner_account_id, public_key, key_rev, pinned_at '
-        'FROM local_report_key_pins WHERE origin = ? AND owner_account_id = ?',
-        variables: [
-          Variable.withString(origin),
-          Variable.withString(ownerAccountId),
-        ]).getSingleOrNull();
+      'SELECT origin, owner_account_id, public_key, key_rev, pinned_at '
+      'FROM local_report_key_pins WHERE origin = ? AND owner_account_id = ?',
+      variables: [
+        Variable.withString(origin),
+        Variable.withString(ownerAccountId),
+      ],
+    ).getSingleOrNull();
     return row == null ? null : _reportKeyPinFromRow(row);
   }
 
   Future<List<ReportKeyPin>> readReportKeyPins(String origin) async {
     final rows = await customSelect(
-        'SELECT origin, owner_account_id, public_key, key_rev, pinned_at '
-        'FROM local_report_key_pins WHERE origin = ? ORDER BY owner_account_id',
-        variables: [Variable.withString(origin)]).get();
+      'SELECT origin, owner_account_id, public_key, key_rev, pinned_at '
+      'FROM local_report_key_pins WHERE origin = ? ORDER BY owner_account_id',
+      variables: [Variable.withString(origin)],
+    ).get();
     return rows.map(_reportKeyPinFromRow).toList(growable: false);
   }
 
@@ -239,20 +252,25 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       throw const FormatException('invalid report key pin');
     }
     await customStatement(
-        'INSERT OR REPLACE INTO local_report_key_pins '
-        '(origin, owner_account_id, public_key, key_rev, pinned_at) '
-        'VALUES (?, ?, ?, ?, ?)',
-        <Object?>[
-          pin.origin,
-          pin.ownerAccountId,
-          Uint8List.fromList(pin.publicKey),
-          pin.keyRev,
-          pin.pinnedAt,
-        ]);
+      'INSERT OR REPLACE INTO local_report_key_pins '
+      '(origin, owner_account_id, public_key, key_rev, pinned_at) '
+      'VALUES (?, ?, ?, ?, ?)',
+      <Object?>[
+        pin.origin,
+        pin.ownerAccountId,
+        Uint8List.fromList(pin.publicKey),
+        pin.keyRev,
+        pin.pinnedAt,
+      ],
+    );
   }
 
-  Future<void> deleteReportKeyPin(String origin, String ownerAccountId) =>
+  Future<void> deleteReportKeyPin(
+    String origin,
+    String ownerAccountId,
+  ) =>
       customStatement(
-          'DELETE FROM local_report_key_pins WHERE origin = ? AND owner_account_id = ?',
-          <Object?>[origin, ownerAccountId]);
+        'DELETE FROM local_report_key_pins WHERE origin = ? AND owner_account_id = ?',
+        <Object?>[origin, ownerAccountId],
+      );
 }

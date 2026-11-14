@@ -58,15 +58,22 @@ void main() {
     expect(bob.service.mlsAccountsOf('conv_unknown'), isNull);
 
     final sent = await alice.service.encryptPayload(
-        'conv_g', AppPayloadType.reportKey, <String, Object?>{'key': _key});
+      'conv_g',
+      AppPayloadType.reportKey,
+      <String, Object?>{'key': _key},
+    );
     // Never franked: an announcement is never reportable.
     expect(sent.frankCommit, isNull);
     await bob.service.processApplicationMessage(
-        bob.envelopeFrom(alice, sent), bob.nextEvent());
+      bob.envelopeFrom(alice, sent),
+      bob.nextEvent(),
+    );
     expect(
-        await bob.store
-            .loadSetting(reportKeyAnnouncementSetting('conv_g', 'acct_alice')),
-        _key);
+      await bob.store.loadSetting(
+        reportKeyAnnouncementSetting('conv_g', 'acct_alice'),
+      ),
+      _key,
+    );
     final row = (await bob.store.loadMessages('conv_g')).single;
     expect(row.kind, 'action');
     expect(row.senderHidden, isTrue);
@@ -75,45 +82,72 @@ void main() {
 
     // An announcement never expires.
     await expectLater(
-        alice.service.encryptExpiringPayload(
-            'conv_g', AppPayloadType.reportKey, <String, Object?>{'key': _key},
-            expiresAt: DateTime.now().add(const Duration(hours: 1))),
-        throwsArgumentError);
+      alice.service.encryptExpiringPayload(
+        'conv_g',
+        AppPayloadType.reportKey,
+        <String, Object?>{'key': _key},
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+      throwsArgumentError,
+    );
 
     // A request naming Bob is kept with its sync event; one naming only
     // someone else is not.
     final other = await alice.service.encryptPayload(
-        'conv_g', AppPayloadType.reportKeyRequest, <String, Object?>{
-      'accounts': ['acct_carol']
-    });
+      'conv_g',
+      AppPayloadType.reportKeyRequest,
+      <String, Object?>{
+        'accounts': ['acct_carol'],
+      },
+    );
     await bob.service.processApplicationMessage(
-        bob.envelopeFrom(alice, other), bob.nextEvent());
+      bob.envelopeFrom(alice, other),
+      bob.nextEvent(),
+    );
     expect(
-        await bob.store.loadSetting(reportKeyRequestSetting('conv_g')), isNull);
+      await bob.store.loadSetting(reportKeyRequestSetting('conv_g')),
+      isNull,
+    );
     final asked = await alice.service.encryptPayload(
-        'conv_g', AppPayloadType.reportKeyRequest, <String, Object?>{
-      'accounts': ['acct_carol', 'acct_bob']
-    });
+      'conv_g',
+      AppPayloadType.reportKeyRequest,
+      <String, Object?>{
+        'accounts': ['acct_carol', 'acct_bob'],
+      },
+    );
     final event = bob.nextEvent();
-    await bob.service
-        .processApplicationMessage(bob.envelopeFrom(alice, asked), event);
-    expect(await bob.store.loadSetting(reportKeyRequestSetting('conv_g')),
-        '$event');
+    await bob.service.processApplicationMessage(
+      bob.envelopeFrom(alice, asked),
+      event,
+    );
+    expect(
+      await bob.store.loadSetting(reportKeyRequestSetting('conv_g')),
+      '$event',
+    );
   }, skip: skip);
 
   test('a group without a C4 record keeps no report key', () async {
     final (alice, bob) = await pair('conv_dm', null);
     expect(bob.service.governanceOf('conv_dm'), isNull);
     final sent = await alice.service.encryptPayload(
-        'conv_dm', AppPayloadType.reportKey, <String, Object?>{'key': _key});
+      'conv_dm',
+      AppPayloadType.reportKey,
+      <String, Object?>{'key': _key},
+    );
     await bob.service.processApplicationMessage(
-        bob.envelopeFrom(alice, sent), bob.nextEvent());
+      bob.envelopeFrom(alice, sent),
+      bob.nextEvent(),
+    );
     expect(
-        await bob.store
-            .loadSetting(reportKeyAnnouncementSetting('conv_dm', 'acct_alice')),
-        isNull);
+      await bob.store.loadSetting(
+        reportKeyAnnouncementSetting('conv_dm', 'acct_alice'),
+      ),
+      isNull,
+    );
     expect(
-        (await bob.store.loadMessages('conv_dm')).single.senderHidden, isTrue);
+      (await bob.store.loadMessages('conv_dm')).single.senderHidden,
+      isTrue,
+    );
   }, skip: skip);
 }
 
@@ -125,23 +159,26 @@ Session _session(String accountId, String deviceId) => Session(
     );
 
 Future<void> _start(_Client alice, _Client bob, String conversationId) async {
-  await alice.service.initializeConversation(
-      conversationId, <DeviceKeyPackage>[await bob.keyPackage()]);
+  await alice.service.initializeConversation(conversationId, <DeviceKeyPackage>[
+    await bob.keyPackage(),
+  ]);
   final item = (await alice.store.pendingMlsMessages()).single;
   final bundle = MlsCommitBundle.decode(item.payload);
   await alice.service.completeCommitBundle(item);
-  await bob.service.processMlsMessage(MlsMessage(
-    id: 'mls_${++_serverIds}',
-    conversationId: conversationId,
-    senderAccountId: alice.accountId,
-    senderDeviceId: alice.deviceId,
-    kind: 'welcome',
-    payload: bundle.welcome,
-    idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
-    syncEventId: bob.nextEvent(),
-    createdAt: DateTime.now().toUtc(),
-    recipientDeviceId: bob.deviceId,
-  ));
+  await bob.service.processMlsMessage(
+    MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: conversationId,
+      senderAccountId: alice.accountId,
+      senderDeviceId: alice.deviceId,
+      kind: 'welcome',
+      payload: bundle.welcome,
+      idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
+      syncEventId: bob.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+      recipientDeviceId: bob.deviceId,
+    ),
+  );
 }
 
 class _Client {
@@ -154,16 +191,23 @@ class _Client {
   int events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final local = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: local);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: local,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
     await service.activateSession(_session(accountId, deviceId));
     return _Client(service, local, accountId, deviceId);
   }

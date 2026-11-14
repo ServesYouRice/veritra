@@ -55,7 +55,9 @@ class _Api extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const ConversationMute(muted: false);
 }
 
@@ -119,15 +121,16 @@ Conversation _group({String role = 'owner'}) => Conversation(
     );
 
 Future<void> _open(WidgetTester tester, AppState state) async {
-  await tester.pumpWidget(_app(
-    ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-  ));
+  await tester.pumpWidget(
+    _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('a chat of two leads with the person and the three actions',
-      (tester) async {
+  testWidgets('a chat of two leads with the person and the three actions', (
+    tester,
+  ) async {
     final state = _state(_Api(), <Conversation>[_dm()]);
     await _open(tester, state);
 
@@ -148,42 +151,49 @@ void main() {
     expect(find.byKey(const Key('details-call')), findsNothing);
   });
 
-  testWidgets('Call shows for a chat of two when calls exist, not for a group',
-      (tester) async {
-    final messenger = tester.binding.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(
+  testWidgets(
+    'Call shows for a chat of two when calls exist, not for a group',
+    (tester) async {
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
         const MethodChannel('FlutterWebRTC.Method'),
-        (call) async => throw PlatformException(code: 'none'));
-    addTearDown(() => messenger.setMockMethodCallHandler(
-        const MethodChannel('FlutterWebRTC.Method'), null));
-    final log = <String>[];
-    final incoming = StreamController<IncomingCallSignal>.broadcast();
-    late CallController controller;
-    await tester.runAsync(() async {
-      controller = CallController(
-        service: NativeCallService(
-          api: FakeCallApi(log),
-          token: 't',
-          crypto: FakeCallCrypto(log),
-          incoming: incoming.stream,
-          media: FakeMediaFactory(log),
-        ),
-        selfAccountId: 'acct_me',
+        (call) async => throw PlatformException(code: 'none'),
       );
-    });
-    addTearDown(controller.dispose);
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          const MethodChannel('FlutterWebRTC.Method'),
+          null,
+        ),
+      );
+      final log = <String>[];
+      final incoming = StreamController<IncomingCallSignal>.broadcast();
+      late CallController controller;
+      await tester.runAsync(() async {
+        controller = CallController(
+          service: NativeCallService(
+            api: FakeCallApi(log),
+            token: 't',
+            crypto: FakeCallCrypto(log),
+            incoming: incoming.stream,
+            media: FakeMediaFactory(log),
+          ),
+          selfAccountId: 'acct_me',
+        );
+      });
+      addTearDown(controller.dispose);
 
-    final dm = _state(_Api(), <Conversation>[_dm()]);
-    dm.callController.value = controller;
-    await _open(tester, dm);
-    expect(find.byKey(const Key('details-call')), findsOneWidget);
-    expect(find.text(englishL10n.detailsActionCall), findsOneWidget);
+      final dm = _state(_Api(), <Conversation>[_dm()]);
+      dm.callController.value = controller;
+      await _open(tester, dm);
+      expect(find.byKey(const Key('details-call')), findsOneWidget);
+      expect(find.text(englishL10n.detailsActionCall), findsOneWidget);
 
-    final group = _state(_Api(), <Conversation>[_group()]);
-    group.callController.value = controller;
-    await _open(tester, group);
-    expect(find.byKey(const Key('details-call')), findsNothing);
-  });
+      final group = _state(_Api(), <Conversation>[_group()]);
+      group.callController.value = controller;
+      await _open(tester, group);
+      expect(find.byKey(const Key('details-call')), findsNothing);
+    },
+  );
 
   testWidgets('the actions fit 320 dp at twice the text size', (tester) async {
     tester.view
@@ -193,18 +203,15 @@ void main() {
     final state = _state(_Api(), <Conversation>[_dm()]);
     tester.platformDispatcher.textScaleFactorTestValue = 2;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    await tester.pumpWidget(_app(
-      ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-    ));
+    await tester.pumpWidget(
+      _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+    );
     await tester.pumpAndSettle();
     // No overflow, and every action is still there to tap.
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('details-mute')), findsOneWidget);
     expect(find.byKey(const Key('details-search')), findsOneWidget);
-    for (final key in const <Key>[
-      Key('details-mute'),
-      Key('details-search'),
-    ]) {
+    for (final key in const <Key>[Key('details-mute'), Key('details-search')]) {
       expect(tester.getSize(find.byKey(key)).width, greaterThanOrEqualTo(48));
     }
   });
@@ -232,32 +239,43 @@ void main() {
       ..members = <ConversationMember>[
         ConversationMember(accountId: 'acct_me', username: 'me', role: 'owner'),
         ConversationMember(
-            accountId: 'acct_alice', username: 'alice', role: 'member'),
+          accountId: 'acct_alice',
+          username: 'alice',
+          role: 'member',
+        ),
       ];
     final state = _state(api, <Conversation>[_dm()]);
     await _open(tester, state);
-    expect(find.text(englishL10n.detailsSectionMembers.toUpperCase()),
-        findsNothing);
+    expect(
+      find.text(englishL10n.detailsSectionMembers.toUpperCase()),
+      findsNothing,
+    );
     expect(find.text('@me'), findsNothing);
     expect(find.text('OWNER'), findsNothing);
     expect(find.text('MEMBER'), findsNothing);
     expect(find.byKey(const Key('roles-tile')), findsNothing);
   });
 
-  testWidgets('a group keeps its members, roles and roles screen',
-      (tester) async {
+  testWidgets('a group keeps its members, roles and roles screen', (
+    tester,
+  ) async {
     final api = _Api()
       ..members = <ConversationMember>[
         ConversationMember(accountId: 'acct_me', username: 'me', role: 'owner'),
         ConversationMember(
-            accountId: 'acct_alice', username: 'alice', role: 'member'),
+          accountId: 'acct_alice',
+          username: 'alice',
+          role: 'member',
+        ),
       ];
     final state = _state(api, <Conversation>[_group()]);
     await _open(tester, state);
     expect(find.text('Family'), findsWidgets);
     expect(find.text(englishL10n.conversationPrivateGroup), findsOneWidget);
-    expect(find.text(englishL10n.detailsSectionMembers.toUpperCase()),
-        findsOneWidget);
+    expect(
+      find.text(englishL10n.detailsSectionMembers.toUpperCase()),
+      findsOneWidget,
+    );
     expect(find.text('@alice'), findsOneWidget);
     // U15: the role shows under the name, in words.
     expect(find.textContaining(englishL10n.roleOwner), findsOneWidget);
@@ -270,7 +288,9 @@ void main() {
     // Last on the page, so scroll to it. Collapsed: neither the ID nor the
     // note is anywhere on the page.
     await tester.scrollUntilVisible(
-        find.byKey(const Key('details-advanced')), 300);
+      find.byKey(const Key('details-advanced')),
+      300,
+    );
     expect(find.text(englishL10n.detailsConversationIdLabel), findsNothing);
     expect(find.text(englishL10n.detailsMembershipNote), findsNothing);
     expect(find.text(shortId('conv_1')), findsNothing);
@@ -282,8 +302,9 @@ void main() {
   });
 
   group('disappearing messages', () {
-    testWidgets('one row with the current value opens a sheet of timers',
-        (tester) async {
+    testWidgets('one row with the current value opens a sheet of timers', (
+      tester,
+    ) async {
       final state = _state(_Api(), <Conversation>[_dm(retention: 86400)]);
       await _open(tester, state);
 
@@ -317,8 +338,9 @@ void main() {
       expect(find.text('7 days'), findsOneWidget);
     });
 
-    testWidgets('locked in a chat of two, the reason names no role',
-        (tester) async {
+    testWidgets('locked in a chat of two, the reason names no role', (
+      tester,
+    ) async {
       final state = _state(_Api(), <Conversation>[_dm(role: 'member')]);
       await _open(tester, state);
       await tester.tap(find.byKey(const Key('details-retention')));
@@ -327,8 +349,9 @@ void main() {
       expect(find.text(englishL10n.detailsRetentionLocked), findsNothing);
     });
 
-    testWidgets('locked, the sheet says why and offers nothing to change',
-        (tester) async {
+    testWidgets('locked, the sheet says why and offers nothing to change', (
+      tester,
+    ) async {
       // A plain member cannot change the timer.
       final state = _state(_Api(), <Conversation>[_group(role: 'member')]);
       await _open(tester, state);
@@ -337,8 +360,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('retention-locked')), findsOneWidget);
       expect(find.text(englishL10n.detailsRetentionLocked), findsOneWidget);
-      final tiles = tester
-          .widgetList<RadioListTile<int?>>(find.byType(RadioListTile<int?>));
+      final tiles = tester.widgetList<RadioListTile<int?>>(
+        find.byType(RadioListTile<int?>),
+      );
       expect(tiles, hasLength(5));
       expect(tiles.every((tile) => tile.enabled == false), isTrue);
     });

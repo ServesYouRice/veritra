@@ -170,13 +170,13 @@ void main() {
       state.membersByConversation = <String, List<ConversationMember>>{
         'g': <ConversationMember>[
           ConversationMember(
-              accountId: 'acct_pal', username: 'pal', role: 'member'),
+            accountId: 'acct_pal',
+            username: 'pal',
+            role: 'member',
+          ),
         ],
       };
-      expect(
-        line(_group('g', 'Family'), _row('g')),
-        '@pal: see you at eight',
-      );
+      expect(line(_group('g', 'Family'), _row('g')), '@pal: see you at eight');
       // Without a member record the short account ID stands in.
       expect(
         line(_group('g', 'Family'), _row('g', sender: 'acct_zed1234567890')),
@@ -186,8 +186,10 @@ void main() {
 
     test('whitespace collapses, direction overrides go, long text is cut', () {
       expect(
-        line(_dm('c', 'acct_pal'),
-            _row('c', body: 'a\n\n b\u202e\u2066c\t d  ')),
+        line(
+          _dm('c', 'acct_pal'),
+          _row('c', body: 'a\n\n b\u202e\u2066c\t d  '),
+        ),
         'a bc d',
       );
       final long = line(_dm('c', 'acct_pal'), _row('c', body: 'x' * 500))!;
@@ -208,48 +210,64 @@ void main() {
       final dm = _dm('c', 'acct_pal');
       expect(
         line(
-            dm,
-            _row('c',
-                kind: LocalMessageKind.attachment,
-                body: attachment('application/pdf', 'invoice.pdf'))),
+          dm,
+          _row(
+            'c',
+            kind: LocalMessageKind.attachment,
+            body: attachment('application/pdf', 'invoice.pdf'),
+          ),
+        ),
         'Attachment',
       );
       expect(
         line(
-            dm,
-            _row('c',
-                kind: LocalMessageKind.attachment,
-                body: attachment('image/png', 'me.png'))),
+          dm,
+          _row(
+            'c',
+            kind: LocalMessageKind.attachment,
+            body: attachment('image/png', 'me.png'),
+          ),
+        ),
         'Photo',
       );
       expect(
         line(
-            dm,
-            _row('c',
-                kind: LocalMessageKind.attachment,
-                body: attachment('audio/mp4', 'note.m4a'))),
+          dm,
+          _row(
+            'c',
+            kind: LocalMessageKind.attachment,
+            body: attachment('audio/mp4', 'note.m4a'),
+          ),
+        ),
         'Voice note',
       );
       expect(
         line(
-            dm, _row('c', kind: LocalMessageKind.poll, body: '{"q":"Pizza?"}')),
+          dm,
+          _row('c', kind: LocalMessageKind.poll, body: '{"q":"Pizza?"}'),
+        ),
         'Poll',
       );
       // Never the file name or the question.
       expect(
         line(
-            dm,
-            _row('c',
-                kind: LocalMessageKind.attachment,
-                body: attachment('application/pdf', 'invoice.pdf'))),
+          dm,
+          _row(
+            'c',
+            kind: LocalMessageKind.attachment,
+            body: attachment('application/pdf', 'invoice.pdf'),
+          ),
+        ),
         isNot(contains('invoice')),
       );
     });
 
     test('a spoiler is hidden', () {
       expect(
-        line(_dm('c', 'acct_pal'),
-            _row('c', formatJson: '{"spoilers":[{"offset":0,"length":3}]}')),
+        line(
+          _dm('c', 'acct_pal'),
+          _row('c', formatJson: '{"spoilers":[{"offset":0,"length":3}]}'),
+        ),
         englishL10n.w8HiddenSpoiler,
       );
     });
@@ -261,8 +279,9 @@ void main() {
       expect(line(dm, _row('c', kind: LocalMessageKind.unverifiable)), isNull);
       expect(line(dm, _row('c', kind: LocalMessageKind.invalid)), isNull);
       expect(
-          line(dm, _row('c', kind: LocalMessageKind.unsupported, body: '{}')),
-          isNull);
+        line(dm, _row('c', kind: LocalMessageKind.unsupported, body: '{}')),
+        isNull,
+      );
       expect(line(dm, _row('c', body: null)), isNull);
     });
 
@@ -282,18 +301,21 @@ void main() {
     });
   });
 
-  testWidgets('a cold start shows the last message from the local store',
-      (tester) async {
+  testWidgets('a cold start shows the last message from the local store', (
+    tester,
+  ) async {
     final store = _Store()
       ..rows['c'] = <LocalMessage>[
         _row('c', key: 'dev:old', body: 'older', createdAt: 100),
         _row('c', key: 'dev:new', body: 'see you at eight', createdAt: 200),
         // An edit or reaction envelope is not a message.
-        _row('c',
-            key: 'dev:act',
-            kind: LocalMessageKind.action,
-            body: '{}',
-            createdAt: 300),
+        _row(
+          'c',
+          key: 'dev:act',
+          kind: LocalMessageKind.action,
+          body: '{}',
+          createdAt: 300,
+        ),
       ];
     final state = await _state(tester, store, <Conversation>[
       _dm('c', 'acct_pal'),
@@ -318,8 +340,9 @@ void main() {
     expect(find.text(englishL10n.conversationEncrypted), findsOneWidget);
   });
 
-  testWidgets('a message that arrives updates the row it belongs to',
-      (tester) async {
+  testWidgets('a message that arrives updates the row it belongs to', (
+    tester,
+  ) async {
     final store = _Store()
       ..rows['c'] = <LocalMessage>[_row('c', body: 'first')];
     final state = await _state(tester, store, <Conversation>[
@@ -355,7 +378,8 @@ void main() {
     expect(find.text('self-destructing'), findsOneWidget);
 
     await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 400)));
+      () => Future<void>.delayed(const Duration(milliseconds: 400)),
+    );
     // Any change notifies; the purge that would normally follow can lag.
     await tester.runAsync(() => state.setMentionsInMutedChats(true));
     await tester.pump();
@@ -363,8 +387,9 @@ void main() {
     expect(find.text(englishL10n.conversationEncrypted), findsOneWidget);
   });
 
-  testWidgets('the switch hides every preview and is remembered',
-      (tester) async {
+  testWidgets('the switch hides every preview and is remembered', (
+    tester,
+  ) async {
     final store = _Store()..rows['c'] = <LocalMessage>[_row('c')];
     final state = await _state(tester, store, <Conversation>[
       _dm('c', 'acct_pal'),
@@ -385,8 +410,9 @@ void main() {
     expect(find.text('see you at eight'), findsOneWidget);
   });
 
-  testWidgets('no history is read for a request or a chat with no message',
-      (tester) async {
+  testWidgets('no history is read for a request or a chat with no message', (
+    tester,
+  ) async {
     final store = _Store()
       ..rows['req'] = <LocalMessage>[
         _row('req', sender: 'acct_stranger', body: 'buy my coin'),

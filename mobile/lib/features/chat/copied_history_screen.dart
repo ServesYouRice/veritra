@@ -30,7 +30,8 @@ class CopiedHistoryListScreen extends StatelessWidget {
               ? EmptyState(
                   icon: Icons.history,
                   title: context.l10n.k2HistoryOnlyTitle,
-                  message: context.l10n.k2HistoryEmpty)
+                  message: context.l10n.k2HistoryEmpty,
+                )
               : ListView(
                   children: <Widget>[
                     _Notice(text: context.l10n.k2HistoryOnlyNotice),
@@ -41,7 +42,9 @@ class CopiedHistoryListScreen extends StatelessWidget {
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => CopiedHistoryScreen(
-                                state: state, conversation: item),
+                              state: state,
+                              conversation: item,
+                            ),
                           ),
                         ),
                       ),
@@ -64,8 +67,11 @@ String historyTitle(BuildContext context, HistoryConversation c) {
 /// Sender names are not part of the copy, so other members are shown as
 /// "Another member"; attachments are listed but never downloaded.
 class CopiedHistoryScreen extends StatefulWidget {
-  const CopiedHistoryScreen(
-      {required this.state, required this.conversation, super.key});
+  const CopiedHistoryScreen({
+    required this.state,
+    required this.conversation,
+    super.key,
+  });
 
   final AppState state;
   final HistoryConversation conversation;
@@ -75,8 +81,9 @@ class CopiedHistoryScreen extends StatefulWidget {
 }
 
 class _CopiedHistoryScreenState extends State<CopiedHistoryScreen> {
-  late Future<List<LocalMessage>> _messages =
-      widget.state.historyOnlyMessages(widget.conversation.id);
+  late Future<List<LocalMessage>> _messages = widget.state.historyOnlyMessages(
+    widget.conversation.id,
+  );
 
   @override
   void initState() {
@@ -115,15 +122,18 @@ class _CopiedHistoryScreenState extends State<CopiedHistoryScreen> {
                 }
                 if (rows.isEmpty) {
                   return EmptyState(
-                      icon: Icons.history,
-                      title: historyTitle(context, widget.conversation),
-                      message: context.l10n.k2HistoryEmpty);
+                    icon: Icons.history,
+                    title: historyTitle(context, widget.conversation),
+                    message: context.l10n.k2HistoryEmpty,
+                  );
                 }
                 return ListView.builder(
                   key: const ValueKey('copied-history-messages'),
                   itemCount: rows.length,
                   itemBuilder: (context, i) => _Row(
-                      message: rows[i], own: rows[i].senderAccountId == own),
+                    message: rows[i],
+                    own: rows[i].senderAccountId == own,
+                  ),
                 );
               },
             ),
@@ -146,7 +156,9 @@ class _Notice extends StatelessWidget {
       width: double.infinity,
       color: theme.colorScheme.surfaceContainerHighest,
       padding: const EdgeInsets.symmetric(
-          horizontal: BoneSpacing.gutter, vertical: BoneSpacing.sm),
+        horizontal: BoneSpacing.gutter,
+        vertical: BoneSpacing.sm,
+      ),
       child: Row(
         children: <Widget>[
           const Icon(Icons.lock_outline, size: 18),
@@ -171,26 +183,36 @@ class _Row extends StatelessWidget {
       LocalMessageKind.text => FormattedMessage(
           // No mention callback: copied history never looks up a profile.
           text: message.body ?? '',
-          formatJson: message.formatJson),
-      LocalMessageKind.attachment => Text(l10n.k2HistoryAttachment,
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(fontStyle: FontStyle.italic)),
-      _ => Text(l10n.chatMessageUnsupported,
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(fontStyle: FontStyle.italic)),
+          formatJson: message.formatJson,
+        ),
+      LocalMessageKind.attachment => Text(
+          l10n.k2HistoryAttachment,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      _ => Text(
+          l10n.chatMessageUnsupported,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontStyle: FontStyle.italic,
+          ),
+        ),
     };
     final at = DateTime.fromMillisecondsSinceEpoch(message.createdAt);
     return Padding(
       padding: const EdgeInsets.symmetric(
-          horizontal: BoneSpacing.gutter, vertical: BoneSpacing.sm),
+        horizontal: BoneSpacing.gutter,
+        vertical: BoneSpacing.sm,
+      ),
       child: Column(
         crossAxisAlignment:
             own ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-              '${own ? l10n.detailsYou : l10n.k2HistoryOtherMember} · '
-              '${formatDateTime(context, at)}',
-              style: theme.textTheme.labelSmall),
+            '${own ? l10n.detailsYou : l10n.k2HistoryOtherMember} · '
+            '${formatDateTime(context, at)}',
+            style: theme.textTheme.labelSmall,
+          ),
           const SizedBox(height: 2),
           body,
         ],

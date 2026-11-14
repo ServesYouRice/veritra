@@ -98,8 +98,10 @@ class AttachmentEntry {
 
   /// Parses the JSON list stored in a local attachment message. Malformed
   /// entries are dropped rather than shown.
-  static List<AttachmentEntry> listFromBody(String? body,
-      {String? conversationId}) {
+  static List<AttachmentEntry> listFromBody(
+    String? body, {
+    String? conversationId,
+  }) {
     if (body == null) return const <AttachmentEntry>[];
     try {
       final decoded = jsonDecode(body);
@@ -122,16 +124,20 @@ class AttachmentEntry {
 /// `invoice<RLO>fdp.exe` read as `invoiceexe.pdf`. Removing Cf also removes
 /// the zero-width joiner, which splits emoji ZWJ sequences into their parts;
 /// a name that is safe on every platform matters more than that.
-final RegExp _invisibleNameCharacters =
-    RegExp(r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', unicode: true);
+final RegExp _invisibleNameCharacters = RegExp(
+  r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]',
+  unicode: true,
+);
 
 /// Characters Windows does not allow in a file name (the path separators are
 /// split off before this).
 final RegExp _windowsInvalidNameCharacters = RegExp(r'[<>:"|?*]');
 
 /// Device names Windows reserves, with or without an extension.
-final RegExp _windowsReservedName =
-    RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', caseSensitive: false);
+final RegExp _windowsReservedName = RegExp(
+  r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$',
+  caseSensitive: false,
+);
 
 /// A file name that is safe to show and to use as a suggested save name:
 /// no directories, no invisible or direction-changing characters, valid on

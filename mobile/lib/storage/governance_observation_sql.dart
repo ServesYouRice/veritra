@@ -16,18 +16,21 @@ extension GovernanceObservationSql on EncryptedLocalDatabase {
   ''');
 
   Future<GovernanceObservations?> readGovernanceObservations(
-      String groupId) async {
+    String groupId,
+  ) async {
     final row = await customSelect(
-        'SELECT * FROM local_governance_observations WHERE group_id = ?',
-        variables: [Variable.withString(groupId)]).getSingleOrNull();
+      'SELECT * FROM local_governance_observations WHERE group_id = ?',
+      variables: [Variable.withString(groupId)],
+    ).getSingleOrNull();
     if (row == null) return null;
     final seen = row.read<int?>('election_seen');
     return GovernanceObservations(
       owner: row.read<String?>('owner'),
       ownerRev: row.read<int>('owner_rev'),
       lastOwnerActivity: DateTime.fromMicrosecondsSinceEpoch(
-          row.read<int>('last_owner_activity'),
-          isUtc: true),
+        row.read<int>('last_owner_activity'),
+        isUtc: true,
+      ),
       electionOpened: row.read<int?>('election_opened'),
       electionSeen: seen == null
           ? null
@@ -37,24 +40,29 @@ extension GovernanceObservationSql on EncryptedLocalDatabase {
 
   // Called only inside an MLS transaction after its counter/cursor guard.
   Future<void> _applyGovernanceObservation(
-      GovernanceObservationChange? change) async {
+    GovernanceObservationChange? change,
+  ) async {
     if (change == null) return;
-    final next =
-        change.reduce(await readGovernanceObservations(change.groupId));
-    await customStatement('''
+    final next = change.reduce(
+      await readGovernanceObservations(change.groupId),
+    );
+    await customStatement(
+      '''
       INSERT INTO local_governance_observations VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(group_id) DO UPDATE SET
         owner = excluded.owner, owner_rev = excluded.owner_rev,
         last_owner_activity = excluded.last_owner_activity,
         election_opened = excluded.election_opened, election_seen = excluded.election_seen
-    ''', [
-      change.groupId,
-      next.owner,
-      next.ownerRev,
-      next.lastOwnerActivity.microsecondsSinceEpoch,
-      next.electionOpened,
-      next.electionSeen?.microsecondsSinceEpoch
-    ]);
+    ''',
+      [
+        change.groupId,
+        next.owner,
+        next.ownerRev,
+        next.lastOwnerActivity.microsecondsSinceEpoch,
+        next.electionOpened,
+        next.electionSeen?.microsecondsSinceEpoch,
+      ],
+    );
   }
 
   Future<void> _clearGovernanceObservations() =>

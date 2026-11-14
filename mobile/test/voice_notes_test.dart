@@ -177,16 +177,18 @@ void main() {
     recorder.dispose();
   });
 
-  test('closing the screen mid-recording cancels and releases the microphone',
-      () async {
-    final recorder = controller();
-    await recorder.start();
-    recorder.dispose();
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(backend.cancelled, isTrue);
-    expect(backend.disposed, isTrue);
-    expect(File('${dir.path}/r.m4a').existsSync(), isFalse);
-  });
+  test(
+    'closing the screen mid-recording cancels and releases the microphone',
+    () async {
+      final recorder = controller();
+      await recorder.start();
+      recorder.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(backend.cancelled, isTrue);
+      expect(backend.disposed, isTrue);
+      expect(File('${dir.path}/r.m4a').existsSync(), isFalse);
+    },
+  );
 
   test('only known audio types play inline', () {
     expect(_voiceEntry().isVoiceNote, isTrue);
@@ -201,25 +203,28 @@ void main() {
     expect(formatVoiceDuration(Duration.zero), '0:00');
   });
 
-  testWidgets('tapping a voice note decrypts, plays and cleans up',
-      (tester) async {
+  testWidgets('tapping a voice note decrypts, plays and cleans up', (
+    tester,
+  ) async {
     final playback = _FakePlayback();
     final copy = File('${dir.path}/copy/voice.m4a')
       ..createSync(recursive: true)
       ..writeAsBytesSync(<int>[1]);
     var loads = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: VoiceNoteTile(
-          entry: _voiceEntry(),
-          load: () async {
-            loads++;
-            return copy;
-          },
-          playbackFactory: () => playback,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VoiceNoteTile(
+            entry: _voiceEntry(),
+            load: () async {
+              loads++;
+              return copy;
+            },
+            playbackFactory: () => playback,
+          ),
         ),
       ),
-    ));
+    );
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
 
     await tester.tap(find.byType(VoiceNoteTile));
@@ -240,21 +245,26 @@ void main() {
       await tester.pump();
     }
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
-    expect(copy.parent.existsSync(), isFalse,
-        reason: 'the plaintext copy goes when playback ends');
+    expect(
+      copy.parent.existsSync(),
+      isFalse,
+      reason: 'the plaintext copy goes when playback ends',
+    );
     expect(playback.disposed, isTrue);
   });
 
   testWidgets('a note that cannot be loaded says so', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: VoiceNoteTile(
-          entry: _voiceEntry(),
-          load: () async => throw const FileSystemException('gone'),
-          playbackFactory: _FakePlayback.new,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VoiceNoteTile(
+            entry: _voiceEntry(),
+            load: () async => throw const FileSystemException('gone'),
+            playbackFactory: _FakePlayback.new,
+          ),
         ),
       ),
-    ));
+    );
     await tester.tap(find.byType(VoiceNoteTile));
     await tester.pump();
     await tester.pump();

@@ -18,8 +18,9 @@ class FrameEncryptionUnavailable implements Exception {
 
 /// The HKDF salt the native key provider derives each frame key with, the
 /// same on every device. The raw key is `K(s,t)` from the MLS core.
-final Uint8List b6FrameSalt =
-    Uint8List.fromList(utf8.encode('veritra-b6-frame-v1'));
+final Uint8List b6FrameSalt = Uint8List.fromList(
+  utf8.encode('veritra-b6-frame-v1'),
+);
 
 /// The exact key provider options B6 requires (design, "Required cryptor
 /// settings"): discard frames with no key, no magic bytes (no frame skips
@@ -141,8 +142,11 @@ class WebRtcFrameKeys implements FrameKeySink {
     _chain(() async {
       try {
         for (final id in [participant, ...aliases]) {
-          final ok =
-              await provider.setKey(participantId: id, index: index, key: copy);
+          final ok = await provider.setKey(
+            participantId: id,
+            index: index,
+            key: copy,
+          );
           if (!ok) failed.value = true;
         }
       } finally {
@@ -171,7 +175,10 @@ class WebRtcFrameKeys implements FrameKeySink {
     _chain(() async {
       for (final id in ids) {
         await provider.setKey(
-            participantId: id, index: index, key: _randomKey());
+          participantId: id,
+          index: index,
+          key: _randomKey(),
+        );
       }
     });
   }
@@ -200,12 +207,18 @@ class WebRtcFrameKeys implements FrameKeySink {
       try {
         for (final entry in now.entries) {
           final ok = await provider.setKey(
-              participantId: alias, index: entry.key, key: entry.value);
+            participantId: alias,
+            index: entry.key,
+            key: entry.value,
+          );
           if (!ok) failed.value = true;
         }
         for (final index in stale) {
           await provider.setKey(
-              participantId: alias, index: index, key: _randomKey());
+            participantId: alias,
+            index: index,
+            key: _randomKey(),
+          );
         }
       } finally {
         for (final key in now.values) {
@@ -248,7 +261,10 @@ class WebRtcFrameKeys implements FrameKeySink {
       sendIndex.value = null;
       for (final (participant, index) in slots) {
         await provider.setKey(
-            participantId: participant, index: index, key: _randomKey());
+          participantId: participant,
+          index: index,
+          key: _randomKey(),
+        );
       }
     });
   }

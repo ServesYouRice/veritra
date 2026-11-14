@@ -139,15 +139,16 @@ class OwnerProofPins {
   }
 
   Future<void> _save(Map<String, ReportKeyPin?> overrides) => store.saveSetting(
-      ownerProofPinsSetting(origin),
-      jsonEncode(<String, Object?>{
-        for (final entry in overrides.entries)
-          entry.key: entry.value == null
-              ? null
-              : <String, Object?>{
-                  'key': base64Encode(entry.value!.publicKey),
-                  'rev': entry.value!.keyRev,
-                  'at': entry.value!.pinnedAt,
-                },
-      }));
+        ownerProofPinsSetting(origin),
+        jsonEncode(<String, Object?>{
+          for (final entry in overrides.entries)
+            entry.key: entry.value == null
+                ? null
+                : <String, Object?>{
+                    'key': base64Encode(entry.value!.publicKey),
+                    'rev': entry.value!.keyRev,
+                    'at': entry.value!.pinnedAt,
+                  },
+        }),
+      );
 }

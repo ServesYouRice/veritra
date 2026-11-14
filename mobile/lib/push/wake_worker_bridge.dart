@@ -7,27 +7,32 @@ enum WakeOutcome { committed, noChange, retry, unavailable }
 enum WakeNoticeResult { shown, suppressed, unavailable }
 
 class WakeBootstrap {
-  const WakeBootstrap(
-      {required this.launchBackground,
-      this.boundProfile,
-      required this.uiAttached,
-      required this.nativeSilent,
-      required this.canOptIn});
+  const WakeBootstrap({
+    required this.launchBackground,
+    this.boundProfile,
+    required this.uiAttached,
+    required this.nativeSilent,
+    required this.canOptIn,
+  });
   final bool launchBackground, uiAttached, nativeSilent, canOptIn;
   final String? boundProfile;
 }
 
 class WakePermit {
-  const WakePermit(
-      {required this.permit,
-      required this.profile,
-      required this.wakeGeneration,
-      required this.budgetMs,
-      required this.deadlineEpochMs});
+  const WakePermit({
+    required this.permit,
+    required this.profile,
+    required this.wakeGeneration,
+    required this.budgetMs,
+    required this.deadlineEpochMs,
+  });
   final String permit, profile;
   final int wakeGeneration, budgetMs, deadlineEpochMs;
-  Map<String, Object> get identity =>
-      {'protocol': 1, 'permit': permit, 'profile': profile};
+  Map<String, Object> get identity => {
+        'protocol': 1,
+        'permit': permit,
+        'profile': profile,
+      };
 }
 
 class WakeCancellation {
@@ -71,8 +76,11 @@ class PlatformWakeWorkerBridge {
       throw const FormatException('invalid native wake protocol');
   static bool _matches(String pattern, String value) =>
       RegExp(pattern).stringMatch(value) == value;
-  static Map<Object?, Object?> _map(Object? value, Set<String> keys,
-      {bool protocol = true}) {
+  static Map<Object?, Object?> _map(
+    Object? value,
+    Set<String> keys, {
+    bool protocol = true,
+  }) {
     if (value is! Map ||
         value.keys.any((key) => !keys.contains(key)) ||
         (protocol && value['protocol'] != 1)) _invalid();
@@ -98,8 +106,9 @@ class PlatformWakeWorkerBridge {
   static String _permitName(Object? value) {
     if (value is! String ||
         !_matches(
-            r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-            value)) _invalid();
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+          value,
+        )) _invalid();
     return value;
   }
 
@@ -111,23 +120,25 @@ class PlatformWakeWorkerBridge {
         'bound_profile',
         'ui_attached',
         'native_silent',
-        'can_opt_in'
+        'can_opt_in',
       });
       if (map['launch'] != 'ui' && map['launch'] != 'background') _invalid();
       final bound = map['bound_profile'];
       if (_bool(map['can_opt_in'])) _invalid();
       return WakeBootstrap(
-          launchBackground: map['launch'] == 'background',
-          boundProfile: bound == null ? null : _profileName(bound),
-          uiAttached: _bool(map['ui_attached']),
-          nativeSilent: _bool(map['native_silent']),
-          canOptIn: _bool(map['can_opt_in']));
+        launchBackground: map['launch'] == 'background',
+        boundProfile: bound == null ? null : _profileName(bound),
+        uiAttached: _bool(map['ui_attached']),
+        nativeSilent: _bool(map['native_silent']),
+        canOptIn: _bool(map['can_opt_in']),
+      );
     } on MissingPluginException {
       return const WakeBootstrap(
-          launchBackground: false,
-          uiAttached: true,
-          nativeSilent: false,
-          canOptIn: false);
+        launchBackground: false,
+        uiAttached: true,
+        nativeSilent: false,
+        canOptIn: false,
+      );
     }
   }
 
@@ -145,11 +156,12 @@ class PlatformWakeWorkerBridge {
     _channel.setMethodCallHandler(_handle);
   }
 
-  Future<bool> install(
-      {required String profile,
-      required Future<WakeOutcome> Function(WakePermit) onRun,
-      required Future<void> Function(WakeCancellation) onCancel,
-      void Function(bool)? onUiAttached}) async {
+  Future<bool> install({
+    required String profile,
+    required Future<WakeOutcome> Function(WakePermit) onRun,
+    required Future<void> Function(WakeCancellation) onCancel,
+    void Function(bool)? onUiAttached,
+  }) async {
     _profileName(profile);
     if (_disposed ||
         (_profile != null && _profile != profile) ||
@@ -164,9 +176,12 @@ class PlatformWakeWorkerBridge {
     var installed = false;
     try {
       final map = _map(
-          await _channel.invokeMethod<Object?>(
-              'install', {'protocol': 1, 'profile': profile}),
-          {'protocol', 'native_silent', 'worker_attached', 'can_opt_in'});
+        await _channel.invokeMethod<Object?>('install', {
+          'protocol': 1,
+          'profile': profile,
+        }),
+        {'protocol', 'native_silent', 'worker_attached', 'can_opt_in'},
+      );
       // Native installation authorizes extra phone wakes only for a bridge
       // built with allowOptIn; any other caller treats true as a bad reply.
       final optIn = _bool(map['can_opt_in']);
@@ -195,15 +210,23 @@ class PlatformWakeWorkerBridge {
       return null;
     }
     if (call.method == 'cancel') {
-      final map =
-          _map(call.arguments, {'protocol', 'permit', 'profile', 'reason'});
+      final map = _map(call.arguments, {
+        'protocol',
+        'permit',
+        'profile',
+        'reason',
+      });
       final permit = _permitName(map['permit']),
           profile = _profileName(map['profile']);
       if (profile != _profile ||
-          !const {'deadline', 'os_stop', 'unregistered'}
-              .contains(map['reason'])) return false;
-      await _cancel
-          ?.call(WakeCancellation(permit, profile, map['reason'] as String));
+          !const {
+            'deadline',
+            'os_stop',
+            'unregistered',
+          }.contains(map['reason'])) return false;
+      await _cancel?.call(
+        WakeCancellation(permit, profile, map['reason'] as String),
+      );
       return true;
     }
     if (call.method != 'run') throw MissingPluginException();
@@ -213,14 +236,15 @@ class PlatformWakeWorkerBridge {
       'profile',
       'wake_generation',
       'budget_ms',
-      'deadline_epoch_ms'
+      'deadline_epoch_ms',
     });
     final permit = WakePermit(
-        permit: _permitName(map['permit']),
-        profile: _profileName(map['profile']),
-        wakeGeneration: _int(map['wake_generation'], 1, 0x7fffffffffffffff),
-        budgetMs: _int(map['budget_ms'], 1, 20000),
-        deadlineEpochMs: _int(map['deadline_epoch_ms'], 1, 0x7fffffffffffffff));
+      permit: _permitName(map['permit']),
+      profile: _profileName(map['profile']),
+      wakeGeneration: _int(map['wake_generation'], 1, 0x7fffffffffffffff),
+      budgetMs: _int(map['budget_ms'], 1, 20000),
+      deadlineEpochMs: _int(map['deadline_epoch_ms'], 1, 0x7fffffffffffffff),
+    );
     var outcome = WakeOutcome.unavailable;
     if (permit.profile == _profile && _running == null && _run != null) {
       _running = permit.permit;
@@ -238,7 +262,7 @@ class PlatformWakeWorkerBridge {
       'outcome': switch (outcome) {
         WakeOutcome.noChange => 'no_change',
         _ => outcome.name,
-      }
+      },
     };
   }
 
@@ -246,9 +270,10 @@ class PlatformWakeWorkerBridge {
     if (_disposed || permit.profile != _profile)
       return const WakePermitStatus(false, 0);
     final map = _map(
-        await _channel.invokeMethod<Object?>('validatePermit', permit.identity),
-        {'active', 'remaining_ms'},
-        protocol: false);
+      await _channel.invokeMethod<Object?>('validatePermit', permit.identity),
+      {'active', 'remaining_ms'},
+      protocol: false,
+    );
     final active = _bool(map['active']);
     final remaining = _int(map['remaining_ms'], 0, 20000);
     if (active != (remaining > 0)) _invalid();
@@ -256,17 +281,21 @@ class PlatformWakeWorkerBridge {
   }
 
   Future<WakeNoticeResult> presentGenericNotice(
-      WakePermit permit, String noticeId) async {
+    WakePermit permit,
+    String noticeId,
+  ) async {
     if (_disposed || permit.profile != _profile)
       return WakeNoticeResult.unavailable;
     if (!_matches(r'^[0-9a-f]{32}$', noticeId)) _invalid();
-    final value = await _channel.invokeMethod<Object?>(
-        'presentGenericNotice', {...permit.identity, 'notice_id': noticeId});
+    final value = await _channel.invokeMethod<Object?>('presentGenericNotice', {
+      ...permit.identity,
+      'notice_id': noticeId,
+    });
     return switch (value) {
       'shown' => WakeNoticeResult.shown,
       'suppressed' => WakeNoticeResult.suppressed,
       'unavailable' => WakeNoticeResult.unavailable,
-      _ => _invalid()
+      _ => _invalid(),
     };
   }
 
@@ -274,8 +303,10 @@ class PlatformWakeWorkerBridge {
     _profileName(profile);
     if (_profile != null && _profile != profile) return false;
     try {
-      return await _channel.invokeMethod<bool>(
-              'uninstall', {'protocol': 1, 'profile': profile}) ??
+      return await _channel.invokeMethod<bool>('uninstall', {
+            'protocol': 1,
+            'profile': profile,
+          }) ??
           false;
     } on MissingPluginException {
       return false;

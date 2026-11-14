@@ -10,26 +10,29 @@ extension InviteAnchorSql on EncryptedLocalDatabase {
   )''');
 
   Future<void> writeInviteAnchor(InviteAnchor anchor) => customStatement(
-          'INSERT INTO local_invite_anchors VALUES (?, ?, ?, ?) '
-          'ON CONFLICT(conversation_id) DO UPDATE SET account_id=excluded.account_id, '
-          'device_id=excluded.device_id, signing_key=excluded.signing_key',
-          [
-            anchor.conversationId,
-            anchor.accountId,
-            anchor.deviceId,
-            Uint8List.fromList(anchor.signingKey)
-          ]);
+        'INSERT INTO local_invite_anchors VALUES (?, ?, ?, ?) '
+        'ON CONFLICT(conversation_id) DO UPDATE SET account_id=excluded.account_id, '
+        'device_id=excluded.device_id, signing_key=excluded.signing_key',
+        [
+          anchor.conversationId,
+          anchor.accountId,
+          anchor.deviceId,
+          Uint8List.fromList(anchor.signingKey),
+        ],
+      );
 
   Future<InviteAnchor?> readInviteAnchor(String conversationId) async {
     final row = await customSelect(
-        'SELECT * FROM local_invite_anchors WHERE conversation_id = ?',
-        variables: [Variable.withString(conversationId)]).getSingleOrNull();
+      'SELECT * FROM local_invite_anchors WHERE conversation_id = ?',
+      variables: [Variable.withString(conversationId)],
+    ).getSingleOrNull();
     if (row == null) return null;
     return InviteAnchor(
-        conversationId: conversationId,
-        accountId: row.read<String>('account_id'),
-        deviceId: row.read<String>('device_id'),
-        signingKey: row.read<Uint8List>('signing_key'));
+      conversationId: conversationId,
+      accountId: row.read<String>('account_id'),
+      deviceId: row.read<String>('device_id'),
+      signingKey: row.read<Uint8List>('signing_key'),
+    );
   }
 
   Future<void> _clearInviteAnchors() =>

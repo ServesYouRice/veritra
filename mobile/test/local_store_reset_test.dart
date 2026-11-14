@@ -47,8 +47,10 @@ class _ScriptedStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) {
     if (failWrite(key)) throw StateError('keystore refused the write');
-    return super
-        .write(key: key, value: value == null ? null : stored(key, value));
+    return super.write(
+      key: key,
+      value: value == null ? null : stored(key, value),
+    );
   }
 }
 
@@ -109,27 +111,31 @@ void main() {
     return copy.readCursor();
   }
 
-  test('a key that cannot be read is kept, and the moved copy opens with it',
-      () async {
-    final original = await seed();
-    final storage = _ScriptedStorage()..failRead = (key) => key == _keyName;
-    final store = storeWith(storage);
+  test(
+    'a key that cannot be read is kept, and the moved copy opens with it',
+    () async {
+      final original = await seed();
+      final storage = _ScriptedStorage()..failRead = (key) => key == _keyName;
+      final store = storeWith(storage);
 
-    await store.quarantineUnreadableDatabase(confirmed: true);
+      await store.quarantineUnreadableDatabase(confirmed: true);
 
-    // The read failed, so nothing says the key is gone: it stays.
-    expect(await plain.read(key: _keyName), original.key);
-    final moved = File('${quarantined().path}/veritra-local.db');
-    expect(moved.readAsBytesSync(), original.bytes);
-    expect(await cursorOf(moved, original.key), 4);
-    expect(File('${directory.path}/veritra-local.reset-intent').existsSync(),
-        isFalse);
+      // The read failed, so nothing says the key is gone: it stays.
+      expect(await plain.read(key: _keyName), original.key);
+      final moved = File('${quarantined().path}/veritra-local.db');
+      expect(moved.readAsBytesSync(), original.bytes);
+      expect(await cursorOf(moved, original.key), 4);
+      expect(
+        File('${directory.path}/veritra-local.reset-intent').existsSync(),
+        isFalse,
+      );
 
-    // Once the keystore reads again, the device opens with the kept key.
-    storage.failRead = (_) => false;
-    expect(await store.loadSyncCursor(), 0);
-    expect(await plain.read(key: _keyName), original.key);
-  });
+      // Once the keystore reads again, the device opens with the kept key.
+      storage.failRead = (_) => false;
+      expect(await store.loadSyncCursor(), 0);
+      expect(await plain.read(key: _keyName), original.key);
+    },
+  );
 
   test('a key whose copy cannot be written is not deleted', () async {
     final original = await seed();
@@ -165,8 +171,9 @@ void main() {
 
   test('a verified copy lets the reset drop the key as before', () async {
     final original = await seed();
-    await storeWith(_ScriptedStorage())
-        .quarantineUnreadableDatabase(confirmed: true);
+    await storeWith(
+      _ScriptedStorage(),
+    ).quarantineUnreadableDatabase(confirmed: true);
 
     final folder = quarantined();
     final stamp = folder.path.split('unreadable-').last;
@@ -181,17 +188,22 @@ void main() {
   test('an interrupted reset with an unreadable key keeps the key', () async {
     final original = await seed();
     const stamp = '1700000000000000';
-    File('${directory.path}/veritra-local.reset-intent')
-        .writeAsStringSync(stamp);
+    File(
+      '${directory.path}/veritra-local.reset-intent',
+    ).writeAsStringSync(stamp);
     final storage = _ScriptedStorage()..failRead = (key) => key == _keyName;
 
     // The open finishes the reset first, then cannot read the key.
     await expectLater(
-        storeWith(storage).loadSyncCursor(),
-        throwsA(isA<LocalStoreUnavailableException>().having(
-            (error) => error.kind,
-            'kind',
-            LocalStoreFailureKind.keyUnavailable)));
+      storeWith(storage).loadSyncCursor(),
+      throwsA(
+        isA<LocalStoreUnavailableException>().having(
+          (error) => error.kind,
+          'kind',
+          LocalStoreFailureKind.keyUnavailable,
+        ),
+      ),
+    );
     expect(await plain.read(key: _keyName), original.key);
     final moved = File('${directory.path}/unreadable-$stamp/veritra-local.db');
     expect(await cursorOf(moved, original.key), 4);

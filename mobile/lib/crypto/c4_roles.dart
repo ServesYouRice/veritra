@@ -283,10 +283,11 @@ extension _RoleStateDevice on NativeCryptoDevice {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(genesisRecord, roleRecordMaxBytes);
     _withTwo(
-        groupId.codeUnits,
-        genesisRecord,
-        (group, record) =>
-            _bindings._groupCreateWithRoles(_liveHandle, group, record));
+      groupId.codeUnits,
+      genesisRecord,
+      (group, record) =>
+          _bindings._groupCreateWithRoles(_liveHandle, group, record),
+    );
   }
 
   /// [stageCommitKeyed] that also carries the group's new role [record]
@@ -302,7 +303,7 @@ extension _RoleStateDevice on NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
@@ -310,15 +311,28 @@ extension _RoleStateDevice on NativeCryptoDevice {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(record, roleRecordMaxBytes);
     final changes = encodeKeyedMembershipChanges(
-        adds: adds, removes: removes, allowEmpty: true);
-    return _bindings._withByteLists([groupId.codeUnits, changes, record],
-        (slices) {
+      adds: adds,
+      removes: removes,
+      allowEmpty: true,
+    );
+    return _bindings._withByteLists([groupId.codeUnits, changes, record], (
+      slices,
+    ) {
       final commit = calloc<_PmOwnedBuffer>();
       final welcome = calloc<_PmOwnedBuffer>();
       final epoch = calloc<Uint64>();
       try {
-        _bindings._check(_bindings._groupStageWithRoles(_liveHandle, slices[0],
-            slices[1], slices[2], commit, welcome, epoch));
+        _bindings._check(
+          _bindings._groupStageWithRoles(
+            _liveHandle,
+            slices[0],
+            slices[1],
+            slices[2],
+            commit,
+            welcome,
+            epoch,
+          ),
+        );
         final commitBytes = _bindings._take(commit.ref);
         commit.ref
           ..data = nullptr
@@ -361,7 +375,7 @@ extension _RoleStateDevice on NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
@@ -370,53 +384,59 @@ extension _RoleStateDevice on NativeCryptoDevice {
     if (record != null) _bindings._bounded(record, roleRecordMaxBytes);
     final proofs = encodeLeaveProofs(leaveStatements);
     final changes = encodeKeyedMembershipChanges(
-        adds: adds, removes: removes, allowEmpty: record != null);
+      adds: adds,
+      removes: removes,
+      allowEmpty: record != null,
+    );
     return _bindings._withByteLists(
-        [groupId.codeUnits, changes, proofs],
-        (slices) => _bindings._withOptionalSlice(record, (recordSlice) {
-              final commit = calloc<_PmOwnedBuffer>();
-              final welcome = calloc<_PmOwnedBuffer>();
-              final epoch = calloc<Uint64>();
-              try {
-                _bindings._check(_bindings._groupStageProven(
-                    _liveHandle,
-                    slices[0],
-                    slices[1],
-                    recordSlice,
-                    slices[2],
-                    commit,
-                    welcome,
-                    epoch));
-                final commitBytes = _bindings._take(commit.ref);
-                commit.ref
-                  ..data = nullptr
-                  ..len = 0;
-                final List<int> welcomeBytes;
-                if (welcome.ref.data == nullptr) {
-                  welcomeBytes = const <int>[];
-                } else {
-                  welcomeBytes = _bindings._take(welcome.ref);
-                  welcome.ref
-                    ..data = nullptr
-                    ..len = 0;
-                }
-                if (adds.isEmpty != welcomeBytes.isEmpty) {
-                  throw const NativeCryptoException(
-                      NativeCryptoError.invalidOutput);
-                }
-                return (
-                  commit: commitBytes,
-                  welcome: welcomeBytes,
-                  epoch: epoch.value
-                );
-              } finally {
-                if (commit.ref.data != nullptr) _bindings._free(commit.ref);
-                if (welcome.ref.data != nullptr) _bindings._free(welcome.ref);
-                calloc.free(commit);
-                calloc.free(welcome);
-                calloc.free(epoch);
-              }
-            }));
+      [groupId.codeUnits, changes, proofs],
+      (slices) => _bindings._withOptionalSlice(record, (recordSlice) {
+        final commit = calloc<_PmOwnedBuffer>();
+        final welcome = calloc<_PmOwnedBuffer>();
+        final epoch = calloc<Uint64>();
+        try {
+          _bindings._check(
+            _bindings._groupStageProven(
+              _liveHandle,
+              slices[0],
+              slices[1],
+              recordSlice,
+              slices[2],
+              commit,
+              welcome,
+              epoch,
+            ),
+          );
+          final commitBytes = _bindings._take(commit.ref);
+          commit.ref
+            ..data = nullptr
+            ..len = 0;
+          final List<int> welcomeBytes;
+          if (welcome.ref.data == nullptr) {
+            welcomeBytes = const <int>[];
+          } else {
+            welcomeBytes = _bindings._take(welcome.ref);
+            welcome.ref
+              ..data = nullptr
+              ..len = 0;
+          }
+          if (adds.isEmpty != welcomeBytes.isEmpty) {
+            throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+          }
+          return (
+            commit: commitBytes,
+            welcome: welcomeBytes,
+            epoch: epoch.value,
+          );
+        } finally {
+          if (commit.ref.data != nullptr) _bindings._free(commit.ref);
+          if (welcome.ref.data != nullptr) _bindings._free(welcome.ref);
+          calloc.free(commit);
+          calloc.free(welcome);
+          calloc.free(epoch);
+        }
+      }),
+    );
   }
 
   /// This device's leave statement for [groupId] (ABI 24): valid until its
@@ -424,10 +444,12 @@ extension _RoleStateDevice on NativeCryptoDevice {
   Uint8List _signLeaveImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     final bytes = _bindings._withSlice(
-        Uint8List.fromList(groupId.codeUnits),
-        (group) => _bindings._output(
-            (out) => _bindings._c4SignLeave(_liveHandle, group, out),
-            maximum: leaveStatementBytes));
+      Uint8List.fromList(groupId.codeUnits),
+      (group) => _bindings._output(
+        (out) => _bindings._c4SignLeave(_liveHandle, group, out),
+        maximum: leaveStatementBytes,
+      ),
+    );
     if (!isLeaveStatement(bytes)) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -443,15 +465,23 @@ extension _RoleStateDevice on NativeCryptoDevice {
   /// (or any failure here) restore the committed state; never seal it. A
   /// review this binding cannot read is discarded before it throws.
   IncomingCommitReview _stageIncomingCommitImpl(
-      String groupId, List<int> commit) {
+    String groupId,
+    List<int> commit,
+  ) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
     final bytes = _bindings._withByteLists(
-        <List<int>>[groupId.codeUnits, commit],
-        (slices) => _bindings._output(
-            (out) => _bindings._groupStageIncoming(
-                _liveHandle, slices[0], slices[1], out),
-            maximum: _roleOutputMaxBytes));
+      <List<int>>[groupId.codeUnits, commit],
+      (slices) => _bindings._output(
+        (out) => _bindings._groupStageIncoming(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          out,
+        ),
+        maximum: _roleOutputMaxBytes,
+      ),
+    );
     try {
       return _readReview(bytes);
     } on Object {
@@ -471,10 +501,20 @@ extension _RoleStateDevice on NativeCryptoDevice {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
     return _bindings._withByteLists(
-        <List<int>>[groupId.codeUnits, commit],
-        (slices) => _commitPairs((flags, epoch, root, added, committer) =>
-            _bindings._groupMergeIncoming(_liveHandle, slices[0], slices[1],
-                flags, epoch, root, added, committer)));
+      <List<int>>[groupId.codeUnits, commit],
+      (slices) => _commitPairs(
+        (flags, epoch, root, added, committer) => _bindings._groupMergeIncoming(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          flags,
+          epoch,
+          root,
+          added,
+          committer,
+        ),
+      ),
+    );
   }
 
   /// Drops the commit held for [groupId] (the caller refused it). The group
@@ -484,8 +524,9 @@ extension _RoleStateDevice on NativeCryptoDevice {
     return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
       final held = calloc<Uint8>();
       try {
-        _bindings
-            ._check(_bindings._groupDiscardIncoming(_liveHandle, group, held));
+        _bindings._check(
+          _bindings._groupDiscardIncoming(_liveHandle, group, held),
+        );
         return held.value == 1;
       } finally {
         calloc.free(held);
@@ -498,10 +539,12 @@ extension _RoleStateDevice on NativeCryptoDevice {
   GroupRoleState _groupRoleStateImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     final bytes = _bindings._withSlice(
-        Uint8List.fromList(groupId.codeUnits),
-        (group) => _bindings._output(
-            (out) => _bindings._groupRoleState(_liveHandle, group, out),
-            maximum: _roleOutputMaxBytes));
+      Uint8List.fromList(groupId.codeUnits),
+      (group) => _bindings._output(
+        (out) => _bindings._groupRoleState(_liveHandle, group, out),
+        maximum: _roleOutputMaxBytes,
+      ),
+    );
     return _readRoleState(bytes);
   }
 }

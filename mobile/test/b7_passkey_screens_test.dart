@@ -73,19 +73,24 @@ void main() {
       domains: domains,
     );
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      home: ConnectScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        home: ConnectScreen(state: state),
+      ),
+    );
     // U20: sign-in sits behind "I already have an account".
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
     await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('welcome-signed-in-before')),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byType(TextFormField).first, 'https://chat.example.com');
+      find.byType(TextFormField).first,
+      'https://chat.example.com',
+    );
     await tester.pump(const Duration(milliseconds: 700));
     await tester.pump();
     return state;
@@ -94,43 +99,57 @@ void main() {
   final button = find.byKey(const ValueKey<String>('connect-passkey'));
 
   group('the connect screen', () {
-    testWidgets('shows the passkey button on an enrolled Android phone',
-        (tester) async {
+    testWidgets('shows the passkey button on an enrolled Android phone', (
+      tester,
+    ) async {
       await openConnect(tester);
       expect(button, findsOneWidget);
       expect(find.text('Sign in with a passkey'), findsOneWidget);
     });
 
     testWidgets('hides it on Linux', (tester) async {
-      await openConnect(tester,
-          supported: false, platform: PasskeyPlatform.linux);
+      await openConnect(
+        tester,
+        supported: false,
+        platform: PasskeyPlatform.linux,
+      );
       expect(button, findsNothing);
     });
 
-    testWidgets('hides it on an iOS host that is not in the build list',
-        (tester) async {
+    testWidgets('hides it on an iOS host that is not in the build list', (
+      tester,
+    ) async {
       await openConnect(tester, platform: PasskeyPlatform.ios);
       expect(button, findsNothing);
     });
 
     testWidgets('shows it on iOS for a host in the build list', (tester) async {
-      await openConnect(tester,
-          platform: PasskeyPlatform.ios,
-          domains: const <String>['chat.example.com']);
+      await openConnect(
+        tester,
+        platform: PasskeyPlatform.ios,
+        domains: const <String>['chat.example.com'],
+      );
       expect(button, findsOneWidget);
     });
 
-    testWidgets('hides it where the server reports no passkeys',
-        (tester) async {
+    testWidgets('hides it where the server reports no passkeys', (
+      tester,
+    ) async {
       await openConnect(tester, info: null);
       expect(button, findsNothing);
     });
 
-    testWidgets('hides it where the operator left the platform out',
-        (tester) async {
-      await openConnect(tester,
-          info: const PasskeyServerInfo(
-              rpId: 'chat.example.com', android: false, apple: true));
+    testWidgets('hides it where the operator left the platform out', (
+      tester,
+    ) async {
+      await openConnect(
+        tester,
+        info: const PasskeyServerInfo(
+          rpId: 'chat.example.com',
+          android: false,
+          apple: true,
+        ),
+      );
       expect(button, findsNothing);
     });
 
@@ -152,22 +171,27 @@ void main() {
       return h;
     }
 
-    testWidgets('lists passkeys and adds one after the password check',
-        (tester) async {
+    testWidgets('lists passkeys and adds one after the password check', (
+      tester,
+    ) async {
       final h = await signedIn(tester);
       h.api.records = <PasskeyRecord>[
         PasskeyRecord(
-            id: 'pk_1',
-            name: 'Work phone',
-            createdAt: DateTime.utc(2026, 11, 1),
-            synced: true),
+          id: 'pk_1',
+          name: 'Work phone',
+          createdAt: DateTime.utc(2026, 11, 1),
+          synced: true,
+        ),
       ];
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: PasskeysScreen(state: h.state),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: PasskeysScreen(state: h.state),
+        ),
+      );
       await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 50)));
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
       await tester.pump();
       expect(find.text('Work phone'), findsOneWidget);
       // U37: one fact per row.
@@ -182,7 +206,8 @@ void main() {
       await tester.enterText(find.byType(TextField), 'owner-password');
       await tester.tap(find.text('Continue'));
       await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 100)));
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
       await tester.pumpAndSettle();
       expect(h.passkeys.created, hasLength(1));
       expect(h.api.trace, contains('register:cer_reg:Passkey 1'));
@@ -191,37 +216,45 @@ void main() {
     testWidgets('says so when this server offers none here', (tester) async {
       final h = await signedIn(tester);
       h.api.status = <String, Object?>{'setup_required': false};
-      await tester.pumpWidget(MaterialApp(
-        theme: veritraLightTheme(),
-        home: PasskeysScreen(state: h.state),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: veritraLightTheme(),
+          home: PasskeysScreen(state: h.state),
+        ),
+      );
       await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 50)));
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
       await tester.pump();
       expect(find.byKey(const ValueKey('off')), findsOneWidget);
       expect(find.byKey(const ValueKey<String>('passkeys-add')), findsNothing);
     });
   });
 
-  testWidgets('the banner shows and dismisses a passkey notice',
-      (tester) async {
+  testWidgets('the banner shows and dismisses a passkey notice', (
+    tester,
+  ) async {
     final h = PkHarness();
     addTearDown(h.dispose);
     await h.enrolled();
-    h.api.events.add(SyncEvent(
-      id: 1,
-      type: 'account.passkey_added',
-      createdAt: DateTime.utc(2026, 11, 8),
-      payload: <String, Object?>{'passkey_id': 'pk_other'},
-    ));
+    h.api.events.add(
+      SyncEvent(
+        id: 1,
+        type: 'account.passkey_added',
+        createdAt: DateTime.utc(2026, 11, 8),
+        payload: <String, Object?>{'passkey_id': 'pk_other'},
+      ),
+    );
     await tester.runAsync(() async {
       await h.state.signInWithPasskey(pkOrigin);
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      home: Scaffold(body: AccountRecoveryBanner(state: h.state)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        home: Scaffold(body: AccountRecoveryBanner(state: h.state)),
+      ),
+    );
     expect(h.state.passkeyNotice, PasskeyNotice.added);
     expect(find.textContaining('A passkey was added'), findsOneWidget);
     await tester.tap(find.text('Dismiss'));

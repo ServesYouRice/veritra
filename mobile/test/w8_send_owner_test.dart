@@ -11,30 +11,33 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 const owner = Session(
-    baseUrl: 'https://example.test',
-    token: 'old-token',
-    accountId: 'alice',
-    deviceId: 'dev');
+  baseUrl: 'https://example.test',
+  token: 'old-token',
+  accountId: 'alice',
+  deviceId: 'dev',
+);
 const other = Session(
-    baseUrl: 'https://example.test',
-    token: 'new-token',
-    accountId: 'bob',
-    deviceId: 'other');
+  baseUrl: 'https://example.test',
+  token: 'new-token',
+  accountId: 'bob',
+  deviceId: 'other',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test('queued old plaintext cannot capture a newer session', () async {
     final store = _HeldCapacityStore(), crypto = _Mls();
     final state = AppState(
-        apiClientFactory: (_) => _Api(),
-        syncServiceFactory: (_, __) => _QuietSync(),
-        localStore: store,
-        cryptoService: crypto);
+      apiClientFactory: (_) => _Api(),
+      syncServiceFactory: (_, __) => _QuietSync(),
+      localStore: store,
+      cryptoService: crypto,
+    );
     addTearDown(state.dispose);
     state.session = owner;
     state.api = _Api();
     state.conversations = [
-      Conversation(id: 'conv', kind: 'group', createdBy: 'alice')
+      Conversation(id: 'conv', kind: 'group', createdBy: 'alice'),
     ];
     final first = state.sendMessageTo('conv', 'first');
     await store.entered.future;
@@ -50,47 +53,61 @@ void main() {
   test('forward stops after first destination changes session', () async {
     final store = MemoryLocalStore(), crypto = _Mls();
     final state = AppState(
-        apiClientFactory: (_) => _Api(),
-        syncServiceFactory: (_, __) => _QuietSync(),
-        localStore: store,
-        cryptoService: crypto);
+      apiClientFactory: (_) => _Api(),
+      syncServiceFactory: (_, __) => _QuietSync(),
+      localStore: store,
+      cryptoService: crypto,
+    );
     addTearDown(state.dispose);
     state.session = owner;
     state.api = _Api();
     state.conversations = [
       for (final id in ['source', 'dest1', 'dest2'])
-        Conversation(id: id, kind: 'group', createdBy: 'alice')
+        Conversation(id: id, kind: 'group', createdBy: 'alice'),
     ];
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
-    await store.commitMlsTransition(MlsStateTransition(
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List.filled(32, 1),
+        sealedState: [1],
+      ),
+      0,
+    );
+    await store.commitMlsTransition(
+      MlsStateTransition(
         messageId: 'seed',
         conversationId: 'source',
         expectedCounter: 1,
         expectedCursor: 0,
         state: StoredCryptoState(
-            counter: 2, stateKey: List.filled(32, 1), sealedState: [2]),
+          counter: 2,
+          stateKey: List.filled(32, 1),
+          sealedState: [2],
+        ),
         cursor: 1,
         messageEffects: [
           const InsertMessageEffect(
-              key: 'dev:source',
-              conversationId: 'source',
-              senderAccountId: 'alice',
-              senderDeviceId: 'dev',
-              kind: 'text',
-              body: 'private source',
-              createdAt: 1,
-              state: 'received')
-        ]));
+            key: 'dev:source',
+            conversationId: 'source',
+            senderAccountId: 'alice',
+            senderDeviceId: 'dev',
+            kind: 'text',
+            body: 'private source',
+            createdAt: 1,
+            state: 'received',
+          ),
+        ],
+      ),
+    );
     await state.refreshHistory('source');
     crypto.afterEncrypt = () => state.session = other;
     expect(
-        await state.forwardMessage(
-            state.historyFor('source').forKey('dev:source')!,
-            ['dest1', 'dest2']),
-        false);
+      await state.forwardMessage(
+        state.historyFor('source').forKey('dev:source')!,
+        ['dest1', 'dest2'],
+      ),
+      false,
+    );
     expect(crypto.calls, 1);
     expect(await store.pendingEnvelopes(), isEmpty);
   });
@@ -117,15 +134,20 @@ class _Mls implements MlsConversationCryptoService {
   void Function()? afterEncrypt;
   @override
   Future<MessageEnvelope> encryptPayload(
-      String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {List<String> attachmentRefs = const [], String? draftText}) async {
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const [],
+    String? draftText,
+  }) async {
     calls++;
     afterEncrypt?.call();
     return MessageEnvelope(
-        conversationId: conversationId,
-        idempotencyKey: 'action-$calls',
-        ciphertext: [1],
-        cryptoProtocol: 'test');
+      conversationId: conversationId,
+      idempotencyKey: 'action-$calls',
+      ciphertext: [1],
+      cryptoProtocol: 'test',
+    );
   }
 
   @override

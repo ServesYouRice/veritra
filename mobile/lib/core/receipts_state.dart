@@ -34,8 +34,9 @@ class ReceiptsState extends ChangeNotifier {
       _byConversation[conversationId] ?? const <MemberReceipt>[];
 
   void set(String conversationId, List<MemberReceipt> receipts) {
-    _byConversation[conversationId] =
-        List<MemberReceipt>.unmodifiable(receipts);
+    _byConversation[conversationId] = List<MemberReceipt>.unmodifiable(
+      receipts,
+    );
     notifyListeners();
   }
 
@@ -63,8 +64,11 @@ class ReceiptsState extends ChangeNotifier {
     DateTime createdAt, {
     required bool showRead,
   }) =>
-      tickForReceipts(receiptsFor(conversationId), createdAt,
-          showRead: showRead);
+      tickForReceipts(
+        receiptsFor(conversationId),
+        createdAt,
+        showRead: showRead,
+      );
 }
 
 /// [ReceiptsState.tickFor] over an explicit list.
@@ -104,10 +108,10 @@ abstract class ReceiptPreferenceStore {
 /// errors are thrown to [ReceiptPreferences], which keeps read state private
 /// until the choice is known; a preference must never block startup.
 class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
-  SecureReceiptPreferenceStore(
-      {FlutterSecureStorage? storage,
-      ProfileScope scope = const ProfileScope()})
-      : _key = scope.secureKey('read_receipts.v1'),
+  SecureReceiptPreferenceStore({
+    FlutterSecureStorage? storage,
+    ProfileScope scope = const ProfileScope(),
+  })  : _key = scope.secureKey('read_receipts.v1'),
         _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(resetOnError: false),

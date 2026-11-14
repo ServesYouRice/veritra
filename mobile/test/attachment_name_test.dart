@@ -29,8 +29,11 @@ void main() {
       test(entry.key, () {
         for (final code in entry.value) {
           final raw = 'ab${String.fromCharCode(code)}cd.txt';
-          expect(safeAttachmentName(raw), 'abcd.txt',
-              reason: 'U+${code.toRadixString(16)}');
+          expect(
+            safeAttachmentName(raw),
+            'abcd.txt',
+            reason: 'U+${code.toRadixString(16)}',
+          );
         }
       });
     }

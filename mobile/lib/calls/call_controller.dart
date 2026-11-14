@@ -253,8 +253,11 @@ class CallController extends ChangeNotifier {
       return;
     }
     _incoming = incoming;
-    _begin(CallPhase.ringingIn, call.conversationId,
-        incoming.signal['video'] == true);
+    _begin(
+      CallPhase.ringingIn,
+      call.conversationId,
+      incoming.signal['video'] == true,
+    );
     callId = call.id;
   }
 
@@ -271,10 +274,11 @@ class CallController extends ChangeNotifier {
       notice = CallNotice(CallNoticeKind.missed, conversation);
     } else if (wasCalling) {
       notice = CallNotice(
-          end.state == 'rejected'
-              ? CallNoticeKind.declined
-              : CallNoticeKind.noAnswer,
-          conversation);
+        end.state == 'rejected'
+            ? CallNoticeKind.declined
+            : CallNoticeKind.noAnswer,
+        conversation,
+      );
     }
     notifyListeners();
   }

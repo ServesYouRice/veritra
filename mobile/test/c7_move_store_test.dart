@@ -8,24 +8,27 @@ import 'package:private_messenger/crypto/c7_move.dart';
 /// for or still has to import.
 void main() {
   C7Move noted(int i) => C7Move(
-      channelId: 'chan_$i',
-      fromConversationId: 'conv_from_$i',
-      toConversationId: 'conv_to_$i');
+        channelId: 'chan_$i',
+        fromConversationId: 'conv_from_$i',
+        toConversationId: 'conv_to_$i',
+      );
 
   test('only settled moves make room, oldest first', () {
     final owed = const C7Move(
-        channelId: 'chan_owed',
-        fromConversationId: 'conv_a',
-        toConversationId: 'conv_b',
-        owed: true,
-        imported: true);
+      channelId: 'chan_owed',
+      fromConversationId: 'conv_a',
+      toConversationId: 'conv_b',
+      owed: true,
+      imported: true,
+    );
     final toImport = C7Move(
-        channelId: 'chan_import',
-        fromConversationId: 'conv_c',
-        toConversationId: 'conv_d',
-        wrapEpoch: 2,
-        wrapKey: Uint8List(32),
-        wrapClose: 4);
+      channelId: 'chan_import',
+      fromConversationId: 'conv_c',
+      toConversationId: 'conv_d',
+      wrapEpoch: 2,
+      wrapKey: Uint8List(32),
+      wrapClose: 4,
+    );
     expect(toImport.importDue, isTrue);
     final moves = <C7Move>[
       owed,
@@ -41,6 +44,8 @@ void main() {
     expect(kept.any((m) => m.same(noted(0))), isFalse);
     // Under the limit nothing is dropped.
     expect(
-        C7Move.decodeAll(C7Move.encodeAll(moves.sublist(0, 5))), hasLength(5));
+      C7Move.decodeAll(C7Move.encodeAll(moves.sublist(0, 5))),
+      hasLength(5),
+    );
   });
 }

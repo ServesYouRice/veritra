@@ -36,65 +36,80 @@ void main() {
 
     // Carol: genesis lists both devices with her own franking key; the
     // phone then sets its own; then the phone removes her old device.
-    final carolGenesis = await carol.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_carol'),
-      version: 1,
-      prevHash: DeviceListBody.zeroHash,
-      createdAtMs: 1,
-      change: DeviceListChange.migrationGenesis,
-      entries: [
-        DeviceListPair(idBytes('dev_carol'), carolKey),
-        DeviceListPair(idBytes('dev_phone'), phoneKey),
-      ],
-      frankKeys: [
-        DeviceListFrankKey(
-            idBytes('dev_carol'), await carol.service.currentFrankKey()),
-      ],
-    ));
+    final carolGenesis = await carol.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_carol'),
+        version: 1,
+        prevHash: DeviceListBody.zeroHash,
+        createdAtMs: 1,
+        change: DeviceListChange.migrationGenesis,
+        entries: [
+          DeviceListPair(idBytes('dev_carol'), carolKey),
+          DeviceListPair(idBytes('dev_phone'), phoneKey),
+        ],
+        frankKeys: [
+          DeviceListFrankKey(
+            idBytes('dev_carol'),
+            await carol.service.currentFrankKey(),
+          ),
+        ],
+      ),
+    );
     final phoneFrank = await phone.service.currentFrankKey();
     final carolFrank = await carol.service.currentFrankKey();
     final head1 = bindings.checkDeviceListStep(
-        expectedAccountId: idBytes('acct_carol'), statement: carolGenesis);
-    final carolSetsPhone = await phone.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_carol'),
-      version: 2,
-      prevHash: head1.listHash,
-      createdAtMs: 2,
-      change: DeviceListChange.frankKey,
-      entries: [
-        DeviceListPair(idBytes('dev_carol'), carolKey),
-        DeviceListPair(idBytes('dev_phone'), phoneKey),
-      ],
-      frankKeys: [
-        DeviceListFrankKey(idBytes('dev_carol'), carolFrank),
-        DeviceListFrankKey(idBytes('dev_phone'), phoneFrank),
-      ],
-    ));
+      expectedAccountId: idBytes('acct_carol'),
+      statement: carolGenesis,
+    );
+    final carolSetsPhone = await phone.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_carol'),
+        version: 2,
+        prevHash: head1.listHash,
+        createdAtMs: 2,
+        change: DeviceListChange.frankKey,
+        entries: [
+          DeviceListPair(idBytes('dev_carol'), carolKey),
+          DeviceListPair(idBytes('dev_phone'), phoneKey),
+        ],
+        frankKeys: [
+          DeviceListFrankKey(idBytes('dev_carol'), carolFrank),
+          DeviceListFrankKey(idBytes('dev_phone'), phoneFrank),
+        ],
+      ),
+    );
     final head2 = bindings.checkDeviceListStep(
-        expectedAccountId: idBytes('acct_carol'),
-        statement: carolSetsPhone,
-        prev: carolGenesis);
-    final carolRemoved = await phone.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_carol'),
-      version: 3,
-      prevHash: head2.listHash,
-      createdAtMs: 3,
-      change: DeviceListChange.remove,
-      entries: [DeviceListPair(idBytes('dev_phone'), phoneKey)],
-      frankKeys: [DeviceListFrankKey(idBytes('dev_phone'), phoneFrank)],
-    ));
-    final erinGenesis = await erin.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_erin'),
-      version: 1,
-      prevHash: DeviceListBody.zeroHash,
-      createdAtMs: 1,
-      change: DeviceListChange.migrationGenesis,
-      entries: [DeviceListPair(idBytes('dev_erin'), erinKey)],
-      frankKeys: [
-        DeviceListFrankKey(
-            idBytes('dev_erin'), await erin.service.currentFrankKey()),
-      ],
-    ));
+      expectedAccountId: idBytes('acct_carol'),
+      statement: carolSetsPhone,
+      prev: carolGenesis,
+    );
+    final carolRemoved = await phone.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_carol'),
+        version: 3,
+        prevHash: head2.listHash,
+        createdAtMs: 3,
+        change: DeviceListChange.remove,
+        entries: [DeviceListPair(idBytes('dev_phone'), phoneKey)],
+        frankKeys: [DeviceListFrankKey(idBytes('dev_phone'), phoneFrank)],
+      ),
+    );
+    final erinGenesis = await erin.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_erin'),
+        version: 1,
+        prevHash: DeviceListBody.zeroHash,
+        createdAtMs: 1,
+        change: DeviceListChange.migrationGenesis,
+        entries: [DeviceListPair(idBytes('dev_erin'), erinKey)],
+        frankKeys: [
+          DeviceListFrankKey(
+            idBytes('dev_erin'),
+            await erin.service.currentFrankKey(),
+          ),
+        ],
+      ),
+    );
     final chains = <String, List<Uint8List>>{
       'acct_carol': [carolGenesis, carolSetsPhone, carolRemoved],
       'acct_erin': [erinGenesis],
@@ -107,7 +122,10 @@ void main() {
     }
 
     final pins = _RecordingPins(
-        store: dave.store, source: _Chains(chains), verifier: dave.service);
+      store: dave.store,
+      source: _Chains(chains),
+      verifier: dave.service,
+    );
     dave.service.deviceListPins = pins;
 
     C7HistoryRow row(String id, String device) => C7HistoryRow(
@@ -133,17 +151,22 @@ void main() {
         // Carol's own list had the device with this key, then removed it:
         // named (a former device is still hers).
         C7FormerKey(
-            deviceId: 'dev_carol',
-            accountId: 'acct_carol',
-            signingKey: carolKey),
+          deviceId: 'dev_carol',
+          accountId: 'acct_carol',
+          signingKey: carolKey,
+        ),
         // Erin's list has her device now: named.
         C7FormerKey(
-            deviceId: 'dev_erin', accountId: 'acct_erin', signingKey: erinKey),
+          deviceId: 'dev_erin',
+          accountId: 'acct_erin',
+          signingKey: erinKey,
+        ),
         // The server names Carol for a device her list never had.
         C7FormerKey(
-            deviceId: 'dev_mallory',
-            accountId: 'acct_carol',
-            signingKey: erinKey),
+          deviceId: 'dev_mallory',
+          accountId: 'acct_carol',
+          signingKey: erinKey,
+        ),
       ],
     );
     expect(pins.verdicts, {
@@ -159,14 +182,16 @@ void main() {
       'conv_2',
       groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
       channels: <String, C7HistoryPage>{
-        'chan_1': C7HistoryPage(<C7HistoryRow>[row('m4', 'dev_carol')],
-            complete: true),
+        'chan_1': C7HistoryPage(<C7HistoryRow>[
+          row('m4', 'dev_carol'),
+        ], complete: true),
       },
       formerKeys: <C7FormerKey>[
         C7FormerKey(
-            deviceId: 'dev_carol',
-            accountId: 'acct_erin',
-            signingKey: carolKey),
+          deviceId: 'dev_carol',
+          accountId: 'acct_erin',
+          signingKey: carolKey,
+        ),
       ],
     );
     expect(pins.verdicts, {'acct_erin/dev_carol': LeafVerdict.unapproved});
@@ -174,17 +199,27 @@ void main() {
 }
 
 class _RecordingPins extends DeviceListPins {
-  _RecordingPins(
-      {required super.store, required super.source, required super.verifier});
+  _RecordingPins({
+    required super.store,
+    required super.source,
+    required super.verifier,
+  });
 
   final Map<String, LeafVerdict> verdicts = <String, LeafVerdict>{};
 
   @override
   Future<LeafVerdict> judge(
-      List<int> accountId, List<int> deviceId, List<int> signingKey,
-      {bool refreshFirst = true}) async {
-    final verdict = await super
-        .judge(accountId, deviceId, signingKey, refreshFirst: refreshFirst);
+    List<int> accountId,
+    List<int> deviceId,
+    List<int> signingKey, {
+    bool refreshFirst = true,
+  }) async {
+    final verdict = await super.judge(
+      accountId,
+      deviceId,
+      signingKey,
+      refreshFirst: refreshFirst,
+    );
     verdicts['${String.fromCharCodes(accountId)}/'
         '${String.fromCharCodes(deviceId)}'] = verdict;
     return verdict;
@@ -196,8 +231,10 @@ class _Chains implements DeviceListSource {
   final Map<String, List<Uint8List>> chains;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) async {
     final chain = chains[accountId] ?? const <Uint8List>[];
     return DeviceListPage(
       headVersion: chain.length,
@@ -216,21 +253,28 @@ class _Device {
   final MemoryLocalStore store;
 
   static Future<_Device> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final local = MemoryLocalStore();
     final service = NativeCryptoService(bindings: bindings, localStore: local);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
-    await service.activateSession(Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: accountId,
-      deviceId: deviceId,
-    ));
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
+    await service.activateSession(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: accountId,
+        deviceId: deviceId,
+      ),
+    );
     return _Device(service, local);
   }
 }

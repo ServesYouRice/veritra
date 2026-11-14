@@ -18,8 +18,9 @@ Future<List<MlsPendingChange>> _readAgainst(Map<String, Object?> body) async {
       ..write(jsonEncode(body));
     await request.response.close();
   });
-  final client =
-      ApiClient(baseUrl: 'http://${server.address.address}:${server.port}');
+  final client = ApiClient(
+    baseUrl: 'http://${server.address.address}:${server.port}',
+  );
   addTearDown(client.close);
   return client.mlsPendingChanges('token');
 }

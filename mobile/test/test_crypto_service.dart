@@ -7,8 +7,9 @@ import 'package:private_messenger/core/sha256.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 
 /// The device signing key [TestOnlyCryptoService] reports (32 bytes).
-final Uint8List testDeviceSigningKey =
-    Uint8List.fromList(List<int>.generate(32, (i) => 0x20 + i));
+final Uint8List testDeviceSigningKey = Uint8List.fromList(
+  List<int>.generate(32, (i) => 0x20 + i),
+);
 
 /// A stand-in for an Ed25519 signature (64 bytes) that depends on the key and
 /// the message and nothing else: [TestOnlyCryptoService] signs and checks with
@@ -36,7 +37,8 @@ class TestOnlyCryptoService
 
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation) async {
+    EnrollmentReservation reservation,
+  ) async {
     return EnrollmentCredential(
       deviceKeyPackage: 'TEST_ONLY_DEVICE_KEY_PACKAGE'.codeUnits,
       signingKey: List<int>.filled(32, 1),
@@ -46,7 +48,9 @@ class TestOnlyCryptoService
 
   @override
   Future<MessageEnvelope> encrypt(
-      String conversationId, String plaintext) async {
+    String conversationId,
+    String plaintext,
+  ) async {
     return MessageEnvelope(
       conversationId: conversationId,
       idempotencyKey:
@@ -54,7 +58,7 @@ class TestOnlyCryptoService
       ciphertext: 'TEST_ONLY_CIPHERTEXT_LEN:${plaintext.length}'.codeUnits,
       cryptoProtocol: 'test-only-not-production',
       cryptoMetadata: const <String, Object?>{
-        'warning': 'not-production-crypto'
+        'warning': 'not-production-crypto',
       },
     );
   }

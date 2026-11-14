@@ -147,10 +147,6 @@ class StatusDot extends StatelessWidget {
     if (semanticsLabel == null) {
       return ExcludeSemantics(child: dot);
     }
-    return Semantics(
-      label: semanticsLabel,
-      excludeSemantics: true,
-      child: dot,
-    );
+    return Semantics(label: semanticsLabel, excludeSemantics: true, child: dot);
   }
 }

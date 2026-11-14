@@ -75,19 +75,21 @@ Future<(_SearchApi, List<List<SelectedAccount>>)> _show(
     );
   addTearDown(state.dispose);
   final changes = <List<SelectedAccount>>[];
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(
-      body: SingleChildScrollView(
-        child: AccountPicker(
-          state: state,
-          maxSelection: maxSelection,
-          onChanged: changes.add,
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: AccountPicker(
+            state: state,
+            maxSelection: maxSelection,
+            onChanged: changes.add,
+          ),
         ),
       ),
     ),
-  ));
+  );
   return (api, changes);
 }
 
@@ -97,8 +99,9 @@ Future<void> _type(WidgetTester tester, String text) async {
 }
 
 void main() {
-  testWidgets('an answer for text that was edited since is never shown',
-      (tester) async {
+  testWidgets('an answer for text that was edited since is never shown', (
+    tester,
+  ) async {
     final (api, _) = await _show(tester);
     await _type(tester, 'a');
     await tester.pump(_debounce);
@@ -126,8 +129,11 @@ void main() {
     expect(find.text('samuel'), findsOneWidget);
 
     await _type(tester, '');
-    expect(find.text('samuel'), findsNothing,
-        reason: 'results for text that is gone must not stay tappable');
+    expect(
+      find.text('samuel'),
+      findsNothing,
+      reason: 'results for text that is gone must not stay tappable',
+    );
   });
 
   /// The tap handler of the tile for [name], as it was drawn at this moment.
@@ -135,8 +141,9 @@ void main() {
   VoidCallback tapOf(WidgetTester tester, String name) =>
       tester.widget<ListTile>(find.widgetWithText(ListTile, name)).onTap!;
 
-  testWidgets('a lookup in flight when an account is chosen is dropped',
-      (tester) async {
+  testWidgets('a lookup in flight when an account is chosen is dropped', (
+    tester,
+  ) async {
     final (api, changes) = await _show(tester);
     await _type(tester, 'sam');
     await tester.pump(_debounce);
@@ -155,8 +162,11 @@ void main() {
 
     api.answer('sa', <String>['sasha']);
     await tester.pump();
-    expect(find.text('sasha'), findsNothing,
-        reason: 'the field was cleared by the choice; old results stay away');
+    expect(
+      find.text('sasha'),
+      findsNothing,
+      reason: 'the field was cleared by the choice; old results stay away',
+    );
     expect(find.byType(ListTile), findsNothing);
   });
 
@@ -208,8 +218,9 @@ void main() {
     }
   });
 
-  testWidgets('a single-account picker still replaces the choice',
-      (tester) async {
+  testWidgets('a single-account picker still replaces the choice', (
+    tester,
+  ) async {
     final (api, changes) = await _show(tester, maxSelection: 1);
     for (final name in <String>['first', 'second']) {
       await _type(tester, 'q-$name');
@@ -223,8 +234,9 @@ void main() {
     expect(find.byType(InputChip), findsOneWidget);
   });
 
-  testWidgets('an account that is already chosen is not offered again',
-      (tester) async {
+  testWidgets('an account that is already chosen is not offered again', (
+    tester,
+  ) async {
     final (api, _) = await _show(tester, maxSelection: 3);
     await _type(tester, 'q1');
     await tester.pump(_debounce);

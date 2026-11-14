@@ -43,7 +43,8 @@ void main() {
   test('device-link QR origins stay HTTPS-only by default', () {
     expect(
       parseDeviceLinkOrigin(
-          'veritra://device-link?code=abc&origin=http://localhost:8080'),
+        'veritra://device-link?code=abc&origin=http://localhost:8080',
+      ),
       isNull,
     );
     expect(

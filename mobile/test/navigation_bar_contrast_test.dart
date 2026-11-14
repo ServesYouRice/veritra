@@ -20,8 +20,11 @@ void main() {
 
     test('${entry.key}: the selected icon clears 3:1 on the indicator', () {
       final icon = bar.iconTheme?.resolve(selected)?.color;
-      expect(icon, isNotNull,
-          reason: 'without an iconTheme Material applies onSecondaryContainer');
+      expect(
+        icon,
+        isNotNull,
+        reason: 'without an iconTheme Material applies onSecondaryContainer',
+      );
       expect(contrastRatio(icon!, indicator), greaterThanOrEqualTo(3));
     });
 
@@ -31,8 +34,10 @@ void main() {
       expect(on, isNot(off));
       // Stronger, not just another colour: it stands out from the muted rest.
       final background = bar.backgroundColor!;
-      expect(contrastRatio(on.color!, background),
-          greaterThan(contrastRatio(off.color!, background)));
+      expect(
+        contrastRatio(on.color!, background),
+        greaterThan(contrastRatio(off.color!, background)),
+      );
     });
 
     test('${entry.key}: the unselected look keeps the muted label', () {
@@ -47,9 +52,11 @@ void main() {
     test('${entry.key}: the labels stay readable on the bar', () {
       for (final states in <Set<WidgetState>>[selected, unselected]) {
         final label = bar.labelTextStyle!.resolve(states)!.color!;
-        expect(contrastRatio(label, bar.backgroundColor!),
-            greaterThanOrEqualTo(4.5),
-            reason: '${entry.key} $states');
+        expect(
+          contrastRatio(label, bar.backgroundColor!),
+          greaterThanOrEqualTo(4.5),
+          reason: '${entry.key} $states',
+        );
       }
     });
   }

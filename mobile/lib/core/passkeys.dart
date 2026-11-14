@@ -70,8 +70,9 @@ PasskeyPlatform passkeyPlatformOf(TargetPlatform platform) {
 /// Hostnames compiled into the build's associated-domains entitlement
 /// (`--dart-define=VERITRA_PASSKEY_DOMAINS=a.example,b.example`). Only used
 /// on iOS and macOS (design, "Where the button shows").
-const String passkeyAppleDomainsDefine =
-    String.fromEnvironment('VERITRA_PASSKEY_DOMAINS');
+const String passkeyAppleDomainsDefine = String.fromEnvironment(
+  'VERITRA_PASSKEY_DOMAINS',
+);
 
 List<String> parsePasskeyDomains(String raw) => <String>[
       for (final part in raw.split(','))
@@ -257,8 +258,9 @@ class PlatformPasskeyClient implements PasskeyClient {
   Future<Map<String, Object?>> create(Map<String, Object?> publicKey) async {
     if (!platformSupported) throw const PasskeyUnavailable();
     try {
-      final request =
-          RegisterRequestType.fromJson(Map<String, dynamic>.from(publicKey));
+      final request = RegisterRequestType.fromJson(
+        Map<String, dynamic>.from(publicKey),
+      );
       final response = await _plugin.register(request);
       return Map<String, Object?>.from(response.toJson());
     } on PasskeyAuthCancelledException {

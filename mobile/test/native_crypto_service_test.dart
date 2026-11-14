@@ -25,101 +25,138 @@ void main() {
       configured == null || configured.isEmpty ? null : configured;
   if (libraryPath == null && Platform.environment['CI'] == 'true') {
     test('CI provides the native crypto library', () {
-      fail('VERITRA_CRYPTO_LIBRARY is required when CI=true: set it to a '
-          'built libprivate_messenger_crypto');
+      fail(
+        'VERITRA_CRYPTO_LIBRARY is required when CI=true: set it to a '
+        'built libprivate_messenger_crypto',
+      );
     });
   }
   final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
 
-  test('decrypted history is kept for text, reply, edit, reaction, delete',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
+  test(
+    'decrypted history is kept for text, reply, edit, reaction, delete',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
 
-    final hello = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'hello'});
-    final helloKey = messageKey('dev_alice', hello.idempotencyKey);
-    expect((await alice.history()).single.state, LocalMessageState.pending);
-    await bob.receive(alice, hello);
-    await alice.receive(alice, hello);
-    expect((await alice.history()).single.state, LocalMessageState.sent);
-    expect((await bob.history()).single.body, 'hello');
+      final hello = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'hello',
+      });
+      final helloKey = messageKey('dev_alice', hello.idempotencyKey);
+      expect((await alice.history()).single.state, LocalMessageState.pending);
+      await bob.receive(alice, hello);
+      await alice.receive(alice, hello);
+      expect((await alice.history()).single.state, LocalMessageState.sent);
+      expect((await bob.history()).single.body, 'hello');
 
-    final reply = await bob.send(AppPayloadType.reply,
-        <String, Object?>{'text': 'hi back', 'reply_to_id': helloKey});
-    await alice.receive(bob, reply);
-    expect((await alice.history()).last.replyTo, helloKey);
-    expect((await alice.history()).last.body, 'hi back');
+      final reply = await bob.send(AppPayloadType.reply, <String, Object?>{
+        'text': 'hi back',
+        'reply_to_id': helloKey,
+      });
+      await alice.receive(bob, reply);
+      expect((await alice.history()).last.replyTo, helloKey);
+      expect((await alice.history()).last.body, 'hi back');
 
-    final edit = await alice.send(AppPayloadType.edit,
-        <String, Object?>{'message_id': helloKey, 'text': 'hello!'});
-    await bob.receive(alice, edit);
-    final edited =
-        (await bob.history()).firstWhere((item) => item.key == helloKey);
-    expect(edited.body, 'hello!');
-    expect(edited.editedAt, isNotNull);
+      final edit = await alice.send(AppPayloadType.edit, <String, Object?>{
+        'message_id': helloKey,
+        'text': 'hello!',
+      });
+      await bob.receive(alice, edit);
+      final edited = (await bob.history()).firstWhere(
+        (item) => item.key == helloKey,
+      );
+      expect(edited.body, 'hello!');
+      expect(edited.editedAt, isNotNull);
 
-    // Bob cannot edit Alice's message, on either device.
-    final forged = await bob.send(AppPayloadType.edit,
-        <String, Object?>{'message_id': helloKey, 'text': 'forged'});
-    await alice.receive(bob, forged);
-    expect(
+      // Bob cannot edit Alice's message, on either device.
+      final forged = await bob.send(AppPayloadType.edit, <String, Object?>{
+        'message_id': helloKey,
+        'text': 'forged',
+      });
+      await alice.receive(bob, forged);
+      expect(
         (await alice.history()).firstWhere((item) => item.key == helloKey).body,
-        'hello!');
+        'hello!',
+      );
 
-    final reaction = await bob.send(AppPayloadType.reaction,
-        <String, Object?>{'message_id': helloKey, 'reaction': '👍'});
-    await alice.receive(bob, reaction);
-    expect((await alice.store.loadReactions('conv_1')).single.reaction, '👍');
+      final reaction = await bob.send(
+        AppPayloadType.reaction,
+        <String, Object?>{'message_id': helloKey, 'reaction': '👍'},
+      );
+      await alice.receive(bob, reaction);
+      expect((await alice.store.loadReactions('conv_1')).single.reaction, '👍');
 
-    final delete = await alice
-        .send(AppPayloadType.delete, <String, Object?>{'message_id': helloKey});
-    await bob.receive(alice, delete);
-    final deleted =
-        (await bob.history()).firstWhere((item) => item.key == helloKey);
-    expect(deleted.body, isNull);
-    expect(deleted.deletedAt, isNotNull);
-  }, skip: skip);
+      final delete = await alice.send(AppPayloadType.delete, <String, Object?>{
+        'message_id': helloKey,
+      });
+      await bob.receive(alice, delete);
+      final deleted = (await bob.history()).firstWhere(
+        (item) => item.key == helloKey,
+      );
+      expect(deleted.body, isNull);
+      expect(deleted.deletedAt, isNotNull);
+    },
+    skip: skip,
+  );
 
-  test('every message is franked and a receiver checks the commitment',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
+  test(
+    'every message is franked and a receiver checks the commitment',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
 
-    final good =
-        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'one'});
-    // The commitment rides beside the ciphertext, never in the metadata.
-    expect(good.frankCommit, hasLength(32));
-    expect(good.toJson()['frank_commit'], isA<String>());
-    expect(good.cryptoMetadata.keys.any((key) => key.contains('frank')), false);
-    expect(
-        MessageEnvelope.fromJson(good.toJson()).frankCommit, good.frankCommit);
-    await bob.receive(alice, good);
+      final good = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'one',
+      });
+      // The commitment rides beside the ciphertext, never in the metadata.
+      expect(good.frankCommit, hasLength(32));
+      expect(good.toJson()['frank_commit'], isA<String>());
+      expect(
+        good.cryptoMetadata.keys.any((key) => key.contains('frank')),
+        false,
+      );
+      expect(
+        MessageEnvelope.fromJson(good.toJson()).frankCommit,
+        good.frankCommit,
+      );
+      await bob.receive(alice, good);
 
-    // A server that changes the commitment, or removes it, makes the message
-    // invalid; sync still moves past it.
-    final changed =
-        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
-    await bob.receive(alice, changed,
-        frankCommit: List<int>.of(changed.frankCommit!)..[0] ^= 1);
-    final stripped = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'three'});
-    await bob.receive(alice, stripped, dropFrankCommit: true);
-    // Another message's commitment is not this message's.
-    final swapped = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'four'});
-    await bob.receive(alice, swapped, frankCommit: good.frankCommit);
+      // A server that changes the commitment, or removes it, makes the message
+      // invalid; sync still moves past it.
+      final changed = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'two',
+      });
+      await bob.receive(
+        alice,
+        changed,
+        frankCommit: List<int>.of(changed.frankCommit!)..[0] ^= 1,
+      );
+      final stripped = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'three',
+      });
+      await bob.receive(alice, stripped, dropFrankCommit: true);
+      // Another message's commitment is not this message's.
+      final swapped = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'four',
+      });
+      await bob.receive(alice, swapped, frankCommit: good.frankCommit);
 
-    final rows = await bob.history();
-    expect(rows.where((row) => row.kind == LocalMessageKind.invalid),
-        hasLength(3));
-    expect(rows.where((row) => row.body != null).map((row) => row.body),
-        <String?>['one']);
-  }, skip: skip);
+      final rows = await bob.history();
+      expect(
+        rows.where((row) => row.kind == LocalMessageKind.invalid),
+        hasLength(3),
+      );
+      expect(
+        rows.where((row) => row.body != null).map((row) => row.body),
+        <String?>['one'],
+      );
+    },
+    skip: skip,
+  );
 
   test('a service reloads MLS state that moved without it', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
@@ -129,27 +166,37 @@ void main() {
 
     // A second service on the same store advances the committed state, as a
     // backup restore or a second app instance would.
-    final other =
-        TestNativeCryptoService(bindings: bindings, localStore: alice.store);
-    await other.activateSession(const Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: 'acct_alice',
-      deviceId: 'dev_alice',
-    ));
+    final other = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: alice.store,
+    );
+    await other.activateSession(
+      const Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: 'acct_alice',
+        deviceId: 'dev_alice',
+      ),
+    );
     final first = await other.encryptPayload(
-        'conv_1', AppPayloadType.text, <String, Object?>{'text': 'one'});
+      'conv_1',
+      AppPayloadType.text,
+      <String, Object?>{'text': 'one'},
+    );
     await alice.store.removePendingEnvelope(first.idempotencyKey);
     await other.dispose();
 
     // The original service must not reuse its stale in-memory ratchet.
-    final second =
-        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
+    final second = await alice.send(AppPayloadType.text, <String, Object?>{
+      'text': 'two',
+    });
     await bob.receive(alice, first);
     await bob.receive(alice, second);
     // Both received in the same test tick, so compare without order.
-    expect((await bob.history()).map((item) => item.body),
-        unorderedEquals(<String?>['one', 'two']));
+    expect(
+      (await bob.history()).map((item) => item.body),
+      unorderedEquals(<String?>['one', 'two']),
+    );
   }, skip: skip);
 
   test('sealed state in an unsupported format is a distinct error', () async {
@@ -162,80 +209,109 @@ void main() {
     // A fresh store, as after reinstalling over old app data.
     final store = MemoryLocalStore();
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: stored.counter,
-            stateKey: stored.stateKey,
-            sealedState: oldFormat),
-        0);
-    final restarted =
-        TestNativeCryptoService(bindings: bindings, localStore: store);
+      StoredCryptoState(
+        counter: stored.counter,
+        stateKey: stored.stateKey,
+        sealedState: oldFormat,
+      ),
+      0,
+    );
+    final restarted = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: store,
+    );
     const session = Session(
       baseUrl: 'https://localhost:8443',
       token: 'token',
       accountId: 'acct_alice',
       deviceId: 'dev_alice',
     );
-    await expectLater(restarted.activateSession(session),
-        throwsA(isA<CryptoStateFormatUnsupported>()));
     await expectLater(
-        restarted.activateExistingSessionBounded(session,
-            checkCanCommit: () {}),
-        throwsA(isA<CryptoStateFormatUnsupported>()));
-    expect(describeError(const CryptoStateFormatUnsupported()),
-        englishL10n.errorCryptoStateFormatUnsupported);
+      restarted.activateSession(session),
+      throwsA(isA<CryptoStateFormatUnsupported>()),
+    );
+    await expectLater(
+      restarted.activateExistingSessionBounded(session, checkCanCommit: () {}),
+      throwsA(isA<CryptoStateFormatUnsupported>()),
+    );
+    expect(
+      describeError(const CryptoStateFormatUnsupported()),
+      englishL10n.errorCryptoStateFormatUnsupported,
+    );
     await restarted.dispose();
   }, skip: skip);
 
   test(
-      'bounded removal persists C3 rotation and retries a cancelled transition',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    final tablet = await _Client.enroll(bindings, 'acct_bob', 'dev_tablet');
-    addTearDown(alice.service.dispose);
-    addTearDown(bob.service.dispose);
-    addTearDown(tablet.service.dispose);
-    await _startConversation(alice, bob);
-    await bob.service
-        .stageMembershipChange('conv_1', adds: [await tablet.keyPackage()]);
-    await _accept(bob, [tablet], [alice]);
-    await bob.service.stageMembershipChange('conv_1',
-        removes: [(accountId: 'acct_bob', deviceId: 'dev_tablet')]);
-    final item = await _accept(bob, [], []);
-    final message = MlsMessage(
-      id: 'mls_bounded_removal',
-      conversationId: 'conv_1',
-      senderAccountId: bob.accountId,
-      senderDeviceId: bob.deviceId,
-      kind: 'commit',
-      payload: MlsCommitBundle.decode(item.payload).commit,
-      idempotencyKey: item.idempotencyKey,
-      syncEventId: alice.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-    );
-    final before = await alice.store.loadCryptoState();
-    await expectLater(
-        alice.service.processMlsMessageBounded(message, checkCanCommit: () {
-          // This fence runs again after the native group has advanced.
-          if (alice.store.nativeRemovalReached) throw StateError('wake ended');
-        }),
-        throwsStateError);
-    expect((await alice.store.loadCryptoState())!.counter, before!.counter);
-    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        isNull);
-    alice.store.nativeRemovalReached = false;
-    await alice.service
-        .processMlsMessageBounded(message, checkCanCommit: () {});
-    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        '3');
-    final counter = (await alice.store.loadCryptoState())!.counter;
-    await alice.service
-        .processMlsMessageBounded(message, checkCanCommit: () {});
-    expect((await alice.store.loadCryptoState())!.counter, counter);
-    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        '3');
-  }, skip: skip);
+    'bounded removal persists C3 rotation and retries a cancelled transition',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final tablet = await _Client.enroll(bindings, 'acct_bob', 'dev_tablet');
+      addTearDown(alice.service.dispose);
+      addTearDown(bob.service.dispose);
+      addTearDown(tablet.service.dispose);
+      await _startConversation(alice, bob);
+      await bob.service.stageMembershipChange(
+        'conv_1',
+        adds: [await tablet.keyPackage()],
+      );
+      await _accept(bob, [tablet], [alice]);
+      await bob.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: 'acct_bob', deviceId: 'dev_tablet')],
+      );
+      final item = await _accept(bob, [], []);
+      final message = MlsMessage(
+        id: 'mls_bounded_removal',
+        conversationId: 'conv_1',
+        senderAccountId: bob.accountId,
+        senderDeviceId: bob.deviceId,
+        kind: 'commit',
+        payload: MlsCommitBundle.decode(item.payload).commit,
+        idempotencyKey: item.idempotencyKey,
+        syncEventId: alice.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+      );
+      final before = await alice.store.loadCryptoState();
+      await expectLater(
+        alice.service.processMlsMessageBounded(
+          message,
+          checkCanCommit: () {
+            // This fence runs again after the native group has advanced.
+            if (alice.store.nativeRemovalReached)
+              throw StateError('wake ended');
+          },
+        ),
+        throwsStateError,
+      );
+      expect((await alice.store.loadCryptoState())!.counter, before!.counter);
+      expect(
+        await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        isNull,
+      );
+      alice.store.nativeRemovalReached = false;
+      await alice.service.processMlsMessageBounded(
+        message,
+        checkCanCommit: () {},
+      );
+      expect(
+        await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '3',
+      );
+      final counter = (await alice.store.loadCryptoState())!.counter;
+      await alice.service.processMlsMessageBounded(
+        message,
+        checkCanCommit: () {},
+      );
+      expect((await alice.store.loadCryptoState())!.counter, counter);
+      expect(
+        await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '3',
+      );
+    },
+    skip: skip,
+  );
 
   for (final ownEcho in [false, true]) {
     test('own removal records C3 rotation (own echo: $ownEcho)', () async {
@@ -252,12 +328,17 @@ void main() {
       expect(MlsCommitBundle.decode(update.payload).isUpdateOnly, isTrue);
       expect(await alice.store.loadSetting(setting), isNull);
 
-      await alice.service.stageMembershipChange('conv_1',
-          removes: [(accountId: bob.accountId, deviceId: bob.deviceId)]);
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: bob.accountId, deviceId: bob.deviceId)],
+      );
       final item = (await alice.store.pendingMlsMessages()).single;
       final bundle = MlsCommitBundle.decode(item.payload);
-      expect(await alice.store.loadSetting(setting), isNull,
-          reason: 'a staged removal is not an accepted removal');
+      expect(
+        await alice.store.loadSetting(setting),
+        isNull,
+        reason: 'a staged removal is not an accepted removal',
+      );
       if (ownEcho) {
         final message = MlsMessage(
           id: 'mls_own_removal',
@@ -272,25 +353,33 @@ void main() {
         );
         final before = (await alice.store.loadCryptoState())!.counter;
         await expectLater(
-            alice.service.processMlsMessageBounded(message, checkCanCommit: () {
+          alice.service.processMlsMessageBounded(
+            message,
+            checkCanCommit: () {
               if (alice.store.nativeRemovalReached) {
                 throw StateError('wake ended');
               }
-            }),
-            throwsStateError);
+            },
+          ),
+          throwsStateError,
+        );
         expect((await alice.store.loadCryptoState())!.counter, before);
         expect(await alice.store.loadSetting(setting), isNull);
         expect(await alice.store.pendingMlsMessages(), hasLength(1));
         alice.store.nativeRemovalReached = false;
-        await alice.service
-            .processMlsMessageBounded(message, checkCanCommit: () {});
+        await alice.service.processMlsMessageBounded(
+          message,
+          checkCanCommit: () {},
+        );
       } else {
         await alice.service.completeCommitBundle(item);
       }
       expect(await alice.store.loadSetting(setting), '${bundle.epoch + 1}');
       expect(await alice.store.pendingMlsMessages(), isEmpty);
-      expect(await alice.service.groupEpoch('conv_1'),
-          (epoch: bundle.epoch + 1, pending: false));
+      expect(await alice.service.groupEpoch('conv_1'), (
+        epoch: bundle.epoch + 1,
+        pending: false,
+      ));
       // A late completion after an accepted echo must preserve the marker.
       await alice.service.completeCommitBundle(item);
       expect(await alice.store.loadSetting(setting), '${bundle.epoch + 1}');
@@ -304,52 +393,69 @@ void main() {
     final tablet = await _Client.enroll(bindings, 'acct_bob', 'dev_tablet');
     await _startConversation(alice, bob);
 
-    await bob.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await tablet.keyPackage()]);
+    await bob.service.stageMembershipChange(
+      'conv_1',
+      adds: <DeviceKeyPackage>[await tablet.keyPackage()],
+    );
     // Until the server accepts it, Bob's group stays on the old epoch.
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: true));
     await _accept(bob, <_Client>[tablet], <_Client>[alice]);
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    expect(
-        await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    expect(await alice.service.groupEpoch('conv_1'), (
+      epoch: 2,
+      pending: false,
+    ));
 
-    final hello =
-        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'hi'});
+    final hello = await alice.send(AppPayloadType.text, <String, Object?>{
+      'text': 'hi',
+    });
     await bob.receive(alice, hello);
     await tablet.receive(alice, hello);
     expect((await tablet.history()).single.body, 'hi');
 
     // Adds alone do not rotate C3 info keys.
-    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        isNull);
-    expect(await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        isNull);
+    expect(
+      await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+      isNull,
+    );
+    expect(
+      await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+      isNull,
+    );
 
     // Removing the tablet again is one more bundle.
-    await alice.service.stageMembershipChange('conv_1', removes: <MlsDeviceRef>[
-      (accountId: 'acct_bob', deviceId: 'dev_tablet')
-    ]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      removes: <MlsDeviceRef>[(accountId: 'acct_bob', deviceId: 'dev_tablet')],
+    );
     expect(await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
     await _accept(alice, const <_Client>[], <_Client>[bob, tablet]);
-    expect(
-        await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    expect(await alice.service.groupEpoch('conv_1'), (
+      epoch: 3,
+      pending: false,
+    ));
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
     // The survivor records the authenticated removal with MLS state; the
     // removed device must never distribute a replacement key.
-    expect(await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        '3');
     expect(
-        await tablet.store.loadSetting(communityInfoRemovalSetting('conv_1')),
-        isNull);
+      await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+      '3',
+    );
+    expect(
+      await tablet.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+      isNull,
+    );
     // The tablet applies its own removal, which drops its group (D70), and
     // can no longer send.
     expect(await tablet.service.groupEpoch('conv_1'), isNull);
     await expectLater(
-        tablet.send(AppPayloadType.text, <String, Object?>{'text': 'still?'}),
-        throwsA(isA<NativeCryptoException>()));
+      tablet.send(AppPayloadType.text, <String, Object?>{'text': 'still?'}),
+      throwsA(isA<NativeCryptoException>()),
+    );
 
-    final after =
-        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'bye'});
+    final after = await alice.send(AppPayloadType.text, <String, Object?>{
+      'text': 'bye',
+    });
     await bob.receive(alice, after);
     expect((await bob.history()).last.body, 'bye');
     // Nor can it read what the group sends after the removal: sync moves
@@ -360,7 +466,9 @@ void main() {
     expect(history.map((message) => message.body), <String?>['hi', null]);
     final placeholder = history.last;
     expect(
-        placeholder.key, 'undecryptable:$event:${placeholder.serverMessageId}');
+      placeholder.key,
+      'undecryptable:$event:${placeholder.serverMessageId}',
+    );
     expect(placeholder.kind, LocalMessageKind.invalid);
     expect(placeholder.formatJson, isNull);
   }, skip: skip);
@@ -372,10 +480,14 @@ void main() {
     final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
     await _startConversation(alice, bob);
 
-    await alice.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    await bob.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      adds: <DeviceKeyPackage>[await carol.keyPackage()],
+    );
+    await bob.service.stageMembershipChange(
+      'conv_1',
+      adds: <DeviceKeyPackage>[await carol.keyPackage()],
+    );
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: true));
 
     // Bob's commit lost. The winning commit arrives before his refusal:
@@ -386,45 +498,64 @@ void main() {
     await bob.service.abandonCommitBundle(bobsBundle);
     expect(await bob.store.pendingMlsMessages(), isEmpty);
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    expect(
-        await alice.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    expect(
-        await carol.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+    expect(await alice.service.groupEpoch('conv_1'), (
+      epoch: 2,
+      pending: false,
+    ));
+    expect(await carol.service.groupEpoch('conv_1'), (
+      epoch: 2,
+      pending: false,
+    ));
 
-    final after = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'converged'});
+    final after = await alice.send(AppPayloadType.text, <String, Object?>{
+      'text': 'converged',
+    });
     await bob.receive(alice, after);
     expect((await bob.history()).last.body, 'converged');
   }, skip: skip);
 
-  test('a commit refused before the winner arrives still applies the winner',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
-    await _startConversation(alice, bob);
+  test(
+    'a commit refused before the winner arrives still applies the winner',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
 
-    await alice.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    await bob.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    final winner = await _accept(alice, <_Client>[carol], const <_Client>[]);
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()],
+      );
+      await bob.service.stageMembershipChange(
+        'conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()],
+      );
+      final winner = await _accept(alice, <_Client>[carol], const <_Client>[]);
 
-    // Bob's refusal comes first: his staged commit is dropped, and the
-    // winning commit that arrives later applies to the old epoch.
-    final bobsBundle = (await bob.store.pendingMlsMessages()).single;
-    await bob.service.abandonCommitBundle(bobsBundle);
-    expect(await bob.store.pendingMlsMessages(), isEmpty);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 1, pending: false));
-    await _deliverCommit(alice, bob, winner);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
+      // Bob's refusal comes first: his staged commit is dropped, and the
+      // winning commit that arrives later applies to the old epoch.
+      final bobsBundle = (await bob.store.pendingMlsMessages()).single;
+      await bob.service.abandonCommitBundle(bobsBundle);
+      expect(await bob.store.pendingMlsMessages(), isEmpty);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 1,
+        pending: false,
+      ));
+      await _deliverCommit(alice, bob, winner);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 2,
+        pending: false,
+      ));
 
-    final after = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'converged'});
-    await bob.receive(alice, after);
-    expect((await bob.history()).last.body, 'converged');
-  }, skip: skip);
+      final after = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'converged',
+      });
+      await bob.receive(alice, after);
+      expect((await bob.history()).last.body, 'converged');
+    },
+    skip: skip,
+  );
 
   test('an own commit echo merges the staged commit once', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
@@ -432,8 +563,10 @@ void main() {
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
     await _startConversation(alice, bob);
-    await alice.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      adds: <DeviceKeyPackage>[await carol.keyPackage()],
+    );
     final item = (await alice.store.pendingMlsMessages()).single;
     final bundle = MlsCommitBundle.decode(item.payload);
 
@@ -463,81 +596,102 @@ void main() {
     await alice.service.processMlsMessage(echo);
     expect(await alice.service.groupEpoch('conv_1'), merged);
     // The same commit in a later sync event finds no bundle left to merge.
-    await alice.service.processMlsMessage(MlsMessage(
-      id: 'mls_echo_again',
-      conversationId: 'conv_1',
-      senderAccountId: 'acct_alice',
-      senderDeviceId: 'dev_alice',
-      kind: 'commit',
-      payload: bundle.commit,
-      idempotencyKey: item.idempotencyKey,
-      syncEventId: alice.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-    ));
+    await alice.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_echo_again',
+        conversationId: 'conv_1',
+        senderAccountId: 'acct_alice',
+        senderDeviceId: 'dev_alice',
+        kind: 'commit',
+        payload: bundle.commit,
+        idempotencyKey: item.idempotencyKey,
+        syncEventId: alice.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
     expect(await alice.service.groupEpoch('conv_1'), merged);
     expect(await alice.store.pendingMlsMessages(), isEmpty);
   }, skip: skip);
 
-  test('a self-update lands only once accepted, and every member follows',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
-    await _startConversation(alice, bob);
-    await alice.service.stageMembershipChange('conv_1',
-        adds: <DeviceKeyPackage>[await carol.keyPackage()]);
-    await _accept(alice, <_Client>[carol], <_Client>[bob]);
-    final safety = await alice.service.conversationSafetyNumber('conv_1');
+  test(
+    'a self-update lands only once accepted, and every member follows',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final carol = await _Client.enroll(bindings, 'acct_carol', 'dev_carol');
+      await _startConversation(alice, bob);
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        adds: <DeviceKeyPackage>[await carol.keyPackage()],
+      );
+      await _accept(alice, <_Client>[carol], <_Client>[bob]);
+      final safety = await alice.service.conversationSafetyNumber('conv_1');
 
-    await bob.service.stageSelfUpdate('conv_1');
-    // Staged, not merged, until the server accepts it (D28).
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
-    final bundle = MlsCommitBundle.decode(
-        (await bob.store.pendingMlsMessages()).single.payload);
-    expect(bundle.isUpdateOnly, isTrue);
-    expect(bundle.epoch, 2);
-    await _accept(bob, const <_Client>[], <_Client>[alice, carol]);
-    for (final member in <_Client>[alice, bob, carol]) {
-      expect(await member.service.groupEpoch('conv_1'),
-          (epoch: 3, pending: false));
-    }
-    // Same members and signing keys, so the safety number holds.
-    expect((await alice.service.conversationSafetyNumber('conv_1')).digits,
-        safety.digits);
+      await bob.service.stageSelfUpdate('conv_1');
+      // Staged, not merged, until the server accepts it (D28).
+      expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: true));
+      final bundle = MlsCommitBundle.decode(
+        (await bob.store.pendingMlsMessages()).single.payload,
+      );
+      expect(bundle.isUpdateOnly, isTrue);
+      expect(bundle.epoch, 2);
+      await _accept(bob, const <_Client>[], <_Client>[alice, carol]);
+      for (final member in <_Client>[alice, bob, carol]) {
+        expect(await member.service.groupEpoch('conv_1'), (
+          epoch: 3,
+          pending: false,
+        ));
+      }
+      // Same members and signing keys, so the safety number holds.
+      expect(
+        (await alice.service.conversationSafetyNumber('conv_1')).digits,
+        safety.digits,
+      );
 
-    final hello = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'after'});
-    await bob.receive(alice, hello);
-    await carol.receive(alice, hello);
-    expect((await bob.history()).last.body, 'after');
-    final reply =
-        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'ok'});
-    await carol.receive(bob, reply);
-    expect((await carol.history()).last.body, 'ok');
-  }, skip: skip);
+      final hello = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'after',
+      });
+      await bob.receive(alice, hello);
+      await carol.receive(alice, hello);
+      expect((await bob.history()).last.body, 'after');
+      final reply = await bob.send(AppPayloadType.text, <String, Object?>{
+        'text': 'ok',
+      });
+      await carol.receive(bob, reply);
+      expect((await carol.history()).last.body, 'ok');
+    },
+    skip: skip,
+  );
 
-  test('a self-update that loses the epoch is dropped without a fork',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
+  test(
+    'a self-update that loses the epoch is dropped without a fork',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
 
-    await bob.service.stageSelfUpdate('conv_1');
-    final bobs = (await bob.store.pendingMlsMessages()).single;
-    await alice.service.stageSelfUpdate('conv_1');
-    await _accept(alice, const <_Client>[], <_Client>[bob]);
-    // The server refused Bob's commit (409): it is dropped, and the
-    // winner already applied.
-    await bob.service.abandonCommitBundle(bobs);
-    expect(await bob.store.pendingMlsMessages(), isEmpty);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    final next =
-        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'next'});
-    await alice.receive(bob, next);
-    expect((await alice.history()).last.body, 'next');
-  }, skip: skip);
+      await bob.service.stageSelfUpdate('conv_1');
+      final bobs = (await bob.store.pendingMlsMessages()).single;
+      await alice.service.stageSelfUpdate('conv_1');
+      await _accept(alice, const <_Client>[], <_Client>[bob]);
+      // The server refused Bob's commit (409): it is dropped, and the
+      // winner already applied.
+      await bob.service.abandonCommitBundle(bobs);
+      expect(await bob.store.pendingMlsMessages(), isEmpty);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 2,
+        pending: false,
+      ));
+      final next = await bob.send(AppPayloadType.text, <String, Object?>{
+        'text': 'next',
+      });
+      await alice.receive(bob, next);
+      expect((await alice.history()).last.body, 'next');
+    },
+    skip: skip,
+  );
 
   test('a spoofed sender is kept as unverifiable and sync continues', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
@@ -545,96 +699,120 @@ void main() {
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
 
-    final spoofed = await bob
-        .send(AppPayloadType.text, <String, Object?>{'text': 'I am carol'});
+    final spoofed = await bob.send(AppPayloadType.text, <String, Object?>{
+      'text': 'I am carol',
+    });
     await alice.receive(bob, spoofed, claimedAccountId: 'acct_carol');
     final record = (await alice.history()).single;
     expect(record.kind, LocalMessageKind.unverifiable);
     expect(record.body, isNull);
 
-    final next =
-        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'next'});
+    final next = await bob.send(AppPayloadType.text, <String, Object?>{
+      'text': 'next',
+    });
     await alice.receive(bob, next);
     // Both messages can share a timestamp, so do not rely on list order.
     final after = await alice.history();
     expect(after, hasLength(2));
-    expect(after.where((m) => m.kind == LocalMessageKind.unverifiable),
-        hasLength(1));
+    expect(
+      after.where((m) => m.kind == LocalMessageKind.unverifiable),
+      hasLength(1),
+    );
     expect(after.map((m) => m.body), contains('next'));
   }, skip: skip);
 
-  test('a B6 call group lives on a scratch handle and is never sealed (D70)',
-      () async {
-    final bindings = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
-    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
-    final groupId = Uint8List.fromList(List<int>.generate(32, (i) => 200 - i));
+  test(
+    'a B6 call group lives on a scratch handle and is never sealed (D70)',
+    () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      final groupId = Uint8List.fromList(
+        List<int>.generate(32, (i) => 200 - i),
+      );
 
-    final handle = await alice.service.openCallGroup();
-    handle.crypto.createGroup(groupId);
-    final leaves = handle.crypto.members(groupId);
-    expect(leaves.single.id, 'acct_alice/dev_alice');
-    // The scratch leaf is the messaging device's own: it matches the parent.
-    final parent = alice.service.parentGroups;
-    expect(parent.hasMember('conv_1', leaves.single), isTrue);
-    expect(parent.members('conv_1')!.map((m) => m.id).toSet(),
-        {'acct_alice/dev_alice', 'acct_bob/dev_bob'});
-    expect(await parent.allApproved('conv_1'), isTrue);
-    expect(parent.members('conv_unknown'), isEmpty);
-    expect(await parent.allApproved('conv_unknown'), isFalse);
-    // Bob's list removes his device (review MEDIUM, round 7): once alice
-    // judges again, his leaf, still in the tree, is no call member and no
-    // call starts.
-    sharedTestDeviceLists.markRemoved('acct_bob', 'dev_bob');
-    try {
+      final handle = await alice.service.openCallGroup();
+      handle.crypto.createGroup(groupId);
+      final leaves = handle.crypto.members(groupId);
+      expect(leaves.single.id, 'acct_alice/dev_alice');
+      // The scratch leaf is the messaging device's own: it matches the parent.
+      final parent = alice.service.parentGroups;
+      expect(parent.hasMember('conv_1', leaves.single), isTrue);
+      expect(parent.members('conv_1')!.map((m) => m.id).toSet(), {
+        'acct_alice/dev_alice',
+        'acct_bob/dev_bob',
+      });
+      expect(await parent.allApproved('conv_1'), isTrue);
+      expect(parent.members('conv_unknown'), isEmpty);
+      expect(await parent.allApproved('conv_unknown'), isFalse);
+      // Bob's list removes his device (review MEDIUM, round 7): once alice
+      // judges again, his leaf, still in the tree, is no call member and no
+      // call starts.
+      sharedTestDeviceLists.markRemoved('acct_bob', 'dev_bob');
+      try {
+        await alice.service.refreshApprovalHold('conv_1');
+        expect(parent.members('conv_1')!.map((m) => m.id), [
+          'acct_alice/dev_alice',
+        ]);
+        expect(await parent.allApproved('conv_1'), isFalse);
+      } finally {
+        sharedTestDeviceLists.unmarkRemoved('acct_bob', 'dev_bob');
+      }
       await alice.service.refreshApprovalHold('conv_1');
+      expect(await parent.allApproved('conv_1'), isTrue);
+
+      // The messaging device seals a new state while the call is open.
+      final sent = await alice.send(AppPayloadType.text, <String, Object?>{
+        'text': 'during call',
+      });
+      await bob.receive(alice, sent);
+
+      // A fresh service restores exactly what was stored: the conversation,
+      // never the call group.
+      final restarted = TestNativeCryptoService(
+        bindings: bindings,
+        localStore: alice.store,
+      );
+      await restarted.activateSession(
+        const Session(
+          baseUrl: 'https://localhost:8443',
+          token: 'token',
+          accountId: 'acct_alice',
+          deviceId: 'dev_alice',
+        ),
+      );
+      final copy = await restarted.openCallGroup();
       expect(
-          parent.members('conv_1')!.map((m) => m.id), ['acct_alice/dev_alice']);
-      expect(await parent.allApproved('conv_1'), isFalse);
-    } finally {
-      sharedTestDeviceLists.unmarkRemoved('acct_bob', 'dev_bob');
-    }
-    await alice.service.refreshApprovalHold('conv_1');
-    expect(await parent.allApproved('conv_1'), isTrue);
+        () => copy.crypto.members(groupId),
+        throwsA(anything),
+        reason: 'the call group never reached sealed state',
+      );
+      // A fresh service has not loaded its L1 verdicts: unknown, not empty,
+      // until they are loaded from the store.
+      expect(await restarted.parentGroups.allApproved('conv_1'), isTrue);
+      expect(restarted.parentGroups.members('conv_1'), hasLength(2));
+      copy.close();
+      await restarted.dispose();
 
-    // The messaging device seals a new state while the call is open.
-    final sent = await alice
-        .send(AppPayloadType.text, <String, Object?>{'text': 'during call'});
-    await bob.receive(alice, sent);
-
-    // A fresh service restores exactly what was stored: the conversation,
-    // never the call group.
-    final restarted =
-        TestNativeCryptoService(bindings: bindings, localStore: alice.store);
-    await restarted.activateSession(const Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: 'acct_alice',
-      deviceId: 'dev_alice',
-    ));
-    final copy = await restarted.openCallGroup();
-    expect(() => copy.crypto.members(groupId), throwsA(anything),
-        reason: 'the call group never reached sealed state');
-    // A fresh service has not loaded its L1 verdicts: unknown, not empty,
-    // until they are loaded from the store.
-    expect(await restarted.parentGroups.allApproved('conv_1'), isTrue);
-    expect(restarted.parentGroups.members('conv_1'), hasLength(2));
-    copy.close();
-    await restarted.dispose();
-
-    // The live handle still works, and ending the session closes it.
-    expect(handle.crypto.members(groupId), hasLength(1));
-    await alice.service.dispose();
-    expect((handle as ScratchCallGroupHandle).closed, isTrue);
-    expect(alice.service.parentGroups.members('conv_1'), isEmpty,
-        reason: 'no active device lists nobody');
-  }, skip: skip);
+      // The live handle still works, and ending the session closes it.
+      expect(handle.crypto.members(groupId), hasLength(1));
+      await alice.service.dispose();
+      expect((handle as ScratchCallGroupHandle).closed, isTrue);
+      expect(
+        alice.service.parentGroups.members('conv_1'),
+        isEmpty,
+        reason: 'no active device lists nobody',
+      );
+    },
+    skip: skip,
+  );
 }
 
 Future<void> _startConversation(_Client alice, _Client bob) async {
-  await alice.service.initializeConversation(
-      'conv_1', <DeviceKeyPackage>[await bob.keyPackage()]);
+  await alice.service.initializeConversation('conv_1', <DeviceKeyPackage>[
+    await bob.keyPackage(),
+  ]);
   await _accept(alice, <_Client>[bob], const <_Client>[]);
 }
 
@@ -642,7 +820,10 @@ Future<void> _startConversation(_Client alice, _Client bob) async {
 /// it, [joiners] get the Welcome and [members] the commit. Returns the
 /// accepted outbox item, so a test can deliver its commit later.
 Future<PendingMlsMessage> _accept(
-    _Client from, List<_Client> joiners, List<_Client> members) async {
+  _Client from,
+  List<_Client> joiners,
+  List<_Client> members,
+) async {
   final item = (await from.store.pendingMlsMessages()).single;
   expect(item.kind, MlsCommitBundle.kind);
   final bundle = MlsCommitBundle.decode(item.payload);
@@ -652,18 +833,20 @@ Future<PendingMlsMessage> _accept(
     await _deliverCommit(from, member, item);
   }
   for (final joiner in joiners) {
-    await joiner.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: 'conv_1',
-      senderAccountId: from.accountId,
-      senderDeviceId: from.deviceId,
-      kind: 'welcome',
-      payload: bundle.welcome,
-      idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.deviceId}',
-      syncEventId: joiner.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-      recipientDeviceId: joiner.deviceId,
-    ));
+    await joiner.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_${++_serverIds}',
+        conversationId: 'conv_1',
+        senderAccountId: from.accountId,
+        senderDeviceId: from.deviceId,
+        kind: 'welcome',
+        payload: bundle.welcome,
+        idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.deviceId}',
+        syncEventId: joiner.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+        recipientDeviceId: joiner.deviceId,
+      ),
+    );
   }
   return item;
 }
@@ -671,18 +854,23 @@ Future<PendingMlsMessage> _accept(
 /// Plays the sync stream delivering the commit of [from]'s accepted [item]
 /// to [member].
 Future<void> _deliverCommit(
-    _Client from, _Client member, PendingMlsMessage item) async {
-  await member.service.processMlsMessage(MlsMessage(
-    id: 'mls_${++_serverIds}',
-    conversationId: 'conv_1',
-    senderAccountId: from.accountId,
-    senderDeviceId: from.deviceId,
-    kind: 'commit',
-    payload: MlsCommitBundle.decode(item.payload).commit,
-    idempotencyKey: item.idempotencyKey,
-    syncEventId: member.nextEvent(),
-    createdAt: DateTime.now().toUtc(),
-  ));
+  _Client from,
+  _Client member,
+  PendingMlsMessage item,
+) async {
+  await member.service.processMlsMessage(
+    MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: 'conv_1',
+      senderAccountId: from.accountId,
+      senderDeviceId: from.deviceId,
+      kind: 'commit',
+      payload: MlsCommitBundle.decode(item.payload).commit,
+      idempotencyKey: item.idempotencyKey,
+      syncEventId: member.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+    ),
+  );
 }
 
 int _serverIds = 0;
@@ -707,22 +895,31 @@ class _Client {
   int _events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final store = _RemovalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: store);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
-    await service.activateSession(Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: accountId,
-      deviceId: deviceId,
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: store,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
+    await service.activateSession(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: accountId,
+        deviceId: deviceId,
+      ),
+    );
     return _Client(service, store, accountId, deviceId);
   }
 
@@ -741,7 +938,9 @@ class _Client {
   Future<List<LocalMessage>> history() => store.loadMessages('conv_1');
 
   Future<MessageEnvelope> send(
-      AppPayloadType type, Map<String, Object?> body) async {
+    AppPayloadType type,
+    Map<String, Object?> body,
+  ) async {
     final envelope = await service.encryptPayload('conv_1', type, body);
     await store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;
@@ -750,10 +949,13 @@ class _Client {
   /// Delivers [sent] as the server would, carrying its franking commitment.
   /// [frankCommit] replaces it and [dropFrankCommit] removes it, to play a
   /// server that changed or stripped the field.
-  Future<void> receive(_Client from, MessageEnvelope sent,
-      {String? claimedAccountId,
-      List<int>? frankCommit,
-      bool dropFrankCommit = false}) async {
+  Future<void> receive(
+    _Client from,
+    MessageEnvelope sent, {
+    String? claimedAccountId,
+    List<int>? frankCommit,
+    bool dropFrankCommit = false,
+  }) async {
     await service.processApplicationMessage(
       ReceivedMessageEnvelope(
         id: 'srv_${++_serverIds}',

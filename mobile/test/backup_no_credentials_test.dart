@@ -44,7 +44,10 @@ SealedToken _sealedToken(List<int> nonce, List<int> output) => SealedToken(
     );
 
 StoredCryptoState _state(int counter) => StoredCryptoState(
-    counter: counter, stateKey: _stateKey, sealedState: _sealed);
+      counter: counter,
+      stateKey: _stateKey,
+      sealedState: _sealed,
+    );
 
 /// Every way the sentinels could appear in the JSON plaintext.
 List<String> _forbidden() => <String>[
@@ -107,90 +110,104 @@ void main() {
     await store.saveSession(_session);
     await store.saveCryptoState(_state(1), 10);
     await store.saveSnapshot(
-        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
-        const <String, List<ReceivedMessageEnvelope>>{},
-        10);
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: 'application:11:m1',
-      conversationId: 'conv_1',
-      expectedCounter: 1,
-      expectedCursor: 10,
-      state: _state(2),
-      cursor: 11,
-      messageEffects: <MessageEffect>[
-        InsertMessageEffect(
-          key: 'dev_peer:m1',
-          serverMessageId: 'm1',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_peer',
-          senderDeviceId: 'dev_peer',
-          kind: LocalMessageKind.text,
-          body: 'hello',
-          createdAt: DateTime.utc(2026, 10, 24).millisecondsSinceEpoch,
-          state: LocalMessageState.received,
-        ),
-      ],
-    ));
-    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-      expectedCounter: 2,
-      expectedCursor: 11,
-      state: _state(3),
-      messages: <PendingMlsMessage>[
-        PendingMlsMessage(
-          idempotencyKey: 'mls_1',
-          conversationId: 'conv_1',
-          kind: 'commit',
-          payload: utf8.encode('mls-outbox-SENTINEL'),
-        ),
-      ],
-    ));
-    await store.enqueueEnvelope(MessageEnvelope(
-      conversationId: 'conv_1',
-      idempotencyKey: 'plain_1',
-      ciphertext: utf8.encode('plain-outbox-SENTINEL'),
-      cryptoProtocol: 'mls10-openmls-v1',
-    ));
-    await store.saveSealedTokens(
-        <SealedToken>[_sealedToken(_tokenNonce, _tokenOutput)]);
-    await store.enqueueEnvelope(MessageEnvelope(
-      conversationId: 'conv_1',
-      idempotencyKey: 'sealed_queued_000000000001',
-      ciphertext: utf8.encode('sealed-outbox-SENTINEL'),
-      cryptoProtocol: 'mls10-openmls-v1',
-      sealedToken: _sealedToken(_queuedNonce, _queuedOutput),
-    ));
+      <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+      const <String, List<ReceivedMessageEnvelope>>{},
+      10,
+    );
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: 'application:11:m1',
+        conversationId: 'conv_1',
+        expectedCounter: 1,
+        expectedCursor: 10,
+        state: _state(2),
+        cursor: 11,
+        messageEffects: <MessageEffect>[
+          InsertMessageEffect(
+            key: 'dev_peer:m1',
+            serverMessageId: 'm1',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_peer',
+            senderDeviceId: 'dev_peer',
+            kind: LocalMessageKind.text,
+            body: 'hello',
+            createdAt: DateTime.utc(2026, 10, 24).millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+          ),
+        ],
+      ),
+    );
+    await store.commitOutgoingMlsTransition(
+      OutgoingMlsStateTransition(
+        expectedCounter: 2,
+        expectedCursor: 11,
+        state: _state(3),
+        messages: <PendingMlsMessage>[
+          PendingMlsMessage(
+            idempotencyKey: 'mls_1',
+            conversationId: 'conv_1',
+            kind: 'commit',
+            payload: utf8.encode('mls-outbox-SENTINEL'),
+          ),
+        ],
+      ),
+    );
+    await store.enqueueEnvelope(
+      MessageEnvelope(
+        conversationId: 'conv_1',
+        idempotencyKey: 'plain_1',
+        ciphertext: utf8.encode('plain-outbox-SENTINEL'),
+        cryptoProtocol: 'mls10-openmls-v1',
+      ),
+    );
+    await store.saveSealedTokens(<SealedToken>[
+      _sealedToken(_tokenNonce, _tokenOutput),
+    ]);
+    await store.enqueueEnvelope(
+      MessageEnvelope(
+        conversationId: 'conv_1',
+        idempotencyKey: 'sealed_queued_000000000001',
+        ciphertext: utf8.encode('sealed-outbox-SENTINEL'),
+        cryptoProtocol: 'mls10-openmls-v1',
+        sealedToken: _sealedToken(_queuedNonce, _queuedOutput),
+      ),
+    );
     expect(
-        await store.countSealedTokens('conv_1', keyId: 'f' * 32, epoch: 20400),
-        1);
+      await store.countSealedTokens('conv_1', keyId: 'f' * 32, epoch: 20400),
+      1,
+    );
     return store.exportHistorySnapshot();
   }
 
   for (final memory in <bool>[true, false]) {
     final label = memory ? 'memory store' : 'encrypted store';
 
-    test('the history snapshot holds no credential or MLS state ($label)',
-        () async {
-      final backup =
-          await seededBackup(memory ? MemoryLocalStore() : createStore());
-      final text = utf8.decode(backup);
-      // The snapshot names its source device by design (K2); no secret.
-      for (final needle in _forbidden().where((n) => n != _deviceId)) {
-        expect(text, isNot(contains(needle)), reason: needle);
-      }
-      expect(text, isNot(contains('mls-outbox-SENTINEL')));
-      expect(text, isNot(contains('plain-outbox-SENTINEL')));
-      expect(text, isNot(contains('sealed-outbox-SENTINEL')));
-      // Nor the raw token bytes, in any spelling the JSON could hold.
-      for (final bytes in <List<int>>[
-        _tokenNonce,
-        _tokenOutput,
-        _queuedNonce,
-        _queuedOutput
-      ]) {
-        expect(text, isNot(contains(bytes.join(','))));
-        expect(_containsRun(backup, bytes), isFalse);
-      }
-    });
+    test(
+      'the history snapshot holds no credential or MLS state ($label)',
+      () async {
+        final backup = await seededBackup(
+          memory ? MemoryLocalStore() : createStore(),
+        );
+        final text = utf8.decode(backup);
+        // The snapshot names its source device by design (K2); no secret.
+        for (final needle in _forbidden().where((n) => n != _deviceId)) {
+          expect(text, isNot(contains(needle)), reason: needle);
+        }
+        expect(text, isNot(contains('mls-outbox-SENTINEL')));
+        expect(text, isNot(contains('plain-outbox-SENTINEL')));
+        expect(text, isNot(contains('sealed-outbox-SENTINEL')));
+        // Nor the raw token bytes, in any spelling the JSON could hold.
+        for (final bytes in <List<int>>[
+          _tokenNonce,
+          _tokenOutput,
+          _queuedNonce,
+          _queuedOutput,
+        ]) {
+          expect(text, isNot(contains(bytes.join(','))));
+          expect(_containsRun(backup, bytes), isFalse);
+        }
+      },
+    );
   }
 }
 

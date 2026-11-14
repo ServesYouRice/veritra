@@ -77,8 +77,11 @@ Uint8List generateFrankKey({Random? random}) {
 /// `d` (1 to 16 entries, [designationWellFormed]), only ever in the form
 /// `,"frank":{"k":"<44 chars>","d":"<64 x n chars>"}}`. A sealed payload
 /// with no owner key to designate is in the plain form (no `d`).
-Uint8List frankWireJson(Uint8List canonical, List<int> key,
-    {List<int>? designation}) {
+Uint8List frankWireJson(
+  Uint8List canonical,
+  List<int> key, {
+  List<int>? designation,
+}) {
   if (key.length != frankKeyBytes ||
       (designation != null && !designationWellFormed(designation)) ||
       canonical.length < 2 ||
@@ -160,8 +163,9 @@ FrankOutcome splitFrank(List<int> json) {
         return const MalformedFrank();
       }
       final text = ascii.decode(
-          Uint8List.sublistView(bytes, runStart, runStart + run),
-          allowInvalid: false);
+        Uint8List.sublistView(bytes, runStart, runStart + run),
+        allowInvalid: false,
+      );
       final decodedDesignation = base64.decode(text);
       if (base64.encode(decodedDesignation) != text ||
           !designationWellFormed(decodedDesignation)) {
@@ -194,9 +198,10 @@ FrankOutcome splitFrank(List<int> json) {
     // wire content minus `frank`.
     if (_objectWithoutFrank(canonical) == null) return const MalformedFrank();
     return Franked(
-        canonical: canonical,
-        key: Uint8List.fromList(key),
-        designation: designation);
+      canonical: canonical,
+      key: Uint8List.fromList(key),
+      designation: designation,
+    );
   } catch (_) {
     return const MalformedFrank();
   }

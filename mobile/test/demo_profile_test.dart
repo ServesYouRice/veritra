@@ -13,8 +13,11 @@ void main() {
       <String>['--profile='],
       <String>['--profile=${'a' * 21}'],
     ]) {
-      expect(() => demoProfileFromArgs(bad), throwsFormatException,
-          reason: bad.join(' '));
+      expect(
+        () => demoProfileFromArgs(bad),
+        throwsFormatException,
+        reason: bad.join(' '),
+      );
     }
   });
 }

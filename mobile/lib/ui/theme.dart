@@ -160,18 +160,14 @@ ThemeData _buildTheme(Brightness brightness) {
       backgroundColor: scheme.surface,
       surfaceTintColor: Colors.transparent,
       foregroundColor: scheme.onSurface,
-      titleTextStyle: textTheme.titleLarge?.copyWith(
-        color: scheme.onSurface,
-      ),
+      titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: scheme.surfaceContainer,
       // U8: a field error wraps to a second line instead of being cut.
       errorMaxLines: 2,
-      hintStyle: textTheme.bodyMedium?.copyWith(
-        color: scheme.onSurfaceVariant,
-      ),
+      hintStyle: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(BoneRadii.md),
         borderSide: BorderSide(color: scheme.outlineVariant),
@@ -245,9 +241,7 @@ ThemeData _buildTheme(Brightness brightness) {
     dialogTheme: DialogThemeData(
       backgroundColor: scheme.surfaceContainerLow,
       surfaceTintColor: Colors.transparent,
-      titleTextStyle: textTheme.titleLarge?.copyWith(
-        color: scheme.onSurface,
-      ),
+      titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(BoneRadii.lg),
       ),

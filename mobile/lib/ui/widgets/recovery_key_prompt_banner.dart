@@ -43,14 +43,18 @@ class RecoveryKeyPromptBanner extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Icon(Icons.key_outlined,
-                        size: 18, color: scheme.onSecondaryContainer),
+                    Icon(
+                      Icons.key_outlined,
+                      size: 18,
+                      color: scheme.onSecondaryContainer,
+                    ),
                     const SizedBox(width: BoneSpacing.md),
                     Expanded(
                       child: Text(
                         l10n.autoBackupPromptMessage,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: scheme.onSecondaryContainer),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSecondaryContainer,
+                        ),
                       ),
                     ),
                   ],

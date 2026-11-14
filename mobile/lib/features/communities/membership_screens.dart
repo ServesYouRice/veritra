@@ -338,8 +338,10 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
   }
 
   Future<void> _load() async {
-    final invites =
-        await state.loadMembershipInvites(widget.kind, widget.targetId);
+    final invites = await state.loadMembershipInvites(
+      widget.kind,
+      widget.targetId,
+    );
     if (!mounted) return;
     if (invites == null) {
       setState(() => _error = _failureOf(state));
@@ -383,8 +385,9 @@ class _MembershipInvitesPanelState extends State<MembershipInvitesPanel> {
 
   void _copy(String link) {
     Clipboard.setData(ClipboardData(text: link));
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(context.l10n.membInviteCopied)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.membInviteCopied)));
   }
 
   @override
@@ -514,11 +517,13 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
       setState(() => _error = _failureOf(state));
     } else {
       final l10n = context.l10n;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-          approve ? l10n.joinStatusApproved : l10n.joinReqRejectedSnack,
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            approve ? l10n.joinStatusApproved : l10n.joinReqRejectedSnack,
+          ),
         ),
-      ));
+      );
       if (approve) widget.onApproved?.call();
     }
     await _load();
@@ -566,7 +571,8 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
                             children: <Widget>[
                               TextButton(
                                 key: ValueKey<String>(
-                                    'join-decline-${request.id}'),
+                                  'join-decline-${request.id}',
+                                ),
                                 onPressed: busy
                                     ? null
                                     : () => _decide(request, approve: false),
@@ -574,7 +580,8 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
                               ),
                               FilledButton.tonal(
                                 key: ValueKey<String>(
-                                    'join-approve-${request.id}'),
+                                  'join-approve-${request.id}',
+                                ),
                                 onPressed: busy
                                     ? null
                                     : () => _decide(request, approve: true),
@@ -747,7 +754,10 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     if (seconds == null || !mounted) return;
     setState(() => _error = null);
     final done = await state.timeoutCommunityMember(
-        _communityId, member.accountId, seconds);
+      _communityId,
+      member.accountId,
+      seconds,
+    );
     if (!mounted) return;
     if (!done) {
       setState(() => _error = _failureOf(state));
@@ -757,15 +767,17 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       // the access it ended.)
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(
-          content: Text(l10n.timeoutDone),
-          persist: false,
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: l10n.commonUndo,
-            onPressed: () => unawaited(_timeout(member, lift: true)),
+        ..showSnackBar(
+          SnackBar(
+            content: Text(l10n.timeoutDone),
+            persist: false,
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: l10n.commonUndo,
+              onPressed: () => unawaited(_timeout(member, lift: true)),
+            ),
           ),
-        ));
+        );
     }
   }
 

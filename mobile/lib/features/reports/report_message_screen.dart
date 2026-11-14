@@ -169,8 +169,9 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       appBar: LargeTitleBar(title: l10n.c6ReportTitle),
       body: SafeArea(
         child: switch (_phase) {
-          _Phase.loading =>
-            const Center(child: CircularProgressIndicator.adaptive()),
+          _Phase.loading => const Center(
+              child: CircularProgressIndicator.adaptive(),
+            ),
           _Phase.blocked => _Notice(
               icon: Icons.report_gmailerrorred_outlined,
               text: _message ?? l10n.errorGeneric,
@@ -192,8 +193,10 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
               children: <Widget>[
                 Text(l10n.c6ReportIntro, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: BoneSpacing.lg),
-                Text(l10n.c6ReportPreviewLabel,
-                    style: theme.textTheme.labelLarge),
+                Text(
+                  l10n.c6ReportPreviewLabel,
+                  style: theme.textTheme.labelLarge,
+                ),
                 const SizedBox(height: BoneSpacing.sm),
                 Container(
                   padding: const EdgeInsets.all(BoneSpacing.md),
@@ -214,8 +217,10 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
                 ..._reasons(context),
                 if (_message != null) ...<Widget>[
                   const SizedBox(height: BoneSpacing.md),
-                  Text(_message!,
-                      style: TextStyle(color: theme.colorScheme.error)),
+                  Text(
+                    _message!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
                 ],
                 const SizedBox(height: BoneSpacing.xl),
                 _action(context),
@@ -265,24 +270,32 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
     if (plan.isCommunity) {
       // Moderator keys are trusted only over MLS: nothing to compare.
       return <Widget>[
-        Text(l10n.c6ReportModeratorCount(plan.check.recipients.length),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.c6ReportModeratorCount(plan.check.recipients.length),
+          style: theme.textTheme.bodyMedium,
+        ),
         if (plan.unconfirmed.isNotEmpty) ...<Widget>[
           const SizedBox(height: BoneSpacing.sm),
-          Text(l10n.c6ReportModeratorsUnconfirmed(plan.unconfirmed.length),
-              style: theme.textTheme.bodyMedium),
+          Text(
+            l10n.c6ReportModeratorsUnconfirmed(plan.unconfirmed.length),
+            style: theme.textTheme.bodyMedium,
+          ),
         ],
       ];
     }
     final unsure = plan.check.recipients
-        .where((r) =>
-            r.status == ReportKeyStatus.unpinned ||
-            r.status == ReportKeyStatus.changed)
+        .where(
+          (r) =>
+              r.status == ReportKeyStatus.unpinned ||
+              r.status == ReportKeyStatus.changed,
+        )
         .toList();
     if (unsure.isEmpty && plan.check.missing.isEmpty) {
       return <Widget>[
-        Text(l10n.c6ReportRecipientCount(plan.check.recipients.length),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.c6ReportRecipientCount(plan.check.recipients.length),
+          style: theme.textTheme.bodyMedium,
+        ),
       ];
     }
     return <Widget>[
@@ -292,19 +305,26 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       const SizedBox(height: BoneSpacing.sm),
       for (final r in unsure) ...<Widget>[
         SelectableText(
-          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId),
-              reportKeyFingerprint(r.recipient.publicKey)),
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+          l10n.c6ReportOwnerKey(
+            shortId(r.recipient.inboxId),
+            reportKeyFingerprint(r.recipient.publicKey),
+          ),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
         ),
         if (r.status == ReportKeyStatus.changed)
-          Text(l10n.c6ReportKeyChanged,
-              style: TextStyle(color: theme.colorScheme.error)),
+          Text(
+            l10n.c6ReportKeyChanged,
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
         const SizedBox(height: BoneSpacing.sm),
       ],
       if (plan.check.missing.isNotEmpty)
-        Text(l10n.c6ReportKeyMissing,
-            style: TextStyle(color: theme.colorScheme.error)),
+        Text(
+          l10n.c6ReportKeyMissing,
+          style: TextStyle(color: theme.colorScheme.error),
+        ),
     ];
   }
 
@@ -325,7 +345,8 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
           ? const SizedBox(
               height: 20,
               width: 20,
-              child: CircularProgressIndicator(strokeWidth: 2))
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
           : Text(l10n.c6ReportSend),
     );
   }

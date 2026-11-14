@@ -41,8 +41,10 @@ class DesktopServices {
   /// Starts the real shell on Windows, Linux and macOS. Returns null on
   /// other platforms and when the shell cannot start, so the app still runs
   /// as a normal window.
-  static Future<DesktopServices?> startIfSupported(AppState state,
-      {ProfileScope scope = const ProfileScope()}) async {
+  static Future<DesktopServices?> startIfSupported(
+    AppState state, {
+    ProfileScope scope = const ProfileScope(),
+  }) async {
     if (!desktopShellSupported) return null;
     try {
       final shell = PluginDesktopShell();
@@ -52,11 +54,13 @@ class DesktopServices {
         quitLabel: strings.trayQuit,
         tooltip: veritraProductName,
       );
-      final settings =
-          NotificationSettings(SecureNotificationSettingsStore(scope: scope));
+      final settings = NotificationSettings(
+        SecureNotificationSettingsStore(scope: scope),
+      );
       unawaited(settings.load());
-      final updateSettings =
-          UpdateSettings(SecureUpdateSettingsStore(scope: scope));
+      final updateSettings = UpdateSettings(
+        SecureUpdateSettingsStore(scope: scope),
+      );
       await updateSettings.load();
       final updateService = UpdateService(
         settings: updateSettings,

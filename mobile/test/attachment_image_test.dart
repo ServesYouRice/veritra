@@ -78,9 +78,11 @@ Uint8List _declaredPng(int width, int height) {
     out.add((ByteData(4)..setUint32(0, data.length)).buffer.asUint8List());
     out.add(typeBytes);
     out.add(data);
-    out.add((ByteData(4)..setUint32(0, _crc32(<int>[...typeBytes, ...data])))
-        .buffer
-        .asUint8List());
+    out.add(
+      (ByteData(4)..setUint32(0, _crc32(<int>[...typeBytes, ...data])))
+          .buffer
+          .asUint8List(),
+    );
   }
 
   final header = ByteData(13)
@@ -110,15 +112,17 @@ Future<Uint8List> _realPng(int width, int height) async {
 Future<void> _show(WidgetTester tester, Uint8List bytes) async {
   final state = _ImageState(bytes);
   addTearDown(state.dispose);
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: AttachmentImageScreen(
-      state: state,
-      entry: _entry,
-      conversationId: 'conv_1',
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: AttachmentImageScreen(
+        state: state,
+        entry: _entry,
+        conversationId: 'conv_1',
+      ),
     ),
-  ));
+  );
   // The size probe and the decode are real engine work.
   await tester.runAsync(
     () => Future<void>.delayed(const Duration(milliseconds: 300)),
@@ -141,24 +145,35 @@ void main() {
 
   test('large images are decoded smaller, in proportion', () {
     expect(viewerDecodeSize(800, 600), (width: null, height: null));
-    expect(
-        viewerDecodeSize(maxViewerDecodeSide, 10), (width: null, height: null));
-    expect(viewerDecodeSize(8000, 6000),
-        (width: maxViewerDecodeSide, height: null));
-    expect(viewerDecodeSize(6000, 8000),
-        (width: null, height: maxViewerDecodeSide));
+    expect(viewerDecodeSize(maxViewerDecodeSide, 10), (
+      width: null,
+      height: null,
+    ));
+    expect(viewerDecodeSize(8000, 6000), (
+      width: maxViewerDecodeSide,
+      height: null,
+    ));
+    expect(viewerDecodeSize(6000, 8000), (
+      width: null,
+      height: maxViewerDecodeSide,
+    ));
   });
 
-  testWidgets('an image that declares too many pixels is never decoded',
-      (tester) async {
+  testWidgets('an image that declares too many pixels is never decoded', (
+    tester,
+  ) async {
     await _show(tester, _declaredPng(30000, 30000));
     expect(find.text('This image cannot be shown.'), findsOneWidget);
-    expect(find.byType(Image), findsNothing,
-        reason: 'no Image means nothing asked the engine to decode it');
+    expect(
+      find.byType(Image),
+      findsNothing,
+      reason: 'no Image means nothing asked the engine to decode it',
+    );
   });
 
-  testWidgets('bytes that are not an image are not decoded either',
-      (tester) async {
+  testWidgets('bytes that are not an image are not decoded either', (
+    tester,
+  ) async {
     await _show(tester, Uint8List.fromList(List<int>.filled(64, 7)));
     expect(find.text('This image cannot be shown.'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
@@ -170,12 +185,16 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('This image cannot be shown.'), findsNothing);
     final provider = tester.widget<Image>(find.byType(Image)).image;
-    expect(provider, isNot(isA<ResizeImage>()),
-        reason: 'a small image needs no resizing');
+    expect(
+      provider,
+      isNot(isA<ResizeImage>()),
+      reason: 'a small image needs no resizing',
+    );
   });
 
-  testWidgets('a wide image is decoded no wider than the viewer bound',
-      (tester) async {
+  testWidgets('a wide image is decoded no wider than the viewer bound', (
+    tester,
+  ) async {
     final bytes = (await tester.runAsync(() => _realPng(5000, 20)))!;
     await _show(tester, bytes);
     final provider = tester.widget<Image>(find.byType(Image)).image;

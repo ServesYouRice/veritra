@@ -16,19 +16,21 @@ class _Bridge extends PlatformWakeWorkerBridge {
 }
 
 WakeBootstrap background({String? profile = 'demo'}) => WakeBootstrap(
-    launchBackground: true,
-    boundProfile: profile,
-    uiAttached: false,
-    nativeSilent: true,
-    canOptIn: false);
+      launchBackground: true,
+      boundProfile: profile,
+      uiAttached: false,
+      nativeSilent: true,
+      canOptIn: false,
+    );
 
 void main() {
-  test('unknown background profile cannot construct storage or crypto',
-      () async {
-    for (final profile in [null, 'different']) {
-      final bridge = _Bridge(Future.value(background(profile: profile)));
-      var ui = 0, bg = 0;
-      final gate = WakeLaunchCoordinator(
+  test(
+    'unknown background profile cannot construct storage or crypto',
+    () async {
+      for (final profile in [null, 'different']) {
+        final bridge = _Bridge(Future.value(background(profile: profile)));
+        var ui = 0, bg = 0;
+        final gate = WakeLaunchCoordinator(
           bridge: bridge,
           profile: 'demo',
           onUi: () async {
@@ -36,41 +38,47 @@ void main() {
           },
           onBackground: () async {
             bg++;
-          });
-      await gate.start();
-      expect(ui, 0);
-      expect(bg, 0);
-      bridge.attachment!(true);
-      await Future<void>.delayed(Duration.zero);
-      expect(ui, 1);
-      expect(bg, 0);
-    }
-  });
+          },
+        );
+        await gate.start();
+        expect(ui, 0);
+        expect(bg, 0);
+        bridge.attachment!(true);
+        await Future<void>.delayed(Duration.zero);
+        expect(ui, 1);
+        expect(bg, 0);
+      }
+    },
+  );
 
-  test('release without a background crypto callback stays quiet until UI',
-      () async {
-    final bridge = _Bridge(Future.value(background(profile: 'release')));
-    var ui = 0;
-    final gate = WakeLaunchCoordinator(
+  test(
+    'release without a background crypto callback stays quiet until UI',
+    () async {
+      final bridge = _Bridge(Future.value(background(profile: 'release')));
+      var ui = 0;
+      final gate = WakeLaunchCoordinator(
         bridge: bridge,
         profile: 'release',
         onUi: () async {
           ui++;
-        });
-    await gate.start();
-    expect(ui, 0);
-    bridge.attachment!(true);
-    bridge.attachment!(true);
-    await Future<void>.delayed(Duration.zero);
-    expect(ui, 1);
-  });
+        },
+      );
+      await gate.start();
+      expect(ui, 0);
+      bridge.attachment!(true);
+      bridge.attachment!(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(ui, 1);
+    },
+  );
 
-  test('UI attachment cancels before draining pending background setup',
-      () async {
-    final bridge = _Bridge(Future.value(background()));
-    final entered = Completer<void>(), release = Completer<void>();
-    final events = <String>[];
-    final gate = WakeLaunchCoordinator(
+  test(
+    'UI attachment cancels before draining pending background setup',
+    () async {
+      final bridge = _Bridge(Future.value(background()));
+      final entered = Completer<void>(), release = Completer<void>();
+      final events = <String>[];
+      final gate = WakeLaunchCoordinator(
         bridge: bridge,
         profile: 'demo',
         onBackground: () async {
@@ -83,31 +91,34 @@ void main() {
         },
         onUi: () async {
           events.add('ui');
-        });
-    final start = gate.start();
-    await entered.future;
-    bridge.attachment!(true);
-    await Future<void>.delayed(Duration.zero);
-    expect(events, ['background', 'cancel']);
-    release.complete();
-    await start;
-    await Future<void>.delayed(Duration.zero);
-    expect(events, ['background', 'cancel', 'cancel', 'ui']);
-  });
+        },
+      );
+      final start = gate.start();
+      await entered.future;
+      bridge.attachment!(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['background', 'cancel']);
+      release.complete();
+      await start;
+      await Future<void>.delayed(Duration.zero);
+      expect(events, ['background', 'cancel', 'cancel', 'ui']);
+    },
+  );
 
   test('UI attachment during bootstrap cannot start a second owner', () async {
     final bootstrap = Completer<WakeBootstrap>();
     final bridge = _Bridge(bootstrap.future);
     var ui = 0, bg = 0;
     final gate = WakeLaunchCoordinator(
-        bridge: bridge,
-        profile: 'demo',
-        onUi: () async {
-          ui++;
-        },
-        onBackground: () async {
-          bg++;
-        });
+      bridge: bridge,
+      profile: 'demo',
+      onUi: () async {
+        ui++;
+      },
+      onBackground: () async {
+        bg++;
+      },
+    );
     final start = gate.start();
     bridge.attachment!(true);
     bootstrap.complete(background());
@@ -121,14 +132,15 @@ void main() {
     final bridge = _Bridge(Future.error(const FormatException('protocol')));
     var ui = 0, bg = 0;
     final gate = WakeLaunchCoordinator(
-        bridge: bridge,
-        profile: 'demo',
-        onUi: () async {
-          ui++;
-        },
-        onBackground: () async {
-          bg++;
-        });
+      bridge: bridge,
+      profile: 'demo',
+      onUi: () async {
+        ui++;
+      },
+      onBackground: () async {
+        bg++;
+      },
+    );
     await gate.start();
     expect(ui, 0);
     expect(bg, 0);
@@ -137,12 +149,13 @@ void main() {
     expect(ui, 1);
   });
 
-  test('late setup owner is cancelled before UI can use the shared state',
-      () async {
-    final bridge = _Bridge(Future.value(background()));
-    final entered = Completer<void>(), release = Completer<void>();
-    var activeWorker = false, ui = false;
-    final gate = WakeLaunchCoordinator(
+  test(
+    'late setup owner is cancelled before UI can use the shared state',
+    () async {
+      final bridge = _Bridge(Future.value(background()));
+      final entered = Completer<void>(), release = Completer<void>();
+      var activeWorker = false, ui = false;
+      final gate = WakeLaunchCoordinator(
         bridge: bridge,
         profile: 'demo',
         onBackground: () async {
@@ -156,23 +169,26 @@ void main() {
         onUi: () async {
           expect(activeWorker, isFalse);
           ui = true;
-        });
-    final started = gate.start();
-    await entered.future;
-    bridge.attachment!(true);
-    await Future<void>.delayed(Duration.zero);
-    release.complete();
-    await started;
-    await Future<void>.delayed(Duration.zero);
-    expect(ui, isTrue);
-  });
+        },
+      );
+      final started = gate.start();
+      await entered.future;
+      bridge.attachment!(true);
+      await Future<void>.delayed(Duration.zero);
+      release.complete();
+      await started;
+      await Future<void>.delayed(Duration.zero);
+      expect(ui, isTrue);
+    },
+  );
 
-  test('latest detach event overrides a stale attached bootstrap snapshot',
-      () async {
-    final response = Completer<WakeBootstrap>();
-    final bridge = _Bridge(response.future);
-    var ui = 0, bg = 0;
-    final gate = WakeLaunchCoordinator(
+  test(
+    'latest detach event overrides a stale attached bootstrap snapshot',
+    () async {
+      final response = Completer<WakeBootstrap>();
+      final bridge = _Bridge(response.future);
+      var ui = 0, bg = 0;
+      final gate = WakeLaunchCoordinator(
         bridge: bridge,
         profile: 'demo',
         onUi: () async {
@@ -180,17 +196,22 @@ void main() {
         },
         onBackground: () async {
           bg++;
-        });
-    final started = gate.start();
-    bridge.attachment!(false);
-    response.complete(const WakeBootstrap(
-        launchBackground: true,
-        boundProfile: 'demo',
-        uiAttached: true,
-        nativeSilent: true,
-        canOptIn: false));
-    await started;
-    expect(ui, 0);
-    expect(bg, 1);
-  });
+        },
+      );
+      final started = gate.start();
+      bridge.attachment!(false);
+      response.complete(
+        const WakeBootstrap(
+          launchBackground: true,
+          boundProfile: 'demo',
+          uiAttached: true,
+          nativeSilent: true,
+          canOptIn: false,
+        ),
+      );
+      await started;
+      expect(ui, 0);
+      expect(bg, 1);
+    },
+  );
 }

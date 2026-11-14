@@ -30,10 +30,11 @@ void main() {
         final text = await utf8.decoder.bind(request).join();
         seen.add('${request.method} ${request.uri.path}');
         await handle(
-            request,
-            text.isEmpty
-                ? <String, Object?>{}
-                : Map<String, Object?>.from(jsonDecode(text) as Map));
+          request,
+          text.isEmpty
+              ? <String, Object?>{}
+              : Map<String, Object?>.from(jsonDecode(text) as Map),
+        );
         await request.response.close();
       });
     });
@@ -79,9 +80,11 @@ void main() {
       expect(status.pending!.id, 'arr_1');
       expect(status.pending!.deviceName, 'Phone');
       expect(status.pending!.readyAt, DateTime.utc(2026, 11, 8, 9));
-      await api.putRecoveryKey('tok',
-          rkAuthPub: List<int>.filled(32, 0xA1),
-          rkId: List<int>.filled(16, 0xB2));
+      await api.putRecoveryKey(
+        'tok',
+        rkAuthPub: List<int>.filled(32, 0xA1),
+        rkId: List<int>.filled(16, 0xB2),
+      );
       expect(seen, <String>[
         'GET /api/v1/account/recovery-key',
         'PUT /api/v1/account/recovery-key',
@@ -91,24 +94,35 @@ void main() {
     test('recovery off: available false, and PUT answers 503', () async {
       handle = (request, body) async {
         if (request.method == 'GET') {
-          reply(request, 200,
-              <String, Object?>{'available': false, 'configured': false});
+          reply(request, 200, <String, Object?>{
+            'available': false,
+            'configured': false,
+          });
         } else {
-          reply(request, 503,
-              <String, Object?>{'error': 'recovery_not_configured'});
+          reply(request, 503, <String, Object?>{
+            'error': 'recovery_not_configured',
+          });
         }
       };
       final status = await api.recoveryKeyStatus('tok');
       expect(status.available, isFalse);
       expect(status.pending, isNull);
       await expectLater(
-          api.putRecoveryKey('tok',
-              rkAuthPub: List<int>.filled(32, 1),
-              rkId: List<int>.filled(16, 1)),
-          throwsA(isA<ApiException>()
+        api.putRecoveryKey(
+          'tok',
+          rkAuthPub: List<int>.filled(32, 1),
+          rkId: List<int>.filled(16, 1),
+        ),
+        throwsA(
+          isA<ApiException>()
               .having((e) => e.serverCode, 'code', 'recovery_not_configured')
-              .having((e) => e.localizedMessage(englishL10n), 'message',
-                  englishL10n.apiErrorRecoveryNotConfigured)));
+              .having(
+                (e) => e.localizedMessage(englishL10n),
+                'message',
+                englishL10n.apiErrorRecoveryNotConfigured,
+              ),
+        ),
+      );
     });
 
     test('reserve takes the username; the claim never does', () async {
@@ -167,25 +181,28 @@ void main() {
     });
 
     test('a refused claim is one 401 with no detail', () async {
-      handle = (request, body) async => reply(
-          request, 401, <String, Object?>{'error': 'invalid_credentials'});
+      handle = (request, body) async => reply(request, 401, <String, Object?>{
+            'error': 'invalid_credentials',
+          });
       await expectLater(
-          api.claimAccountRecovery(
-            enrollment: const EnrollmentReservation(
-                id: 'res_1',
-                accountId: 'acct',
-                deviceId: 'dev',
-                challenge: <int>[1]),
-            password: 'pw',
-            deviceName: 'Phone',
-            credential: EnrollmentCredential(
-                deviceKeyPackage: List<int>.filled(64, 1),
-                signingKey: List<int>.filled(32, 1),
-                challengeSignature: List<int>.filled(64, 1)),
-            recoverySignature: List<int>.filled(64, 1),
+        api.claimAccountRecovery(
+          enrollment: const EnrollmentReservation(
+            id: 'res_1',
+            accountId: 'acct',
+            deviceId: 'dev',
+            challenge: <int>[1],
           ),
-          throwsA(
-              isA<ApiException>().having((e) => e.statusCode, 'status', 401)));
+          password: 'pw',
+          deviceName: 'Phone',
+          credential: EnrollmentCredential(
+            deviceKeyPackage: List<int>.filled(64, 1),
+            signingKey: List<int>.filled(32, 1),
+            challengeSignature: List<int>.filled(64, 1),
+          ),
+          recoverySignature: List<int>.filled(64, 1),
+        ),
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 401)),
+      );
     });
 
     test('status: waiting, completed with a token, then without', () async {
@@ -198,7 +215,7 @@ void main() {
             'account': {'id': 'acct_me', 'username': 'alice', 'role': 'member'},
             'device': {'id': 'dev_new', 'account_id': 'acct_me'},
             'token': 'session-token',
-          }
+          },
         ),
         (
           200,
@@ -206,7 +223,7 @@ void main() {
             'state': 'completed',
             'account': {'id': 'acct_me', 'username': 'alice', 'role': 'member'},
             'device': {'id': 'dev_new', 'account_id': 'acct_me'},
-          }
+          },
         ),
         (410, {'error': 'recovery_cancelled'}),
       ];
@@ -231,18 +248,24 @@ void main() {
       expect(lost.phase, AccountRecoveryPhase.completedWithoutToken);
       expect(lost.token, isNull);
       await expectLater(
-          api.accountRecoveryStatus('arr_1', 'claim-token'),
-          throwsA(isA<ApiException>()
-              .having((e) => e.statusCode, 'status', 410)
-              .having((e) => e.localizedMessage(englishL10n), 'message',
-                  englishL10n.recoveryRequestEnded)));
+        api.accountRecoveryStatus('arr_1', 'claim-token'),
+        throwsA(
+          isA<ApiException>().having((e) => e.statusCode, 'status', 410).having(
+                (e) => e.localizedMessage(englishL10n),
+                'message',
+                englishL10n.recoveryRequestEnded,
+              ),
+        ),
+      );
     });
 
     test('a 200 that is not completed is refused', () async {
       handle = (request, body) async =>
           reply(request, 200, <String, Object?>{'state': 'waiting'});
-      await expectLater(api.accountRecoveryStatus('arr_1', 'claim-token'),
-          throwsA(isA<ApiResponseException>()));
+      await expectLater(
+        api.accountRecoveryStatus('arr_1', 'claim-token'),
+        throwsA(isA<ApiResponseException>()),
+      );
     });
 
     test('cancel uses the session and the request path', () async {
@@ -253,12 +276,19 @@ void main() {
         reply(request, 200, <String, Object?>{'state': 'cancelled'});
       };
       await api.cancelAccountRecovery('tok', 'arr_1');
-      handle = (request, body) async => reply(
-          request, 403, <String, Object?>{'error': 'recent_auth_required'});
+      handle = (request, body) async => reply(request, 403, <String, Object?>{
+            'error': 'recent_auth_required',
+          });
       await expectLater(
-          api.cancelAccountRecovery('tok', 'arr_1'),
-          throwsA(isA<ApiException>()
-              .having((e) => e.serverCode, 'code', 'recent_auth_required')));
+        api.cancelAccountRecovery('tok', 'arr_1'),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.serverCode,
+            'code',
+            'recent_auth_required',
+          ),
+        ),
+      );
     });
   });
 
@@ -314,16 +344,25 @@ void main() {
             sealedState: const <int>[1, 2, 3],
             changes: const <CryptoRecordChange>[
               CryptoRecordChange(
-                  kind: 1, recordId: <int>[7], generation: 1, sealed: <int>[8]),
+                kind: 1,
+                recordId: <int>[7],
+                generation: 1,
+                sealed: <int>[8],
+              ),
               CryptoRecordChange(
-                  kind: 3, recordId: <int>[9], generation: 1, sealed: null),
+                kind: 3,
+                recordId: <int>[9],
+                generation: 1,
+                sealed: null,
+              ),
             ],
           ),
         );
 
     test('round-trips every field', () {
       final decoded = PendingAccountRecovery.decode(
-          claim().copyWith(needsLogin: true).encode())!;
+        claim().copyWith(needsLogin: true).encode(),
+      )!;
       expect(decoded.origin, 'https://chat.example.org');
       expect(decoded.username, 'alice');
       expect(decoded.accountId, 'acct_me');

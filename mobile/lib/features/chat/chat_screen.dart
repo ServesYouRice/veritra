@@ -87,8 +87,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // The draft and reply target live in [AppState.composerDrafts], which
   // outlives this screen: switching destinations in the wide layout, or
   // between conversations, disposes it (T49C-4).
-  late final TextEditingController composer =
-      TextEditingController.fromValue(_draftValue(widget.conversationId));
+  late final TextEditingController composer = TextEditingController.fromValue(
+    _draftValue(widget.conversationId),
+  );
   final scroll = ScrollController();
 
   /// Files waiting to be sent from this conversation (W9, B4).
@@ -149,10 +150,14 @@ class _ChatScreenState extends State<ChatScreen> {
         .timelineFor(widget.conversationId)
         .where((message) => !history.hides(message))
         .toList(growable: false);
-    final at = shown.indexWhere((message) =>
-        ConversationHistory.keyOf(
-            message.senderDeviceId, message.idempotencyKey) ==
-        key);
+    final at = shown.indexWhere(
+      (message) =>
+          ConversationHistory.keyOf(
+            message.senderDeviceId,
+            message.idempotencyKey,
+          ) ==
+          key,
+    );
     return at < 0
         ? null
         : widget.state.pendingFor(widget.conversationId).length + at;
@@ -361,8 +366,10 @@ class _ChatScreenState extends State<ChatScreen> {
         final readOnly = conversation != null &&
             widget.state.readOnlyWithoutPeer(conversation.id);
         final restricted = conversation != null &&
-            !widget.state.mayPost(conversation.id,
-                channelId: widget.state.selectedChannelFor(conversation.id));
+            !widget.state.mayPost(
+              conversation.id,
+              channelId: widget.state.selectedChannelFor(conversation.id),
+            );
         final replyTarget = (readOnly || restricted) ? null : _replyTarget();
         if (_jumpKey != null) _scheduleJump();
         return ChatShortcuts(
@@ -400,8 +407,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                 children: <Widget>[
                                   Text(
                                     conversationTitle(
-                                        context.l10n, conversation,
-                                        profiles: widget.state.profiles),
+                                      context.l10n,
+                                      conversation,
+                                      profiles: widget.state.profiles,
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -431,23 +440,28 @@ class _ChatScreenState extends State<ChatScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: <Widget>[
                                   IconButton(
-                                      key: const Key('chat-call-voice'),
-                                      tooltip: context.l10n.callStartVoice,
-                                      onPressed: calls.busy
-                                          ? null
-                                          : () => unawaited(
-                                              calls.start(conversation.id)),
-                                      icon: const Icon(Icons.call_outlined)),
+                                    key: const Key('chat-call-voice'),
+                                    tooltip: context.l10n.callStartVoice,
+                                    onPressed: calls.busy
+                                        ? null
+                                        : () => unawaited(
+                                              calls.start(conversation.id),
+                                            ),
+                                    icon: const Icon(Icons.call_outlined),
+                                  ),
                                   IconButton(
-                                      key: const Key('chat-call-video'),
-                                      tooltip: context.l10n.callStartVideo,
-                                      onPressed: calls.busy
-                                          ? null
-                                          : () => unawaited(calls.start(
-                                              conversation.id,
-                                              withVideo: true)),
-                                      icon:
-                                          const Icon(Icons.videocam_outlined)),
+                                    key: const Key('chat-call-video'),
+                                    tooltip: context.l10n.callStartVideo,
+                                    onPressed: calls.busy
+                                        ? null
+                                        : () => unawaited(
+                                              calls.start(
+                                                conversation.id,
+                                                withVideo: true,
+                                              ),
+                                            ),
+                                    icon: const Icon(Icons.videocam_outlined),
+                                  ),
                                 ],
                               ),
                             ),
@@ -461,8 +475,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               key: const Key('chat-call-group'),
                               tooltip: context.l10n.roomStart,
                               onPressed: () => unawaited(
-                                  _openRoom(session, conversation.id)),
-                              icon: const Icon(Icons.groups_outlined)),
+                                _openRoom(session, conversation.id),
+                              ),
+                              icon: const Icon(Icons.groups_outlined),
+                            ),
                     ),
                   // Starred messages and the details page: two rarely used
                   // actions behind one menu (U29).
@@ -505,35 +521,44 @@ class _ChatScreenState extends State<ChatScreen> {
                       AccountRecoveryBanner(state: widget.state),
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
                       Material(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         // Up to 50 pins per chat: about three rows show,
                         // the rest scroll, so the timeline keeps its room.
                         child: ConstrainedBox(
-                            key: const ValueKey('pin-bar'),
-                            constraints: const BoxConstraints(maxHeight: 144),
-                            child: ListView(shrinkWrap: true, children: [
-                              for (final pin in widget.state
-                                  .pinsFor(widget.conversationId))
+                          key: const ValueKey('pin-bar'),
+                          constraints: const BoxConstraints(maxHeight: 144),
+                          child: ListView(
+                            shrinkWrap: true,
+                            children: [
+                              for (final pin in widget.state.pinsFor(
+                                widget.conversationId,
+                              ))
                                 ListTile(
                                   dense: true,
-                                  leading: const Icon(Icons.push_pin_outlined,
-                                      size: 18),
+                                  leading: const Icon(
+                                    Icons.push_pin_outlined,
+                                    size: 18,
+                                  ),
                                   title: Text(
-                                      quotedPreview(
-                                          context.l10n,
-                                          widget.state
-                                              .historyFor(widget.conversationId)
-                                              .forKey(pin.targetKey)),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
+                                    quotedPreview(
+                                      context.l10n,
+                                      widget.state
+                                          .historyFor(widget.conversationId)
+                                          .forKey(pin.targetKey),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                   onTap: () {
                                     setState(() => _jumpKey = pin.targetKey);
                                     _scheduleJump();
                                   },
-                                )
-                            ])),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                     Expanded(
                       child: conversation == null
@@ -588,14 +613,18 @@ class _ChatScreenState extends State<ChatScreen> {
                         // A send held for a member's removal (D68) is still
                         // pending: no second send of the same text meanwhile.
                         busy: widget.state.isBusy(Ops.send) ||
-                            widget.state
-                                .sendHeldForRemoval(widget.conversationId),
+                            widget.state.sendHeldForRemoval(
+                              widget.conversationId,
+                            ),
                         onSend: _send,
                         attaching: widget.state.isBusy(Ops.attachment),
                         onAttach:
                             !restricted && widget.state.attachmentsAvailable
                                 ? () => pickAttachmentFiles(
-                                    context, widget.state, _attachments)
+                                      context,
+                                      widget.state,
+                                      _attachments,
+                                    )
                                 : null,
                         onPasteFiles:
                             !restricted && widget.state.attachmentsAvailable
@@ -649,14 +678,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Ctrl+F: the search screen, as the chat list's search button opens it.
   void _openSearch() {
-    Navigator.of(context).push(
-      sharedAxisRoute<void>((_) => SearchScreen(state: widget.state)),
-    );
+    Navigator.of(
+      context,
+    ).push(sharedAxisRoute<void>((_) => SearchScreen(state: widget.state)));
   }
 
   Future<void> _addFiles(List<XFile> files, {Set<String>? temporary}) =>
-      addAttachmentFiles(context, widget.state, _attachments, files,
-          temporaryPaths: temporary ?? const <String>{});
+      addAttachmentFiles(
+        context,
+        widget.state,
+        _attachments,
+        files,
+        temporaryPaths: temporary ?? const <String>{},
+      );
 
   Future<void> _startVoiceNote() async {
     final l10n = context.l10n;
@@ -665,11 +699,15 @@ class _ChatScreenState extends State<ChatScreen> {
     if (result == VoiceStartResult.started) return;
     messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(result == VoiceStartResult.permissionDenied
-            ? l10n.voiceNotePermissionDenied
-            : l10n.voiceNoteRecordFailed),
-      ));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            result == VoiceStartResult.permissionDenied
+                ? l10n.voiceNotePermissionDenied
+                : l10n.voiceNoteRecordFailed,
+          ),
+        ),
+      );
   }
 
   Future<void> _stopVoiceNote() async {
@@ -695,10 +733,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _createPoll() async {
     final draft = await showPollComposer(context);
     if (draft == null || !mounted) return;
-    await widget.state.sendPoll(widget.conversationId,
-        question: draft.question,
-        options: draft.options,
-        multipleChoice: draft.multipleChoice);
+    await widget.state.sendPoll(
+      widget.conversationId,
+      question: draft.question,
+      options: draft.options,
+      multipleChoice: draft.multipleChoice,
+    );
   }
 
   /// Up in an empty composer edits your newest message, as in other chats.
@@ -779,7 +819,12 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
       if (renewalBanner == null) return empty;
-      return Column(children: <Widget>[renewalBanner, Expanded(child: empty)]);
+      return Column(
+        children: <Widget>[
+          renewalBanner,
+          Expanded(child: empty),
+        ],
+      );
     }
     final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
@@ -789,8 +834,11 @@ class _ChatScreenState extends State<ChatScreen> {
         // for an hour (the server gave no key package, or kept it out).
         for (final accountId in notJoined)
           MaterialBanner(
-            content: Text(context.l10n
-                .chatDevicesNotJoined(_memberName(conversationId, accountId))),
+            content: Text(
+              context.l10n.chatDevicesNotJoined(
+                _memberName(conversationId, accountId),
+              ),
+            ),
             leading: const Icon(Icons.devices_other_outlined),
             actions: const <Widget>[SizedBox.shrink()],
           ),
@@ -833,8 +881,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     heroTag: null,
                     tooltip: context.l10n.chatJumpToLatest,
                     onPressed: _jumpToLatest,
-                    backgroundColor:
-                        Theme.of(context).colorScheme.surfaceContainerHigh,
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHigh,
                     foregroundColor: Theme.of(context).colorScheme.onSurface,
                     child: const Icon(Icons.arrow_downward),
                   ),
@@ -856,8 +905,9 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) {
       if (!mounted) return;
       // No call without frame encryption (B6, fail closed).
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.roomFailedCryptor)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.roomFailedCryptor)));
       return;
     }
     if (!mounted) {
@@ -881,20 +931,26 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _showStarredMessages() async {
     final state = widget.state;
     final selected = await showModalBottomSheet<String>(
-        context: context,
-        builder: (sheetContext) => SafeArea(
-                child: ListView(shrinkWrap: true, children: [
-              ListTile(title: Text(context.l10n.w8StarredMessages)),
-              for (final message
-                  in state.historyFor(widget.conversationId).messages)
-                if (state.starredMessages.contains(message.key) &&
-                    message.hiddenAt == null &&
-                    message.deletedAt == null)
-                  ListTile(
-                      leading: const Icon(Icons.star),
-                      title: Text(quotedPreview(context.l10n, message)),
-                      onTap: () => Navigator.pop(sheetContext, message.key)),
-            ])));
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(title: Text(context.l10n.w8StarredMessages)),
+            for (final message
+                in state.historyFor(widget.conversationId).messages)
+              if (state.starredMessages.contains(message.key) &&
+                  message.hiddenAt == null &&
+                  message.deletedAt == null)
+                ListTile(
+                  leading: const Icon(Icons.star),
+                  title: Text(quotedPreview(context.l10n, message)),
+                  onTap: () => Navigator.pop(sheetContext, message.key),
+                ),
+          ],
+        ),
+      ),
+    );
     if (selected != null && mounted) {
       setState(() => _jumpKey = selected);
       _scheduleJump();
@@ -906,132 +962,155 @@ class _ChatScreenState extends State<ChatScreen> {
     final state = widget.state;
     final conversationId = widget.conversationId;
     final actionable = message.deletedAt == null &&
-        const [LocalMessageKind.text, LocalMessageKind.attachment]
-            .contains(message.kind);
+        const [
+          LocalMessageKind.text,
+          LocalMessageKind.attachment,
+        ].contains(message.kind);
     // K0 step 8: in a read-only conversation only what stays on this device
     // (copy, forward elsewhere, star, hide) is offered.
     final sendable = !state.readOnlyWithoutPeer(conversationId);
-    final mayPost = state.mayPost(conversationId,
-        channelId: state.selectedChannelFor(conversationId));
+    final mayPost = state.mayPost(
+      conversationId,
+      channelId: state.selectedChannelFor(conversationId),
+    );
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: SingleChildScrollView(
-            child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (actionable && sendable)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
-                child: Wrap(
-                  spacing: BoneSpacing.xs,
-                  children: <Widget>[
-                    for (final reaction in quickReactions)
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (actionable && sendable)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: BoneSpacing.md,
+                  ),
+                  child: Wrap(
+                    spacing: BoneSpacing.xs,
+                    children: <Widget>[
+                      for (final reaction in quickReactions)
+                        IconButton(
+                          tooltip: context.l10n.chatReact(reaction),
+                          onPressed: () =>
+                              Navigator.of(sheetContext).pop('react:$reaction'),
+                          icon: Text(
+                            reaction,
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                        ),
                       IconButton(
-                        tooltip: context.l10n.chatReact(reaction),
+                        tooltip: context.l10n.chatMoreReactions,
                         onPressed: () =>
-                            Navigator.of(sheetContext).pop('react:$reaction'),
-                        icon: Text(reaction,
-                            style: const TextStyle(fontSize: 24)),
+                            Navigator.of(sheetContext).pop('react:'),
+                        icon: const Icon(Icons.add_reaction_outlined),
                       ),
-                    IconButton(
-                      tooltip: context.l10n.chatMoreReactions,
-                      onPressed: () => Navigator.of(sheetContext).pop('react:'),
-                      icon: const Icon(Icons.add_reaction_outlined),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            if (actionable && sendable && mayPost)
-              ListTile(
-                leading: const Icon(Icons.reply),
-                title: Text(context.l10n.chatReply),
-                onTap: () => Navigator.of(sheetContext).pop('reply'),
-              ),
-            if (actionable && message.kind == LocalMessageKind.text)
-              ListTile(
-                leading: const Icon(Icons.copy),
-                title: Text(context.l10n.chatCopyText),
-                onTap: () => Navigator.of(sheetContext).pop('copy'),
-              ),
-            if (actionable && message.kind == LocalMessageKind.text)
-              ListTile(
-                leading: const Icon(Icons.text_fields),
-                title: Text(context.l10n.chatSelectText),
-                onTap: () => Navigator.of(sheetContext).pop('select'),
-              ),
-            if (actionable)
-              ListTile(
+              if (actionable && sendable && mayPost)
+                ListTile(
+                  leading: const Icon(Icons.reply),
+                  title: Text(context.l10n.chatReply),
+                  onTap: () => Navigator.of(sheetContext).pop('reply'),
+                ),
+              if (actionable && message.kind == LocalMessageKind.text)
+                ListTile(
+                  leading: const Icon(Icons.copy),
+                  title: Text(context.l10n.chatCopyText),
+                  onTap: () => Navigator.of(sheetContext).pop('copy'),
+                ),
+              if (actionable && message.kind == LocalMessageKind.text)
+                ListTile(
+                  leading: const Icon(Icons.text_fields),
+                  title: Text(context.l10n.chatSelectText),
+                  onTap: () => Navigator.of(sheetContext).pop('select'),
+                ),
+              if (actionable)
+                ListTile(
                   leading: const Icon(Icons.forward_outlined),
                   title: Text(context.l10n.w8Forward),
-                  onTap: () => Navigator.of(sheetContext).pop('forward')),
-            ListTile(
-                leading: Icon(state.starredMessages.contains(message.key)
-                    ? Icons.star
-                    : Icons.star_outline),
-                title: Text(state.starredMessages.contains(message.key)
-                    ? context.l10n.w8Unstar
-                    : context.l10n.w8Star),
-                onTap: () => Navigator.of(sheetContext).pop('star')),
-            ListTile(
+                  onTap: () => Navigator.of(sheetContext).pop('forward'),
+                ),
+              ListTile(
+                leading: Icon(
+                  state.starredMessages.contains(message.key)
+                      ? Icons.star
+                      : Icons.star_outline,
+                ),
+                title: Text(
+                  state.starredMessages.contains(message.key)
+                      ? context.l10n.w8Unstar
+                      : context.l10n.w8Star,
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('star'),
+              ),
+              ListTile(
                 leading: const Icon(Icons.hide_source),
                 title: Text(context.l10n.w8DeleteForMe),
-                onTap: () => Navigator.of(sheetContext).pop('hide')),
-            // C6: report a message someone else sent. Offered only where the
-            // build can report; the screen explains what is sent first.
-            if (actionable && !mine && state.reportsAvailable)
-              ListTile(
+                onTap: () => Navigator.of(sheetContext).pop('hide'),
+              ),
+              // C6: report a message someone else sent. Offered only where the
+              // build can report; the screen explains what is sent first.
+              if (actionable && !mine && state.reportsAvailable)
+                ListTile(
                   leading: const Icon(Icons.flag_outlined),
                   title: Text(context.l10n.c6ReportMessage),
-                  onTap: () => Navigator.of(sheetContext).pop('report')),
-            if (actionable && sendable && state.canPinMessages(conversationId))
-              ListTile(
+                  onTap: () => Navigator.of(sheetContext).pop('report'),
+                ),
+              if (actionable &&
+                  sendable &&
+                  state.canPinMessages(conversationId))
+                ListTile(
                   leading: const Icon(Icons.push_pin_outlined),
                   title: Text(context.l10n.w8Pin),
-                  onTap: () => Navigator.of(sheetContext).pop('pin')),
-            if (mine && sendable) ...<Widget>[
-              if (message.kind == LocalMessageKind.text &&
-                  message.deletedAt == null)
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: Text(context.l10n.chatEdit),
-                  onTap: () => Navigator.of(sheetContext).pop('edit'),
+                  onTap: () => Navigator.of(sheetContext).pop('pin'),
                 ),
-              if (const [
+              if (mine && sendable) ...<Widget>[
+                if (message.kind == LocalMessageKind.text &&
+                    message.deletedAt == null)
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: Text(context.l10n.chatEdit),
+                    onTap: () => Navigator.of(sheetContext).pop('edit'),
+                  ),
+                if (const [
+                      LocalMessageKind.text,
+                      LocalMessageKind.attachment,
+                      LocalMessageKind.unsupported,
+                      LocalMessageKind.poll,
+                    ].contains(message.kind) &&
+                    message.deletedAt == null)
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: Text(context.l10n.chatDeleteForEveryone),
+                    onTap: () => Navigator.of(sheetContext).pop('delete'),
+                  ),
+              ],
+              // C5: a moderator or above deletes a message of someone it
+              // outranks under the verified role record; every app checks.
+              if (!mine &&
+                  sendable &&
+                  state.mayModerateMessage(
+                    conversationId,
+                    message.senderAccountId,
+                  ) &&
+                  const [
                     LocalMessageKind.text,
                     LocalMessageKind.attachment,
                     LocalMessageKind.unsupported,
-                    LocalMessageKind.poll
+                    LocalMessageKind.poll,
                   ].contains(message.kind) &&
                   message.deletedAt == null)
                 ListTile(
+                  key: const Key('moderator-delete'),
                   leading: const Icon(Icons.delete_outline),
                   title: Text(context.l10n.chatDeleteForEveryone),
                   onTap: () => Navigator.of(sheetContext).pop('delete'),
                 ),
             ],
-            // C5: a moderator or above deletes a message of someone it
-            // outranks under the verified role record; every app checks.
-            if (!mine &&
-                sendable &&
-                state.mayModerateMessage(
-                    conversationId, message.senderAccountId) &&
-                const [
-                  LocalMessageKind.text,
-                  LocalMessageKind.attachment,
-                  LocalMessageKind.unsupported,
-                  LocalMessageKind.poll
-                ].contains(message.kind) &&
-                message.deletedAt == null)
-              ListTile(
-                key: const Key('moderator-delete'),
-                leading: const Icon(Icons.delete_outline),
-                title: Text(context.l10n.chatDeleteForEveryone),
-                onTap: () => Navigator.of(sheetContext).pop('delete'),
-              ),
-          ],
-        )),
+          ),
+        ),
       ),
     );
     if (!mounted || action == null) return;
@@ -1051,7 +1130,10 @@ class _ChatScreenState extends State<ChatScreen> {
           .any((item) => item.reaction == reaction && item.mine);
       // Tapping your own reaction again takes it back.
       sent = await state.react(
-          conversationId, message.key, alreadyMine ? '' : reaction);
+        conversationId,
+        message.key,
+        alreadyMine ? '' : reaction,
+      );
     } else if (action == 'reply') {
       _setReplyTarget(message.key);
     } else if (action == 'copy') {
@@ -1066,7 +1148,11 @@ class _ChatScreenState extends State<ChatScreen> {
         builder: (sheetContext) => SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(
-                BoneSpacing.gutter, 0, BoneSpacing.gutter, BoneSpacing.lg),
+              BoneSpacing.gutter,
+              0,
+              BoneSpacing.gutter,
+              BoneSpacing.lg,
+            ),
             child: FormattedMessage(
               key: const Key('select-text'),
               selectable: true,
@@ -1082,79 +1168,100 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'hide') {
       await state.deleteMessageForMe(message);
     } else if (action == 'report') {
-      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-        builder: (_) => ReportMessageScreen(
-          state: state,
-          conversationId: conversationId,
-          messageKey: message.key,
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ReportMessageScreen(
+            state: state,
+            conversationId: conversationId,
+            messageKey: message.key,
+          ),
         ),
-      ));
+      );
       return;
     } else if (action == 'forward') {
       final selected = <String>{};
       final destinations = await showDialog<List<String>>(
-          context: context,
-          builder: (dialogContext) => StatefulBuilder(
-              builder: (context, setDialogState) => AlertDialog(
-                    title: Text(context.l10n.w8Forward),
-                    content: SizedBox(
-                        width: 360,
-                        child: SingleChildScrollView(
-                            child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                              for (final c in state.conversations)
-                                CheckboxListTile(
-                                    value: selected.contains(c.id),
-                                    title: Text(conversationTitle(
-                                        context.l10n, c,
-                                        profiles: state.profiles)),
-                                    onChanged: (v) => setDialogState(() {
-                                          if (v == true &&
-                                              selected.length <
-                                                  ((message.forwardHops ?? 0) >=
-                                                          5
-                                                      ? 1
-                                                      : 5)) {
-                                            selected.add(c.id);
-                                          } else {
-                                            selected.remove(c.id);
-                                          }
-                                        }))
-                            ]))),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          child: Text(context.l10n.commonCancel)),
-                      FilledButton(
-                          onPressed: selected.isEmpty
-                              ? null
-                              : () => Navigator.pop(
-                                  dialogContext, selected.toList()),
-                          child: Text(context.l10n.w8Forward))
-                    ],
-                  )));
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text(context.l10n.w8Forward),
+            content: SizedBox(
+              width: 360,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final c in state.conversations)
+                      CheckboxListTile(
+                        value: selected.contains(c.id),
+                        title: Text(
+                          conversationTitle(
+                            context.l10n,
+                            c,
+                            profiles: state.profiles,
+                          ),
+                        ),
+                        onChanged: (v) => setDialogState(() {
+                          if (v == true &&
+                              selected.length <
+                                  ((message.forwardHops ?? 0) >= 5 ? 1 : 5)) {
+                            selected.add(c.id);
+                          } else {
+                            selected.remove(c.id);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(context.l10n.commonCancel),
+              ),
+              FilledButton(
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => Navigator.pop(dialogContext, selected.toList()),
+                child: Text(context.l10n.w8Forward),
+              ),
+            ],
+          ),
+        ),
+      );
       if (destinations != null)
         sent = await state.forwardMessage(message, destinations);
     } else if (action == 'pin') {
       final existing =
           state.pinsFor(conversationId).any((p) => p.targetKey == message.key);
       final duration = await showModalBottomSheet<int>(
-          context: context,
-          builder: (sheetContext) => SafeArea(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                if (existing)
-                  ListTile(
-                      title: Text(context.l10n.w8Unpin),
-                      onTap: () => Navigator.pop(sheetContext, 0)),
-                for (final days in [1, 7, 30])
-                  ListTile(
-                      title: Text(context.l10n.w8PinDays(days)),
-                      onTap: () => Navigator.pop(sheetContext, days * 86400)),
-              ])));
+        context: context,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (existing)
+                ListTile(
+                  title: Text(context.l10n.w8Unpin),
+                  onTap: () => Navigator.pop(sheetContext, 0),
+                ),
+              for (final days in [1, 7, 30])
+                ListTile(
+                  title: Text(context.l10n.w8PinDays(days)),
+                  onTap: () => Navigator.pop(sheetContext, days * 86400),
+                ),
+            ],
+          ),
+        ),
+      );
       if (duration != null)
-        sent = await state.pinMessage(conversationId, message.key,
-            pinned: duration != 0, durationSeconds: duration);
+        sent = await state.pinMessage(
+          conversationId,
+          message.key,
+          pinned: duration != 0,
+          durationSeconds: duration,
+        );
     } else if (action == 'edit') {
       await _editMessage(message);
       return;
@@ -1182,8 +1289,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!sent && mounted) {
       final error = state.errorFor(Ops.send);
       if (error != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error)));
       }
     }
   }
@@ -1192,12 +1300,16 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = await _editDialog(message.body ?? '');
     if (!mounted || text == null || text.trim().isEmpty) return;
     if (text == message.body) return;
-    final sent = await widget.state
-        .editMessage(widget.conversationId, message.key, text.trim());
+    final sent = await widget.state.editMessage(
+      widget.conversationId,
+      message.key,
+      text.trim(),
+    );
     final error = widget.state.errorFor(Ops.send);
     if (!sent && mounted && error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -1250,7 +1362,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_attachments.isNotEmpty) {
       if (state.isBusy(Ops.attachment)) return;
       final sentFiles = await sendPendingAttachments(
-          context, state, conversationId, _attachments);
+        context,
+        state,
+        conversationId,
+        _attachments,
+      );
       if (!sentFiles || !mounted) return;
     }
     final text = composer.text.trim();
@@ -1266,8 +1382,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // the submitted draft is safe to clear. Preserve newer edits. The
       // stored draft is cleared even if this screen closed meanwhile, so the
       // sent text does not come back as a draft.
-      state.composerDrafts
-          .clearSent(conversationId, text: text, replyTo: replyingTo);
+      state.composerDrafts.clearSent(
+        conversationId,
+        text: text,
+        replyTo: replyingTo,
+      );
       if (!mounted) {
         return;
       }
@@ -1282,9 +1401,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final error = widget.state.errorFor(Ops.send);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 }
@@ -1443,13 +1562,17 @@ class _MessageList extends StatelessWidget {
     // as a system line (decision 1); every other hidden envelope goes.
     bool? historyLine(ReceivedMessageEnvelope message) =>
         state.channelHistoryLine(
-            conversationId,
-            ConversationHistory.keyOf(
-                message.senderDeviceId, message.idempotencyKey));
+          conversationId,
+          ConversationHistory.keyOf(
+            message.senderDeviceId,
+            message.idempotencyKey,
+          ),
+        );
     final messages = this
         .messages
-        .where((message) =>
-            !history.hides(message) || historyLine(message) != null)
+        .where(
+          (message) => !history.hides(message) || historyLine(message) != null,
+        )
         .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
@@ -1526,9 +1649,10 @@ class _MessageList extends StatelessWidget {
         final line = historyLine(message);
         if (line != null) {
           return _HistoryLine(
-              text: line
-                  ? context.l10n.channelHistoryLineFull
-                  : context.l10n.channelHistoryLineFromJoin);
+            text: line
+                ? context.l10n.channelHistoryLineFull
+                : context.l10n.channelHistoryLineFromJoin,
+          );
         }
         final local = history.forEnvelope(message);
         // A decrypted record names its authenticated sender; the envelope's
@@ -1569,8 +1693,10 @@ class _MessageList extends StatelessWidget {
                     : quotedPreview(context.l10n, replyTarget),
                 reactions: local == null
                     ? const <({String reaction, int count, bool mine})>[]
-                    : history.reactionsFor(local.key,
-                        ownAccountId: state.session?.accountId),
+                    : history.reactionsFor(
+                        local.key,
+                        ownAccountId: state.session?.accountId,
+                      ),
                 starred:
                     local != null && state.starredMessages.contains(local.key),
                 onMention: (accountId) {
@@ -1579,12 +1705,15 @@ class _MessageList extends StatelessWidget {
                       .where((m) => m.accountId == accountId)
                       .firstOrNull;
                   showModalBottomSheet<void>(
-                      context: context,
-                      builder: (_) => SafeArea(
-                          child: ListTile(
-                              leading: const Icon(Icons.person_outline),
-                              title: Text(member?.username ?? accountId),
-                              subtitle: Text(accountId))));
+                    context: context,
+                    builder: (_) => SafeArea(
+                      child: ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(member?.username ?? accountId),
+                        subtitle: Text(accountId),
+                      ),
+                    ),
+                  );
                 },
                 mine: mine,
                 tick: tick,
@@ -1623,8 +1752,11 @@ class _MessageList extends StatelessWidget {
                     ? context.l10n.channelHistoryFormerMemberUnnamed
                     : _senderLabel(senderAccountId),
                 onLoadVoiceNote: state.attachmentsAvailable
-                    ? (entry) => decryptVoiceNote(state, entry,
-                        conversationId: conversationId)
+                    ? (entry) => decryptVoiceNote(
+                          state,
+                          entry,
+                          conversationId: conversationId,
+                        )
                     : null,
                 onOpenAttachment: state.attachmentsAvailable
                     ? (entry) => openAttachment(
@@ -1647,10 +1779,9 @@ class _MessageList extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: highlighted
-                  ? Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.14)
+                  ? Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.14)
                   : null,
               borderRadius: BorderRadius.circular(BoneRadii.md),
             ),
@@ -1706,7 +1837,9 @@ class _EncryptionNotice extends StatelessWidget {
     final color = theme.colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.symmetric(
-          vertical: BoneSpacing.lg, horizontal: BoneSpacing.md),
+        vertical: BoneSpacing.lg,
+        horizontal: BoneSpacing.md,
+      ),
       child: Row(
         key: const Key('chat-encryption-notice'),
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1736,8 +1869,11 @@ class _EncryptionNotice extends StatelessWidget {
 /// flight, and an explicit button otherwise so history is reachable without
 /// relying on a scroll gesture.
 class _HistoryFooter extends StatelessWidget {
-  const _HistoryFooter(
-      {required this.loading, required this.onLoad, this.label});
+  const _HistoryFooter({
+    required this.loading,
+    required this.onLoad,
+    this.label,
+  });
 
   final bool loading;
   final VoidCallback onLoad;
@@ -2127,14 +2263,24 @@ class _MessageBubble extends StatelessWidget {
     return _SwipeForActions(
       onSwipe: onActions,
       child: Listener(
-          onPointerDown: (event) {
-            if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
-          },
-          child: GestureDetector(
-            onLongPress: onActions,
-            child: _bubble(context, theme, scheme, background, foreground,
-                sender, deleted, unverifiable, text),
-          )),
+        onPointerDown: (event) {
+          if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
+        },
+        child: GestureDetector(
+          onLongPress: onActions,
+          child: _bubble(
+            context,
+            theme,
+            scheme,
+            background,
+            foreground,
+            sender,
+            deleted,
+            unverifiable,
+            text,
+          ),
+        ),
+      ),
     );
   }
 
@@ -2200,8 +2346,9 @@ class _MessageBubble extends StatelessWidget {
   /// it is drawn. Nothing is fetched here.
   List<Widget> _linkPreviewCard(String text, Color foreground) {
     final preview = LinkPreview.fromWire(
-        decodeDecoration(local?.formatJson)['link_preview'],
-        text: text);
+      decodeDecoration(local?.formatJson)['link_preview'],
+      text: text,
+    );
     if (preview == null) return const <Widget>[];
     return <Widget>[
       Padding(
@@ -2214,8 +2361,10 @@ class _MessageBubble extends StatelessWidget {
   /// The attachments of an attachment message. Entries that fail to parse,
   /// or name another conversation, are left out rather than shown.
   List<Widget> _attachmentTiles(BuildContext context) {
-    final entries = AttachmentEntry.listFromBody(local?.body,
-        conversationId: message.conversationId);
+    final entries = AttachmentEntry.listFromBody(
+      local?.body,
+      conversationId: message.conversationId,
+    );
     if (entries.isEmpty) {
       return <Widget>[
         Text(
@@ -2270,9 +2419,10 @@ class _MessageBubble extends StatelessWidget {
             !deleted &&
             !unverifiable &&
             onOpenAttachment != null &&
-            AttachmentEntry.listFromBody(local?.body,
-                    conversationId: message.conversationId)
-                .isNotEmpty) ||
+            AttachmentEntry.listFromBody(
+              local?.body,
+              conversationId: message.conversationId,
+            ).isNotEmpty) ||
         (poll != null && !deleted && !unverifiable && !placeholder);
     Widget quiet(Widget child) =>
         tileNodes ? ExcludeSemantics(child: child) : child;
@@ -2323,72 +2473,95 @@ class _MessageBubble extends StatelessWidget {
                   children: <Widget>[
                     if (starred) quiet(const Icon(Icons.star, size: 14)),
                     if (copiedHistory)
-                      quiet(Text(l10n.k2CopiedHistory,
-                          style: theme.textTheme.labelSmall)),
+                      quiet(
+                        Text(
+                          l10n.k2CopiedHistory,
+                          style: theme.textTheme.labelSmall,
+                        ),
+                      ),
                     if (local?.forwardHops != null)
-                      quiet(Padding(
+                      quiet(
+                        Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
-                              local!.forwardHops! >= 5
-                                  ? l10n.w8ForwardedMany
-                                  : l10n.w8Forwarded,
-                              style: theme.textTheme.labelSmall
-                                  ?.copyWith(fontStyle: FontStyle.italic)))),
-                    if (showSender)
-                      quiet(Padding(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Text(
-                          senderLabel,
-                          // Normal small text in the sender's own colour
-                          // (U36), not the capitalised micro style.
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: senderColorSeed == null
-                                ? scheme.onSurfaceVariant
-                                : senderNameColor(
-                                    senderColorSeed!, theme.brightness),
+                            local!.forwardHops! >= 5
+                                ? l10n.w8ForwardedMany
+                                : l10n.w8Forwarded,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontStyle: FontStyle.italic,
+                            ),
                           ),
                         ),
-                      )),
+                      ),
+                    if (showSender)
+                      quiet(
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 5),
+                          child: Text(
+                            senderLabel,
+                            // Normal small text in the sender's own colour
+                            // (U36), not the capitalised micro style.
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: senderColorSeed == null
+                                  ? scheme.onSurfaceVariant
+                                  : senderNameColor(
+                                      senderColorSeed!,
+                                      theme.brightness,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
                     // Shown whether or not the sender is (a DM hides it).
                     if (removedSender != null)
-                      quiet(Padding(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Icon(Icons.phonelink_erase_outlined,
-                                size: 14, color: scheme.error),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                removedSender,
-                                style: theme.textTheme.labelSmall
-                                    ?.copyWith(color: scheme.error),
+                      quiet(
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 5),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                Icons.phonelink_erase_outlined,
+                                size: 14,
+                                color: scheme.error,
+                              ),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  removedSender,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: scheme.error,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (replyPreview != null && !deleted)
+                      quiet(
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.only(left: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              left: BorderSide(
+                                color: scheme.outlineVariant,
+                                width: 3,
                               ),
                             ),
-                          ],
-                        ),
-                      )),
-                    if (replyPreview != null && !deleted)
-                      quiet(Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.only(left: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            left: BorderSide(
-                                color: scheme.outlineVariant, width: 3),
+                          ),
+                          child: Text(
+                            replyPreview!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
-                        child: Text(
-                          replyPreview!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      )),
+                      ),
                     if (deleted)
                       Text(
                         l10n.chatMessageDeleted,
@@ -2401,8 +2574,11 @@ class _MessageBubble extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
-                          Icon(Icons.gpp_maybe_outlined,
-                              size: 16, color: scheme.error),
+                          Icon(
+                            Icons.gpp_maybe_outlined,
+                            size: 16,
+                            color: scheme.error,
+                          ),
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
@@ -2419,13 +2595,14 @@ class _MessageBubble extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
                           Icon(
-                              _isUndecryptable
-                                  ? Icons.visibility_off_outlined
-                                  : local?.kind == LocalMessageKind.invalid
-                                      ? Icons.warning_amber_outlined
-                                      : Icons.update_outlined,
-                              size: 16,
-                              color: scheme.onSurfaceVariant),
+                            _isUndecryptable
+                                ? Icons.visibility_off_outlined
+                                : local?.kind == LocalMessageKind.invalid
+                                    ? Icons.warning_amber_outlined
+                                    : Icons.update_outlined,
+                            size: 16,
+                            color: scheme.onSurfaceVariant,
+                          ),
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
@@ -2453,8 +2630,9 @@ class _MessageBubble extends StatelessWidget {
                         text: text,
                         formatJson: local?.formatJson,
                         onMention: onMention,
-                        style: theme.textTheme.bodyMedium
-                            ?.copyWith(color: foreground),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: foreground,
+                        ),
                       ),
                       ..._linkPreviewCard(text, foreground),
                     ] else
@@ -2464,35 +2642,39 @@ class _MessageBubble extends StatelessWidget {
                         color: foreground,
                       ),
                     if (reactions.isNotEmpty && !deleted)
-                      quiet(Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Wrap(
-                          spacing: 4,
-                          runSpacing: 4,
-                          children: <Widget>[
-                            for (final item in reactions)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: item.mine
-                                      ? scheme.secondaryContainer
-                                      : scheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(10),
+                      quiet(
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children: <Widget>[
+                              for (final item in reactions)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: item.mine
+                                        ? scheme.secondaryContainer
+                                        : scheme.surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    item.count > 1
+                                        ? l10n.chatReactionCount(
+                                            item.reaction,
+                                            item.count,
+                                          )
+                                        : item.reaction,
+                                    style: theme.textTheme.labelSmall,
+                                  ),
                                 ),
-                                child: Text(
-                                  item.count > 1
-                                      ? l10n.chatReactionCount(
-                                          item.reaction,
-                                          item.count,
-                                        )
-                                      : item.reaction,
-                                  style: theme.textTheme.labelSmall,
-                                ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
-                      )),
+                      ),
                     const SizedBox(height: 6),
                     quiet(_metaLine(context, scheme)),
                   ],
@@ -2535,7 +2717,7 @@ const List<String> quickReactions = <String>[
   '😂',
   '🎉',
   '😮',
-  '😢'
+  '😢',
 ];
 
 /// Shown above the composer while a reply is being written.
@@ -2550,11 +2732,18 @@ class _ReplyBar extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-          BoneSpacing.lg, BoneSpacing.sm, BoneSpacing.sm, 0),
+        BoneSpacing.lg,
+        BoneSpacing.sm,
+        BoneSpacing.sm,
+        0,
+      ),
       child: Row(
         children: <Widget>[
-          Icon(Icons.reply,
-              size: 18, color: theme.colorScheme.onSurfaceVariant),
+          Icon(
+            Icons.reply,
+            size: 18,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
           const SizedBox(width: BoneSpacing.sm),
           Expanded(
             child: Text(
@@ -2679,8 +2868,10 @@ class _Composer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable:
-          Listenable.merge(<Listenable>[controller, if (tray != null) tray!]),
+      listenable: Listenable.merge(<Listenable>[
+        controller,
+        if (tray != null) tray!,
+      ]),
       builder: (context, _) => _build(context, controller.text),
     );
   }
@@ -2698,8 +2889,9 @@ class _Composer extends StatelessWidget {
         // IME is composing, Enter confirms the candidate instead, so the key
         // is left to the text field and the draft is not sent.
         if (_enterSends &&
-            const SingleActivator(LogicalKeyboardKey.enter)
-                .accepts(event, HardwareKeyboard.instance)) {
+            const SingleActivator(
+              LogicalKeyboardKey.enter,
+            ).accepts(event, HardwareKeyboard.instance)) {
           final composing = controller.value.composing;
           if (composing.isValid && !composing.isCollapsed) {
             return KeyEventResult.ignored;
@@ -2838,62 +3030,66 @@ class _Composer extends StatelessWidget {
               _addButton(context),
               Expanded(
                 child: _wrapDesktopInput(
-                    canSend: canSend,
-                    TextField(
-                      controller: controller,
-                      enabled: enabled && !restricted,
-                      minLines: 1,
-                      maxLines: 4,
-                      keyboardType: TextInputType.multiline,
-                      textInputAction: TextInputAction.newline,
-                      textCapitalization: TextCapitalization.sentences,
-                      style: theme.textTheme.bodyMedium,
-                      // The field's own fill and border are cleared: the pill
-                      // around it is the input surface now, and the theme's
-                      // `inputDecorationTheme` would otherwise draw a rounded box
-                      // inside a rounded box.
-                      decoration: InputDecoration(
-                        prefixIcon: restricted
-                            ? Icon(
-                                Icons.lock_outline,
-                                size: 20,
-                                color: scheme.onSurfaceVariant,
-                              )
-                            : null,
-                        hintText: restricted
-                            ? context.l10n.chatPostingRestricted
-                            : context.l10n.chatComposerHint,
-                        filled: false,
-                        isDense: true,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        disabledBorder: InputBorder.none,
-                        errorBorder: InputBorder.none,
-                        focusedErrorBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: BoneSpacing.xs,
-                          vertical: 12,
-                        ),
-                        hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        // Silent only until the draft nears the limit; past it
-                        // the count turns into an error and Send disables.
-                        // Nothing is truncated, so a long paste is never lost.
-                        counterText: nearLimit
-                            ? context.l10n
-                                .chatComposerCounter(length, maxAppTextLength)
-                            : null,
-                        counterStyle: overLimit
-                            ? theme.textTheme.bodySmall
-                                ?.copyWith(color: scheme.error)
-                            : theme.textTheme.bodySmall,
-                        errorText: overLimit
-                            ? context.l10n.validationMessageTooLong
-                            : null,
+                  canSend: canSend,
+                  TextField(
+                    controller: controller,
+                    enabled: enabled && !restricted,
+                    minLines: 1,
+                    maxLines: 4,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    textCapitalization: TextCapitalization.sentences,
+                    style: theme.textTheme.bodyMedium,
+                    // The field's own fill and border are cleared: the pill
+                    // around it is the input surface now, and the theme's
+                    // `inputDecorationTheme` would otherwise draw a rounded box
+                    // inside a rounded box.
+                    decoration: InputDecoration(
+                      prefixIcon: restricted
+                          ? Icon(
+                              Icons.lock_outline,
+                              size: 20,
+                              color: scheme.onSurfaceVariant,
+                            )
+                          : null,
+                      hintText: restricted
+                          ? context.l10n.chatPostingRestricted
+                          : context.l10n.chatComposerHint,
+                      filled: false,
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      disabledBorder: InputBorder.none,
+                      errorBorder: InputBorder.none,
+                      focusedErrorBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: BoneSpacing.xs,
+                        vertical: 12,
                       ),
-                    )),
+                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      // Silent only until the draft nears the limit; past it
+                      // the count turns into an error and Send disables.
+                      // Nothing is truncated, so a long paste is never lost.
+                      counterText: nearLimit
+                          ? context.l10n.chatComposerCounter(
+                              length,
+                              maxAppTextLength,
+                            )
+                          : null,
+                      counterStyle: overLimit
+                          ? theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.error,
+                            )
+                          : theme.textTheme.bodySmall,
+                      errorText: overLimit
+                          ? context.l10n.validationMessageTooLong
+                          : null,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: BoneSpacing.xs),
               if (showMic)
@@ -3038,8 +3234,9 @@ class _SyncPausedNotice extends StatelessWidget {
     final left = await state.leaveConversation(conversationId);
     final error = state.errorFor(Ops.members);
     if (!left && error != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 }
@@ -3114,8 +3311,10 @@ String _attachmentSummary(
   LocalMessage message,
   String conversationId,
 ) {
-  final entries = AttachmentEntry.listFromBody(message.body,
-      conversationId: conversationId);
+  final entries = AttachmentEntry.listFromBody(
+    message.body,
+    conversationId: conversationId,
+  );
   if (entries.isEmpty) return l10n.chatAttachment;
   final first = entries.first.fileName;
   return entries.length == 1
@@ -3139,8 +3338,9 @@ class _HistoryLine extends StatelessWidget {
         child: Text(
           text,
           textAlign: TextAlign.center,
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

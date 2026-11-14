@@ -27,69 +27,95 @@ void main() {
   }
   final skip = libraryPath == null ? 'VERITRA_CRYPTO_LIBRARY not set' : false;
 
-  test('a record over its limit rolls back and names the conversation',
-      () async {
-    final real = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(real, 'acct_alice', 'dev_alice');
-    final limited = _LimitBindings(real);
-    final bob = await _Client.enroll(limited, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
+  test(
+    'a record over its limit rolls back and names the conversation',
+    () async {
+      final real = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(real, 'acct_alice', 'dev_alice');
+      final limited = _LimitBindings(real);
+      final bob = await _Client.enroll(limited, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
 
-    final hello = await alice.service.encryptPayload(
-        'conv_1', AppPayloadType.text, <String, Object?>{'text': 'hi'});
-    final before = (await bob.store.loadCryptoState())!.counter;
-    final cursor = await bob.store.loadSyncCursor();
-    final event = cursor + 1;
+      final hello = await alice.service.encryptPayload(
+        'conv_1',
+        AppPayloadType.text,
+        <String, Object?>{'text': 'hi'},
+      );
+      final before = (await bob.store.loadCryptoState())!.counter;
+      final cursor = await bob.store.loadSyncCursor();
+      final event = cursor + 1;
 
-    limited.refuseSeal = true;
-    await expectLater(
+      limited.refuseSeal = true;
+      await expectLater(
         bob.receive(alice, hello, event),
-        throwsA(isA<CryptoRecordLimitExceeded>()
-            .having((e) => e.conversationId, 'conversationId', 'conv_1')));
-    expect((await bob.store.loadCryptoState())!.counter, before);
-    expect(await bob.store.loadSyncCursor(), cursor);
-    expect(await bob.store.loadMessages('conv_1'), isEmpty);
+        throwsA(
+          isA<CryptoRecordLimitExceeded>().having(
+            (e) => e.conversationId,
+            'conversationId',
+            'conv_1',
+          ),
+        ),
+      );
+      expect((await bob.store.loadCryptoState())!.counter, before);
+      expect(await bob.store.loadSyncCursor(), cursor);
+      expect(await bob.store.loadMessages('conv_1'), isEmpty);
 
-    // A send fails the same way and queues nothing.
-    await expectLater(
+      // A send fails the same way and queues nothing.
+      await expectLater(
         bob.service.encryptPayload(
-            'conv_1', AppPayloadType.text, <String, Object?>{'text': 'no'}),
-        throwsA(isA<CryptoRecordLimitExceeded>()));
-    expect(await bob.store.pendingEnvelopes(), isEmpty);
-    expect((await bob.store.loadCryptoState())!.counter, before);
+          'conv_1',
+          AppPayloadType.text,
+          <String, Object?>{'text': 'no'},
+        ),
+        throwsA(isA<CryptoRecordLimitExceeded>()),
+      );
+      expect(await bob.store.pendingEnvelopes(), isEmpty);
+      expect((await bob.store.loadCryptoState())!.counter, before);
 
-    // The group was rolled back, not left advanced: the same message
-    // decrypts once sealing works again.
-    limited.refuseSeal = false;
-    await bob.receive(alice, hello, event);
-    expect((await bob.store.loadMessages('conv_1')).single.body, 'hi');
-    expect(await bob.store.loadSyncCursor(), event);
-  }, skip: skip);
+      // The group was rolled back, not left advanced: the same message
+      // decrypts once sealing works again.
+      limited.refuseSeal = false;
+      await bob.receive(alice, hello, event);
+      expect((await bob.store.loadMessages('conv_1')).single.body, 'hi');
+      expect(await bob.store.loadSyncCursor(), event);
+    },
+    skip: skip,
+  );
 
-  test('a stored group that fails to load does not settle an accepted commit',
-      () async {
-    final real = NativeCryptoBindings.open(libraryPath!);
-    final alice = await _Client.enroll(real, 'acct_alice', 'dev_alice');
-    final limited = _LimitBindings(real);
-    final bob = await _Client.enroll(limited, 'acct_bob', 'dev_bob');
-    await _startConversation(alice, bob);
-    await bob.service.stageSelfUpdate('conv_1');
-    final item = (await bob.store.pendingMlsMessages()).single;
+  test(
+    'a stored group that fails to load does not settle an accepted commit',
+    () async {
+      final real = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(real, 'acct_alice', 'dev_alice');
+      final limited = _LimitBindings(real);
+      final bob = await _Client.enroll(limited, 'acct_bob', 'dev_bob');
+      await _startConversation(alice, bob);
+      await bob.service.stageSelfUpdate('conv_1');
+      final item = (await bob.store.pendingMlsMessages()).single;
 
-    // The group is stored; only this read fails. Not a missing group.
-    limited.epochFailures = 1;
-    await expectLater(bob.service.completeCommitBundle(item),
-        throwsA(isA<NativeCryptoException>()));
-    expect(await bob.store.pendingMlsMessages(), hasLength(1));
-    limited.epochFailures = 1;
-    await expectLater(bob.service.abandonCommitBundle(item),
-        throwsA(isA<NativeCryptoException>()));
-    expect(await bob.store.pendingMlsMessages(), hasLength(1));
+      // The group is stored; only this read fails. Not a missing group.
+      limited.epochFailures = 1;
+      await expectLater(
+        bob.service.completeCommitBundle(item),
+        throwsA(isA<NativeCryptoException>()),
+      );
+      expect(await bob.store.pendingMlsMessages(), hasLength(1));
+      limited.epochFailures = 1;
+      await expectLater(
+        bob.service.abandonCommitBundle(item),
+        throwsA(isA<NativeCryptoException>()),
+      );
+      expect(await bob.store.pendingMlsMessages(), hasLength(1));
 
-    await bob.service.completeCommitBundle(item);
-    expect(await bob.store.pendingMlsMessages(), isEmpty);
-    expect(await bob.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-  }, skip: skip);
+      await bob.service.completeCommitBundle(item);
+      expect(await bob.store.pendingMlsMessages(), isEmpty);
+      expect(await bob.service.groupEpoch('conv_1'), (
+        epoch: 2,
+        pending: false,
+      ));
+    },
+    skip: skip,
+  );
 }
 
 /// Real bindings whose devices refuse every seal with a group record over
@@ -109,17 +135,24 @@ class _LimitBindings implements NativeCryptoBindings {
 
   @override
   ({NativeCryptoDevice device, int generation}) restoreRecords(
-      String accountId,
-      String deviceId,
-      List<int> stateKey,
-      int minimumGeneration,
-      List<int> root,
-      Iterable<List<int>> records) {
+    String accountId,
+    String deviceId,
+    List<int> stateKey,
+    int minimumGeneration,
+    List<int> root,
+    Iterable<List<int>> records,
+  ) {
     final restored = real.restoreRecords(
-        accountId, deviceId, stateKey, minimumGeneration, root, records);
+      accountId,
+      deviceId,
+      stateKey,
+      minimumGeneration,
+      root,
+      records,
+    );
     return (
       device: _LimitDevice(this, restored.device),
-      generation: restored.generation
+      generation: restored.generation,
     );
   }
 
@@ -132,11 +165,12 @@ class _LimitBindings implements NativeCryptoBindings {
     required Uint8List payload,
   }) =>
       real.frankCommit(
-          key: key,
-          conversationId: conversationId,
-          senderDeviceId: senderDeviceId,
-          actionId: actionId,
-          payload: payload);
+        key: key,
+        conversationId: conversationId,
+        senderDeviceId: senderDeviceId,
+        actionId: actionId,
+        payload: payload,
+      );
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -154,7 +188,7 @@ class _LimitDevice implements NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
@@ -174,10 +208,18 @@ class _LimitDevice implements NativeCryptoDevice {
   }
 
   @override
-  List<int> decrypt(String groupId, List<int> ciphertext,
-          {required String senderAccountId, required String senderDeviceId}) =>
-      real.decrypt(groupId, ciphertext,
-          senderAccountId: senderAccountId, senderDeviceId: senderDeviceId);
+  List<int> decrypt(
+    String groupId,
+    List<int> ciphertext, {
+    required String senderAccountId,
+    required String senderDeviceId,
+  }) =>
+      real.decrypt(
+        groupId,
+        ciphertext,
+        senderAccountId: senderAccountId,
+        senderDeviceId: senderDeviceId,
+      );
 
   @override
   ({int epoch, bool pending}) groupEpoch(String groupId) {
@@ -190,7 +232,8 @@ class _LimitDevice implements NativeCryptoDevice {
 
   @override
   ({List<int> commit, List<int> welcome, int epoch}) stageSelfUpdate(
-          String groupId) =>
+    String groupId,
+  ) =>
       real.stageSelfUpdate(groupId);
 
   @override
@@ -234,13 +277,17 @@ class _LimitDevice implements NativeCryptoDevice {
               List<int> keyPackage,
               List<int> accountId,
               List<int> deviceId,
-              List<int> signingKey
+              List<int> signingKey,
             })>
         adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
   }) =>
-      real.stageCommitWithRoles(groupId,
-          record: record, adds: adds, removes: removes);
+      real.stageCommitWithRoles(
+        groupId,
+        record: record,
+        adds: adds,
+        removes: removes,
+      );
 
   @override
   IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
@@ -287,16 +334,23 @@ class _Client {
   int events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final store = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: store);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: store,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
     await service.activateSession(_session(accountId, deviceId));
     return _Client(service, store, accountId, deviceId);
   }
@@ -329,20 +383,23 @@ class _Client {
 }
 
 Future<void> _startConversation(_Client alice, _Client bob) async {
-  await alice.service.initializeConversation(
-      'conv_1', <DeviceKeyPackage>[await bob.keyPackage()]);
+  await alice.service.initializeConversation('conv_1', <DeviceKeyPackage>[
+    await bob.keyPackage(),
+  ]);
   final item = (await alice.store.pendingMlsMessages()).single;
   await alice.service.completeCommitBundle(item);
-  await bob.service.processMlsMessage(MlsMessage(
-    id: 'mls_${++_serverIds}',
-    conversationId: 'conv_1',
-    senderAccountId: alice.accountId,
-    senderDeviceId: alice.deviceId,
-    kind: 'welcome',
-    payload: MlsCommitBundle.decode(item.payload).welcome,
-    idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
-    syncEventId: ++bob.events,
-    createdAt: DateTime.now().toUtc(),
-    recipientDeviceId: bob.deviceId,
-  ));
+  await bob.service.processMlsMessage(
+    MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: 'conv_1',
+      senderAccountId: alice.accountId,
+      senderDeviceId: alice.deviceId,
+      kind: 'welcome',
+      payload: MlsCommitBundle.decode(item.payload).welcome,
+      idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
+      syncEventId: ++bob.events,
+      createdAt: DateTime.now().toUtc(),
+      recipientDeviceId: bob.deviceId,
+    ),
+  );
 }

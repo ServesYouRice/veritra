@@ -374,10 +374,14 @@ final class C7ChannelBook {
   }
 
   /// [late] without the proposal sent as [actionId].
-  C7ChannelBook withoutLate(String actionId) => copyWith(late: <C7Pending>[
-        for (final entry in late)
-          if (entry.actionId != actionId) entry
-      ], pending: pending, ownNotice: ownNotice);
+  C7ChannelBook withoutLate(String actionId) => copyWith(
+        late: <C7Pending>[
+          for (final entry in late)
+            if (entry.actionId != actionId) entry,
+        ],
+        pending: pending,
+        ownNotice: ownNotice,
+      );
 
   C7ChannelBook copyWith({
     C7ChannelState? chain,
@@ -445,8 +449,11 @@ final class C7ChannelBook {
         (record.opensKey &&
             key != null &&
             c7SameBytes(c7ChkCommitOf(key), record.chkCommit));
-    final step =
-        chain.apply(C7Entry.of(record), source: source, keyGiven: keyGiven);
+    final step = chain.apply(
+      C7Entry.of(record),
+      source: source,
+      keyGiven: keyGiven,
+    );
     var own = C7OwnOutcome.none;
     var pendingNext = pending;
     var notice = ownNotice;
@@ -555,7 +562,10 @@ final class C7ChannelBook {
   /// is `ok` when [forEpoch] is above its miss epoch; an `unsure` one is
   /// `ok` again when the key is the one it holds as current.
   C7ChannelBook confirmedBySlot(
-      int forEpoch, Uint8List key, C7GenerationEntry entry) {
+    int forEpoch,
+    Uint8List key,
+    C7GenerationEntry entry,
+  ) {
     if (chain.mode != c7ModeFull ||
         !c7SameBytes(c7ChkCommitOf(key), entry.keyCommit)) {
       return this;
@@ -581,10 +591,7 @@ final class C7ChannelBook {
           ),
         C7Gen(epoch: entry.epoch, groupId: group, key: key),
       ]..sort((a, b) => a.epoch.compareTo(b.epoch));
-      return copyWith(
-        chain: chain.keyArrived(forEpoch),
-        gens: nextGens,
-      );
+      return copyWith(chain: chain.keyArrived(forEpoch), gens: nextGens);
     }
     if (chain.status == C7Status.unsure) {
       final held = genAt(groupId, forEpoch);
@@ -604,11 +611,14 @@ final class C7ChannelBook {
     if (chain.mode != c7ModeFull || gens.isEmpty) return this;
     final last = gens.last;
     if (last.groupId != groupId || last.epoch >= epoch) return this;
-    return copyWith(gens: <C7Gen>[
-      ...gens.sublist(0, gens.length - 1),
-      last.closedAt(epoch),
-      C7Gen(epoch: epoch, groupId: groupId, key: key),
-    ], pending: pending);
+    return copyWith(
+      gens: <C7Gen>[
+        ...gens.sublist(0, gens.length - 1),
+        last.closedAt(epoch),
+        C7Gen(epoch: epoch, groupId: groupId, key: key),
+      ],
+      pending: pending,
+    );
   }
 
   C7ChannelBook markUnsure(int epoch) =>
@@ -624,7 +634,10 @@ final class C7ChannelBook {
     final key = gen?.key;
     if (gen == null || key == null) {
       return C7SlotSnapshot(
-          head: head, key: null, entry: Uint8List(c7EntryBytes));
+        head: head,
+        key: null,
+        entry: Uint8List(c7EntryBytes),
+      );
     }
     C7Gen? previous;
     final index = gens.indexOf(gen);
@@ -664,7 +677,7 @@ final class C7ChannelBook {
           'late': <Object?>[for (final entry in late) entry.toJson()],
         if (lines.isNotEmpty)
           'lines': <Object?>[
-            for (final (key, full) in lines) <Object?>[key, full]
+            for (final (key, full) in lines) <Object?>[key, full],
           ],
         if (ownNotice != null) 'notice': ownNotice,
       };
@@ -675,7 +688,10 @@ final class C7ChannelBook {
   /// generations, so the channel seals nothing under a history key and hands
   /// no key over until a live switch recovers it (I4, fail closed).
   static C7ChannelBook decode(
-      String? stored, String channelId, String groupId) {
+    String? stored,
+    String channelId,
+    String groupId,
+  ) {
     if (stored == null) return C7ChannelBook.genesis(channelId, groupId);
     try {
       final map = jsonDecode(stored) as Map;
@@ -710,7 +726,7 @@ final class C7ChannelBook {
         ),
         records: records,
         gens: <C7Gen>[
-          for (final gen in map['gens'] as List) C7Gen.fromJson(gen)
+          for (final gen in map['gens'] as List) C7Gen.fromJson(gen),
         ],
         pastGens: (map['past'] as List).cast<int>(),
         pending:
@@ -729,8 +745,9 @@ final class C7ChannelBook {
       return C7ChannelBook(
         channelId: channelId,
         groupId: groupId,
-        chain:
-            const C7ChannelState.implicitGenesis().withStatus(C7Status.closed),
+        chain: const C7ChannelState.implicitGenesis().withStatus(
+          C7Status.closed,
+        ),
         records: const <int, Uint8List>{},
         gens: const <C7Gen>[],
       );

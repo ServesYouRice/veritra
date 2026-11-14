@@ -85,15 +85,20 @@ class AutoBackupScreen extends StatelessWidget {
                 children: <Widget>[
                   ListTile(
                     key: const ValueKey<String>('auto-backup-status'),
-                    leading: Icon(state.k1BackupNeedsAttention
-                        ? Icons.warning_amber_outlined
-                        : Icons.cloud_done_outlined),
+                    leading: Icon(
+                      state.k1BackupNeedsAttention
+                          ? Icons.warning_amber_outlined
+                          : Icons.cloud_done_outlined,
+                    ),
                     title: Text(autoBackupStatusText(context, state)),
                     subtitle: view == K1BackupView.on &&
                             backup?.lastError != null &&
                             last != null
-                        ? Text(l10n.autoBackupLast(
-                            formatDateTime(context, last.toLocal())))
+                        ? Text(
+                            l10n.autoBackupLast(
+                              formatDateTime(context, last.toLocal()),
+                            ),
+                          )
                         : null,
                   ),
                   if (state.k1BackupStale)
@@ -105,8 +110,10 @@ class AutoBackupScreen extends StatelessWidget {
               ),
               if (view == K1BackupView.on && phone) ...<Widget>[
                 const SizedBox(height: BoneSpacing.sm),
-                Text(l10n.autoBackupPhoneNote,
-                    style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  l10n.autoBackupPhoneNote,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
               const SizedBox(height: BoneSpacing.md),
               if (view == K1BackupView.on)
@@ -116,7 +123,8 @@ class AutoBackupScreen extends StatelessWidget {
                       ? null
                       : () => state.runK1BackupIfDue(force: true),
                   child: Text(
-                      running ? l10n.autoBackupRunning : l10n.autoBackupNow),
+                    running ? l10n.autoBackupRunning : l10n.autoBackupNow,
+                  ),
                 ),
               if (view == K1BackupView.needsKeyHere)
                 FilledButton(
@@ -137,8 +145,9 @@ class AutoBackupScreen extends StatelessWidget {
                     ),
                     if (state.k1ConfirmDue)
                       ListTile(
-                        key:
-                            const ValueKey<String>('auto-backup-confirm-later'),
+                        key: const ValueKey<String>(
+                          'auto-backup-confirm-later',
+                        ),
                         leading: const Icon(Icons.schedule),
                         title: Text(l10n.autoBackupPromptLater),
                         onTap: state.postponeK1Confirm,
@@ -183,8 +192,10 @@ class AutoBackupScreen extends StatelessWidget {
       case K1SecondCopyMode.none:
         return <Widget>[
           const SizedBox(height: BoneSpacing.md),
-          Text(l10n.k1SecondCopyUnavailable,
-              style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            l10n.k1SecondCopyUnavailable,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ];
       case K1SecondCopyMode.export:
         // iOS (D91): no silent writes to user folders; saved by hand.
@@ -196,10 +207,13 @@ class AutoBackupScreen extends StatelessWidget {
                 key: const ValueKey<String>('auto-backup-save-copy'),
                 leading: const Icon(Icons.ios_share_outlined),
                 title: Text(l10n.k1SecondCopySave),
-                subtitle: Text(at != null
-                    ? l10n.k1SecondCopySavedAt(
-                        formatDateTime(context, at.toLocal()))
-                    : l10n.k1SecondCopySaveDetail),
+                subtitle: Text(
+                  at != null
+                      ? l10n.k1SecondCopySavedAt(
+                          formatDateTime(context, at.toLocal()),
+                        )
+                      : l10n.k1SecondCopySaveDetail,
+                ),
                 onTap: () => _exportCopy(context),
               ),
             ],
@@ -223,19 +237,25 @@ class AutoBackupScreen extends StatelessWidget {
         children: <Widget>[
           ListTile(
             key: const ValueKey<String>('auto-backup-second-copy'),
-            leading: Icon(backup?.secondCopyFailed == true
-                ? Icons.warning_amber_outlined
-                : Icons.folder_copy_outlined),
-            title: Text(path == null
-                ? l10n.k1SecondCopyChoose
-                : shown == null
-                    ? l10n.k1SecondCopyChosenFolder
-                    : l10n.k1SecondCopyFolder(shown)),
+            leading: Icon(
+              backup?.secondCopyFailed == true
+                  ? Icons.warning_amber_outlined
+                  : Icons.folder_copy_outlined,
+            ),
+            title: Text(
+              path == null
+                  ? l10n.k1SecondCopyChoose
+                  : shown == null
+                      ? l10n.k1SecondCopyChosenFolder
+                      : l10n.k1SecondCopyFolder(shown),
+            ),
             subtitle: backup?.secondCopyFailed == true
                 ? Text(l10n.k1SecondCopyFailed)
                 : at != null
-                    ? Text(l10n
-                        .autoBackupLast(formatDateTime(context, at.toLocal())))
+                    ? Text(
+                        l10n.autoBackupLast(
+                            formatDateTime(context, at.toLocal())),
+                      )
                     : Text(l10n.k1SecondCopyDetail),
             onTap: () async {
               if (defaultTargetPlatform == TargetPlatform.android) {
@@ -243,7 +263,8 @@ class AutoBackupScreen extends StatelessWidget {
                 final picked = await state.pickK1SecondCopyFolder();
                 if (picked == K1SecondCopyPick.failed) {
                   messenger.showSnackBar(
-                      SnackBar(content: Text(l10n.k1SecondCopyPickFailed)));
+                    SnackBar(content: Text(l10n.k1SecondCopyPickFailed)),
+                  );
                 }
                 return;
               }
@@ -272,8 +293,9 @@ class AutoBackupScreen extends StatelessWidget {
     );
     if (typed == null || typed.trim().isEmpty) return;
     final ok = await state.confirmK1Key(typed);
-    messenger.showSnackBar(SnackBar(
-        content: Text(ok ? l10n.k1ConfirmOk : l10n.k1ConfirmMismatch)));
+    messenger.showSnackBar(
+      SnackBar(content: Text(ok ? l10n.k1ConfirmOk : l10n.k1ConfirmMismatch)),
+    );
   }
 
   Future<void> _exportCopy(BuildContext context) async {
@@ -297,8 +319,11 @@ class AutoBackupScreen extends StatelessWidget {
     );
     if (typed == null || typed.trim().isEmpty) return;
     final ok = await state.enableK1BackupsWithKey(typed);
-    messenger.showSnackBar(SnackBar(
-        content: Text(ok ? l10n.autoBackupKeyOn : l10n.autoBackupKeyWrong)));
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok ? l10n.autoBackupKeyOn : l10n.autoBackupKeyWrong),
+      ),
+    );
   }
 }
 

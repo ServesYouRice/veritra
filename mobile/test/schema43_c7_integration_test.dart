@@ -23,7 +23,9 @@ void main() {
   });
 
   Future<Set<String>> columnsOf(
-          EncryptedLocalDatabase db, String table) async =>
+    EncryptedLocalDatabase db,
+    String table,
+  ) async =>
       (await db
               .customSelect("SELECT name FROM pragma_table_info('$table')")
               .get())
@@ -31,8 +33,9 @@ void main() {
           .toSet();
 
   Future<int> userVersion(EncryptedLocalDatabase db) async =>
-      (await db.customSelect('PRAGMA user_version').getSingle())
-          .read<int>('user_version');
+      (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+        'user_version',
+      );
 
   DeviceListPin pin(int checkedAt) => DeviceListPin(
         accountId: 'acct_b',
@@ -44,38 +47,49 @@ void main() {
         checkedAt: checkedAt,
         keys: <DeviceListKeyRow>[
           DeviceListKeyRow(
-              deviceId: utf8.encode('dev_b'),
-              signingKey: List<int>.filled(32, 2),
-              addedVersion: 1,
-              removedVersion: 0,
-              frankKey: List<int>.filled(32, 3)),
+            deviceId: utf8.encode('dev_b'),
+            signingKey: List<int>.filled(32, 2),
+            addedVersion: 1,
+            removedVersion: 0,
+            frankKey: List<int>.filled(32, 3),
+          ),
         ],
       );
 
   /// A database as the current code writes it, with one received message
   /// and one device-list pin, C7's two columns dropped, then [shape]. The
   /// open under test is the next one.
-  Future<File> shaped(String name, int version,
-      Future<void> Function(EncryptedLocalDatabase db) shape) async {
+  Future<File> shaped(
+    String name,
+    int version,
+    Future<void> Function(EncryptedLocalDatabase db) shape,
+  ) async {
     final file = File('${directory.path}/$name.db');
     final db = EncryptedLocalDatabase(NativeDatabase(file));
-    await db.into(db.localMessages).insert(LocalMessagesCompanion.insert(
-          key: 'dev_b:act1',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_b',
-          senderDeviceId: 'dev_b',
-          kind: 'text',
-          createdAt: 1,
-          state: 'received',
-        ));
+    await db.into(db.localMessages).insert(
+          LocalMessagesCompanion.insert(
+            key: 'dev_b:act1',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_b',
+            senderDeviceId: 'dev_b',
+            kind: 'text',
+            createdAt: 1,
+            state: 'received',
+          ),
+        );
     expect(
-        await db.writeDeviceListPin(pin(4242), expectedVersion: null), isTrue);
+      await db.writeDeviceListPin(pin(4242), expectedVersion: null),
+      isTrue,
+    );
     for (final column in const ['c7_gen', 'c7_former']) {
-      await db
-          .customStatement('ALTER TABLE local_messages DROP COLUMN $column');
+      await db.customStatement(
+        'ALTER TABLE local_messages DROP COLUMN $column',
+      );
     }
-    expect(await columnsOf(db, 'local_messages'),
-        isNot(anyOf(contains('c7_gen'), contains('c7_former'))));
+    expect(
+      await columnsOf(db, 'local_messages'),
+      isNot(anyOf(contains('c7_gen'), contains('c7_former'))),
+    );
     await shape(db);
     await db.customStatement('PRAGMA user_version = $version');
     await db.close();
@@ -85,14 +99,22 @@ void main() {
   Future<void> expectMerged(EncryptedLocalDatabase db) async {
     expect(await userVersion(db), EncryptedLocalDatabase.currentSchemaVersion);
     expect(EncryptedLocalDatabase.currentSchemaVersion, 43);
-    expect(await columnsOf(db, 'local_messages'),
-        containsAll(<String>['c7_gen', 'c7_former', 'sender_removed']));
-    expect(await columnsOf(db, 'local_frank_reveals'),
-        containsAll(<String>['designation', 'sender_account_id']));
     expect(
-        await columnsOf(db, 'local_device_list_keys'), contains('frank_key'));
+      await columnsOf(db, 'local_messages'),
+      containsAll(<String>['c7_gen', 'c7_former', 'sender_removed']),
+    );
     expect(
-        await columnsOf(db, 'local_device_list_heads'), contains('pinned_at'));
+      await columnsOf(db, 'local_frank_reveals'),
+      containsAll(<String>['designation', 'sender_account_id']),
+    );
+    expect(
+      await columnsOf(db, 'local_device_list_keys'),
+      contains('frank_key'),
+    );
+    expect(
+      await columnsOf(db, 'local_device_list_heads'),
+      contains('pinned_at'),
+    );
     // The row is kept and reads through the generated (C7) columns.
     final rows = await db.select(db.localMessages).get();
     expect(rows.map((row) => row.key), <String>['dev_b:act1']);
@@ -100,9 +122,11 @@ void main() {
     expect(rows.single.c7Former, isNull);
     // The C7 former-member check still holds on the added column.
     await expectLater(
-        db.customStatement(
-            "UPDATE local_messages SET c7_former = 3 WHERE key = 'dev_b:act1'"),
-        throwsA(anything));
+      db.customStatement(
+        "UPDATE local_messages SET c7_former = 3 WHERE key = 'dev_b:act1'",
+      ),
+      throwsA(anything),
+    );
   }
 
   test(
@@ -112,16 +136,20 @@ void main() {
     // repair has work too.
     final file = await shaped('sealed43', 43, (db) async {
       await db.customStatement(
-          'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at');
+        'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at',
+      );
       await db.customStatement(
-          'ALTER TABLE local_frank_reveals ADD COLUMN signature BLOB');
+        'ALTER TABLE local_frank_reveals ADD COLUMN signature BLOB',
+      );
     });
     final db = EncryptedLocalDatabase(NativeDatabase(file));
     addTearDown(db.close);
     await expectMerged(db);
     // _repairSchema43: draft column gone, first pin time backfilled.
-    expect(await columnsOf(db, 'local_frank_reveals'),
-        isNot(contains('signature')));
+    expect(
+      await columnsOf(db, 'local_frank_reveals'),
+      isNot(contains('signature')),
+    );
     expect((await db.readDeviceListPin('acct_b'))!.pinnedAt, 4242);
   });
 
@@ -132,16 +160,20 @@ void main() {
       }
       for (final column in const ['designation', 'sender_account_id']) {
         await db.customStatement(
-            'ALTER TABLE local_frank_reveals DROP COLUMN $column');
+          'ALTER TABLE local_frank_reveals DROP COLUMN $column',
+        );
       }
       await db.customStatement(
-          'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at');
+        'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at',
+      );
     });
     final db = EncryptedLocalDatabase(NativeDatabase(file));
     addTearDown(db.close);
     await expectMerged(db);
     final tables = (await db
-            .customSelect("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .customSelect(
+              "SELECT name FROM sqlite_master WHERE type = 'table'",
+            )
             .get())
         .map((row) => row.read<String>('name'))
         .toSet();
@@ -152,17 +184,19 @@ void main() {
   test('a merged 43 opens again without change', () async {
     final file = File('${directory.path}/merged.db');
     var db = EncryptedLocalDatabase(NativeDatabase(file));
-    await db.into(db.localMessages).insert(LocalMessagesCompanion.insert(
-          key: 'dev_b:act1',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_b',
-          senderDeviceId: 'dev_b',
-          kind: 'text',
-          createdAt: 1,
-          state: 'received',
-          c7Gen: const Value('gen'),
-          c7Former: const Value(1),
-        ));
+    await db.into(db.localMessages).insert(
+          LocalMessagesCompanion.insert(
+            key: 'dev_b:act1',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_b',
+            senderDeviceId: 'dev_b',
+            kind: 'text',
+            createdAt: 1,
+            state: 'received',
+            c7Gen: const Value('gen'),
+            c7Former: const Value(1),
+          ),
+        );
     await db.close();
     db = EncryptedLocalDatabase(NativeDatabase(file));
     addTearDown(db.close);

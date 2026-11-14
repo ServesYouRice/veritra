@@ -27,8 +27,10 @@ import 'test_crypto_service.dart';
 void main() {
   const origin = 'https://localhost:8080';
 
-  Future<AppState> stateWith(SealedKeyPin? pin,
-      {List<ReportKeyPin> owners = const <ReportKeyPin>[]}) async {
+  Future<AppState> stateWith(
+    SealedKeyPin? pin, {
+    List<ReportKeyPin> owners = const <ReportKeyPin>[],
+  }) async {
     final store = MemoryLocalStore();
     if (pin != null) await store.saveSealedKeyPin(pin);
     for (final owner in owners) {
@@ -49,25 +51,30 @@ void main() {
         deviceId: 'dev_a',
         username: 'a',
       );
-    state.sealedSender =
-        SealedSender(origin: origin, localStore: store, crypto: _NoCrypto())
-          ..enabled = true;
+    state.sealedSender = SealedSender(
+      origin: origin,
+      localStore: store,
+      crypto: _NoCrypto(),
+    )..enabled = true;
     return state;
   }
 
   final pinned = List<int>.filled(32, 0x11);
   final changed = List<int>.filled(32, 0x22);
 
-  testWidgets('a changed key is shown beside the pin and can be accepted',
-      (tester) async {
-    final state = await stateWith(SealedKeyPin(
-      origin: origin,
-      keyId: 'a' * 32,
-      publicKey: pinned,
-      pinnedAt: 1,
-      seenKeyId: 'b' * 32,
-      seenPublicKey: changed,
-    ));
+  testWidgets('a changed key is shown beside the pin and can be accepted', (
+    tester,
+  ) async {
+    final state = await stateWith(
+      SealedKeyPin(
+        origin: origin,
+        keyId: 'a' * 32,
+        publicKey: pinned,
+        pinnedAt: 1,
+        seenKeyId: 'b' * 32,
+        seenPublicKey: changed,
+      ),
+    );
     tester.view.physicalSize = const Size(900, 3000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -76,10 +83,14 @@ void main() {
     // U26: Off, one line, and a question with the safe answer first.
     expect(find.text('OFF'), findsOneWidget);
     expect(find.textContaining('Paused'), findsOneWidget);
-    expect(find.text("Did the server's operator tell you its key changed?"),
-        findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'No, or I am not sure'),
-        findsOneWidget);
+    expect(
+      find.text("Did the server's operator tell you its key changed?"),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'No, or I am not sure'),
+      findsOneWidget,
+    );
     // The codes wait under "Technical details".
     expect(find.text(reportKeyFingerprint(pinned)), findsNothing);
     await tester.tap(find.text('Technical details'));
@@ -87,13 +98,17 @@ void main() {
     expect(find.text(reportKeyFingerprint(pinned)), findsOneWidget);
     expect(find.text(reportKeyFingerprint(changed)), findsOneWidget);
 
-    await tester
-        .tap(find.widgetWithText(OutlinedButton, 'Yes, use the new key'));
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Yes, use the new key'),
+    );
     await tester.pumpAndSettle();
     // The confirmation says what accepting risks; confirm.
-    await tester.tap(find.descendant(
+    await tester.tap(
+      find.descendant(
         of: find.byType(AlertDialog),
-        matching: find.widgetWithText(FilledButton, 'Accept new key')));
+        matching: find.widgetWithText(FilledButton, 'Accept new key'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     final pin = (await state.sealedKeyPin())!;
@@ -105,16 +120,19 @@ void main() {
     expect(find.text('ON'), findsOneWidget);
   });
 
-  testWidgets('U26: the safe answer keeps the old key and changes nothing',
-      (tester) async {
-    final state = await stateWith(SealedKeyPin(
-      origin: origin,
-      keyId: 'a' * 32,
-      publicKey: pinned,
-      pinnedAt: 1,
-      seenKeyId: 'b' * 32,
-      seenPublicKey: changed,
-    ));
+  testWidgets('U26: the safe answer keeps the old key and changes nothing', (
+    tester,
+  ) async {
+    final state = await stateWith(
+      SealedKeyPin(
+        origin: origin,
+        keyId: 'a' * 32,
+        publicKey: pinned,
+        pinnedAt: 1,
+        seenKeyId: 'b' * 32,
+        seenPublicKey: changed,
+      ),
+    );
     await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'No, or I am not sure'));
@@ -130,51 +148,73 @@ void main() {
     expect(find.byKey(const ValueKey('sealed-key-question')), findsOneWidget);
   });
 
-  testWidgets('U26: a pinned, unchanged key reads On in one line',
-      (tester) async {
-    final state = await stateWith(SealedKeyPin(
-        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1));
+  testWidgets('U26: a pinned, unchanged key reads On in one line', (
+    tester,
+  ) async {
+    final state = await stateWith(
+      SealedKeyPin(
+        origin: origin,
+        keyId: 'a' * 32,
+        publicKey: pinned,
+        pinnedAt: 1,
+      ),
+    );
     await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
     await tester.pumpAndSettle();
     expect(find.text('ON'), findsOneWidget);
     expect(
-        tester.widget<Text>(find.byKey(const ValueKey('sealed-summary'))).data,
-        'The server delivers your messages without learning who sent them.');
+      tester.widget<Text>(find.byKey(const ValueKey('sealed-summary'))).data,
+      'The server delivers your messages without learning who sent them.',
+    );
     expect(find.text(reportKeyFingerprint(pinned)), findsNothing);
     expect(find.byKey(const ValueKey('sealed-key-question')), findsNothing);
   });
 
   // Owner decision 4: with no pinned owner key a sealed message is provable
   // to no one, and the screen says so; else it names how many owners.
-  testWidgets('the screen says who a sealed message is provable to',
-      (tester) async {
+  testWidgets('the screen says who a sealed message is provable to', (
+    tester,
+  ) async {
     final key = SealedKeyPin(
-        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1);
+      origin: origin,
+      keyId: 'a' * 32,
+      publicKey: pinned,
+      pinnedAt: 1,
+    );
     var state = await stateWith(key);
     await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
     await tester.pumpAndSettle();
     expect(find.textContaining('can then be proven to no one'), findsOneWidget);
 
     ReportKeyPin owner(String id, int fill) => ReportKeyPin(
-        origin: origin,
-        ownerAccountId: id,
-        publicKey: List<int>.filled(32, fill),
-        keyRev: 1,
-        pinnedAt: 1);
-    state = await stateWith(key, owners: <ReportKeyPin>[
-      owner('acct_owner_1', 0x31),
-      owner('acct_owner_2', 0x32),
-      // A community moderator inbox is not an instance owner.
-      owner('comm_1:acct_mod', 0x33),
-    ]);
-    await tester.pumpWidget(MaterialApp(
-        key: const ValueKey('second'), home: SealedKeyScreen(state: state)));
+          origin: origin,
+          ownerAccountId: id,
+          publicKey: List<int>.filled(32, fill),
+          keyRev: 1,
+          pinnedAt: 1,
+        );
+    state = await stateWith(
+      key,
+      owners: <ReportKeyPin>[
+        owner('acct_owner_1', 0x31),
+        owner('acct_owner_2', 0x32),
+        // A community moderator inbox is not an instance owner.
+        owner('comm_1:acct_mod', 0x33),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        key: const ValueKey('second'),
+        home: SealedKeyScreen(state: state),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('sealed-provable-owners')))
-            .data,
-        contains(': 2.'));
+      tester
+          .widget<Text>(find.byKey(const ValueKey('sealed-provable-owners')))
+          .data,
+      contains(': 2.'),
+    );
     expect(await state.sealedProvableOwnerCount(), 2);
   });
 
@@ -183,73 +223,105 @@ void main() {
   // Settings warns while any is waiting.
   testWidgets('owner key differences wait for the person', (tester) async {
     final key = SealedKeyPin(
-        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1);
+      origin: origin,
+      keyId: 'a' * 32,
+      publicKey: pinned,
+      pinnedAt: 1,
+    );
     final state = await stateWith(key);
     final watch = OwnerKeyWatch(state.localStore, origin);
     ReportInboxRecipient owner(String id, int fill) => ReportInboxRecipient(
-        inboxId: id, publicKey: List<int>.filled(32, fill), keyRev: 1);
+          inboxId: id,
+          publicKey: List<int>.filled(32, fill),
+          keyRev: 1,
+        );
     // First sight pins acct_o1 and acct_o2.
     expect(
-        await watch.observe(ReportInbox(
-            kind: reportInboxInstanceOwner,
-            recipients: [owner('acct_o1', 0x41), owner('acct_o2', 0x42)])),
-        isTrue);
+      await watch.observe(
+        ReportInbox(
+          kind: reportInboxInstanceOwner,
+          recipients: [owner('acct_o1', 0x41), owner('acct_o2', 0x42)],
+        ),
+      ),
+      isTrue,
+    );
     // Then o1's key changes, o2 is gone and o3 is new.
     expect(
-        await watch.observe(ReportInbox(
-            kind: reportInboxInstanceOwner,
-            recipients: [owner('acct_o1', 0x51), owner('acct_o3', 0x43)])),
-        isFalse);
+      await watch.observe(
+        ReportInbox(
+          kind: reportInboxInstanceOwner,
+          recipients: [owner('acct_o1', 0x51), owner('acct_o3', 0x43)],
+        ),
+      ),
+      isFalse,
+    );
     await state.loadOwnerKeyReview();
 
     tester.view.physicalSize = const Size(900, 4000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(body: SettingsScreen(state: state)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(body: SettingsScreen(state: state)),
+      ),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.byKey(const ValueKey('owner-key-review-tile')), findsOneWidget);
 
-    await tester.pumpWidget(MaterialApp(
-        key: const ValueKey('screen'), home: SealedKeyScreen(state: state)));
+    await tester.pumpWidget(
+      MaterialApp(
+        key: const ValueKey('screen'),
+        home: SealedKeyScreen(state: state),
+      ),
+    );
     await tester.pumpAndSettle();
     for (final id in ['acct_o1', 'acct_o2', 'acct_o3']) {
       expect(find.byKey(ValueKey('owner-key-review-$id')), findsOneWidget);
       // U26: keeping what was pinned is the main button.
       expect(
-          find.descendant(
-              of: find.byKey(ValueKey('owner-key-review-$id')),
-              matching:
-                  find.widgetWithText(FilledButton, 'No, keep it as it was')),
-          findsOneWidget);
+        find.descendant(
+          of: find.byKey(ValueKey('owner-key-review-$id')),
+          matching: find.widgetWithText(FilledButton, 'No, keep it as it was'),
+        ),
+        findsOneWidget,
+      );
     }
     expect(find.text('Did you expect this change?'), findsNWidgets(3));
-    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
-        findsNothing);
+    expect(
+      find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
+      findsNothing,
+    );
     await tester.tap(find.text('Technical details'));
     await tester.pumpAndSettle();
-    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
-        findsOneWidget);
-    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x51))),
-        findsOneWidget);
+    expect(
+      find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
+      findsOneWidget,
+    );
+    expect(
+      find.text(reportKeyFingerprint(List<int>.filled(32, 0x51))),
+      findsOneWidget,
+    );
     expect(find.textContaining(': 2.'), findsOneWidget);
 
     // Reject the changed key: the pin stays.
     await tester.tap(find.byKey(const ValueKey('owner-key-reject-acct_o1')));
     await tester.pumpAndSettle();
     expect(
-        find.byKey(const ValueKey('owner-key-review-acct_o1')), findsNothing);
+      find.byKey(const ValueKey('owner-key-review-acct_o1')),
+      findsNothing,
+    );
     // Accept the new owner, after the warning.
     await tester.tap(find.byKey(const ValueKey('owner-key-accept-acct_o3')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('owner-key-accept-confirm')));
     await tester.pumpAndSettle();
     expect(
-        find.byKey(const ValueKey('owner-key-review-acct_o3')), findsNothing);
+      find.byKey(const ValueKey('owner-key-review-acct_o3')),
+      findsNothing,
+    );
     // Accept that o2 is gone.
     await tester.tap(find.byKey(const ValueKey('owner-key-accept-acct_o2')));
     await tester.pumpAndSettle();
@@ -259,9 +331,11 @@ void main() {
 
     // The decisions act on the proof recipients only: no report pin.
     final pins = {
-      for (final pin
-          in await OwnerProofPins(state.localStore, origin).effective())
-        pin.ownerAccountId: pin.publicKey
+      for (final pin in await OwnerProofPins(
+        state.localStore,
+        origin,
+      ).effective())
+        pin.ownerAccountId: pin.publicKey,
     };
     expect(await state.localStore.loadReportKeyPins(origin), isEmpty);
     expect(pins, {
@@ -285,27 +359,32 @@ class _NoCrypto implements SealedSendingCryptoService {
   set sealedTokenSource(SealedTokenSource? source) {}
   @override
   Future<MessageEnvelope?> reencryptSealedAsIdentified(
-          MessageEnvelope sealed) =>
+    MessageEnvelope sealed,
+  ) =>
       throw UnimplementedError();
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
-          ReceivedMessageEnvelope envelope, int syncEventId,
-          {void Function()? checkCanCommit}) =>
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  }) =>
       throw UnimplementedError();
   @override
-  ({Uint8List state, Uint8List request}) sealedTokenRequest(
-          {required List<int> publicKey,
-          required String conversationId,
-          required int epoch,
-          required int count}) =>
+  ({Uint8List state, Uint8List request}) sealedTokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int count,
+  }) =>
       throw UnimplementedError();
   @override
-  List<SealedToken> sealedTokenFinalize(
-          {required List<int> state,
-          required List<int> response,
-          required String conversationId,
-          required String keyId,
-          required int epoch}) =>
+  List<SealedToken> sealedTokenFinalize({
+    required List<int> state,
+    required List<int> response,
+    required String conversationId,
+    required String keyId,
+    required int epoch,
+  }) =>
       throw UnimplementedError();
 }
 

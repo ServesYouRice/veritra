@@ -42,12 +42,16 @@ Future<AccountRuntime> buildReleaseRuntime(String namespace) async {
     syncServiceFactory: (baseUrl, token) =>
         WebSocketSyncService(baseUrl: baseUrl, token: token),
     pushService: PlatformMobilePushService(),
-    receiptPreferences:
-        ReceiptPreferences(SecureReceiptPreferenceStore(scope: scope)),
+    receiptPreferences: ReceiptPreferences(
+      SecureReceiptPreferenceStore(scope: scope),
+    ),
     passkeyClient: PlatformPasskeyClient(),
   )..historyTransferDirectory = slotHistoryTransferDirectory(scope);
   return AccountRuntime(
-      namespace: namespace, state: state, closeStore: store.close);
+    namespace: namespace,
+    state: state,
+    closeStore: store.close,
+  );
 }
 
 /// The account switcher for the release entry point. The existing install is
@@ -62,9 +66,12 @@ AccountHost buildReleaseHost({
     eraser: SlotEraser(storage: kv, scope: const ProfileScope()),
     build: build ?? buildReleaseRuntime,
     primaryNamespace: '',
-    desktopFactory: (state) => DesktopServices.startIfSupported(state,
-        scope: ProfileScope(
-            namespace: (state.localStore as SecureLocalStore).namespace)),
+    desktopFactory: (state) => DesktopServices.startIfSupported(
+      state,
+      scope: ProfileScope(
+        namespace: (state.localStore as SecureLocalStore).namespace,
+      ),
+    ),
     inspect: slotInspectorFor(''),
     revoke: slotRevokerFor((baseUrl) => ApiClient(baseUrl: baseUrl)),
     afterClose: (_) async {
@@ -104,10 +111,11 @@ class StartupFailureApp extends StatelessWidget {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Builder(
-            builder: (context) => Scaffold(
-                    body: Center(
-                  child: Text(AppLocalizations.of(context)!.errorGeneric),
-                ))),
+          builder: (context) => Scaffold(
+            body:
+                Center(child: Text(AppLocalizations.of(context)!.errorGeneric)),
+          ),
+        ),
       );
 }
 
@@ -199,51 +207,59 @@ class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
             if (runtime == null) {
               return _app(null, null, host);
             }
-            return _app(runtime.state, runtime.desktop, host,
-                slot: runtime.namespace);
+            return _app(
+              runtime.state,
+              runtime.desktop,
+              host,
+              slot: runtime.namespace,
+            );
           },
         );
       },
     );
   }
 
-  Widget _app(AppState? state, DesktopServices? desktop, AccountHost? host,
-      {String? slot}) {
+  Widget _app(
+    AppState? state,
+    DesktopServices? desktop,
+    AccountHost? host, {
+    String? slot,
+  }) {
     return wrapDesktopScope(
-        desktop,
-        AppearanceScope(
-          controller: _appearance,
-          child: MaterialApp(
-            key: slot == null ? null : ValueKey<String>('slot-$slot'),
-            title: veritraProductName,
-            theme: veritraLightTheme(),
-            darkTheme: veritraDarkTheme(),
-            themeMode: _appearance.mode,
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            home: state == null
-                ? const Scaffold(
-                    body: Center(child: CircularProgressIndicator()))
-                : AppShell(state: state),
-            builder: (context, child) {
-              var content = child ?? const SizedBox.shrink();
-              // Demo builds only: call UI above every route.
-              if (state != null && state.config.demo) {
-                content = CallHost(state: state, child: content);
-              }
-              if (host == null) return content;
-              return AccountHostScope(
-                host: host,
-                child: Stack(
-                  children: <Widget>[
-                    content,
-                    if (host.switching) const _SwitchingOverlay(),
-                  ],
-                ),
-              );
-            },
-          ),
-        ));
+      desktop,
+      AppearanceScope(
+        controller: _appearance,
+        child: MaterialApp(
+          key: slot == null ? null : ValueKey<String>('slot-$slot'),
+          title: veritraProductName,
+          theme: veritraLightTheme(),
+          darkTheme: veritraDarkTheme(),
+          themeMode: _appearance.mode,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: state == null
+              ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+              : AppShell(state: state),
+          builder: (context, child) {
+            var content = child ?? const SizedBox.shrink();
+            // Demo builds only: call UI above every route.
+            if (state != null && state.config.demo) {
+              content = CallHost(state: state, child: content);
+            }
+            if (host == null) return content;
+            return AccountHostScope(
+              host: host,
+              child: Stack(
+                children: <Widget>[
+                  content,
+                  if (host.switching) const _SwitchingOverlay(),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -260,7 +276,9 @@ class _SwitchingOverlay extends StatelessWidget {
         child: Stack(
           children: <Widget>[
             ModalBarrier(
-                dismissible: false, color: scheme.scrim.withValues(alpha: 0.5)),
+              dismissible: false,
+              color: scheme.scrim.withValues(alpha: 0.5),
+            ),
             Center(
               child: Card(
                 child: Padding(
@@ -269,8 +287,9 @@ class _SwitchingOverlay extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                       const SizedBox(width: 16),
                       Text(context.l10n.accountsSwitching),
                     ],

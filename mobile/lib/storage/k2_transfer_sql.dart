@@ -192,14 +192,17 @@ EnrollmentPromotionOutcome decideEnrollmentPromotion({
       next.deviceId != request.deviceId ||
       next.token.isEmpty) {
     throw const EnrollmentPromotionRefused(
-        'the session does not match the enrollment');
+      'the session does not match the enrollment',
+    );
   }
   // The ledger decides first, whatever the crypto state says.
   if (ledger.isNotEmpty) {
-    final same = ledger.where((row) =>
-        row.origin == request.origin &&
-        row.kind == request.kind &&
-        row.promotionId == request.promotionId);
+    final same = ledger.where(
+      (row) =>
+          row.origin == request.origin &&
+          row.kind == request.kind &&
+          row.promotionId == request.promotionId,
+    );
     if (same.isNotEmpty) return EnrollmentPromotionOutcome.alreadyPromoted;
     throw const EnrollmentPromotionRefused('this identity was promoted before');
   }
@@ -215,12 +218,15 @@ EnrollmentPromotionOutcome decideEnrollmentPromotion({
       state.counter != 1 ||
       !_samePendingState(state, request.expectedState)) {
     throw const EnrollmentPromotionRefused(
-        'the pending identity is not the one opened');
+      'the pending identity is not the one opened',
+    );
   }
   // The session decides before the MLS state: a signed-out identity the
   // promotion replaces takes its MLS state with it.
   final replaces = promotionReplacesSignedOutIdentity(
-      request: request, existingSession: existingSession);
+    request: request,
+    existingSession: existingSession,
+  );
   if (cryptoStateStored && !replaces) {
     throw const EnrollmentPromotionRefused('another MLS state is active');
   }
@@ -230,7 +236,8 @@ EnrollmentPromotionOutcome decideEnrollmentPromotion({
         transfer.accountId != request.accountId ||
         transfer.deviceId != request.deviceId) {
       throw const EnrollmentPromotionRefused(
-          'the transfer is not for this identity');
+        'the transfer is not for this identity',
+      );
     }
   }
   return EnrollmentPromotionOutcome.promoted;
@@ -464,8 +471,9 @@ void validateHistoryTransfer(HistoryTransferProgress t) {
   final incoming = t.direction == historyTransferIncoming;
   final firstWithFile = incoming
       ? HistoryTransferStage.incoming.indexOf(HistoryTransferStage.downloading)
-      : HistoryTransferStage.outgoing
-          .indexOf(HistoryTransferStage.snapshotReady);
+      : HistoryTransferStage.outgoing.indexOf(
+          HistoryTransferStage.snapshotReady,
+        );
   if (stage >= firstWithFile && (!known || handoff == null || path == null)) {
     invalid();
   }
@@ -483,7 +491,9 @@ void validateHistoryTransfer(HistoryTransferProgress t) {
 /// without them keeps them, a different value is refused); the stage only
 /// moves forward. Throws [HistoryTransferConflict] or [FormatException].
 HistoryTransferProgress mergeHistoryTransfer(
-    HistoryTransferProgress? existing, HistoryTransferProgress next) {
+  HistoryTransferProgress? existing,
+  HistoryTransferProgress next,
+) {
   validateHistoryTransfer(next);
   if (existing == null) return next;
   if (existing.origin != next.origin ||
@@ -516,15 +526,27 @@ HistoryTransferProgress mergeHistoryTransfer(
     peerDeviceId: next.peerDeviceId,
     stage: next.stage,
     expiresAt: next.expiresAt,
-    transferId:
-        frozen<String>(existing.transferId, next.transferId, (a, b) => a == b),
+    transferId: frozen<String>(
+      existing.transferId,
+      next.transferId,
+      (a, b) => a == b,
+    ),
     ciphertextSha256: frozen<List<int>>(
-        existing.ciphertextSha256, next.ciphertextSha256, _sameBytes),
+      existing.ciphertextSha256,
+      next.ciphertextSha256,
+      _sameBytes,
+    ),
     ciphertextSize: frozen<int>(
-        existing.ciphertextSize, next.ciphertextSize, (a, b) => a == b),
+      existing.ciphertextSize,
+      next.ciphertextSize,
+      (a, b) => a == b,
+    ),
     handoff: frozen<List<int>>(existing.handoff, next.handoff, _sameBytes),
-    filePath:
-        frozen<String>(existing.filePath, next.filePath, (a, b) => a == b),
+    filePath: frozen<String>(
+      existing.filePath,
+      next.filePath,
+      (a, b) => a == b,
+    ),
     fileOffset: next.fileOffset,
     payloadJson: next.payloadJson,
   );
@@ -535,8 +557,11 @@ HistoryTransferProgress mergeHistoryTransfer(
 /// Whether [transfer] belongs to the active identity: the stored session
 /// [session] names its origin, account and device with a token, and an MLS
 /// state (which holds the native half) is stored.
-bool historyTransferIsActive(HistoryTransferProgress transfer,
-    Map<String, Object?>? session, bool cryptoStateStored) {
+bool historyTransferIsActive(
+  HistoryTransferProgress transfer,
+  Map<String, Object?>? session,
+  bool cryptoStateStored,
+) {
   final identity = _storedSessionIdentity(session);
   return cryptoStateStored &&
       identity != null &&
@@ -556,28 +581,31 @@ extension K2TransferSql on EncryptedLocalDatabase {
     // Kinds and stages are checked in Dart, so a later kind or stage needs
     // no table rebuild; the direction is closed.
     await customStatement(
-        'CREATE TABLE IF NOT EXISTS local_enrollment_promotions ('
-        'origin TEXT NOT NULL, account_id TEXT NOT NULL, '
-        'device_id TEXT NOT NULL, kind TEXT NOT NULL, '
-        'promotion_id TEXT NOT NULL, promoted_at INTEGER NOT NULL, '
-        'PRIMARY KEY (origin, account_id, device_id), '
-        "CHECK (origin <> '' AND account_id <> '' AND device_id <> '' "
-        "AND kind <> '' AND promotion_id <> ''))");
-    await customStatement('CREATE TABLE IF NOT EXISTS local_history_transfers ('
-        'origin TEXT NOT NULL, link_id TEXT NOT NULL, '
-        "direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')), "
-        'account_id TEXT NOT NULL, device_id TEXT NOT NULL, '
-        'peer_device_id TEXT NOT NULL, stage TEXT NOT NULL, '
-        'transfer_id TEXT, ciphertext_sha256 BLOB, ciphertext_size INTEGER, '
-        'handoff BLOB, file_path TEXT, '
-        'file_offset INTEGER NOT NULL CHECK (file_offset >= 0), '
-        'expires_at INTEGER NOT NULL, payload_json TEXT NOT NULL, '
-        'PRIMARY KEY (origin, link_id), '
-        'CHECK ((transfer_id IS NULL) = (ciphertext_sha256 IS NULL) '
-        'AND (ciphertext_sha256 IS NULL) = (ciphertext_size IS NULL)), '
-        'CHECK (ciphertext_sha256 IS NULL OR length(ciphertext_sha256) = 32), '
-        'CHECK (file_offset <= coalesce(ciphertext_size, 0)), '
-        'CHECK (handoff IS NULL OR length(handoff) BETWEEN 1 AND 8192))');
+      'CREATE TABLE IF NOT EXISTS local_enrollment_promotions ('
+      'origin TEXT NOT NULL, account_id TEXT NOT NULL, '
+      'device_id TEXT NOT NULL, kind TEXT NOT NULL, '
+      'promotion_id TEXT NOT NULL, promoted_at INTEGER NOT NULL, '
+      'PRIMARY KEY (origin, account_id, device_id), '
+      "CHECK (origin <> '' AND account_id <> '' AND device_id <> '' "
+      "AND kind <> '' AND promotion_id <> ''))",
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_history_transfers ('
+      'origin TEXT NOT NULL, link_id TEXT NOT NULL, '
+      "direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')), "
+      'account_id TEXT NOT NULL, device_id TEXT NOT NULL, '
+      'peer_device_id TEXT NOT NULL, stage TEXT NOT NULL, '
+      'transfer_id TEXT, ciphertext_sha256 BLOB, ciphertext_size INTEGER, '
+      'handoff BLOB, file_path TEXT, '
+      'file_offset INTEGER NOT NULL CHECK (file_offset >= 0), '
+      'expires_at INTEGER NOT NULL, payload_json TEXT NOT NULL, '
+      'PRIMARY KEY (origin, link_id), '
+      'CHECK ((transfer_id IS NULL) = (ciphertext_sha256 IS NULL) '
+      'AND (ciphertext_sha256 IS NULL) = (ciphertext_size IS NULL)), '
+      'CHECK (ciphertext_sha256 IS NULL OR length(ciphertext_sha256) = 32), '
+      'CHECK (file_offset <= coalesce(ciphertext_size, 0)), '
+      'CHECK (handoff IS NULL OR length(handoff) BETWEEN 1 AND 8192))',
+    );
   }
 
   /// Schema 17 to 18: a pending enrollment whose identity is already the
@@ -602,22 +630,25 @@ extension K2TransferSql on EncryptedLocalDatabase {
         !await _cryptoStateStoredRaw()) {
       return;
     }
-    await _insertPromotion(EnrollmentPromotionRow(
-      kind: pending.kind,
-      origin: pending.origin,
-      accountId: pending.accountId,
-      deviceId: pending.deviceId,
-      promotionId: promotionIdSchemaUpgrade,
-      promotedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-    ));
+    await _insertPromotion(
+      EnrollmentPromotionRow(
+        kind: pending.kind,
+        origin: pending.origin,
+        accountId: pending.accountId,
+        deviceId: pending.deviceId,
+        promotionId: promotionIdSchemaUpgrade,
+        promotedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+      ),
+    );
     await _clearPendingEnrollment();
   }
 
   Future<({String kind, String origin, String accountId, String deviceId})?>
       _readPendingEnrollmentRaw() async {
-    final row = await customSelect('SELECT kind, origin, account_id, device_id '
-            'FROM local_pending_enrollment WHERE singleton = 1')
-        .getSingleOrNull();
+    final row = await customSelect(
+      'SELECT kind, origin, account_id, device_id '
+      'FROM local_pending_enrollment WHERE singleton = 1',
+    ).getSingleOrNull();
     if (row == null) return null;
     return (
       kind: row.read<String>('kind'),
@@ -628,14 +659,14 @@ extension K2TransferSql on EncryptedLocalDatabase {
   }
 
   Future<String?> _readSessionJsonRaw() async => (await customSelect(
-              'SELECT session_json FROM local_accounts WHERE singleton = 1')
-          .getSingleOrNull())
-      ?.read<String?>('session_json');
+        'SELECT session_json FROM local_accounts WHERE singleton = 1',
+      ).getSingleOrNull())
+          ?.read<String?>('session_json');
 
   Future<bool> _cryptoStateStoredRaw() async => (await customSelect(
-              'SELECT 1 AS present FROM local_crypto_states WHERE singleton = 1')
-          .get())
-      .isNotEmpty;
+        'SELECT 1 AS present FROM local_crypto_states WHERE singleton = 1',
+      ).get())
+          .isNotEmpty;
 
   static Map<String, Object?>? _decodeSessionMap(String? json) {
     if (json == null) return null;
@@ -648,26 +679,30 @@ extension K2TransferSql on EncryptedLocalDatabase {
   }
 
   Future<void> _insertPromotion(EnrollmentPromotionRow row) => customStatement(
-          'INSERT INTO local_enrollment_promotions (origin, account_id, '
-          'device_id, kind, promotion_id, promoted_at) VALUES (?, ?, ?, ?, ?, ?)',
-          [
-            row.origin,
-            row.accountId,
-            row.deviceId,
-            row.kind,
-            row.promotionId,
-            row.promotedAt,
-          ]);
+        'INSERT INTO local_enrollment_promotions (origin, account_id, '
+        'device_id, kind, promotion_id, promoted_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          row.origin,
+          row.accountId,
+          row.deviceId,
+          row.kind,
+          row.promotionId,
+          row.promotedAt,
+        ],
+      );
 
   Future<List<EnrollmentPromotionRow>> _readPromotionsInTransaction(
-      String accountId, String deviceId) async {
+    String accountId,
+    String deviceId,
+  ) async {
     final rows = await customSelect(
-        'SELECT * FROM local_enrollment_promotions '
-        'WHERE account_id = ? AND device_id = ?',
-        variables: [
-          Variable.withString(accountId),
-          Variable.withString(deviceId),
-        ]).get();
+      'SELECT * FROM local_enrollment_promotions '
+      'WHERE account_id = ? AND device_id = ?',
+      variables: [
+        Variable.withString(accountId),
+        Variable.withString(deviceId),
+      ],
+    ).get();
     return [
       for (final row in rows)
         EnrollmentPromotionRow(
@@ -682,8 +717,10 @@ extension K2TransferSql on EncryptedLocalDatabase {
   }
 
   /// The ledger rows for this account's [deviceId], on any origin.
-  Future<List<EnrollmentPromotionRow>> readEnrollmentPromotions(
-          {required String accountId, required String deviceId}) =>
+  Future<List<EnrollmentPromotionRow>> readEnrollmentPromotions({
+    required String accountId,
+    required String deviceId,
+  }) =>
       transaction(() => _readPromotionsInTransaction(accountId, deviceId));
 
   /// Makes the pending enrollment the active identity in one transaction:
@@ -699,10 +736,13 @@ extension K2TransferSql on EncryptedLocalDatabase {
   /// of another device is replaced, as an identity change replaces it (see
   /// [promotionReplacesSignedOutIdentity]).
   Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
-          EnrollmentPromotionRequest request) =>
+    EnrollmentPromotionRequest request,
+  ) =>
       transaction(() async {
         final ledger = await _readPromotionsInTransaction(
-            request.accountId, request.deviceId);
+          request.accountId,
+          request.deviceId,
+        );
         final pending = await _readPendingEnrollmentInTransaction();
         final existingSession = _decodeSessionMap(await _readSessionJsonRaw());
         final outcome = decideEnrollmentPromotion(
@@ -724,47 +764,55 @@ extension K2TransferSql on EncryptedLocalDatabase {
         // A signed-out identity of another device goes first, in this same
         // transaction, as an identity change drops it (the ledger stays).
         if (promotionReplacesSignedOutIdentity(
-            request: request, existingSession: existingSession)) {
+          request: request,
+          existingSession: existingSession,
+        )) {
           await _clearIdentityStateInTransaction();
         }
         await customStatement(
-            'INSERT INTO local_accounts (singleton, session_json) VALUES (1, ?) '
-            'ON CONFLICT(singleton) DO UPDATE SET session_json = excluded.session_json',
-            [jsonEncode(request.session)]);
+          'INSERT INTO local_accounts (singleton, session_json) VALUES (1, ?) '
+          'ON CONFLICT(singleton) DO UPDATE SET session_json = excluded.session_json',
+          [jsonEncode(request.session)],
+        );
         await _clearGovernanceObservations();
         await customStatement('DELETE FROM local_crypto_records');
         for (final record in state.records) {
           final sealed = record.sealed;
           if (sealed == null) continue;
           await customStatement(
-              'INSERT INTO local_crypto_records (kind, record_id, generation, '
-              'sealed) VALUES (?, ?, ?, ?)',
-              [
-                record.kind,
-                Uint8List.fromList(record.recordId),
-                record.generation,
-                Uint8List.fromList(sealed),
-              ]);
+            'INSERT INTO local_crypto_records (kind, record_id, generation, '
+            'sealed) VALUES (?, ?, ?, ?)',
+            [
+              record.kind,
+              Uint8List.fromList(record.recordId),
+              record.generation,
+              Uint8List.fromList(sealed),
+            ],
+          );
         }
         await customStatement(
-            'INSERT INTO local_crypto_states (singleton, counter, state_key, '
-            'sealed_state) VALUES (1, ?, ?, ?)',
-            [
-              state.counter,
-              Uint8List.fromList(state.stateKey),
-              Uint8List.fromList(state.root),
-            ]);
+          'INSERT INTO local_crypto_states (singleton, counter, state_key, '
+          'sealed_state) VALUES (1, ?, ?, ?)',
+          [
+            state.counter,
+            Uint8List.fromList(state.stateKey),
+            Uint8List.fromList(state.root),
+          ],
+        );
         await customStatement(
-            'INSERT INTO local_sync_states (singleton, cursor) VALUES (1, 0) '
-            'ON CONFLICT(singleton) DO UPDATE SET cursor = 0');
-        await _insertPromotion(EnrollmentPromotionRow(
-          kind: request.kind,
-          origin: request.origin,
-          accountId: request.accountId,
-          deviceId: request.deviceId,
-          promotionId: request.promotionId,
-          promotedAt: request.promotedAt,
-        ));
+          'INSERT INTO local_sync_states (singleton, cursor) VALUES (1, 0) '
+          'ON CONFLICT(singleton) DO UPDATE SET cursor = 0',
+        );
+        await _insertPromotion(
+          EnrollmentPromotionRow(
+            kind: request.kind,
+            origin: request.origin,
+            accountId: request.accountId,
+            deviceId: request.deviceId,
+            promotionId: request.promotionId,
+            promotedAt: request.promotedAt,
+          ),
+        );
         if (request.transfer case final transfer?) {
           await _writeHistoryTransferInTransaction(transfer);
         }
@@ -773,13 +821,13 @@ extension K2TransferSql on EncryptedLocalDatabase {
       });
 
   Future<HistoryTransferProgress?> _readHistoryTransferInTransaction(
-      String origin, String linkId) async {
+    String origin,
+    String linkId,
+  ) async {
     final row = await customSelect(
-        'SELECT * FROM local_history_transfers WHERE origin = ? AND link_id = ?',
-        variables: [
-          Variable.withString(origin),
-          Variable.withString(linkId),
-        ]).getSingleOrNull();
+      'SELECT * FROM local_history_transfers WHERE origin = ? AND link_id = ?',
+      variables: [Variable.withString(origin), Variable.withString(linkId)],
+    ).getSingleOrNull();
     return row == null ? null : _historyTransferFromRow(row);
   }
 
@@ -808,55 +856,62 @@ extension K2TransferSql on EncryptedLocalDatabase {
   /// Stores [next] under [mergeHistoryTransfer]'s rules, only for the active
   /// identity (see [historyTransferIsActive]).
   Future<void> _writeHistoryTransferInTransaction(
-      HistoryTransferProgress next) async {
+    HistoryTransferProgress next,
+  ) async {
     validateHistoryTransfer(next);
     if (!historyTransferIsActive(
-        next,
-        _decodeSessionMap(await _readSessionJsonRaw()),
-        await _cryptoStateStoredRaw())) {
+      next,
+      _decodeSessionMap(await _readSessionJsonRaw()),
+      await _cryptoStateStoredRaw(),
+    )) {
       throw const HistoryTransferConflict(
-          'the transfer is not for the active identity');
+        'the transfer is not for the active identity',
+      );
     }
     final merged = mergeHistoryTransfer(
-        await _readHistoryTransferInTransaction(next.origin, next.linkId),
-        next);
+      await _readHistoryTransferInTransaction(next.origin, next.linkId),
+      next,
+    );
     await customStatement(
-        'INSERT OR REPLACE INTO local_history_transfers (origin, link_id, '
-        'direction, account_id, device_id, peer_device_id, stage, '
-        'transfer_id, ciphertext_sha256, ciphertext_size, handoff, file_path, '
-        'file_offset, expires_at, payload_json) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          merged.origin,
-          merged.linkId,
-          merged.direction,
-          merged.accountId,
-          merged.deviceId,
-          merged.peerDeviceId,
-          merged.stage,
-          merged.transferId,
-          merged.ciphertextSha256 == null
-              ? null
-              : Uint8List.fromList(merged.ciphertextSha256!),
-          merged.ciphertextSize,
-          merged.handoff == null ? null : Uint8List.fromList(merged.handoff!),
-          merged.filePath,
-          merged.fileOffset,
-          merged.expiresAt,
-          merged.payloadJson,
-        ]);
+      'INSERT OR REPLACE INTO local_history_transfers (origin, link_id, '
+      'direction, account_id, device_id, peer_device_id, stage, '
+      'transfer_id, ciphertext_sha256, ciphertext_size, handoff, file_path, '
+      'file_offset, expires_at, payload_json) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        merged.origin,
+        merged.linkId,
+        merged.direction,
+        merged.accountId,
+        merged.deviceId,
+        merged.peerDeviceId,
+        merged.stage,
+        merged.transferId,
+        merged.ciphertextSha256 == null
+            ? null
+            : Uint8List.fromList(merged.ciphertextSha256!),
+        merged.ciphertextSize,
+        merged.handoff == null ? null : Uint8List.fromList(merged.handoff!),
+        merged.filePath,
+        merged.fileOffset,
+        merged.expiresAt,
+        merged.payloadJson,
+      ],
+    );
   }
 
   /// The transfer for [origin] and [linkId], or null.
   Future<HistoryTransferProgress?> readHistoryTransfer(
-          String origin, String linkId) =>
+    String origin,
+    String linkId,
+  ) =>
       transaction(() => _readHistoryTransferInTransaction(origin, linkId));
 
   /// Every stored transfer, ordered by origin then link (the native order).
   Future<List<HistoryTransferProgress>> readHistoryTransfers() async => [
         for (final row in await customSelect(
-                'SELECT * FROM local_history_transfers ORDER BY origin, link_id')
-            .get())
+          'SELECT * FROM local_history_transfers ORDER BY origin, link_id',
+        ).get())
           _historyTransferFromRow(row),
       ];
 
@@ -894,14 +949,18 @@ extension K2TransferSql on EncryptedLocalDatabase {
 
   /// Deletes the transfer for [origin] and [linkId]; returns whether one
   /// was deleted.
-  Future<bool> deleteHistoryTransfer(String origin, String linkId) =>
+  Future<bool> deleteHistoryTransfer(
+    String origin,
+    String linkId,
+  ) =>
       transaction(() async {
         final existing =
             await _readHistoryTransferInTransaction(origin, linkId);
         if (existing == null) return false;
         await customStatement(
-            'DELETE FROM local_history_transfers WHERE origin = ? AND link_id = ?',
-            [origin, linkId]);
+          'DELETE FROM local_history_transfers WHERE origin = ? AND link_id = ?',
+          [origin, linkId],
+        );
         return true;
       });
 

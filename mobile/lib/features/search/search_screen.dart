@@ -196,9 +196,9 @@ class _SearchScreenState extends State<SearchScreen> {
         return;
       }
       // The local hits stay; only the account lookup failed.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(err.toString())));
     } finally {
       if (mounted && generation == _generation) {
         setState(() => searching = false);
@@ -352,29 +352,40 @@ class _SearchScreenState extends State<SearchScreen> {
             .firstOrNull;
         final title = conversation == null
             ? context.l10n.searchTypeConversation
-            : conversationTitle(context.l10n, conversation,
-                profiles: widget.state.profiles);
+            : conversationTitle(
+                context.l10n,
+                conversation,
+                profiles: widget.state.profiles,
+              );
         return MergeSemantics(
           child: ListTile(
             leading: conversation == null
                 ? const Icon(Icons.chat_bubble_outline)
-                : conversationAvatar(context, conversation,
-                    radius: 20, profiles: widget.state.profiles),
+                : conversationAvatar(
+                    context,
+                    conversation,
+                    radius: 20,
+                    profiles: widget.state.profiles,
+                  ),
             // The date sits on the name line, so the snippet gets the full
             // width of the row below it.
             title: Row(
               children: <Widget>[
                 Expanded(
-                  child:
-                      Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
                 const SizedBox(width: BoneSpacing.sm),
                 Text(
                   formatDateTime(
                     context,
-                    DateTime.fromMillisecondsSinceEpoch(hit.createdAt,
-                            isUtc: true)
-                        .toLocal(),
+                    DateTime.fromMillisecondsSinceEpoch(
+                      hit.createdAt,
+                      isUtc: true,
+                    ).toLocal(),
                   ),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
@@ -401,10 +412,12 @@ class _SearchScreenState extends State<SearchScreen> {
     final buffer = StringBuffer();
     void flush() {
       if (buffer.isEmpty) return;
-      spans.add(TextSpan(
-        text: buffer.toString(),
-        style: marked ? const TextStyle(fontWeight: FontWeight.w700) : null,
-      ));
+      spans.add(
+        TextSpan(
+          text: buffer.toString(),
+          style: marked ? const TextStyle(fontWeight: FontWeight.w700) : null,
+        ),
+      );
       buffer.clear();
     }
 
@@ -423,13 +436,15 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _openMessage(MessageSearchHit hit) {
     widget.state.selectAndPrepare(hit.conversationId);
-    Navigator.of(context).push(sharedAxisRoute<void>(
-      (_) => ChatScreen(
-        state: widget.state,
-        conversationId: hit.conversationId,
-        initialMessageKey: hit.key,
+    Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(
+          state: widget.state,
+          conversationId: hit.conversationId,
+          initialMessageKey: hit.key,
+        ),
       ),
-    ));
+    );
   }
 
   Widget _peopleResults(BuildContext context) {
@@ -460,8 +475,9 @@ class _SearchScreenState extends State<SearchScreen> {
                         _headingForType(type),
                         key: Key('search-heading-$type'),
                       ),
-                      for (final result
-                          in results.where((result) => result.type == type))
+                      for (final result in results.where(
+                        (result) => result.type == type,
+                      ))
                         _resultRow(context, result),
                     ],
                 ],
@@ -503,11 +519,7 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
         ),
-        title: Text(
-          result.label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(result.label, maxLines: 1, overflow: TextOverflow.ellipsis),
         // Explains inert rows instead of leaving a dead tap target
         // unexplained; silent when the row works.
         subtitle: (reason ?? result.detail) == null
@@ -545,8 +557,9 @@ class _SearchScreenState extends State<SearchScreen> {
           if (conversation == null) {
             final error = widget.state.error;
             if (error != null) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text(error)));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(error)));
             }
             return;
           }
@@ -576,8 +589,9 @@ class _SearchScreenState extends State<SearchScreen> {
       return null;
     }
     if (result.type == 'conversation') {
-      final matches = widget.state.conversations
-          .where((conversation) => conversation.id == result.id);
+      final matches = widget.state.conversations.where(
+        (conversation) => conversation.id == result.id,
+      );
       if (matches.isEmpty) return null;
       return () => _open(matches.first.id);
     }
@@ -589,8 +603,10 @@ class _SearchScreenState extends State<SearchScreen> {
   /// share the community's group, so the chat is told which one to show; a
   /// private channel is a group of its own.
   VoidCallback? _openChannelAction(Channel channel) {
-    final conversationId =
-        channelConversationId(channel, widget.state.conversations);
+    final conversationId = channelConversationId(
+      channel,
+      widget.state.conversations,
+    );
     if (conversationId == null) return null;
     return () {
       widget.state.selectChannel(
@@ -603,12 +619,11 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _open(String conversationId) {
     widget.state.selectAndPrepare(conversationId);
-    Navigator.of(context).push(sharedAxisRoute<void>(
-      (_) => ChatScreen(
-        state: widget.state,
-        conversationId: conversationId,
+    Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(state: widget.state, conversationId: conversationId),
       ),
-    ));
+    );
   }
 
   /// Why a row cannot be opened, or null when it can.

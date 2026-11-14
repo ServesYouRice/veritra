@@ -9,20 +9,29 @@ class $LocalAccountsTable extends LocalAccounts
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalAccountsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _singletonMeta =
-      const VerificationMeta('singleton');
+  static const VerificationMeta _singletonMeta = const VerificationMeta(
+    'singleton',
+  );
   @override
   late final GeneratedColumn<int> singleton = GeneratedColumn<int>(
-      'singleton', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(1));
-  static const VerificationMeta _sessionJsonMeta =
-      const VerificationMeta('sessionJson');
+    'singleton',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  static const VerificationMeta _sessionJsonMeta = const VerificationMeta(
+    'sessionJson',
+  );
   @override
   late final GeneratedColumn<String> sessionJson = GeneratedColumn<String>(
-      'session_json', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'session_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [singleton, sessionJson];
   @override
@@ -31,19 +40,26 @@ class $LocalAccountsTable extends LocalAccounts
   String get actualTableName => $name;
   static const String $name = 'local_accounts';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalAccount> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalAccount> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('singleton')) {
-      context.handle(_singletonMeta,
-          singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta));
+      context.handle(
+        _singletonMeta,
+        singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta),
+      );
     }
     if (data.containsKey('session_json')) {
       context.handle(
+        _sessionJsonMeta,
+        sessionJson.isAcceptableOrUnknown(
+          data['session_json']!,
           _sessionJsonMeta,
-          sessionJson.isAcceptableOrUnknown(
-              data['session_json']!, _sessionJsonMeta));
+        ),
+      );
     }
     return context;
   }
@@ -54,10 +70,14 @@ class $LocalAccountsTable extends LocalAccounts
   LocalAccount map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalAccount(
-      singleton: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}singleton'])!,
-      sessionJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}session_json']),
+      singleton: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}singleton'],
+      )!,
+      sessionJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}session_json'],
+      ),
     );
   }
 
@@ -90,8 +110,10 @@ class LocalAccount extends DataClass implements Insertable<LocalAccount> {
     );
   }
 
-  factory LocalAccount.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalAccount.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalAccount(
       singleton: serializer.fromJson<int>(json['singleton']),
@@ -107,9 +129,10 @@ class LocalAccount extends DataClass implements Insertable<LocalAccount> {
     };
   }
 
-  LocalAccount copyWith(
-          {int? singleton,
-          Value<String?> sessionJson = const Value.absent()}) =>
+  LocalAccount copyWith({
+    int? singleton,
+    Value<String?> sessionJson = const Value.absent(),
+  }) =>
       LocalAccount(
         singleton: singleton ?? this.singleton,
         sessionJson: sessionJson.present ? sessionJson.value : this.sessionJson,
@@ -162,8 +185,10 @@ class LocalAccountsCompanion extends UpdateCompanion<LocalAccount> {
     });
   }
 
-  LocalAccountsCompanion copyWith(
-      {Value<int>? singleton, Value<String?>? sessionJson}) {
+  LocalAccountsCompanion copyWith({
+    Value<int>? singleton,
+    Value<String?>? sessionJson,
+  }) {
     return LocalAccountsCompanion(
       singleton: singleton ?? this.singleton,
       sessionJson: sessionJson ?? this.sessionJson,
@@ -201,20 +226,34 @@ class $LocalConversationsTable extends LocalConversations
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _positionMeta =
-      const VerificationMeta('position');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
   @override
   late final GeneratedColumn<int> position = GeneratedColumn<int>(
-      'position', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _payloadJsonMeta =
-      const VerificationMeta('payloadJson');
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadJsonMeta = const VerificationMeta(
+    'payloadJson',
+  );
   @override
   late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
-      'payload_json', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'payload_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [id, position, payloadJson];
   @override
@@ -223,8 +262,10 @@ class $LocalConversationsTable extends LocalConversations
   String get actualTableName => $name;
   static const String $name = 'local_conversations';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalConversation> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalConversation> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -233,16 +274,21 @@ class $LocalConversationsTable extends LocalConversations
       context.missing(_idMeta);
     }
     if (data.containsKey('position')) {
-      context.handle(_positionMeta,
-          position.isAcceptableOrUnknown(data['position']!, _positionMeta));
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
     } else if (isInserting) {
       context.missing(_positionMeta);
     }
     if (data.containsKey('payload_json')) {
       context.handle(
+        _payloadJsonMeta,
+        payloadJson.isAcceptableOrUnknown(
+          data['payload_json']!,
           _payloadJsonMeta,
-          payloadJson.isAcceptableOrUnknown(
-              data['payload_json']!, _payloadJsonMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_payloadJsonMeta);
     }
@@ -255,12 +301,18 @@ class $LocalConversationsTable extends LocalConversations
   LocalConversation map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalConversation(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      position: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}position'])!,
-      payloadJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position'],
+      )!,
+      payloadJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload_json'],
+      )!,
     );
   }
 
@@ -275,8 +327,11 @@ class LocalConversation extends DataClass
   final String id;
   final int position;
   final String payloadJson;
-  const LocalConversation(
-      {required this.id, required this.position, required this.payloadJson});
+  const LocalConversation({
+    required this.id,
+    required this.position,
+    required this.payloadJson,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -294,8 +349,10 @@ class LocalConversation extends DataClass
     );
   }
 
-  factory LocalConversation.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalConversation.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalConversation(
       id: serializer.fromJson<String>(json['id']),
@@ -313,8 +370,11 @@ class LocalConversation extends DataClass
     };
   }
 
-  LocalConversation copyWith(
-          {String? id, int? position, String? payloadJson}) =>
+  LocalConversation copyWith({
+    String? id,
+    int? position,
+    String? payloadJson,
+  }) =>
       LocalConversation(
         id: id ?? this.id,
         position: position ?? this.position,
@@ -383,11 +443,12 @@ class LocalConversationsCompanion extends UpdateCompanion<LocalConversation> {
     });
   }
 
-  LocalConversationsCompanion copyWith(
-      {Value<String>? id,
-      Value<int>? position,
-      Value<String>? payloadJson,
-      Value<int>? rowid}) {
+  LocalConversationsCompanion copyWith({
+    Value<String>? id,
+    Value<int>? position,
+    Value<String>? payloadJson,
+    Value<int>? rowid,
+  }) {
     return LocalConversationsCompanion(
       id: id ?? this.id,
       position: position ?? this.position,
@@ -435,35 +496,64 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _positionMeta =
-      const VerificationMeta('position');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
   @override
   late final GeneratedColumn<int> position = GeneratedColumn<int>(
-      'position', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _payloadJsonMeta =
-      const VerificationMeta('payloadJson');
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadJsonMeta = const VerificationMeta(
+    'payloadJson',
+  );
   @override
   late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
-      'payload_json', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _expiresAtMeta =
-      const VerificationMeta('expiresAt');
+    'payload_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _expiresAtMeta = const VerificationMeta(
+    'expiresAt',
+  );
   @override
   late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
-      'expires_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'expires_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, conversationId, position, payloadJson, expiresAt];
+  List<GeneratedColumn> get $columns => [
+        id,
+        conversationId,
+        position,
+        payloadJson,
+        expiresAt,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -471,8 +561,9 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
   static const String $name = 'local_ciphertext_envelopes';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalCiphertextEnvelope> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalCiphertextEnvelope> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -482,29 +573,39 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('position')) {
-      context.handle(_positionMeta,
-          position.isAcceptableOrUnknown(data['position']!, _positionMeta));
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
     } else if (isInserting) {
       context.missing(_positionMeta);
     }
     if (data.containsKey('payload_json')) {
       context.handle(
+        _payloadJsonMeta,
+        payloadJson.isAcceptableOrUnknown(
+          data['payload_json']!,
           _payloadJsonMeta,
-          payloadJson.isAcceptableOrUnknown(
-              data['payload_json']!, _payloadJsonMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_payloadJsonMeta);
     }
     if (data.containsKey('expires_at')) {
-      context.handle(_expiresAtMeta,
-          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+      context.handle(
+        _expiresAtMeta,
+        expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta),
+      );
     }
     return context;
   }
@@ -512,20 +613,32 @@ class $LocalCiphertextEnvelopesTable extends LocalCiphertextEnvelopes
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  LocalCiphertextEnvelope map(Map<String, dynamic> data,
-      {String? tablePrefix}) {
+  LocalCiphertextEnvelope map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalCiphertextEnvelope(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      position: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}position'])!,
-      payloadJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
-      expiresAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position'],
+      )!,
+      payloadJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload_json'],
+      )!,
+      expiresAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}expires_at'],
+      ),
     );
   }
 
@@ -542,12 +655,13 @@ class LocalCiphertextEnvelope extends DataClass
   final int position;
   final String payloadJson;
   final int? expiresAt;
-  const LocalCiphertextEnvelope(
-      {required this.id,
-      required this.conversationId,
-      required this.position,
-      required this.payloadJson,
-      this.expiresAt});
+  const LocalCiphertextEnvelope({
+    required this.id,
+    required this.conversationId,
+    required this.position,
+    required this.payloadJson,
+    this.expiresAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -573,8 +687,10 @@ class LocalCiphertextEnvelope extends DataClass
     );
   }
 
-  factory LocalCiphertextEnvelope.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalCiphertextEnvelope.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalCiphertextEnvelope(
       id: serializer.fromJson<String>(json['id']),
@@ -596,12 +712,13 @@ class LocalCiphertextEnvelope extends DataClass
     };
   }
 
-  LocalCiphertextEnvelope copyWith(
-          {String? id,
-          String? conversationId,
-          int? position,
-          String? payloadJson,
-          Value<int?> expiresAt = const Value.absent()}) =>
+  LocalCiphertextEnvelope copyWith({
+    String? id,
+    String? conversationId,
+    int? position,
+    String? payloadJson,
+    Value<int?> expiresAt = const Value.absent(),
+  }) =>
       LocalCiphertextEnvelope(
         id: id ?? this.id,
         conversationId: conversationId ?? this.conversationId,
@@ -610,7 +727,8 @@ class LocalCiphertextEnvelope extends DataClass
         expiresAt: expiresAt.present ? expiresAt.value : this.expiresAt,
       );
   LocalCiphertextEnvelope copyWithCompanion(
-      LocalCiphertextEnvelopesCompanion data) {
+    LocalCiphertextEnvelopesCompanion data,
+  ) {
     return LocalCiphertextEnvelope(
       id: data.id.present ? data.id.value : this.id,
       conversationId: data.conversationId.present
@@ -694,13 +812,14 @@ class LocalCiphertextEnvelopesCompanion
     });
   }
 
-  LocalCiphertextEnvelopesCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? conversationId,
-      Value<int>? position,
-      Value<String>? payloadJson,
-      Value<int?>? expiresAt,
-      Value<int>? rowid}) {
+  LocalCiphertextEnvelopesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? conversationId,
+    Value<int>? position,
+    Value<String>? payloadJson,
+    Value<int?>? expiresAt,
+    Value<int>? rowid,
+  }) {
     return LocalCiphertextEnvelopesCompanion(
       id: id ?? this.id,
       conversationId: conversationId ?? this.conversationId,
@@ -755,21 +874,28 @@ class $LocalSyncStatesTable extends LocalSyncStates
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalSyncStatesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _singletonMeta =
-      const VerificationMeta('singleton');
+  static const VerificationMeta _singletonMeta = const VerificationMeta(
+    'singleton',
+  );
   @override
   late final GeneratedColumn<int> singleton = GeneratedColumn<int>(
-      'singleton', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(1));
+    'singleton',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
   static const VerificationMeta _cursorMeta = const VerificationMeta('cursor');
   @override
   late final GeneratedColumn<int> cursor = GeneratedColumn<int>(
-      'cursor', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
+    'cursor',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   @override
   List<GeneratedColumn> get $columns => [singleton, cursor];
   @override
@@ -778,17 +904,23 @@ class $LocalSyncStatesTable extends LocalSyncStates
   String get actualTableName => $name;
   static const String $name = 'local_sync_states';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalSyncState> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalSyncState> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('singleton')) {
-      context.handle(_singletonMeta,
-          singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta));
+      context.handle(
+        _singletonMeta,
+        singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta),
+      );
     }
     if (data.containsKey('cursor')) {
-      context.handle(_cursorMeta,
-          cursor.isAcceptableOrUnknown(data['cursor']!, _cursorMeta));
+      context.handle(
+        _cursorMeta,
+        cursor.isAcceptableOrUnknown(data['cursor']!, _cursorMeta),
+      );
     }
     return context;
   }
@@ -799,10 +931,14 @@ class $LocalSyncStatesTable extends LocalSyncStates
   LocalSyncState map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalSyncState(
-      singleton: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}singleton'])!,
-      cursor: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}cursor'])!,
+      singleton: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}singleton'],
+      )!,
+      cursor: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}cursor'],
+      )!,
     );
   }
 
@@ -831,8 +967,10 @@ class LocalSyncState extends DataClass implements Insertable<LocalSyncState> {
     );
   }
 
-  factory LocalSyncState.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalSyncState.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalSyncState(
       singleton: serializer.fromJson<int>(json['singleton']),
@@ -899,8 +1037,10 @@ class LocalSyncStatesCompanion extends UpdateCompanion<LocalSyncState> {
     });
   }
 
-  LocalSyncStatesCompanion copyWith(
-      {Value<int>? singleton, Value<int>? cursor}) {
+  LocalSyncStatesCompanion copyWith({
+    Value<int>? singleton,
+    Value<int>? cursor,
+  }) {
     return LocalSyncStatesCompanion(
       singleton: singleton ?? this.singleton,
       cursor: cursor ?? this.cursor,
@@ -935,60 +1075,99 @@ class $LocalOutboxEntriesTable extends LocalOutboxEntries
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalOutboxEntriesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idempotencyKeyMeta =
-      const VerificationMeta('idempotencyKey');
+  static const VerificationMeta _idempotencyKeyMeta = const VerificationMeta(
+    'idempotencyKey',
+  );
   @override
   late final GeneratedColumn<String> idempotencyKey = GeneratedColumn<String>(
-      'idempotency_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'idempotency_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _queuedAtMeta =
-      const VerificationMeta('queuedAt');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _queuedAtMeta = const VerificationMeta(
+    'queuedAt',
+  );
   @override
   late final GeneratedColumn<int> queuedAt = GeneratedColumn<int>(
-      'queued_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _payloadJsonMeta =
-      const VerificationMeta('payloadJson');
+    'queued_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadJsonMeta = const VerificationMeta(
+    'payloadJson',
+  );
   @override
   late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
-      'payload_json', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _attemptCountMeta =
-      const VerificationMeta('attemptCount');
+    'payload_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _attemptCountMeta = const VerificationMeta(
+    'attemptCount',
+  );
   @override
   late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
-      'attempt_count', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _nextAttemptAtMeta =
-      const VerificationMeta('nextAttemptAt');
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _nextAttemptAtMeta = const VerificationMeta(
+    'nextAttemptAt',
+  );
   @override
   late final GeneratedColumn<int> nextAttemptAt = GeneratedColumn<int>(
-      'next_attempt_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _failureClassMeta =
-      const VerificationMeta('failureClass');
+    'next_attempt_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failureClassMeta = const VerificationMeta(
+    'failureClass',
+  );
   @override
   late final GeneratedColumn<String> failureClass = GeneratedColumn<String>(
-      'failure_class', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _terminalMeta =
-      const VerificationMeta('terminal');
+    'failure_class',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _terminalMeta = const VerificationMeta(
+    'terminal',
+  );
   @override
   late final GeneratedColumn<bool> terminal = GeneratedColumn<bool>(
-      'terminal', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("terminal" IN (0, 1))'),
-      defaultValue: const Constant(false));
+    'terminal',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("terminal" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
         idempotencyKey,
@@ -998,7 +1177,7 @@ class $LocalOutboxEntriesTable extends LocalOutboxEntries
         attemptCount,
         nextAttemptAt,
         failureClass,
-        terminal
+        terminal,
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1006,61 +1185,85 @@ class $LocalOutboxEntriesTable extends LocalOutboxEntries
   String get actualTableName => $name;
   static const String $name = 'local_outbox_entries';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalOutboxEntry> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalOutboxEntry> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('idempotency_key')) {
       context.handle(
+        _idempotencyKeyMeta,
+        idempotencyKey.isAcceptableOrUnknown(
+          data['idempotency_key']!,
           _idempotencyKeyMeta,
-          idempotencyKey.isAcceptableOrUnknown(
-              data['idempotency_key']!, _idempotencyKeyMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_idempotencyKeyMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('queued_at')) {
-      context.handle(_queuedAtMeta,
-          queuedAt.isAcceptableOrUnknown(data['queued_at']!, _queuedAtMeta));
+      context.handle(
+        _queuedAtMeta,
+        queuedAt.isAcceptableOrUnknown(data['queued_at']!, _queuedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_queuedAtMeta);
     }
     if (data.containsKey('payload_json')) {
       context.handle(
+        _payloadJsonMeta,
+        payloadJson.isAcceptableOrUnknown(
+          data['payload_json']!,
           _payloadJsonMeta,
-          payloadJson.isAcceptableOrUnknown(
-              data['payload_json']!, _payloadJsonMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_payloadJsonMeta);
     }
     if (data.containsKey('attempt_count')) {
       context.handle(
+        _attemptCountMeta,
+        attemptCount.isAcceptableOrUnknown(
+          data['attempt_count']!,
           _attemptCountMeta,
-          attemptCount.isAcceptableOrUnknown(
-              data['attempt_count']!, _attemptCountMeta));
+        ),
+      );
     }
     if (data.containsKey('next_attempt_at')) {
       context.handle(
+        _nextAttemptAtMeta,
+        nextAttemptAt.isAcceptableOrUnknown(
+          data['next_attempt_at']!,
           _nextAttemptAtMeta,
-          nextAttemptAt.isAcceptableOrUnknown(
-              data['next_attempt_at']!, _nextAttemptAtMeta));
+        ),
+      );
     }
     if (data.containsKey('failure_class')) {
       context.handle(
+        _failureClassMeta,
+        failureClass.isAcceptableOrUnknown(
+          data['failure_class']!,
           _failureClassMeta,
-          failureClass.isAcceptableOrUnknown(
-              data['failure_class']!, _failureClassMeta));
+        ),
+      );
     }
     if (data.containsKey('terminal')) {
-      context.handle(_terminalMeta,
-          terminal.isAcceptableOrUnknown(data['terminal']!, _terminalMeta));
+      context.handle(
+        _terminalMeta,
+        terminal.isAcceptableOrUnknown(data['terminal']!, _terminalMeta),
+      );
     }
     return context;
   }
@@ -1072,21 +1275,37 @@ class $LocalOutboxEntriesTable extends LocalOutboxEntries
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalOutboxEntry(
       idempotencyKey: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}idempotency_key'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}idempotency_key'],
+      )!,
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      queuedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}queued_at'])!,
-      payloadJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
-      attemptCount: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}attempt_count'])!,
-      nextAttemptAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}next_attempt_at']),
-      failureClass: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}failure_class']),
-      terminal: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}terminal'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      queuedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}queued_at'],
+      )!,
+      payloadJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload_json'],
+      )!,
+      attemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempt_count'],
+      )!,
+      nextAttemptAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}next_attempt_at'],
+      ),
+      failureClass: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_class'],
+      ),
+      terminal: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}terminal'],
+      )!,
     );
   }
 
@@ -1106,15 +1325,16 @@ class LocalOutboxEntry extends DataClass
   final int? nextAttemptAt;
   final String? failureClass;
   final bool terminal;
-  const LocalOutboxEntry(
-      {required this.idempotencyKey,
-      required this.conversationId,
-      required this.queuedAt,
-      required this.payloadJson,
-      required this.attemptCount,
-      this.nextAttemptAt,
-      this.failureClass,
-      required this.terminal});
+  const LocalOutboxEntry({
+    required this.idempotencyKey,
+    required this.conversationId,
+    required this.queuedAt,
+    required this.payloadJson,
+    required this.attemptCount,
+    this.nextAttemptAt,
+    this.failureClass,
+    required this.terminal,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1150,8 +1370,10 @@ class LocalOutboxEntry extends DataClass
     );
   }
 
-  factory LocalOutboxEntry.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalOutboxEntry.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalOutboxEntry(
       idempotencyKey: serializer.fromJson<String>(json['idempotencyKey']),
@@ -1179,15 +1401,16 @@ class LocalOutboxEntry extends DataClass
     };
   }
 
-  LocalOutboxEntry copyWith(
-          {String? idempotencyKey,
-          String? conversationId,
-          int? queuedAt,
-          String? payloadJson,
-          int? attemptCount,
-          Value<int?> nextAttemptAt = const Value.absent(),
-          Value<String?> failureClass = const Value.absent(),
-          bool? terminal}) =>
+  LocalOutboxEntry copyWith({
+    String? idempotencyKey,
+    String? conversationId,
+    int? queuedAt,
+    String? payloadJson,
+    int? attemptCount,
+    Value<int?> nextAttemptAt = const Value.absent(),
+    Value<String?> failureClass = const Value.absent(),
+    bool? terminal,
+  }) =>
       LocalOutboxEntry(
         idempotencyKey: idempotencyKey ?? this.idempotencyKey,
         conversationId: conversationId ?? this.conversationId,
@@ -1240,8 +1463,16 @@ class LocalOutboxEntry extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(idempotencyKey, conversationId, queuedAt,
-      payloadJson, attemptCount, nextAttemptAt, failureClass, terminal);
+  int get hashCode => Object.hash(
+        idempotencyKey,
+        conversationId,
+        queuedAt,
+        payloadJson,
+        attemptCount,
+        nextAttemptAt,
+        failureClass,
+        terminal,
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1315,16 +1546,17 @@ class LocalOutboxEntriesCompanion extends UpdateCompanion<LocalOutboxEntry> {
     });
   }
 
-  LocalOutboxEntriesCompanion copyWith(
-      {Value<String>? idempotencyKey,
-      Value<String>? conversationId,
-      Value<int>? queuedAt,
-      Value<String>? payloadJson,
-      Value<int>? attemptCount,
-      Value<int?>? nextAttemptAt,
-      Value<String?>? failureClass,
-      Value<bool>? terminal,
-      Value<int>? rowid}) {
+  LocalOutboxEntriesCompanion copyWith({
+    Value<String>? idempotencyKey,
+    Value<String>? conversationId,
+    Value<int>? queuedAt,
+    Value<String>? payloadJson,
+    Value<int>? attemptCount,
+    Value<int?>? nextAttemptAt,
+    Value<String?>? failureClass,
+    Value<bool>? terminal,
+    Value<int>? rowid,
+  }) {
     return LocalOutboxEntriesCompanion(
       idempotencyKey: idempotencyKey ?? this.idempotencyKey,
       conversationId: conversationId ?? this.conversationId,
@@ -1394,66 +1626,101 @@ class $LocalCryptoStatesTable extends LocalCryptoStates
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalCryptoStatesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _singletonMeta =
-      const VerificationMeta('singleton');
+  static const VerificationMeta _singletonMeta = const VerificationMeta(
+    'singleton',
+  );
   @override
   late final GeneratedColumn<int> singleton = GeneratedColumn<int>(
-      'singleton', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(1));
-  static const VerificationMeta _counterMeta =
-      const VerificationMeta('counter');
+    'singleton',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  static const VerificationMeta _counterMeta = const VerificationMeta(
+    'counter',
+  );
   @override
   late final GeneratedColumn<int> counter = GeneratedColumn<int>(
-      'counter', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _stateKeyMeta =
-      const VerificationMeta('stateKey');
+    'counter',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateKeyMeta = const VerificationMeta(
+    'stateKey',
+  );
   @override
   late final GeneratedColumn<Uint8List> stateKey = GeneratedColumn<Uint8List>(
-      'state_key', aliasedName, false,
-      type: DriftSqlType.blob, requiredDuringInsert: true);
-  static const VerificationMeta _sealedStateMeta =
-      const VerificationMeta('sealedState');
+    'state_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sealedStateMeta = const VerificationMeta(
+    'sealedState',
+  );
   @override
   late final GeneratedColumn<Uint8List> sealedState =
-      GeneratedColumn<Uint8List>('sealed_state', aliasedName, false,
-          type: DriftSqlType.blob, requiredDuringInsert: true);
+      GeneratedColumn<Uint8List>(
+    'sealed_state',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [singleton, counter, stateKey, sealedState];
+  List<GeneratedColumn> get $columns => [
+        singleton,
+        counter,
+        stateKey,
+        sealedState,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'local_crypto_states';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalCryptoState> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalCryptoState> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('singleton')) {
-      context.handle(_singletonMeta,
-          singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta));
+      context.handle(
+        _singletonMeta,
+        singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta),
+      );
     }
     if (data.containsKey('counter')) {
-      context.handle(_counterMeta,
-          counter.isAcceptableOrUnknown(data['counter']!, _counterMeta));
+      context.handle(
+        _counterMeta,
+        counter.isAcceptableOrUnknown(data['counter']!, _counterMeta),
+      );
     } else if (isInserting) {
       context.missing(_counterMeta);
     }
     if (data.containsKey('state_key')) {
-      context.handle(_stateKeyMeta,
-          stateKey.isAcceptableOrUnknown(data['state_key']!, _stateKeyMeta));
+      context.handle(
+        _stateKeyMeta,
+        stateKey.isAcceptableOrUnknown(data['state_key']!, _stateKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_stateKeyMeta);
     }
     if (data.containsKey('sealed_state')) {
       context.handle(
+        _sealedStateMeta,
+        sealedState.isAcceptableOrUnknown(
+          data['sealed_state']!,
           _sealedStateMeta,
-          sealedState.isAcceptableOrUnknown(
-              data['sealed_state']!, _sealedStateMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_sealedStateMeta);
     }
@@ -1466,14 +1733,22 @@ class $LocalCryptoStatesTable extends LocalCryptoStates
   LocalCryptoState map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalCryptoState(
-      singleton: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}singleton'])!,
-      counter: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}counter'])!,
-      stateKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}state_key'])!,
-      sealedState: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}sealed_state'])!,
+      singleton: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}singleton'],
+      )!,
+      counter: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}counter'],
+      )!,
+      stateKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}state_key'],
+      )!,
+      sealedState: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}sealed_state'],
+      )!,
     );
   }
 
@@ -1489,11 +1764,12 @@ class LocalCryptoState extends DataClass
   final int counter;
   final Uint8List stateKey;
   final Uint8List sealedState;
-  const LocalCryptoState(
-      {required this.singleton,
-      required this.counter,
-      required this.stateKey,
-      required this.sealedState});
+  const LocalCryptoState({
+    required this.singleton,
+    required this.counter,
+    required this.stateKey,
+    required this.sealedState,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1513,8 +1789,10 @@ class LocalCryptoState extends DataClass
     );
   }
 
-  factory LocalCryptoState.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalCryptoState.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalCryptoState(
       singleton: serializer.fromJson<int>(json['singleton']),
@@ -1534,11 +1812,12 @@ class LocalCryptoState extends DataClass
     };
   }
 
-  LocalCryptoState copyWith(
-          {int? singleton,
-          int? counter,
-          Uint8List? stateKey,
-          Uint8List? sealedState}) =>
+  LocalCryptoState copyWith({
+    int? singleton,
+    int? counter,
+    Uint8List? stateKey,
+    Uint8List? sealedState,
+  }) =>
       LocalCryptoState(
         singleton: singleton ?? this.singleton,
         counter: counter ?? this.counter,
@@ -1567,8 +1846,12 @@ class LocalCryptoState extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(singleton, counter,
-      $driftBlobEquality.hash(stateKey), $driftBlobEquality.hash(sealedState));
+  int get hashCode => Object.hash(
+        singleton,
+        counter,
+        $driftBlobEquality.hash(stateKey),
+        $driftBlobEquality.hash(sealedState),
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1612,11 +1895,12 @@ class LocalCryptoStatesCompanion extends UpdateCompanion<LocalCryptoState> {
     });
   }
 
-  LocalCryptoStatesCompanion copyWith(
-      {Value<int>? singleton,
-      Value<int>? counter,
-      Value<Uint8List>? stateKey,
-      Value<Uint8List>? sealedState}) {
+  LocalCryptoStatesCompanion copyWith({
+    Value<int>? singleton,
+    Value<int>? counter,
+    Value<Uint8List>? stateKey,
+    Value<Uint8List>? sealedState,
+  }) {
     return LocalCryptoStatesCompanion(
       singleton: singleton ?? this.singleton,
       counter: counter ?? this.counter,
@@ -1664,25 +1948,43 @@ class $LocalCryptoRecordsTable extends LocalCryptoRecords
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
   late final GeneratedColumn<int> kind = GeneratedColumn<int>(
-      'kind', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _recordIdMeta =
-      const VerificationMeta('recordId');
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _recordIdMeta = const VerificationMeta(
+    'recordId',
+  );
   @override
   late final GeneratedColumn<Uint8List> recordId = GeneratedColumn<Uint8List>(
-      'record_id', aliasedName, false,
-      type: DriftSqlType.blob, requiredDuringInsert: true);
-  static const VerificationMeta _generationMeta =
-      const VerificationMeta('generation');
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _generationMeta = const VerificationMeta(
+    'generation',
+  );
   @override
   late final GeneratedColumn<int> generation = GeneratedColumn<int>(
-      'generation', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _sealedMeta = const VerificationMeta('sealed');
   @override
   late final GeneratedColumn<Uint8List> sealed = GeneratedColumn<Uint8List>(
-      'sealed', aliasedName, false,
-      type: DriftSqlType.blob, requiredDuringInsert: true);
+    'sealed',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [kind, recordId, generation, sealed];
   @override
@@ -1691,33 +1993,41 @@ class $LocalCryptoRecordsTable extends LocalCryptoRecords
   String get actualTableName => $name;
   static const String $name = 'local_crypto_records';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalCryptoRecord> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalCryptoRecord> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('kind')) {
       context.handle(
-          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
     } else if (isInserting) {
       context.missing(_kindMeta);
     }
     if (data.containsKey('record_id')) {
-      context.handle(_recordIdMeta,
-          recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta));
+      context.handle(
+        _recordIdMeta,
+        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_recordIdMeta);
     }
     if (data.containsKey('generation')) {
       context.handle(
-          _generationMeta,
-          generation.isAcceptableOrUnknown(
-              data['generation']!, _generationMeta));
+        _generationMeta,
+        generation.isAcceptableOrUnknown(data['generation']!, _generationMeta),
+      );
     } else if (isInserting) {
       context.missing(_generationMeta);
     }
     if (data.containsKey('sealed')) {
-      context.handle(_sealedMeta,
-          sealed.isAcceptableOrUnknown(data['sealed']!, _sealedMeta));
+      context.handle(
+        _sealedMeta,
+        sealed.isAcceptableOrUnknown(data['sealed']!, _sealedMeta),
+      );
     } else if (isInserting) {
       context.missing(_sealedMeta);
     }
@@ -1730,14 +2040,22 @@ class $LocalCryptoRecordsTable extends LocalCryptoRecords
   LocalCryptoRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalCryptoRecord(
-      kind: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}kind'])!,
-      recordId: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}record_id'])!,
-      generation: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}generation'])!,
-      sealed: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}sealed'])!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}kind'],
+      )!,
+      recordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}record_id'],
+      )!,
+      generation: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}generation'],
+      )!,
+      sealed: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}sealed'],
+      )!,
     );
   }
 
@@ -1759,11 +2077,12 @@ class LocalCryptoRecord extends DataClass
   /// The generation (root counter) the record was last sealed at.
   final int generation;
   final Uint8List sealed;
-  const LocalCryptoRecord(
-      {required this.kind,
-      required this.recordId,
-      required this.generation,
-      required this.sealed});
+  const LocalCryptoRecord({
+    required this.kind,
+    required this.recordId,
+    required this.generation,
+    required this.sealed,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1783,8 +2102,10 @@ class LocalCryptoRecord extends DataClass
     );
   }
 
-  factory LocalCryptoRecord.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalCryptoRecord.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalCryptoRecord(
       kind: serializer.fromJson<int>(json['kind']),
@@ -1804,11 +2125,12 @@ class LocalCryptoRecord extends DataClass
     };
   }
 
-  LocalCryptoRecord copyWith(
-          {int? kind,
-          Uint8List? recordId,
-          int? generation,
-          Uint8List? sealed}) =>
+  LocalCryptoRecord copyWith({
+    int? kind,
+    Uint8List? recordId,
+    int? generation,
+    Uint8List? sealed,
+  }) =>
       LocalCryptoRecord(
         kind: kind ?? this.kind,
         recordId: recordId ?? this.recordId,
@@ -1837,8 +2159,12 @@ class LocalCryptoRecord extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(kind, $driftBlobEquality.hash(recordId),
-      generation, $driftBlobEquality.hash(sealed));
+  int get hashCode => Object.hash(
+        kind,
+        $driftBlobEquality.hash(recordId),
+        generation,
+        $driftBlobEquality.hash(sealed),
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1888,12 +2214,13 @@ class LocalCryptoRecordsCompanion extends UpdateCompanion<LocalCryptoRecord> {
     });
   }
 
-  LocalCryptoRecordsCompanion copyWith(
-      {Value<int>? kind,
-      Value<Uint8List>? recordId,
-      Value<int>? generation,
-      Value<Uint8List>? sealed,
-      Value<int>? rowid}) {
+  LocalCryptoRecordsCompanion copyWith({
+    Value<int>? kind,
+    Value<Uint8List>? recordId,
+    Value<int>? generation,
+    Value<Uint8List>? sealed,
+    Value<int>? rowid,
+  }) {
     return LocalCryptoRecordsCompanion(
       kind: kind ?? this.kind,
       recordId: recordId ?? this.recordId,
@@ -1946,13 +2273,21 @@ class $LocalMetadataTable extends LocalMetadata
   static const VerificationMeta _nameMeta = const VerificationMeta('name');
   @override
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
-      'name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _valueMeta = const VerificationMeta('value');
   @override
   late final GeneratedColumn<String> value = GeneratedColumn<String>(
-      'value', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'value',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [name, value];
   @override
@@ -1961,19 +2296,25 @@ class $LocalMetadataTable extends LocalMetadata
   String get actualTableName => $name;
   static const String $name = 'local_metadata';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalMetadataData> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalMetadataData> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('name')) {
       context.handle(
-          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
     } else if (isInserting) {
       context.missing(_nameMeta);
     }
     if (data.containsKey('value')) {
       context.handle(
-          _valueMeta, value.isAcceptableOrUnknown(data['value']!, _valueMeta));
+        _valueMeta,
+        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
+      );
     } else if (isInserting) {
       context.missing(_valueMeta);
     }
@@ -1986,10 +2327,14 @@ class $LocalMetadataTable extends LocalMetadata
   LocalMetadataData map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalMetadataData(
-      name: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
-      value: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}value'])!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      value: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}value'],
+      )!,
     );
   }
 
@@ -2013,14 +2358,13 @@ class LocalMetadataData extends DataClass
   }
 
   LocalMetadataCompanion toCompanion(bool nullToAbsent) {
-    return LocalMetadataCompanion(
-      name: Value(name),
-      value: Value(value),
-    );
+    return LocalMetadataCompanion(name: Value(name), value: Value(value));
   }
 
-  factory LocalMetadataData.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalMetadataData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalMetadataData(
       name: serializer.fromJson<String>(json['name']),
@@ -2037,10 +2381,7 @@ class LocalMetadataData extends DataClass
   }
 
   LocalMetadataData copyWith({String? name, String? value}) =>
-      LocalMetadataData(
-        name: name ?? this.name,
-        value: value ?? this.value,
-      );
+      LocalMetadataData(name: name ?? this.name, value: value ?? this.value);
   LocalMetadataData copyWithCompanion(LocalMetadataCompanion data) {
     return LocalMetadataData(
       name: data.name.present ? data.name.value : this.name,
@@ -2094,8 +2435,11 @@ class LocalMetadataCompanion extends UpdateCompanion<LocalMetadataData> {
     });
   }
 
-  LocalMetadataCompanion copyWith(
-      {Value<String>? name, Value<String>? value, Value<int>? rowid}) {
+  LocalMetadataCompanion copyWith({
+    Value<String>? name,
+    Value<String>? value,
+    Value<int>? rowid,
+  }) {
     return LocalMetadataCompanion(
       name: name ?? this.name,
       value: value ?? this.value,
@@ -2135,65 +2479,99 @@ class $LocalMlsTransitionsTable extends LocalMlsTransitions
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalMlsTransitionsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _messageIdMeta =
-      const VerificationMeta('messageId');
+  static const VerificationMeta _messageIdMeta = const VerificationMeta(
+    'messageId',
+  );
   @override
   late final GeneratedColumn<String> messageId = GeneratedColumn<String>(
-      'message_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'message_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _cursorMeta = const VerificationMeta('cursor');
   @override
   late final GeneratedColumn<int> cursor = GeneratedColumn<int>(
-      'cursor', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _counterMeta =
-      const VerificationMeta('counter');
+    'cursor',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _counterMeta = const VerificationMeta(
+    'counter',
+  );
   @override
   late final GeneratedColumn<int> counter = GeneratedColumn<int>(
-      'counter', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'counter',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [messageId, conversationId, cursor, counter];
+  List<GeneratedColumn> get $columns => [
+        messageId,
+        conversationId,
+        cursor,
+        counter,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'local_mls_transitions';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalMlsTransition> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalMlsTransition> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('message_id')) {
-      context.handle(_messageIdMeta,
-          messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
+      context.handle(
+        _messageIdMeta,
+        messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_messageIdMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('cursor')) {
-      context.handle(_cursorMeta,
-          cursor.isAcceptableOrUnknown(data['cursor']!, _cursorMeta));
+      context.handle(
+        _cursorMeta,
+        cursor.isAcceptableOrUnknown(data['cursor']!, _cursorMeta),
+      );
     } else if (isInserting) {
       context.missing(_cursorMeta);
     }
     if (data.containsKey('counter')) {
-      context.handle(_counterMeta,
-          counter.isAcceptableOrUnknown(data['counter']!, _counterMeta));
+      context.handle(
+        _counterMeta,
+        counter.isAcceptableOrUnknown(data['counter']!, _counterMeta),
+      );
     } else if (isInserting) {
       context.missing(_counterMeta);
     }
@@ -2206,14 +2584,22 @@ class $LocalMlsTransitionsTable extends LocalMlsTransitions
   LocalMlsTransition map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalMlsTransition(
-      messageId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}message_id'])!,
+      messageId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}message_id'],
+      )!,
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      cursor: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}cursor'])!,
-      counter: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}counter'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      cursor: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}cursor'],
+      )!,
+      counter: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}counter'],
+      )!,
     );
   }
 
@@ -2229,11 +2615,12 @@ class LocalMlsTransition extends DataClass
   final String conversationId;
   final int cursor;
   final int counter;
-  const LocalMlsTransition(
-      {required this.messageId,
-      required this.conversationId,
-      required this.cursor,
-      required this.counter});
+  const LocalMlsTransition({
+    required this.messageId,
+    required this.conversationId,
+    required this.cursor,
+    required this.counter,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2253,8 +2640,10 @@ class LocalMlsTransition extends DataClass
     );
   }
 
-  factory LocalMlsTransition.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalMlsTransition.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalMlsTransition(
       messageId: serializer.fromJson<String>(json['messageId']),
@@ -2274,11 +2663,12 @@ class LocalMlsTransition extends DataClass
     };
   }
 
-  LocalMlsTransition copyWith(
-          {String? messageId,
-          String? conversationId,
-          int? cursor,
-          int? counter}) =>
+  LocalMlsTransition copyWith({
+    String? messageId,
+    String? conversationId,
+    int? cursor,
+    int? counter,
+  }) =>
       LocalMlsTransition(
         messageId: messageId ?? this.messageId,
         conversationId: conversationId ?? this.conversationId,
@@ -2358,12 +2748,13 @@ class LocalMlsTransitionsCompanion extends UpdateCompanion<LocalMlsTransition> {
     });
   }
 
-  LocalMlsTransitionsCompanion copyWith(
-      {Value<String>? messageId,
-      Value<String>? conversationId,
-      Value<int>? cursor,
-      Value<int>? counter,
-      Value<int>? rowid}) {
+  LocalMlsTransitionsCompanion copyWith({
+    Value<String>? messageId,
+    Value<String>? conversationId,
+    Value<int>? cursor,
+    Value<int>? counter,
+    Value<int>? rowid,
+  }) {
     return LocalMlsTransitionsCompanion(
       messageId: messageId ?? this.messageId,
       conversationId: conversationId ?? this.conversationId,
@@ -2413,83 +2804,142 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalMlsOutboxEntriesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idempotencyKeyMeta =
-      const VerificationMeta('idempotencyKey');
+  static const VerificationMeta _idempotencyKeyMeta = const VerificationMeta(
+    'idempotencyKey',
+  );
   @override
   late final GeneratedColumn<String> idempotencyKey = GeneratedColumn<String>(
-      'idempotency_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'idempotency_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
   late final GeneratedColumn<String> kind = GeneratedColumn<String>(
-      'kind', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _recipientDeviceIdMeta =
-      const VerificationMeta('recipientDeviceId');
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _recipientDeviceIdMeta = const VerificationMeta(
+    'recipientDeviceId',
+  );
   @override
   late final GeneratedColumn<String> recipientDeviceId =
-      GeneratedColumn<String>('recipient_device_id', aliasedName, true,
-          type: DriftSqlType.string, requiredDuringInsert: false);
+      GeneratedColumn<String>(
+    'recipient_device_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _revocationDeviceIdMeta =
       const VerificationMeta('revocationDeviceId');
   @override
   late final GeneratedColumn<String> revocationDeviceId =
-      GeneratedColumn<String>('revocation_device_id', aliasedName, true,
-          type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _payloadMeta =
-      const VerificationMeta('payload');
+      GeneratedColumn<String>(
+    'revocation_device_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
   @override
   late final GeneratedColumn<Uint8List> payload = GeneratedColumn<Uint8List>(
-      'payload', aliasedName, false,
-      type: DriftSqlType.blob, requiredDuringInsert: true);
-  static const VerificationMeta _stateCounterMeta =
-      const VerificationMeta('stateCounter');
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateCounterMeta = const VerificationMeta(
+    'stateCounter',
+  );
   @override
   late final GeneratedColumn<int> stateCounter = GeneratedColumn<int>(
-      'state_counter', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _queuedAtMeta =
-      const VerificationMeta('queuedAt');
+    'state_counter',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _queuedAtMeta = const VerificationMeta(
+    'queuedAt',
+  );
   @override
   late final GeneratedColumn<int> queuedAt = GeneratedColumn<int>(
-      'queued_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _attemptCountMeta =
-      const VerificationMeta('attemptCount');
+    'queued_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _attemptCountMeta = const VerificationMeta(
+    'attemptCount',
+  );
   @override
   late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
-      'attempt_count', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _nextAttemptAtMeta =
-      const VerificationMeta('nextAttemptAt');
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _nextAttemptAtMeta = const VerificationMeta(
+    'nextAttemptAt',
+  );
   @override
   late final GeneratedColumn<int> nextAttemptAt = GeneratedColumn<int>(
-      'next_attempt_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _failureClassMeta =
-      const VerificationMeta('failureClass');
+    'next_attempt_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failureClassMeta = const VerificationMeta(
+    'failureClass',
+  );
   @override
   late final GeneratedColumn<String> failureClass = GeneratedColumn<String>(
-      'failure_class', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _terminalMeta =
-      const VerificationMeta('terminal');
+    'failure_class',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _terminalMeta = const VerificationMeta(
+    'terminal',
+  );
   @override
   late final GeneratedColumn<bool> terminal = GeneratedColumn<bool>(
-      'terminal', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("terminal" IN (0, 1))'),
-      defaultValue: const Constant(false));
+    'terminal',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("terminal" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
         idempotencyKey,
@@ -2503,7 +2953,7 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
         attemptCount,
         nextAttemptAt,
         failureClass,
-        terminal
+        terminal,
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2512,85 +2962,118 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
   static const String $name = 'local_mls_outbox_entries';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalMlsOutboxEntry> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalMlsOutboxEntry> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('idempotency_key')) {
       context.handle(
+        _idempotencyKeyMeta,
+        idempotencyKey.isAcceptableOrUnknown(
+          data['idempotency_key']!,
           _idempotencyKeyMeta,
-          idempotencyKey.isAcceptableOrUnknown(
-              data['idempotency_key']!, _idempotencyKeyMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_idempotencyKeyMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
-          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
     } else if (isInserting) {
       context.missing(_kindMeta);
     }
     if (data.containsKey('recipient_device_id')) {
       context.handle(
+        _recipientDeviceIdMeta,
+        recipientDeviceId.isAcceptableOrUnknown(
+          data['recipient_device_id']!,
           _recipientDeviceIdMeta,
-          recipientDeviceId.isAcceptableOrUnknown(
-              data['recipient_device_id']!, _recipientDeviceIdMeta));
+        ),
+      );
     }
     if (data.containsKey('revocation_device_id')) {
       context.handle(
+        _revocationDeviceIdMeta,
+        revocationDeviceId.isAcceptableOrUnknown(
+          data['revocation_device_id']!,
           _revocationDeviceIdMeta,
-          revocationDeviceId.isAcceptableOrUnknown(
-              data['revocation_device_id']!, _revocationDeviceIdMeta));
+        ),
+      );
     }
     if (data.containsKey('payload')) {
-      context.handle(_payloadMeta,
-          payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta));
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
     } else if (isInserting) {
       context.missing(_payloadMeta);
     }
     if (data.containsKey('state_counter')) {
       context.handle(
+        _stateCounterMeta,
+        stateCounter.isAcceptableOrUnknown(
+          data['state_counter']!,
           _stateCounterMeta,
-          stateCounter.isAcceptableOrUnknown(
-              data['state_counter']!, _stateCounterMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_stateCounterMeta);
     }
     if (data.containsKey('queued_at')) {
-      context.handle(_queuedAtMeta,
-          queuedAt.isAcceptableOrUnknown(data['queued_at']!, _queuedAtMeta));
+      context.handle(
+        _queuedAtMeta,
+        queuedAt.isAcceptableOrUnknown(data['queued_at']!, _queuedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_queuedAtMeta);
     }
     if (data.containsKey('attempt_count')) {
       context.handle(
+        _attemptCountMeta,
+        attemptCount.isAcceptableOrUnknown(
+          data['attempt_count']!,
           _attemptCountMeta,
-          attemptCount.isAcceptableOrUnknown(
-              data['attempt_count']!, _attemptCountMeta));
+        ),
+      );
     }
     if (data.containsKey('next_attempt_at')) {
       context.handle(
+        _nextAttemptAtMeta,
+        nextAttemptAt.isAcceptableOrUnknown(
+          data['next_attempt_at']!,
           _nextAttemptAtMeta,
-          nextAttemptAt.isAcceptableOrUnknown(
-              data['next_attempt_at']!, _nextAttemptAtMeta));
+        ),
+      );
     }
     if (data.containsKey('failure_class')) {
       context.handle(
+        _failureClassMeta,
+        failureClass.isAcceptableOrUnknown(
+          data['failure_class']!,
           _failureClassMeta,
-          failureClass.isAcceptableOrUnknown(
-              data['failure_class']!, _failureClassMeta));
+        ),
+      );
     }
     if (data.containsKey('terminal')) {
-      context.handle(_terminalMeta,
-          terminal.isAcceptableOrUnknown(data['terminal']!, _terminalMeta));
+      context.handle(
+        _terminalMeta,
+        terminal.isAcceptableOrUnknown(data['terminal']!, _terminalMeta),
+      );
     }
     return context;
   }
@@ -2602,29 +3085,53 @@ class $LocalMlsOutboxEntriesTable extends LocalMlsOutboxEntries
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalMlsOutboxEntry(
       idempotencyKey: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}idempotency_key'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}idempotency_key'],
+      )!,
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      kind: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
       recipientDeviceId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}recipient_device_id']),
+        DriftSqlType.string,
+        data['${effectivePrefix}recipient_device_id'],
+      ),
       revocationDeviceId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}revocation_device_id']),
-      payload: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}payload'])!,
-      stateCounter: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}state_counter'])!,
-      queuedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}queued_at'])!,
-      attemptCount: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}attempt_count'])!,
-      nextAttemptAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}next_attempt_at']),
-      failureClass: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}failure_class']),
-      terminal: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}terminal'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}revocation_device_id'],
+      ),
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}payload'],
+      )!,
+      stateCounter: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}state_counter'],
+      )!,
+      queuedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}queued_at'],
+      )!,
+      attemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempt_count'],
+      )!,
+      nextAttemptAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}next_attempt_at'],
+      ),
+      failureClass: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_class'],
+      ),
+      terminal: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}terminal'],
+      )!,
     );
   }
 
@@ -2648,19 +3155,20 @@ class LocalMlsOutboxEntry extends DataClass
   final int? nextAttemptAt;
   final String? failureClass;
   final bool terminal;
-  const LocalMlsOutboxEntry(
-      {required this.idempotencyKey,
-      required this.conversationId,
-      required this.kind,
-      this.recipientDeviceId,
-      this.revocationDeviceId,
-      required this.payload,
-      required this.stateCounter,
-      required this.queuedAt,
-      required this.attemptCount,
-      this.nextAttemptAt,
-      this.failureClass,
-      required this.terminal});
+  const LocalMlsOutboxEntry({
+    required this.idempotencyKey,
+    required this.conversationId,
+    required this.kind,
+    this.recipientDeviceId,
+    this.revocationDeviceId,
+    required this.payload,
+    required this.stateCounter,
+    required this.queuedAt,
+    required this.attemptCount,
+    this.nextAttemptAt,
+    this.failureClass,
+    required this.terminal,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2712,17 +3220,21 @@ class LocalMlsOutboxEntry extends DataClass
     );
   }
 
-  factory LocalMlsOutboxEntry.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalMlsOutboxEntry.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalMlsOutboxEntry(
       idempotencyKey: serializer.fromJson<String>(json['idempotencyKey']),
       conversationId: serializer.fromJson<String>(json['conversationId']),
       kind: serializer.fromJson<String>(json['kind']),
-      recipientDeviceId:
-          serializer.fromJson<String?>(json['recipientDeviceId']),
-      revocationDeviceId:
-          serializer.fromJson<String?>(json['revocationDeviceId']),
+      recipientDeviceId: serializer.fromJson<String?>(
+        json['recipientDeviceId'],
+      ),
+      revocationDeviceId: serializer.fromJson<String?>(
+        json['revocationDeviceId'],
+      ),
       payload: serializer.fromJson<Uint8List>(json['payload']),
       stateCounter: serializer.fromJson<int>(json['stateCounter']),
       queuedAt: serializer.fromJson<int>(json['queuedAt']),
@@ -2751,19 +3263,20 @@ class LocalMlsOutboxEntry extends DataClass
     };
   }
 
-  LocalMlsOutboxEntry copyWith(
-          {String? idempotencyKey,
-          String? conversationId,
-          String? kind,
-          Value<String?> recipientDeviceId = const Value.absent(),
-          Value<String?> revocationDeviceId = const Value.absent(),
-          Uint8List? payload,
-          int? stateCounter,
-          int? queuedAt,
-          int? attemptCount,
-          Value<int?> nextAttemptAt = const Value.absent(),
-          Value<String?> failureClass = const Value.absent(),
-          bool? terminal}) =>
+  LocalMlsOutboxEntry copyWith({
+    String? idempotencyKey,
+    String? conversationId,
+    String? kind,
+    Value<String?> recipientDeviceId = const Value.absent(),
+    Value<String?> revocationDeviceId = const Value.absent(),
+    Uint8List? payload,
+    int? stateCounter,
+    int? queuedAt,
+    int? attemptCount,
+    Value<int?> nextAttemptAt = const Value.absent(),
+    Value<String?> failureClass = const Value.absent(),
+    bool? terminal,
+  }) =>
       LocalMlsOutboxEntry(
         idempotencyKey: idempotencyKey ?? this.idempotencyKey,
         conversationId: conversationId ?? this.conversationId,
@@ -2838,18 +3351,19 @@ class LocalMlsOutboxEntry extends DataClass
 
   @override
   int get hashCode => Object.hash(
-      idempotencyKey,
-      conversationId,
-      kind,
-      recipientDeviceId,
-      revocationDeviceId,
-      $driftBlobEquality.hash(payload),
-      stateCounter,
-      queuedAt,
-      attemptCount,
-      nextAttemptAt,
-      failureClass,
-      terminal);
+        idempotencyKey,
+        conversationId,
+        kind,
+        recipientDeviceId,
+        revocationDeviceId,
+        $driftBlobEquality.hash(payload),
+        stateCounter,
+        queuedAt,
+        attemptCount,
+        nextAttemptAt,
+        failureClass,
+        terminal,
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2951,20 +3465,21 @@ class LocalMlsOutboxEntriesCompanion
     });
   }
 
-  LocalMlsOutboxEntriesCompanion copyWith(
-      {Value<String>? idempotencyKey,
-      Value<String>? conversationId,
-      Value<String>? kind,
-      Value<String?>? recipientDeviceId,
-      Value<String?>? revocationDeviceId,
-      Value<Uint8List>? payload,
-      Value<int>? stateCounter,
-      Value<int>? queuedAt,
-      Value<int>? attemptCount,
-      Value<int?>? nextAttemptAt,
-      Value<String?>? failureClass,
-      Value<bool>? terminal,
-      Value<int>? rowid}) {
+  LocalMlsOutboxEntriesCompanion copyWith({
+    Value<String>? idempotencyKey,
+    Value<String>? conversationId,
+    Value<String>? kind,
+    Value<String?>? recipientDeviceId,
+    Value<String?>? revocationDeviceId,
+    Value<Uint8List>? payload,
+    Value<int>? stateCounter,
+    Value<int>? queuedAt,
+    Value<int>? attemptCount,
+    Value<int?>? nextAttemptAt,
+    Value<String?>? failureClass,
+    Value<bool>? terminal,
+    Value<int>? rowid,
+  }) {
     return LocalMlsOutboxEntriesCompanion(
       idempotencyKey: idempotencyKey ?? this.idempotencyKey,
       conversationId: conversationId ?? this.conversationId,
@@ -3054,33 +3569,58 @@ class $LocalPeerVerificationsTable extends LocalPeerVerifications
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalPeerVerificationsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _peerAccountIdMeta =
-      const VerificationMeta('peerAccountId');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _peerAccountIdMeta = const VerificationMeta(
+    'peerAccountId',
+  );
   @override
   late final GeneratedColumn<String> peerAccountId = GeneratedColumn<String>(
-      'peer_account_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _transcriptHashMeta =
-      const VerificationMeta('transcriptHash');
+    'peer_account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _transcriptHashMeta = const VerificationMeta(
+    'transcriptHash',
+  );
   @override
   late final GeneratedColumn<Uint8List> transcriptHash =
-      GeneratedColumn<Uint8List>('transcript_hash', aliasedName, false,
-          type: DriftSqlType.blob, requiredDuringInsert: true);
-  static const VerificationMeta _verifiedAtMeta =
-      const VerificationMeta('verifiedAt');
+      GeneratedColumn<Uint8List>(
+    'transcript_hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _verifiedAtMeta = const VerificationMeta(
+    'verifiedAt',
+  );
   @override
   late final GeneratedColumn<int> verifiedAt = GeneratedColumn<int>(
-      'verified_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'verified_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [conversationId, peerAccountId, transcriptHash, verifiedAt];
+  List<GeneratedColumn> get $columns => [
+        conversationId,
+        peerAccountId,
+        transcriptHash,
+        verifiedAt,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -3088,39 +3628,49 @@ class $LocalPeerVerificationsTable extends LocalPeerVerifications
   static const String $name = 'local_peer_verifications';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalPeerVerification> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalPeerVerification> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('peer_account_id')) {
       context.handle(
+        _peerAccountIdMeta,
+        peerAccountId.isAcceptableOrUnknown(
+          data['peer_account_id']!,
           _peerAccountIdMeta,
-          peerAccountId.isAcceptableOrUnknown(
-              data['peer_account_id']!, _peerAccountIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_peerAccountIdMeta);
     }
     if (data.containsKey('transcript_hash')) {
       context.handle(
+        _transcriptHashMeta,
+        transcriptHash.isAcceptableOrUnknown(
+          data['transcript_hash']!,
           _transcriptHashMeta,
-          transcriptHash.isAcceptableOrUnknown(
-              data['transcript_hash']!, _transcriptHashMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_transcriptHashMeta);
     }
     if (data.containsKey('verified_at')) {
       context.handle(
-          _verifiedAtMeta,
-          verifiedAt.isAcceptableOrUnknown(
-              data['verified_at']!, _verifiedAtMeta));
+        _verifiedAtMeta,
+        verifiedAt.isAcceptableOrUnknown(data['verified_at']!, _verifiedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_verifiedAtMeta);
     }
@@ -3134,13 +3684,21 @@ class $LocalPeerVerificationsTable extends LocalPeerVerifications
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalPeerVerification(
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
       peerAccountId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}peer_account_id'])!,
-      transcriptHash: attachedDatabase.typeMapping
-          .read(DriftSqlType.blob, data['${effectivePrefix}transcript_hash'])!,
-      verifiedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}verified_at'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}peer_account_id'],
+      )!,
+      transcriptHash: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}transcript_hash'],
+      )!,
+      verifiedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}verified_at'],
+      )!,
     );
   }
 
@@ -3156,11 +3714,12 @@ class LocalPeerVerification extends DataClass
   final String peerAccountId;
   final Uint8List transcriptHash;
   final int verifiedAt;
-  const LocalPeerVerification(
-      {required this.conversationId,
-      required this.peerAccountId,
-      required this.transcriptHash,
-      required this.verifiedAt});
+  const LocalPeerVerification({
+    required this.conversationId,
+    required this.peerAccountId,
+    required this.transcriptHash,
+    required this.verifiedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3180,8 +3739,10 @@ class LocalPeerVerification extends DataClass
     );
   }
 
-  factory LocalPeerVerification.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalPeerVerification.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalPeerVerification(
       conversationId: serializer.fromJson<String>(json['conversationId']),
@@ -3201,11 +3762,12 @@ class LocalPeerVerification extends DataClass
     };
   }
 
-  LocalPeerVerification copyWith(
-          {String? conversationId,
-          String? peerAccountId,
-          Uint8List? transcriptHash,
-          int? verifiedAt}) =>
+  LocalPeerVerification copyWith({
+    String? conversationId,
+    String? peerAccountId,
+    Uint8List? transcriptHash,
+    int? verifiedAt,
+  }) =>
       LocalPeerVerification(
         conversationId: conversationId ?? this.conversationId,
         peerAccountId: peerAccountId ?? this.peerAccountId,
@@ -3213,7 +3775,8 @@ class LocalPeerVerification extends DataClass
         verifiedAt: verifiedAt ?? this.verifiedAt,
       );
   LocalPeerVerification copyWithCompanion(
-      LocalPeerVerificationsCompanion data) {
+    LocalPeerVerificationsCompanion data,
+  ) {
     return LocalPeerVerification(
       conversationId: data.conversationId.present
           ? data.conversationId.value
@@ -3241,8 +3804,12 @@ class LocalPeerVerification extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(conversationId, peerAccountId,
-      $driftBlobEquality.hash(transcriptHash), verifiedAt);
+  int get hashCode => Object.hash(
+        conversationId,
+        peerAccountId,
+        $driftBlobEquality.hash(transcriptHash),
+        verifiedAt,
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3250,7 +3817,9 @@ class LocalPeerVerification extends DataClass
           other.conversationId == this.conversationId &&
           other.peerAccountId == this.peerAccountId &&
           $driftBlobEquality.equals(
-              other.transcriptHash, this.transcriptHash) &&
+            other.transcriptHash,
+            this.transcriptHash,
+          ) &&
           other.verifiedAt == this.verifiedAt);
 }
 
@@ -3294,12 +3863,13 @@ class LocalPeerVerificationsCompanion
     });
   }
 
-  LocalPeerVerificationsCompanion copyWith(
-      {Value<String>? conversationId,
-      Value<String>? peerAccountId,
-      Value<Uint8List>? transcriptHash,
-      Value<int>? verifiedAt,
-      Value<int>? rowid}) {
+  LocalPeerVerificationsCompanion copyWith({
+    Value<String>? conversationId,
+    Value<String>? peerAccountId,
+    Value<Uint8List>? transcriptHash,
+    Value<int>? verifiedAt,
+    Value<int>? rowid,
+  }) {
     return LocalPeerVerificationsCompanion(
       conversationId: conversationId ?? this.conversationId,
       peerAccountId: peerAccountId ?? this.peerAccountId,
@@ -3352,141 +3922,244 @@ class $LocalMessagesTable extends LocalMessages
   static const VerificationMeta _keyMeta = const VerificationMeta('key');
   @override
   late final GeneratedColumn<String> key = GeneratedColumn<String>(
-      'key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _serverMessageIdMeta =
-      const VerificationMeta('serverMessageId');
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _serverMessageIdMeta = const VerificationMeta(
+    'serverMessageId',
+  );
   @override
   late final GeneratedColumn<String> serverMessageId = GeneratedColumn<String>(
-      'server_message_id', aliasedName, true,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'));
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'server_message_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _senderAccountIdMeta =
-      const VerificationMeta('senderAccountId');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _senderAccountIdMeta = const VerificationMeta(
+    'senderAccountId',
+  );
   @override
   late final GeneratedColumn<String> senderAccountId = GeneratedColumn<String>(
-      'sender_account_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _senderDeviceIdMeta =
-      const VerificationMeta('senderDeviceId');
+    'sender_account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _senderDeviceIdMeta = const VerificationMeta(
+    'senderDeviceId',
+  );
   @override
   late final GeneratedColumn<String> senderDeviceId = GeneratedColumn<String>(
-      'sender_device_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'sender_device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
   late final GeneratedColumn<String> kind = GeneratedColumn<String>(
-      'kind', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _bodyMeta = const VerificationMeta('body');
   @override
   late final GeneratedColumn<String> body = GeneratedColumn<String>(
-      'body', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _replyToMeta =
-      const VerificationMeta('replyTo');
+    'body',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _replyToMeta = const VerificationMeta(
+    'replyTo',
+  );
   @override
   late final GeneratedColumn<String> replyTo = GeneratedColumn<String>(
-      'reply_to', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'reply_to',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _editedAtMeta =
-      const VerificationMeta('editedAt');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _editedAtMeta = const VerificationMeta(
+    'editedAt',
+  );
   @override
   late final GeneratedColumn<int> editedAt = GeneratedColumn<int>(
-      'edited_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _deletedAtMeta =
-      const VerificationMeta('deletedAt');
+    'edited_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _deletedAtMeta = const VerificationMeta(
+    'deletedAt',
+  );
   @override
   late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
-      'deleted_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'deleted_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _stateMeta = const VerificationMeta('state');
   @override
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
-      'state', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _expiresAtMeta =
-      const VerificationMeta('expiresAt');
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _expiresAtMeta = const VerificationMeta(
+    'expiresAt',
+  );
   @override
   late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
-      'expires_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _searchIdMeta =
-      const VerificationMeta('searchId');
+    'expires_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _searchIdMeta = const VerificationMeta(
+    'searchId',
+  );
   @override
   late final GeneratedColumn<int> searchId = GeneratedColumn<int>(
-      'search_id', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _hiddenAtMeta =
-      const VerificationMeta('hiddenAt');
+    'search_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _hiddenAtMeta = const VerificationMeta(
+    'hiddenAt',
+  );
   @override
   late final GeneratedColumn<int> hiddenAt = GeneratedColumn<int>(
-      'hidden_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _formatJsonMeta =
-      const VerificationMeta('formatJson');
+    'hidden_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _formatJsonMeta = const VerificationMeta(
+    'formatJson',
+  );
   @override
   late final GeneratedColumn<String> formatJson = GeneratedColumn<String>(
-      'format_json', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _forwardHopsMeta =
-      const VerificationMeta('forwardHops');
+    'format_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _forwardHopsMeta = const VerificationMeta(
+    'forwardHops',
+  );
   @override
   late final GeneratedColumn<int> forwardHops = GeneratedColumn<int>(
-      'forward_hops', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _channelIdMeta =
-      const VerificationMeta('channelId');
+    'forward_hops',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _channelIdMeta = const VerificationMeta(
+    'channelId',
+  );
   @override
   late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
-      'channel_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _senderHiddenMeta =
-      const VerificationMeta('senderHidden');
+    'channel_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _senderHiddenMeta = const VerificationMeta(
+    'senderHidden',
+  );
   @override
   late final GeneratedColumn<bool> senderHidden = GeneratedColumn<bool>(
-      'sender_hidden', aliasedName, true,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'CHECK ("sender_hidden" IN (0, 1))'));
-  static const VerificationMeta _senderRemovedMeta =
-      const VerificationMeta('senderRemoved');
+    'sender_hidden',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("sender_hidden" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _senderRemovedMeta = const VerificationMeta(
+    'senderRemoved',
+  );
   @override
   late final GeneratedColumn<bool> senderRemoved = GeneratedColumn<bool>(
-      'sender_removed', aliasedName, true,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'CHECK ("sender_removed" IN (0, 1))'));
+    'sender_removed',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("sender_removed" IN (0, 1))',
+    ),
+  );
   static const VerificationMeta _c7GenMeta = const VerificationMeta('c7Gen');
   @override
   late final GeneratedColumn<String> c7Gen = GeneratedColumn<String>(
-      'c7_gen', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _c7FormerMeta =
-      const VerificationMeta('c7Former');
+    'c7_gen',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _c7FormerMeta = const VerificationMeta(
+    'c7Former',
+  );
   @override
   late final GeneratedColumn<int> c7Former = GeneratedColumn<int>(
-      'c7_former', aliasedName, true,
-      check: () =>
-          c7Former.isIn(const [C7FormerMark.named, C7FormerMark.unnamed]),
-      type: DriftSqlType.int,
-      requiredDuringInsert: false);
+    'c7_former',
+    aliasedName,
+    true,
+    check: () =>
+        c7Former.isIn(const [C7FormerMark.named, C7FormerMark.unnamed]),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3510,7 +4183,7 @@ class $LocalMessagesTable extends LocalMessages
         senderHidden,
         senderRemoved,
         c7Gen,
-        c7Former
+        c7Former,
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3518,127 +4191,178 @@ class $LocalMessagesTable extends LocalMessages
   String get actualTableName => $name;
   static const String $name = 'local_messages';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalMessage> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalMessage> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('key')) {
       context.handle(
-          _keyMeta, key.isAcceptableOrUnknown(data['key']!, _keyMeta));
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
     } else if (isInserting) {
       context.missing(_keyMeta);
     }
     if (data.containsKey('server_message_id')) {
       context.handle(
+        _serverMessageIdMeta,
+        serverMessageId.isAcceptableOrUnknown(
+          data['server_message_id']!,
           _serverMessageIdMeta,
-          serverMessageId.isAcceptableOrUnknown(
-              data['server_message_id']!, _serverMessageIdMeta));
+        ),
+      );
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('sender_account_id')) {
       context.handle(
+        _senderAccountIdMeta,
+        senderAccountId.isAcceptableOrUnknown(
+          data['sender_account_id']!,
           _senderAccountIdMeta,
-          senderAccountId.isAcceptableOrUnknown(
-              data['sender_account_id']!, _senderAccountIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_senderAccountIdMeta);
     }
     if (data.containsKey('sender_device_id')) {
       context.handle(
+        _senderDeviceIdMeta,
+        senderDeviceId.isAcceptableOrUnknown(
+          data['sender_device_id']!,
           _senderDeviceIdMeta,
-          senderDeviceId.isAcceptableOrUnknown(
-              data['sender_device_id']!, _senderDeviceIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_senderDeviceIdMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
-          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
     } else if (isInserting) {
       context.missing(_kindMeta);
     }
     if (data.containsKey('body')) {
       context.handle(
-          _bodyMeta, body.isAcceptableOrUnknown(data['body']!, _bodyMeta));
+        _bodyMeta,
+        body.isAcceptableOrUnknown(data['body']!, _bodyMeta),
+      );
     }
     if (data.containsKey('reply_to')) {
-      context.handle(_replyToMeta,
-          replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta));
+      context.handle(
+        _replyToMeta,
+        replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta),
+      );
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('edited_at')) {
-      context.handle(_editedAtMeta,
-          editedAt.isAcceptableOrUnknown(data['edited_at']!, _editedAtMeta));
+      context.handle(
+        _editedAtMeta,
+        editedAt.isAcceptableOrUnknown(data['edited_at']!, _editedAtMeta),
+      );
     }
     if (data.containsKey('deleted_at')) {
-      context.handle(_deletedAtMeta,
-          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+      context.handle(
+        _deletedAtMeta,
+        deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta),
+      );
     }
     if (data.containsKey('state')) {
       context.handle(
-          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
     } else if (isInserting) {
       context.missing(_stateMeta);
     }
     if (data.containsKey('expires_at')) {
-      context.handle(_expiresAtMeta,
-          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+      context.handle(
+        _expiresAtMeta,
+        expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta),
+      );
     }
     if (data.containsKey('search_id')) {
-      context.handle(_searchIdMeta,
-          searchId.isAcceptableOrUnknown(data['search_id']!, _searchIdMeta));
+      context.handle(
+        _searchIdMeta,
+        searchId.isAcceptableOrUnknown(data['search_id']!, _searchIdMeta),
+      );
     }
     if (data.containsKey('hidden_at')) {
-      context.handle(_hiddenAtMeta,
-          hiddenAt.isAcceptableOrUnknown(data['hidden_at']!, _hiddenAtMeta));
+      context.handle(
+        _hiddenAtMeta,
+        hiddenAt.isAcceptableOrUnknown(data['hidden_at']!, _hiddenAtMeta),
+      );
     }
     if (data.containsKey('format_json')) {
       context.handle(
-          _formatJsonMeta,
-          formatJson.isAcceptableOrUnknown(
-              data['format_json']!, _formatJsonMeta));
+        _formatJsonMeta,
+        formatJson.isAcceptableOrUnknown(data['format_json']!, _formatJsonMeta),
+      );
     }
     if (data.containsKey('forward_hops')) {
       context.handle(
+        _forwardHopsMeta,
+        forwardHops.isAcceptableOrUnknown(
+          data['forward_hops']!,
           _forwardHopsMeta,
-          forwardHops.isAcceptableOrUnknown(
-              data['forward_hops']!, _forwardHopsMeta));
+        ),
+      );
     }
     if (data.containsKey('channel_id')) {
-      context.handle(_channelIdMeta,
-          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+      context.handle(
+        _channelIdMeta,
+        channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta),
+      );
     }
     if (data.containsKey('sender_hidden')) {
       context.handle(
+        _senderHiddenMeta,
+        senderHidden.isAcceptableOrUnknown(
+          data['sender_hidden']!,
           _senderHiddenMeta,
-          senderHidden.isAcceptableOrUnknown(
-              data['sender_hidden']!, _senderHiddenMeta));
+        ),
+      );
     }
     if (data.containsKey('sender_removed')) {
       context.handle(
+        _senderRemovedMeta,
+        senderRemoved.isAcceptableOrUnknown(
+          data['sender_removed']!,
           _senderRemovedMeta,
-          senderRemoved.isAcceptableOrUnknown(
-              data['sender_removed']!, _senderRemovedMeta));
+        ),
+      );
     }
     if (data.containsKey('c7_gen')) {
       context.handle(
-          _c7GenMeta, c7Gen.isAcceptableOrUnknown(data['c7_gen']!, _c7GenMeta));
+        _c7GenMeta,
+        c7Gen.isAcceptableOrUnknown(data['c7_gen']!, _c7GenMeta),
+      );
     }
     if (data.containsKey('c7_former')) {
-      context.handle(_c7FormerMeta,
-          c7Former.isAcceptableOrUnknown(data['c7_former']!, _c7FormerMeta));
+      context.handle(
+        _c7FormerMeta,
+        c7Former.isAcceptableOrUnknown(data['c7_former']!, _c7FormerMeta),
+      );
     }
     return context;
   }
@@ -3649,50 +4373,94 @@ class $LocalMessagesTable extends LocalMessages
   LocalMessage map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalMessage(
-      key: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}key'])!,
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
       serverMessageId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}server_message_id']),
+        DriftSqlType.string,
+        data['${effectivePrefix}server_message_id'],
+      ),
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
       senderAccountId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}sender_account_id'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}sender_account_id'],
+      )!,
       senderDeviceId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}sender_device_id'])!,
-      kind: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
-      body: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}body']),
-      replyTo: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}reply_to']),
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      editedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}edited_at']),
-      deletedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
-      state: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
-      expiresAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}expires_at']),
-      searchId: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}search_id']),
-      hiddenAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}hidden_at']),
-      formatJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}format_json']),
-      forwardHops: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}forward_hops']),
-      channelId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
-      senderHidden: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}sender_hidden']),
-      senderRemoved: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}sender_removed']),
-      c7Gen: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}c7_gen']),
-      c7Former: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}c7_former']),
+        DriftSqlType.string,
+        data['${effectivePrefix}sender_device_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      body: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}body'],
+      ),
+      replyTo: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reply_to'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      editedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}edited_at'],
+      ),
+      deletedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}deleted_at'],
+      ),
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      expiresAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}expires_at'],
+      ),
+      searchId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}search_id'],
+      ),
+      hiddenAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}hidden_at'],
+      ),
+      formatJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}format_json'],
+      ),
+      forwardHops: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}forward_hops'],
+      ),
+      channelId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}channel_id'],
+      ),
+      senderHidden: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}sender_hidden'],
+      ),
+      senderRemoved: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}sender_removed'],
+      ),
+      c7Gen: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}c7_gen'],
+      ),
+      c7Former: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}c7_former'],
+      ),
     );
   }
 
@@ -3754,29 +4522,30 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   /// linked device never shows such a post unmarked. A [C7FormerMark]
   /// value; null is unmarked. Edits never clear it.
   final int? c7Former;
-  const LocalMessage(
-      {required this.key,
-      this.serverMessageId,
-      required this.conversationId,
-      required this.senderAccountId,
-      required this.senderDeviceId,
-      required this.kind,
-      this.body,
-      this.replyTo,
-      required this.createdAt,
-      this.editedAt,
-      this.deletedAt,
-      required this.state,
-      this.expiresAt,
-      this.searchId,
-      this.hiddenAt,
-      this.formatJson,
-      this.forwardHops,
-      this.channelId,
-      this.senderHidden,
-      this.senderRemoved,
-      this.c7Gen,
-      this.c7Former});
+  const LocalMessage({
+    required this.key,
+    this.serverMessageId,
+    required this.conversationId,
+    required this.senderAccountId,
+    required this.senderDeviceId,
+    required this.kind,
+    this.body,
+    this.replyTo,
+    required this.createdAt,
+    this.editedAt,
+    this.deletedAt,
+    required this.state,
+    this.expiresAt,
+    this.searchId,
+    this.hiddenAt,
+    this.formatJson,
+    this.forwardHops,
+    this.channelId,
+    this.senderHidden,
+    this.senderRemoved,
+    this.c7Gen,
+    this.c7Former,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3889,8 +4658,10 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
     );
   }
 
-  factory LocalMessage.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalMessage.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalMessage(
       key: serializer.fromJson<String>(json['key']),
@@ -3946,29 +4717,30 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
     };
   }
 
-  LocalMessage copyWith(
-          {String? key,
-          Value<String?> serverMessageId = const Value.absent(),
-          String? conversationId,
-          String? senderAccountId,
-          String? senderDeviceId,
-          String? kind,
-          Value<String?> body = const Value.absent(),
-          Value<String?> replyTo = const Value.absent(),
-          int? createdAt,
-          Value<int?> editedAt = const Value.absent(),
-          Value<int?> deletedAt = const Value.absent(),
-          String? state,
-          Value<int?> expiresAt = const Value.absent(),
-          Value<int?> searchId = const Value.absent(),
-          Value<int?> hiddenAt = const Value.absent(),
-          Value<String?> formatJson = const Value.absent(),
-          Value<int?> forwardHops = const Value.absent(),
-          Value<String?> channelId = const Value.absent(),
-          Value<bool?> senderHidden = const Value.absent(),
-          Value<bool?> senderRemoved = const Value.absent(),
-          Value<String?> c7Gen = const Value.absent(),
-          Value<int?> c7Former = const Value.absent()}) =>
+  LocalMessage copyWith({
+    String? key,
+    Value<String?> serverMessageId = const Value.absent(),
+    String? conversationId,
+    String? senderAccountId,
+    String? senderDeviceId,
+    String? kind,
+    Value<String?> body = const Value.absent(),
+    Value<String?> replyTo = const Value.absent(),
+    int? createdAt,
+    Value<int?> editedAt = const Value.absent(),
+    Value<int?> deletedAt = const Value.absent(),
+    String? state,
+    Value<int?> expiresAt = const Value.absent(),
+    Value<int?> searchId = const Value.absent(),
+    Value<int?> hiddenAt = const Value.absent(),
+    Value<String?> formatJson = const Value.absent(),
+    Value<int?> forwardHops = const Value.absent(),
+    Value<String?> channelId = const Value.absent(),
+    Value<bool?> senderHidden = const Value.absent(),
+    Value<bool?> senderRemoved = const Value.absent(),
+    Value<String?> c7Gen = const Value.absent(),
+    Value<int?> c7Former = const Value.absent(),
+  }) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -4090,7 +4862,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         senderHidden,
         senderRemoved,
         c7Gen,
-        c7Former
+        c7Former,
       ]);
   @override
   bool operator ==(Object other) =>
@@ -4252,30 +5024,31 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     });
   }
 
-  LocalMessagesCompanion copyWith(
-      {Value<String>? key,
-      Value<String?>? serverMessageId,
-      Value<String>? conversationId,
-      Value<String>? senderAccountId,
-      Value<String>? senderDeviceId,
-      Value<String>? kind,
-      Value<String?>? body,
-      Value<String?>? replyTo,
-      Value<int>? createdAt,
-      Value<int?>? editedAt,
-      Value<int?>? deletedAt,
-      Value<String>? state,
-      Value<int?>? expiresAt,
-      Value<int?>? searchId,
-      Value<int?>? hiddenAt,
-      Value<String?>? formatJson,
-      Value<int?>? forwardHops,
-      Value<String?>? channelId,
-      Value<bool?>? senderHidden,
-      Value<bool?>? senderRemoved,
-      Value<String?>? c7Gen,
-      Value<int?>? c7Former,
-      Value<int>? rowid}) {
+  LocalMessagesCompanion copyWith({
+    Value<String>? key,
+    Value<String?>? serverMessageId,
+    Value<String>? conversationId,
+    Value<String>? senderAccountId,
+    Value<String>? senderDeviceId,
+    Value<String>? kind,
+    Value<String?>? body,
+    Value<String?>? replyTo,
+    Value<int>? createdAt,
+    Value<int?>? editedAt,
+    Value<int?>? deletedAt,
+    Value<String>? state,
+    Value<int?>? expiresAt,
+    Value<int?>? searchId,
+    Value<int?>? hiddenAt,
+    Value<String?>? formatJson,
+    Value<int?>? forwardHops,
+    Value<String?>? channelId,
+    Value<bool?>? senderHidden,
+    Value<bool?>? senderRemoved,
+    Value<String?>? c7Gen,
+    Value<int?>? c7Former,
+    Value<int>? rowid,
+  }) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
       serverMessageId: serverMessageId ?? this.serverMessageId,
@@ -4415,33 +5188,57 @@ class $LocalMessageReactionsTable extends LocalMessageReactions
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalMessageReactionsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _targetKeyMeta =
-      const VerificationMeta('targetKey');
+  static const VerificationMeta _targetKeyMeta = const VerificationMeta(
+    'targetKey',
+  );
   @override
   late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
-      'target_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _reactorAccountIdMeta =
-      const VerificationMeta('reactorAccountId');
+    'target_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _reactorAccountIdMeta = const VerificationMeta(
+    'reactorAccountId',
+  );
   @override
   late final GeneratedColumn<String> reactorAccountId = GeneratedColumn<String>(
-      'reactor_account_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _reactionMeta =
-      const VerificationMeta('reaction');
+    'reactor_account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _reactionMeta = const VerificationMeta(
+    'reaction',
+  );
   @override
   late final GeneratedColumn<String> reaction = GeneratedColumn<String>(
-      'reaction', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'reaction',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [targetKey, reactorAccountId, reaction, updatedAt];
+  List<GeneratedColumn> get $columns => [
+        targetKey,
+        reactorAccountId,
+        reaction,
+        updatedAt,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -4449,33 +5246,43 @@ class $LocalMessageReactionsTable extends LocalMessageReactions
   static const String $name = 'local_message_reactions';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalMessageReaction> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalMessageReaction> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('target_key')) {
-      context.handle(_targetKeyMeta,
-          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+      context.handle(
+        _targetKeyMeta,
+        targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_targetKeyMeta);
     }
     if (data.containsKey('reactor_account_id')) {
       context.handle(
+        _reactorAccountIdMeta,
+        reactorAccountId.isAcceptableOrUnknown(
+          data['reactor_account_id']!,
           _reactorAccountIdMeta,
-          reactorAccountId.isAcceptableOrUnknown(
-              data['reactor_account_id']!, _reactorAccountIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_reactorAccountIdMeta);
     }
     if (data.containsKey('reaction')) {
-      context.handle(_reactionMeta,
-          reaction.isAcceptableOrUnknown(data['reaction']!, _reactionMeta));
+      context.handle(
+        _reactionMeta,
+        reaction.isAcceptableOrUnknown(data['reaction']!, _reactionMeta),
+      );
     } else if (isInserting) {
       context.missing(_reactionMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -4488,14 +5295,22 @@ class $LocalMessageReactionsTable extends LocalMessageReactions
   LocalMessageReaction map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalMessageReaction(
-      targetKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
+      targetKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_key'],
+      )!,
       reactorAccountId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}reactor_account_id'])!,
-      reaction: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}reaction'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}reactor_account_id'],
+      )!,
+      reaction: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reaction'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -4511,11 +5326,12 @@ class LocalMessageReaction extends DataClass
   final String reactorAccountId;
   final String reaction;
   final int updatedAt;
-  const LocalMessageReaction(
-      {required this.targetKey,
-      required this.reactorAccountId,
-      required this.reaction,
-      required this.updatedAt});
+  const LocalMessageReaction({
+    required this.targetKey,
+    required this.reactorAccountId,
+    required this.reaction,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4535,8 +5351,10 @@ class LocalMessageReaction extends DataClass
     );
   }
 
-  factory LocalMessageReaction.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalMessageReaction.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalMessageReaction(
       targetKey: serializer.fromJson<String>(json['targetKey']),
@@ -4556,11 +5374,12 @@ class LocalMessageReaction extends DataClass
     };
   }
 
-  LocalMessageReaction copyWith(
-          {String? targetKey,
-          String? reactorAccountId,
-          String? reaction,
-          int? updatedAt}) =>
+  LocalMessageReaction copyWith({
+    String? targetKey,
+    String? reactorAccountId,
+    String? reaction,
+    int? updatedAt,
+  }) =>
       LocalMessageReaction(
         targetKey: targetKey ?? this.targetKey,
         reactorAccountId: reactorAccountId ?? this.reactorAccountId,
@@ -4642,12 +5461,13 @@ class LocalMessageReactionsCompanion
     });
   }
 
-  LocalMessageReactionsCompanion copyWith(
-      {Value<String>? targetKey,
-      Value<String>? reactorAccountId,
-      Value<String>? reaction,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  LocalMessageReactionsCompanion copyWith({
+    Value<String>? targetKey,
+    Value<String>? reactorAccountId,
+    Value<String>? reaction,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return LocalMessageReactionsCompanion(
       targetKey: targetKey ?? this.targetKey,
       reactorAccountId: reactorAccountId ?? this.reactorAccountId,
@@ -4697,63 +5517,97 @@ class $LocalDraftsTable extends LocalDrafts
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalDraftsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _bodyMeta = const VerificationMeta('body');
   @override
   late final GeneratedColumn<String> body = GeneratedColumn<String>(
-      'body', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _replyToMeta =
-      const VerificationMeta('replyTo');
+    'body',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _replyToMeta = const VerificationMeta(
+    'replyTo',
+  );
   @override
   late final GeneratedColumn<String> replyTo = GeneratedColumn<String>(
-      'reply_to', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'reply_to',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [conversationId, body, replyTo, updatedAt];
+  List<GeneratedColumn> get $columns => [
+        conversationId,
+        body,
+        replyTo,
+        updatedAt,
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'local_drafts';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalDraft> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalDraft> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('body')) {
       context.handle(
-          _bodyMeta, body.isAcceptableOrUnknown(data['body']!, _bodyMeta));
+        _bodyMeta,
+        body.isAcceptableOrUnknown(data['body']!, _bodyMeta),
+      );
     } else if (isInserting) {
       context.missing(_bodyMeta);
     }
     if (data.containsKey('reply_to')) {
-      context.handle(_replyToMeta,
-          replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta));
+      context.handle(
+        _replyToMeta,
+        replyTo.isAcceptableOrUnknown(data['reply_to']!, _replyToMeta),
+      );
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -4767,13 +5621,21 @@ class $LocalDraftsTable extends LocalDrafts
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalDraft(
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      body: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}body'])!,
-      replyTo: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}reply_to']),
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      body: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}body'],
+      )!,
+      replyTo: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reply_to'],
+      ),
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -4790,11 +5652,12 @@ class LocalDraft extends DataClass implements Insertable<LocalDraft> {
   /// The local key of the message being replied to, if any.
   final String? replyTo;
   final int updatedAt;
-  const LocalDraft(
-      {required this.conversationId,
-      required this.body,
-      this.replyTo,
-      required this.updatedAt});
+  const LocalDraft({
+    required this.conversationId,
+    required this.body,
+    this.replyTo,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4818,8 +5681,10 @@ class LocalDraft extends DataClass implements Insertable<LocalDraft> {
     );
   }
 
-  factory LocalDraft.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalDraft.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalDraft(
       conversationId: serializer.fromJson<String>(json['conversationId']),
@@ -4839,11 +5704,12 @@ class LocalDraft extends DataClass implements Insertable<LocalDraft> {
     };
   }
 
-  LocalDraft copyWith(
-          {String? conversationId,
-          String? body,
-          Value<String?> replyTo = const Value.absent(),
-          int? updatedAt}) =>
+  LocalDraft copyWith({
+    String? conversationId,
+    String? body,
+    Value<String?> replyTo = const Value.absent(),
+    int? updatedAt,
+  }) =>
       LocalDraft(
         conversationId: conversationId ?? this.conversationId,
         body: body ?? this.body,
@@ -4922,12 +5788,13 @@ class LocalDraftsCompanion extends UpdateCompanion<LocalDraft> {
     });
   }
 
-  LocalDraftsCompanion copyWith(
-      {Value<String>? conversationId,
-      Value<String>? body,
-      Value<String?>? replyTo,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  LocalDraftsCompanion copyWith({
+    Value<String>? conversationId,
+    Value<String>? body,
+    Value<String?>? replyTo,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return LocalDraftsCompanion(
       conversationId: conversationId ?? this.conversationId,
       body: body ?? this.body,
@@ -4977,18 +5844,28 @@ class $LocalConversationMutesTable extends LocalConversationMutes
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalConversationMutesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _mutedUntilMeta =
-      const VerificationMeta('mutedUntil');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _mutedUntilMeta = const VerificationMeta(
+    'mutedUntil',
+  );
   @override
   late final GeneratedColumn<int> mutedUntil = GeneratedColumn<int>(
-      'muted_until', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'muted_until',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [conversationId, mutedUntil];
   @override
@@ -4998,23 +5875,27 @@ class $LocalConversationMutesTable extends LocalConversationMutes
   static const String $name = 'local_conversation_mutes';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalConversationMute> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalConversationMute> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('muted_until')) {
       context.handle(
-          _mutedUntilMeta,
-          mutedUntil.isAcceptableOrUnknown(
-              data['muted_until']!, _mutedUntilMeta));
+        _mutedUntilMeta,
+        mutedUntil.isAcceptableOrUnknown(data['muted_until']!, _mutedUntilMeta),
+      );
     }
     return context;
   }
@@ -5026,9 +5907,13 @@ class $LocalConversationMutesTable extends LocalConversationMutes
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalConversationMute(
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      mutedUntil: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}muted_until']),
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      mutedUntil: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}muted_until'],
+      ),
     );
   }
 
@@ -5064,8 +5949,10 @@ class LocalConversationMute extends DataClass
     );
   }
 
-  factory LocalConversationMute.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalConversationMute.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalConversationMute(
       conversationId: serializer.fromJson<String>(json['conversationId']),
@@ -5081,15 +5968,17 @@ class LocalConversationMute extends DataClass
     };
   }
 
-  LocalConversationMute copyWith(
-          {String? conversationId,
-          Value<int?> mutedUntil = const Value.absent()}) =>
+  LocalConversationMute copyWith({
+    String? conversationId,
+    Value<int?> mutedUntil = const Value.absent(),
+  }) =>
       LocalConversationMute(
         conversationId: conversationId ?? this.conversationId,
         mutedUntil: mutedUntil.present ? mutedUntil.value : this.mutedUntil,
       );
   LocalConversationMute copyWithCompanion(
-      LocalConversationMutesCompanion data) {
+    LocalConversationMutesCompanion data,
+  ) {
     return LocalConversationMute(
       conversationId: data.conversationId.present
           ? data.conversationId.value
@@ -5145,10 +6034,11 @@ class LocalConversationMutesCompanion
     });
   }
 
-  LocalConversationMutesCompanion copyWith(
-      {Value<String>? conversationId,
-      Value<int?>? mutedUntil,
-      Value<int>? rowid}) {
+  LocalConversationMutesCompanion copyWith({
+    Value<String>? conversationId,
+    Value<int?>? mutedUntil,
+    Value<int>? rowid,
+  }) {
     return LocalConversationMutesCompanion(
       conversationId: conversationId ?? this.conversationId,
       mutedUntil: mutedUntil ?? this.mutedUntil,
@@ -5188,50 +6078,85 @@ class $LocalPinsTable extends LocalPins
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalPinsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _channelIdMeta =
-      const VerificationMeta('channelId');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _channelIdMeta = const VerificationMeta(
+    'channelId',
+  );
   @override
   late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
-      'channel_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _targetKeyMeta =
-      const VerificationMeta('targetKey');
+    'channel_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _targetKeyMeta = const VerificationMeta(
+    'targetKey',
+  );
   @override
   late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
-      'target_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _pinnedByAccountIdMeta =
-      const VerificationMeta('pinnedByAccountId');
+    'target_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _pinnedByAccountIdMeta = const VerificationMeta(
+    'pinnedByAccountId',
+  );
   @override
   late final GeneratedColumn<String> pinnedByAccountId =
-      GeneratedColumn<String>('pinned_by_account_id', aliasedName, false,
-          type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _pinnedAtMeta =
-      const VerificationMeta('pinnedAt');
+      GeneratedColumn<String>(
+    'pinned_by_account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _pinnedAtMeta = const VerificationMeta(
+    'pinnedAt',
+  );
   @override
   late final GeneratedColumn<int> pinnedAt = GeneratedColumn<int>(
-      'pinned_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _appliedOrderMeta =
-      const VerificationMeta('appliedOrder');
+    'pinned_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _appliedOrderMeta = const VerificationMeta(
+    'appliedOrder',
+  );
   @override
   late final GeneratedColumn<int> appliedOrder = GeneratedColumn<int>(
-      'applied_order', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _expiresAtMeta =
-      const VerificationMeta('expiresAt');
+    'applied_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _expiresAtMeta = const VerificationMeta(
+    'expiresAt',
+  );
   @override
   late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
-      'expires_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'expires_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [
         conversationId,
@@ -5240,7 +6165,7 @@ class $LocalPinsTable extends LocalPins
         pinnedByAccountId,
         pinnedAt,
         appliedOrder,
-        expiresAt
+        expiresAt,
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -5248,51 +6173,70 @@ class $LocalPinsTable extends LocalPins
   String get actualTableName => $name;
   static const String $name = 'local_pins';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalPin> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalPin> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('channel_id')) {
-      context.handle(_channelIdMeta,
-          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+      context.handle(
+        _channelIdMeta,
+        channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta),
+      );
     }
     if (data.containsKey('target_key')) {
-      context.handle(_targetKeyMeta,
-          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+      context.handle(
+        _targetKeyMeta,
+        targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_targetKeyMeta);
     }
     if (data.containsKey('pinned_by_account_id')) {
       context.handle(
+        _pinnedByAccountIdMeta,
+        pinnedByAccountId.isAcceptableOrUnknown(
+          data['pinned_by_account_id']!,
           _pinnedByAccountIdMeta,
-          pinnedByAccountId.isAcceptableOrUnknown(
-              data['pinned_by_account_id']!, _pinnedByAccountIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_pinnedByAccountIdMeta);
     }
     if (data.containsKey('pinned_at')) {
-      context.handle(_pinnedAtMeta,
-          pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta));
+      context.handle(
+        _pinnedAtMeta,
+        pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_pinnedAtMeta);
     }
     if (data.containsKey('applied_order')) {
       context.handle(
+        _appliedOrderMeta,
+        appliedOrder.isAcceptableOrUnknown(
+          data['applied_order']!,
           _appliedOrderMeta,
-          appliedOrder.isAcceptableOrUnknown(
-              data['applied_order']!, _appliedOrderMeta));
+        ),
+      );
     }
     if (data.containsKey('expires_at')) {
-      context.handle(_expiresAtMeta,
-          expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta));
+      context.handle(
+        _expiresAtMeta,
+        expiresAt.isAcceptableOrUnknown(data['expires_at']!, _expiresAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_expiresAtMeta);
     }
@@ -5306,19 +6250,33 @@ class $LocalPinsTable extends LocalPins
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalPin(
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      channelId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
-      targetKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      channelId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}channel_id'],
+      ),
+      targetKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_key'],
+      )!,
       pinnedByAccountId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}pinned_by_account_id'])!,
-      pinnedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}pinned_at'])!,
-      appliedOrder: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}applied_order'])!,
-      expiresAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}expires_at'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}pinned_by_account_id'],
+      )!,
+      pinnedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}pinned_at'],
+      )!,
+      appliedOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}applied_order'],
+      )!,
+      expiresAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}expires_at'],
+      )!,
     );
   }
 
@@ -5336,14 +6294,15 @@ class LocalPin extends DataClass implements Insertable<LocalPin> {
   final int pinnedAt;
   final int appliedOrder;
   final int expiresAt;
-  const LocalPin(
-      {required this.conversationId,
-      this.channelId,
-      required this.targetKey,
-      required this.pinnedByAccountId,
-      required this.pinnedAt,
-      required this.appliedOrder,
-      required this.expiresAt});
+  const LocalPin({
+    required this.conversationId,
+    this.channelId,
+    required this.targetKey,
+    required this.pinnedByAccountId,
+    required this.pinnedAt,
+    required this.appliedOrder,
+    required this.expiresAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -5373,8 +6332,10 @@ class LocalPin extends DataClass implements Insertable<LocalPin> {
     );
   }
 
-  factory LocalPin.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalPin.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalPin(
       conversationId: serializer.fromJson<String>(json['conversationId']),
@@ -5400,14 +6361,15 @@ class LocalPin extends DataClass implements Insertable<LocalPin> {
     };
   }
 
-  LocalPin copyWith(
-          {String? conversationId,
-          Value<String?> channelId = const Value.absent(),
-          String? targetKey,
-          String? pinnedByAccountId,
-          int? pinnedAt,
-          int? appliedOrder,
-          int? expiresAt}) =>
+  LocalPin copyWith({
+    String? conversationId,
+    Value<String?> channelId = const Value.absent(),
+    String? targetKey,
+    String? pinnedByAccountId,
+    int? pinnedAt,
+    int? appliedOrder,
+    int? expiresAt,
+  }) =>
       LocalPin(
         conversationId: conversationId ?? this.conversationId,
         channelId: channelId.present ? channelId.value : this.channelId,
@@ -5450,8 +6412,15 @@ class LocalPin extends DataClass implements Insertable<LocalPin> {
   }
 
   @override
-  int get hashCode => Object.hash(conversationId, channelId, targetKey,
-      pinnedByAccountId, pinnedAt, appliedOrder, expiresAt);
+  int get hashCode => Object.hash(
+        conversationId,
+        channelId,
+        targetKey,
+        pinnedByAccountId,
+        pinnedAt,
+        appliedOrder,
+        expiresAt,
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5520,15 +6489,16 @@ class LocalPinsCompanion extends UpdateCompanion<LocalPin> {
     });
   }
 
-  LocalPinsCompanion copyWith(
-      {Value<String>? conversationId,
-      Value<String?>? channelId,
-      Value<String>? targetKey,
-      Value<String>? pinnedByAccountId,
-      Value<int>? pinnedAt,
-      Value<int>? appliedOrder,
-      Value<int>? expiresAt,
-      Value<int>? rowid}) {
+  LocalPinsCompanion copyWith({
+    Value<String>? conversationId,
+    Value<String?>? channelId,
+    Value<String>? targetKey,
+    Value<String>? pinnedByAccountId,
+    Value<int>? pinnedAt,
+    Value<int>? appliedOrder,
+    Value<int>? expiresAt,
+    Value<int>? rowid,
+  }) {
     return LocalPinsCompanion(
       conversationId: conversationId ?? this.conversationId,
       channelId: channelId ?? this.channelId,
@@ -5593,50 +6563,84 @@ class $LocalPendingPinsTable extends LocalPendingPins
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalPendingPinsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _actionKeyMeta =
-      const VerificationMeta('actionKey');
+  static const VerificationMeta _actionKeyMeta = const VerificationMeta(
+    'actionKey',
+  );
   @override
   late final GeneratedColumn<String> actionKey = GeneratedColumn<String>(
-      'action_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+    'action_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _channelIdMeta =
-      const VerificationMeta('channelId');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _channelIdMeta = const VerificationMeta(
+    'channelId',
+  );
   @override
   late final GeneratedColumn<String> channelId = GeneratedColumn<String>(
-      'channel_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _targetKeyMeta =
-      const VerificationMeta('targetKey');
+    'channel_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _targetKeyMeta = const VerificationMeta(
+    'targetKey',
+  );
   @override
   late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
-      'target_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _accountIdMeta =
-      const VerificationMeta('accountId');
+    'target_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
   @override
   late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
-      'account_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
   @override
   late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
-      'pinned', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: true,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("pinned" IN (0, 1))'));
-  static const VerificationMeta _durationSecondsMeta =
-      const VerificationMeta('durationSeconds');
+    'pinned',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("pinned" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _durationSecondsMeta = const VerificationMeta(
+    'durationSeconds',
+  );
   @override
   late final GeneratedColumn<int> durationSeconds = GeneratedColumn<int>(
-      'duration_seconds', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'duration_seconds',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
         actionKey,
@@ -5645,7 +6649,7 @@ class $LocalPendingPinsTable extends LocalPendingPins
         targetKey,
         accountId,
         pinned,
-        durationSeconds
+        durationSeconds,
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -5653,51 +6657,69 @@ class $LocalPendingPinsTable extends LocalPendingPins
   String get actualTableName => $name;
   static const String $name = 'local_pending_pins';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalPendingPin> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalPendingPin> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('action_key')) {
-      context.handle(_actionKeyMeta,
-          actionKey.isAcceptableOrUnknown(data['action_key']!, _actionKeyMeta));
+      context.handle(
+        _actionKeyMeta,
+        actionKey.isAcceptableOrUnknown(data['action_key']!, _actionKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_actionKeyMeta);
     }
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('channel_id')) {
-      context.handle(_channelIdMeta,
-          channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta));
+      context.handle(
+        _channelIdMeta,
+        channelId.isAcceptableOrUnknown(data['channel_id']!, _channelIdMeta),
+      );
     }
     if (data.containsKey('target_key')) {
-      context.handle(_targetKeyMeta,
-          targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta));
+      context.handle(
+        _targetKeyMeta,
+        targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_targetKeyMeta);
     }
     if (data.containsKey('account_id')) {
-      context.handle(_accountIdMeta,
-          accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta));
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_accountIdMeta);
     }
     if (data.containsKey('pinned')) {
-      context.handle(_pinnedMeta,
-          pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta));
+      context.handle(
+        _pinnedMeta,
+        pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta),
+      );
     } else if (isInserting) {
       context.missing(_pinnedMeta);
     }
     if (data.containsKey('duration_seconds')) {
       context.handle(
+        _durationSecondsMeta,
+        durationSeconds.isAcceptableOrUnknown(
+          data['duration_seconds']!,
           _durationSecondsMeta,
-          durationSeconds.isAcceptableOrUnknown(
-              data['duration_seconds']!, _durationSecondsMeta));
+        ),
+      );
     }
     return context;
   }
@@ -5708,20 +6730,34 @@ class $LocalPendingPinsTable extends LocalPendingPins
   LocalPendingPin map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalPendingPin(
-      actionKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}action_key'])!,
+      actionKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}action_key'],
+      )!,
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      channelId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
-      targetKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}target_key'])!,
-      accountId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}account_id'])!,
-      pinned: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}pinned'])!,
-      durationSeconds: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}duration_seconds']),
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      channelId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}channel_id'],
+      ),
+      targetKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_key'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_id'],
+      )!,
+      pinned: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}pinned'],
+      )!,
+      durationSeconds: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}duration_seconds'],
+      ),
     );
   }
 
@@ -5739,14 +6775,15 @@ class LocalPendingPin extends DataClass implements Insertable<LocalPendingPin> {
   final String accountId;
   final bool pinned;
   final int? durationSeconds;
-  const LocalPendingPin(
-      {required this.actionKey,
-      required this.conversationId,
-      this.channelId,
-      required this.targetKey,
-      required this.accountId,
-      required this.pinned,
-      this.durationSeconds});
+  const LocalPendingPin({
+    required this.actionKey,
+    required this.conversationId,
+    this.channelId,
+    required this.targetKey,
+    required this.accountId,
+    required this.pinned,
+    this.durationSeconds,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -5780,8 +6817,10 @@ class LocalPendingPin extends DataClass implements Insertable<LocalPendingPin> {
     );
   }
 
-  factory LocalPendingPin.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalPendingPin.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalPendingPin(
       actionKey: serializer.fromJson<String>(json['actionKey']),
@@ -5807,14 +6846,15 @@ class LocalPendingPin extends DataClass implements Insertable<LocalPendingPin> {
     };
   }
 
-  LocalPendingPin copyWith(
-          {String? actionKey,
-          String? conversationId,
-          Value<String?> channelId = const Value.absent(),
-          String? targetKey,
-          String? accountId,
-          bool? pinned,
-          Value<int?> durationSeconds = const Value.absent()}) =>
+  LocalPendingPin copyWith({
+    String? actionKey,
+    String? conversationId,
+    Value<String?> channelId = const Value.absent(),
+    String? targetKey,
+    String? accountId,
+    bool? pinned,
+    Value<int?> durationSeconds = const Value.absent(),
+  }) =>
       LocalPendingPin(
         actionKey: actionKey ?? this.actionKey,
         conversationId: conversationId ?? this.conversationId,
@@ -5857,8 +6897,15 @@ class LocalPendingPin extends DataClass implements Insertable<LocalPendingPin> {
   }
 
   @override
-  int get hashCode => Object.hash(actionKey, conversationId, channelId,
-      targetKey, accountId, pinned, durationSeconds);
+  int get hashCode => Object.hash(
+        actionKey,
+        conversationId,
+        channelId,
+        targetKey,
+        accountId,
+        pinned,
+        durationSeconds,
+      );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5927,15 +6974,16 @@ class LocalPendingPinsCompanion extends UpdateCompanion<LocalPendingPin> {
     });
   }
 
-  LocalPendingPinsCompanion copyWith(
-      {Value<String>? actionKey,
-      Value<String>? conversationId,
-      Value<String?>? channelId,
-      Value<String>? targetKey,
-      Value<String>? accountId,
-      Value<bool>? pinned,
-      Value<int?>? durationSeconds,
-      Value<int>? rowid}) {
+  LocalPendingPinsCompanion copyWith({
+    Value<String>? actionKey,
+    Value<String>? conversationId,
+    Value<String?>? channelId,
+    Value<String>? targetKey,
+    Value<String>? accountId,
+    Value<bool>? pinned,
+    Value<int?>? durationSeconds,
+    Value<int>? rowid,
+  }) {
     return LocalPendingPinsCompanion(
       actionKey: actionKey ?? this.actionKey,
       conversationId: conversationId ?? this.conversationId,
@@ -6000,18 +7048,28 @@ class $LocalStarredTable extends LocalStarred
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalStarredTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _messageKeyMeta =
-      const VerificationMeta('messageKey');
+  static const VerificationMeta _messageKeyMeta = const VerificationMeta(
+    'messageKey',
+  );
   @override
   late final GeneratedColumn<String> messageKey = GeneratedColumn<String>(
-      'message_key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _starredAtMeta =
-      const VerificationMeta('starredAt');
+    'message_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _starredAtMeta = const VerificationMeta(
+    'starredAt',
+  );
   @override
   late final GeneratedColumn<int> starredAt = GeneratedColumn<int>(
-      'starred_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'starred_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [messageKey, starredAt];
   @override
@@ -6020,21 +7078,25 @@ class $LocalStarredTable extends LocalStarred
   String get actualTableName => $name;
   static const String $name = 'local_starred';
   @override
-  VerificationContext validateIntegrity(Insertable<LocalStarredData> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<LocalStarredData> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('message_key')) {
       context.handle(
-          _messageKeyMeta,
-          messageKey.isAcceptableOrUnknown(
-              data['message_key']!, _messageKeyMeta));
+        _messageKeyMeta,
+        messageKey.isAcceptableOrUnknown(data['message_key']!, _messageKeyMeta),
+      );
     } else if (isInserting) {
       context.missing(_messageKeyMeta);
     }
     if (data.containsKey('starred_at')) {
-      context.handle(_starredAtMeta,
-          starredAt.isAcceptableOrUnknown(data['starred_at']!, _starredAtMeta));
+      context.handle(
+        _starredAtMeta,
+        starredAt.isAcceptableOrUnknown(data['starred_at']!, _starredAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_starredAtMeta);
     }
@@ -6047,10 +7109,14 @@ class $LocalStarredTable extends LocalStarred
   LocalStarredData map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalStarredData(
-      messageKey: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}message_key'])!,
-      starredAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}starred_at'])!,
+      messageKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}message_key'],
+      )!,
+      starredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}starred_at'],
+      )!,
     );
   }
 
@@ -6080,8 +7146,10 @@ class LocalStarredData extends DataClass
     );
   }
 
-  factory LocalStarredData.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalStarredData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalStarredData(
       messageKey: serializer.fromJson<String>(json['messageKey']),
@@ -6156,8 +7224,11 @@ class LocalStarredCompanion extends UpdateCompanion<LocalStarredData> {
     });
   }
 
-  LocalStarredCompanion copyWith(
-      {Value<String>? messageKey, Value<int>? starredAt, Value<int>? rowid}) {
+  LocalStarredCompanion copyWith({
+    Value<String>? messageKey,
+    Value<int>? starredAt,
+    Value<int>? rowid,
+  }) {
     return LocalStarredCompanion(
       messageKey: messageKey ?? this.messageKey,
       starredAt: starredAt ?? this.starredAt,
@@ -6197,24 +7268,39 @@ class $LocalConversationPrefsTable extends LocalConversationPrefs
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $LocalConversationPrefsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _conversationIdMeta =
-      const VerificationMeta('conversationId');
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
   @override
   late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-      'conversation_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _archivedAtMeta =
-      const VerificationMeta('archivedAt');
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _archivedAtMeta = const VerificationMeta(
+    'archivedAt',
+  );
   @override
   late final GeneratedColumn<int> archivedAt = GeneratedColumn<int>(
-      'archived_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _pinnedAtMeta =
-      const VerificationMeta('pinnedAt');
+    'archived_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _pinnedAtMeta = const VerificationMeta(
+    'pinnedAt',
+  );
   @override
   late final GeneratedColumn<int> pinnedAt = GeneratedColumn<int>(
-      'pinned_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'pinned_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [conversationId, archivedAt, pinnedAt];
   @override
@@ -6224,27 +7310,33 @@ class $LocalConversationPrefsTable extends LocalConversationPrefs
   static const String $name = 'local_conversation_prefs';
   @override
   VerificationContext validateIntegrity(
-      Insertable<LocalConversationPref> instance,
-      {bool isInserting = false}) {
+    Insertable<LocalConversationPref> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('conversation_id')) {
       context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
           _conversationIdMeta,
-          conversationId.isAcceptableOrUnknown(
-              data['conversation_id']!, _conversationIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_conversationIdMeta);
     }
     if (data.containsKey('archived_at')) {
       context.handle(
-          _archivedAtMeta,
-          archivedAt.isAcceptableOrUnknown(
-              data['archived_at']!, _archivedAtMeta));
+        _archivedAtMeta,
+        archivedAt.isAcceptableOrUnknown(data['archived_at']!, _archivedAtMeta),
+      );
     }
     if (data.containsKey('pinned_at')) {
-      context.handle(_pinnedAtMeta,
-          pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta));
+      context.handle(
+        _pinnedAtMeta,
+        pinnedAt.isAcceptableOrUnknown(data['pinned_at']!, _pinnedAtMeta),
+      );
     }
     return context;
   }
@@ -6256,11 +7348,17 @@ class $LocalConversationPrefsTable extends LocalConversationPrefs
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LocalConversationPref(
       conversationId: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}conversation_id'])!,
-      archivedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}archived_at']),
-      pinnedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}pinned_at']),
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      archivedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}archived_at'],
+      ),
+      pinnedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}pinned_at'],
+      ),
     );
   }
 
@@ -6275,8 +7373,11 @@ class LocalConversationPref extends DataClass
   final String conversationId;
   final int? archivedAt;
   final int? pinnedAt;
-  const LocalConversationPref(
-      {required this.conversationId, this.archivedAt, this.pinnedAt});
+  const LocalConversationPref({
+    required this.conversationId,
+    this.archivedAt,
+    this.pinnedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -6302,8 +7403,10 @@ class LocalConversationPref extends DataClass
     );
   }
 
-  factory LocalConversationPref.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory LocalConversationPref.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LocalConversationPref(
       conversationId: serializer.fromJson<String>(json['conversationId']),
@@ -6321,17 +7424,19 @@ class LocalConversationPref extends DataClass
     };
   }
 
-  LocalConversationPref copyWith(
-          {String? conversationId,
-          Value<int?> archivedAt = const Value.absent(),
-          Value<int?> pinnedAt = const Value.absent()}) =>
+  LocalConversationPref copyWith({
+    String? conversationId,
+    Value<int?> archivedAt = const Value.absent(),
+    Value<int?> pinnedAt = const Value.absent(),
+  }) =>
       LocalConversationPref(
         conversationId: conversationId ?? this.conversationId,
         archivedAt: archivedAt.present ? archivedAt.value : this.archivedAt,
         pinnedAt: pinnedAt.present ? pinnedAt.value : this.pinnedAt,
       );
   LocalConversationPref copyWithCompanion(
-      LocalConversationPrefsCompanion data) {
+    LocalConversationPrefsCompanion data,
+  ) {
     return LocalConversationPref(
       conversationId: data.conversationId.present
           ? data.conversationId.value
@@ -6395,11 +7500,12 @@ class LocalConversationPrefsCompanion
     });
   }
 
-  LocalConversationPrefsCompanion copyWith(
-      {Value<String>? conversationId,
-      Value<int?>? archivedAt,
-      Value<int?>? pinnedAt,
-      Value<int>? rowid}) {
+  LocalConversationPrefsCompanion copyWith({
+    Value<String>? conversationId,
+    Value<int?>? archivedAt,
+    Value<int?>? pinnedAt,
+    Value<int>? rowid,
+  }) {
     return LocalConversationPrefsCompanion(
       conversationId: conversationId ?? this.conversationId,
       archivedAt: archivedAt ?? this.archivedAt,
@@ -6447,8 +7553,9 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
       $LocalConversationsTable(this);
   late final $LocalCiphertextEnvelopesTable localCiphertextEnvelopes =
       $LocalCiphertextEnvelopesTable(this);
-  late final $LocalSyncStatesTable localSyncStates =
-      $LocalSyncStatesTable(this);
+  late final $LocalSyncStatesTable localSyncStates = $LocalSyncStatesTable(
+    this,
+  );
   late final $LocalOutboxEntriesTable localOutboxEntries =
       $LocalOutboxEntriesTable(this);
   late final $LocalCryptoStatesTable localCryptoStates =
@@ -6469,21 +7576,28 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
   late final $LocalConversationMutesTable localConversationMutes =
       $LocalConversationMutesTable(this);
   late final $LocalPinsTable localPins = $LocalPinsTable(this);
-  late final $LocalPendingPinsTable localPendingPins =
-      $LocalPendingPinsTable(this);
+  late final $LocalPendingPinsTable localPendingPins = $LocalPendingPinsTable(
+    this,
+  );
   late final $LocalStarredTable localStarred = $LocalStarredTable(this);
   late final $LocalConversationPrefsTable localConversationPrefs =
       $LocalConversationPrefsTable(this);
   late final Index localCiphertextEnvelopesConversationPosition = Index(
-      'local_ciphertext_envelopes_conversation_position',
-      'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)');
+    'local_ciphertext_envelopes_conversation_position',
+    'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_conversation_position ON local_ciphertext_envelopes (conversation_id, position)',
+  );
   late final Index localCiphertextEnvelopesExpiresAt = Index(
-      'local_ciphertext_envelopes_expires_at',
-      'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_expires_at ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL');
-  late final Index localMessagesExpiresAt = Index('local_messages_expires_at',
-      'CREATE INDEX IF NOT EXISTS local_messages_expires_at ON local_messages (expires_at) WHERE expires_at IS NOT NULL');
-  late final Index localMessagesSearchId = Index('local_messages_search_id',
-      'CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id ON local_messages (search_id)');
+    'local_ciphertext_envelopes_expires_at',
+    'CREATE INDEX IF NOT EXISTS local_ciphertext_envelopes_expires_at ON local_ciphertext_envelopes (expires_at) WHERE expires_at IS NOT NULL',
+  );
+  late final Index localMessagesExpiresAt = Index(
+    'local_messages_expires_at',
+    'CREATE INDEX IF NOT EXISTS local_messages_expires_at ON local_messages (expires_at) WHERE expires_at IS NOT NULL',
+  );
+  late final Index localMessagesSearchId = Index(
+    'local_messages_search_id',
+    'CREATE UNIQUE INDEX IF NOT EXISTS local_messages_search_id ON local_messages (search_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6511,7 +7625,7 @@ abstract class _$EncryptedLocalDatabase extends GeneratedDatabase {
         localCiphertextEnvelopesConversationPosition,
         localCiphertextEnvelopesExpiresAt,
         localMessagesExpiresAt,
-        localMessagesSearchId
+        localMessagesSearchId,
       ];
 }
 
@@ -6536,10 +7650,14 @@ class $$LocalAccountsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnFilters(column));
+        column: $table.singleton,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get sessionJson => $composableBuilder(
-      column: $table.sessionJson, builder: (column) => ColumnFilters(column));
+        column: $table.sessionJson,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalAccountsTableOrderingComposer
@@ -6552,10 +7670,14 @@ class $$LocalAccountsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnOrderings(column));
+        column: $table.singleton,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get sessionJson => $composableBuilder(
-      column: $table.sessionJson, builder: (column) => ColumnOrderings(column));
+        column: $table.sessionJson,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalAccountsTableAnnotationComposer
@@ -6571,7 +7693,9 @@ class $$LocalAccountsTableAnnotationComposer
       $composableBuilder(column: $table.singleton, builder: (column) => column);
 
   GeneratedColumn<String> get sessionJson => $composableBuilder(
-      column: $table.sessionJson, builder: (column) => column);
+        column: $table.sessionJson,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalAccountsTableTableManager extends RootTableManager<
@@ -6586,46 +7710,51 @@ class $$LocalAccountsTableTableManager extends RootTableManager<
     (
       LocalAccount,
       BaseReferences<_$EncryptedLocalDatabase, $LocalAccountsTable,
-          LocalAccount>
+          LocalAccount>,
     ),
     LocalAccount,
     PrefetchHooks Function()> {
   $$LocalAccountsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalAccountsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalAccountsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalAccountsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalAccountsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            Value<String?> sessionJson = const Value.absent(),
-          }) =>
-              LocalAccountsCompanion(
-            singleton: singleton,
-            sessionJson: sessionJson,
-          ),
-          createCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            Value<String?> sessionJson = const Value.absent(),
-          }) =>
-              LocalAccountsCompanion.insert(
-            singleton: singleton,
-            sessionJson: sessionJson,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalAccountsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalAccountsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalAccountsTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalAccountsTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              Value<String?> sessionJson = const Value.absent(),
+            }) =>
+                LocalAccountsCompanion(
+              singleton: singleton,
+              sessionJson: sessionJson,
+            ),
+            createCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              Value<String?> sessionJson = const Value.absent(),
+            }) =>
+                LocalAccountsCompanion.insert(
+              singleton: singleton,
+              sessionJson: sessionJson,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalAccountsTable, LocalAccount>(table),
                     BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalAccountsTable, LocalAccount>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        $LocalAccountsTable, LocalAccount>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalAccountsTableProcessedTableManager = ProcessedTableManager<
@@ -6640,7 +7769,7 @@ typedef $$LocalAccountsTableProcessedTableManager = ProcessedTableManager<
     (
       LocalAccount,
       BaseReferences<_$EncryptedLocalDatabase, $LocalAccountsTable,
-          LocalAccount>
+          LocalAccount>,
     ),
     LocalAccount,
     PrefetchHooks Function()>;
@@ -6669,13 +7798,19 @@ class $$LocalConversationsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+        column: $table.id,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get position => $composableBuilder(
-      column: $table.position, builder: (column) => ColumnFilters(column));
+        column: $table.position,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalConversationsTableOrderingComposer
@@ -6688,13 +7823,19 @@ class $$LocalConversationsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+        column: $table.id,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get position => $composableBuilder(
-      column: $table.position, builder: (column) => ColumnOrderings(column));
+        column: $table.position,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalConversationsTableAnnotationComposer
@@ -6713,7 +7854,9 @@ class $$LocalConversationsTableAnnotationComposer
       $composableBuilder(column: $table.position, builder: (column) => column);
 
   GeneratedColumn<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => column);
+        column: $table.payloadJson,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalConversationsTableTableManager extends RootTableManager<
@@ -6728,58 +7871,67 @@ class $$LocalConversationsTableTableManager extends RootTableManager<
     (
       LocalConversation,
       BaseReferences<_$EncryptedLocalDatabase, $LocalConversationsTable,
-          LocalConversation>
+          LocalConversation>,
     ),
     LocalConversation,
     PrefetchHooks Function()> {
   $$LocalConversationsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalConversationsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalConversationsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalConversationsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalConversationsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<int> position = const Value.absent(),
-            Value<String> payloadJson = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationsCompanion(
-            id: id,
-            position: position,
-            payloadJson: payloadJson,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required int position,
-            required String payloadJson,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationsCompanion.insert(
-            id: id,
-            position: position,
-            payloadJson: payloadJson,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalConversationsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalConversationsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalConversationsTableOrderingComposer(
+                    $db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalConversationsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> id = const Value.absent(),
+              Value<int> position = const Value.absent(),
+              Value<String> payloadJson = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationsCompanion(
+              id: id,
+              position: position,
+              payloadJson: payloadJson,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String id,
+              required int position,
+              required String payloadJson,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationsCompanion.insert(
+              id: id,
+              position: position,
+              payloadJson: payloadJson,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalConversationsTable, LocalConversation>(
-                        table),
+                      table,
+                    ),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalConversationsTable,
-                        LocalConversation>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalConversation>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalConversationsTableProcessedTableManager = ProcessedTableManager<
@@ -6794,7 +7946,7 @@ typedef $$LocalConversationsTableProcessedTableManager = ProcessedTableManager<
     (
       LocalConversation,
       BaseReferences<_$EncryptedLocalDatabase, $LocalConversationsTable,
-          LocalConversation>
+          LocalConversation>,
     ),
     LocalConversation,
     PrefetchHooks Function()>;
@@ -6827,20 +7979,29 @@ class $$LocalCiphertextEnvelopesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+        column: $table.id,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get position => $composableBuilder(
-      column: $table.position, builder: (column) => ColumnFilters(column));
+        column: $table.position,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalCiphertextEnvelopesTableOrderingComposer
@@ -6853,20 +8014,29 @@ class $$LocalCiphertextEnvelopesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+        column: $table.id,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get position => $composableBuilder(
-      column: $table.position, builder: (column) => ColumnOrderings(column));
+        column: $table.position,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalCiphertextEnvelopesTableAnnotationComposer
@@ -6882,13 +8052,17 @@ class $$LocalCiphertextEnvelopesTableAnnotationComposer
       $composableBuilder(column: $table.id, builder: (column) => column);
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get position =>
       $composableBuilder(column: $table.position, builder: (column) => column);
 
   GeneratedColumn<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => column);
+        column: $table.payloadJson,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get expiresAt =>
       $composableBuilder(column: $table.expiresAt, builder: (column) => column);
@@ -6906,68 +8080,79 @@ class $$LocalCiphertextEnvelopesTableTableManager extends RootTableManager<
     (
       LocalCiphertextEnvelope,
       BaseReferences<_$EncryptedLocalDatabase, $LocalCiphertextEnvelopesTable,
-          LocalCiphertextEnvelope>
+          LocalCiphertextEnvelope>,
     ),
     LocalCiphertextEnvelope,
     PrefetchHooks Function()> {
   $$LocalCiphertextEnvelopesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalCiphertextEnvelopesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalCiphertextEnvelopesTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalCiphertextEnvelopesTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalCiphertextEnvelopesTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<int> position = const Value.absent(),
-            Value<String> payloadJson = const Value.absent(),
-            Value<int?> expiresAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalCiphertextEnvelopesCompanion(
-            id: id,
-            conversationId: conversationId,
-            position: position,
-            payloadJson: payloadJson,
-            expiresAt: expiresAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String conversationId,
-            required int position,
-            required String payloadJson,
-            Value<int?> expiresAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalCiphertextEnvelopesCompanion.insert(
-            id: id,
-            conversationId: conversationId,
-            position: position,
-            payloadJson: payloadJson,
-            expiresAt: expiresAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalCiphertextEnvelopesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalCiphertextEnvelopesTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalCiphertextEnvelopesTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalCiphertextEnvelopesTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> id = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<int> position = const Value.absent(),
+              Value<String> payloadJson = const Value.absent(),
+              Value<int?> expiresAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalCiphertextEnvelopesCompanion(
+              id: id,
+              conversationId: conversationId,
+              position: position,
+              payloadJson: payloadJson,
+              expiresAt: expiresAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String id,
+              required String conversationId,
+              required int position,
+              required String payloadJson,
+              Value<int?> expiresAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalCiphertextEnvelopesCompanion.insert(
+              id: id,
+              conversationId: conversationId,
+              position: position,
+              payloadJson: payloadJson,
+              expiresAt: expiresAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalCiphertextEnvelopesTable,
                         LocalCiphertextEnvelope>(table),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalCiphertextEnvelopesTable,
-                        LocalCiphertextEnvelope>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalCiphertextEnvelope>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalCiphertextEnvelopesTableProcessedTableManager
@@ -6983,7 +8168,7 @@ typedef $$LocalCiphertextEnvelopesTableProcessedTableManager
         (
           LocalCiphertextEnvelope,
           BaseReferences<_$EncryptedLocalDatabase,
-              $LocalCiphertextEnvelopesTable, LocalCiphertextEnvelope>
+              $LocalCiphertextEnvelopesTable, LocalCiphertextEnvelope>,
         ),
         LocalCiphertextEnvelope,
         PrefetchHooks Function()>;
@@ -7008,10 +8193,14 @@ class $$LocalSyncStatesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnFilters(column));
+        column: $table.singleton,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get cursor => $composableBuilder(
-      column: $table.cursor, builder: (column) => ColumnFilters(column));
+        column: $table.cursor,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalSyncStatesTableOrderingComposer
@@ -7024,10 +8213,14 @@ class $$LocalSyncStatesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnOrderings(column));
+        column: $table.singleton,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get cursor => $composableBuilder(
-      column: $table.cursor, builder: (column) => ColumnOrderings(column));
+        column: $table.cursor,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalSyncStatesTableAnnotationComposer
@@ -7058,46 +8251,52 @@ class $$LocalSyncStatesTableTableManager extends RootTableManager<
     (
       LocalSyncState,
       BaseReferences<_$EncryptedLocalDatabase, $LocalSyncStatesTable,
-          LocalSyncState>
+          LocalSyncState>,
     ),
     LocalSyncState,
     PrefetchHooks Function()> {
   $$LocalSyncStatesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalSyncStatesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalSyncStatesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalSyncStatesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalSyncStatesTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            Value<int> cursor = const Value.absent(),
-          }) =>
-              LocalSyncStatesCompanion(
-            singleton: singleton,
-            cursor: cursor,
-          ),
-          createCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            Value<int> cursor = const Value.absent(),
-          }) =>
-              LocalSyncStatesCompanion.insert(
-            singleton: singleton,
-            cursor: cursor,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalSyncStatesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalSyncStatesTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalSyncStatesTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalSyncStatesTableAnnotationComposer(
+                    $db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              Value<int> cursor = const Value.absent(),
+            }) =>
+                LocalSyncStatesCompanion(
+              singleton: singleton,
+              cursor: cursor,
+            ),
+            createCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              Value<int> cursor = const Value.absent(),
+            }) =>
+                LocalSyncStatesCompanion.insert(
+              singleton: singleton,
+              cursor: cursor,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalSyncStatesTable, LocalSyncState>(table),
                     BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalSyncStatesTable, LocalSyncState>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        $LocalSyncStatesTable, LocalSyncState>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalSyncStatesTableProcessedTableManager = ProcessedTableManager<
@@ -7112,7 +8311,7 @@ typedef $$LocalSyncStatesTableProcessedTableManager = ProcessedTableManager<
     (
       LocalSyncState,
       BaseReferences<_$EncryptedLocalDatabase, $LocalSyncStatesTable,
-          LocalSyncState>
+          LocalSyncState>,
     ),
     LocalSyncState,
     PrefetchHooks Function()>;
@@ -7151,30 +8350,44 @@ class $$LocalOutboxEntriesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey,
-      builder: (column) => ColumnFilters(column));
+        column: $table.idempotencyKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get queuedAt => $composableBuilder(
-      column: $table.queuedAt, builder: (column) => ColumnFilters(column));
+        column: $table.queuedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount, builder: (column) => ColumnFilters(column));
+        column: $table.attemptCount,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt, builder: (column) => ColumnFilters(column));
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get failureClass => $composableBuilder(
-      column: $table.failureClass, builder: (column) => ColumnFilters(column));
+        column: $table.failureClass,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<bool> get terminal => $composableBuilder(
-      column: $table.terminal, builder: (column) => ColumnFilters(column));
+        column: $table.terminal,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalOutboxEntriesTableOrderingComposer
@@ -7187,33 +8400,44 @@ class $$LocalOutboxEntriesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.idempotencyKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get queuedAt => $composableBuilder(
-      column: $table.queuedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.queuedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+        column: $table.payloadJson,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.attemptCount,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get failureClass => $composableBuilder(
-      column: $table.failureClass,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.failureClass,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<bool> get terminal => $composableBuilder(
-      column: $table.terminal, builder: (column) => ColumnOrderings(column));
+        column: $table.terminal,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalOutboxEntriesTableAnnotationComposer
@@ -7226,25 +8450,37 @@ class $$LocalOutboxEntriesTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey, builder: (column) => column);
+        column: $table.idempotencyKey,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get queuedAt =>
       $composableBuilder(column: $table.queuedAt, builder: (column) => column);
 
   GeneratedColumn<String> get payloadJson => $composableBuilder(
-      column: $table.payloadJson, builder: (column) => column);
+        column: $table.payloadJson,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount, builder: (column) => column);
+        column: $table.attemptCount,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt, builder: (column) => column);
+        column: $table.nextAttemptAt,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get failureClass => $composableBuilder(
-      column: $table.failureClass, builder: (column) => column);
+        column: $table.failureClass,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<bool> get terminal =>
       $composableBuilder(column: $table.terminal, builder: (column) => column);
@@ -7262,78 +8498,87 @@ class $$LocalOutboxEntriesTableTableManager extends RootTableManager<
     (
       LocalOutboxEntry,
       BaseReferences<_$EncryptedLocalDatabase, $LocalOutboxEntriesTable,
-          LocalOutboxEntry>
+          LocalOutboxEntry>,
     ),
     LocalOutboxEntry,
     PrefetchHooks Function()> {
   $$LocalOutboxEntriesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalOutboxEntriesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalOutboxEntriesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalOutboxEntriesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalOutboxEntriesTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> idempotencyKey = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<int> queuedAt = const Value.absent(),
-            Value<String> payloadJson = const Value.absent(),
-            Value<int> attemptCount = const Value.absent(),
-            Value<int?> nextAttemptAt = const Value.absent(),
-            Value<String?> failureClass = const Value.absent(),
-            Value<bool> terminal = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalOutboxEntriesCompanion(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            queuedAt: queuedAt,
-            payloadJson: payloadJson,
-            attemptCount: attemptCount,
-            nextAttemptAt: nextAttemptAt,
-            failureClass: failureClass,
-            terminal: terminal,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String idempotencyKey,
-            required String conversationId,
-            required int queuedAt,
-            required String payloadJson,
-            Value<int> attemptCount = const Value.absent(),
-            Value<int?> nextAttemptAt = const Value.absent(),
-            Value<String?> failureClass = const Value.absent(),
-            Value<bool> terminal = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalOutboxEntriesCompanion.insert(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            queuedAt: queuedAt,
-            payloadJson: payloadJson,
-            attemptCount: attemptCount,
-            nextAttemptAt: nextAttemptAt,
-            failureClass: failureClass,
-            terminal: terminal,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalOutboxEntriesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalOutboxEntriesTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalOutboxEntriesTableOrderingComposer(
+                    $db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalOutboxEntriesTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> idempotencyKey = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<int> queuedAt = const Value.absent(),
+              Value<String> payloadJson = const Value.absent(),
+              Value<int> attemptCount = const Value.absent(),
+              Value<int?> nextAttemptAt = const Value.absent(),
+              Value<String?> failureClass = const Value.absent(),
+              Value<bool> terminal = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalOutboxEntriesCompanion(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              queuedAt: queuedAt,
+              payloadJson: payloadJson,
+              attemptCount: attemptCount,
+              nextAttemptAt: nextAttemptAt,
+              failureClass: failureClass,
+              terminal: terminal,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String idempotencyKey,
+              required String conversationId,
+              required int queuedAt,
+              required String payloadJson,
+              Value<int> attemptCount = const Value.absent(),
+              Value<int?> nextAttemptAt = const Value.absent(),
+              Value<String?> failureClass = const Value.absent(),
+              Value<bool> terminal = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalOutboxEntriesCompanion.insert(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              queuedAt: queuedAt,
+              payloadJson: payloadJson,
+              attemptCount: attemptCount,
+              nextAttemptAt: nextAttemptAt,
+              failureClass: failureClass,
+              terminal: terminal,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalOutboxEntriesTable, LocalOutboxEntry>(
-                        table),
+                      table,
+                    ),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalOutboxEntriesTable,
-                        LocalOutboxEntry>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalOutboxEntry>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalOutboxEntriesTableProcessedTableManager = ProcessedTableManager<
@@ -7348,7 +8593,7 @@ typedef $$LocalOutboxEntriesTableProcessedTableManager = ProcessedTableManager<
     (
       LocalOutboxEntry,
       BaseReferences<_$EncryptedLocalDatabase, $LocalOutboxEntriesTable,
-          LocalOutboxEntry>
+          LocalOutboxEntry>,
     ),
     LocalOutboxEntry,
     PrefetchHooks Function()>;
@@ -7377,16 +8622,24 @@ class $$LocalCryptoStatesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnFilters(column));
+        column: $table.singleton,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get counter => $composableBuilder(
-      column: $table.counter, builder: (column) => ColumnFilters(column));
+        column: $table.counter,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get stateKey => $composableBuilder(
-      column: $table.stateKey, builder: (column) => ColumnFilters(column));
+        column: $table.stateKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get sealedState => $composableBuilder(
-      column: $table.sealedState, builder: (column) => ColumnFilters(column));
+        column: $table.sealedState,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalCryptoStatesTableOrderingComposer
@@ -7399,16 +8652,24 @@ class $$LocalCryptoStatesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<int> get singleton => $composableBuilder(
-      column: $table.singleton, builder: (column) => ColumnOrderings(column));
+        column: $table.singleton,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get counter => $composableBuilder(
-      column: $table.counter, builder: (column) => ColumnOrderings(column));
+        column: $table.counter,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get stateKey => $composableBuilder(
-      column: $table.stateKey, builder: (column) => ColumnOrderings(column));
+        column: $table.stateKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get sealedState => $composableBuilder(
-      column: $table.sealedState, builder: (column) => ColumnOrderings(column));
+        column: $table.sealedState,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalCryptoStatesTableAnnotationComposer
@@ -7430,7 +8691,9 @@ class $$LocalCryptoStatesTableAnnotationComposer
       $composableBuilder(column: $table.stateKey, builder: (column) => column);
 
   GeneratedColumn<Uint8List> get sealedState => $composableBuilder(
-      column: $table.sealedState, builder: (column) => column);
+        column: $table.sealedState,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalCryptoStatesTableTableManager extends RootTableManager<
@@ -7445,56 +8708,66 @@ class $$LocalCryptoStatesTableTableManager extends RootTableManager<
     (
       LocalCryptoState,
       BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoStatesTable,
-          LocalCryptoState>
+          LocalCryptoState>,
     ),
     LocalCryptoState,
     PrefetchHooks Function()> {
   $$LocalCryptoStatesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalCryptoStatesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalCryptoStatesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalCryptoStatesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalCryptoStatesTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            Value<int> counter = const Value.absent(),
-            Value<Uint8List> stateKey = const Value.absent(),
-            Value<Uint8List> sealedState = const Value.absent(),
-          }) =>
-              LocalCryptoStatesCompanion(
-            singleton: singleton,
-            counter: counter,
-            stateKey: stateKey,
-            sealedState: sealedState,
-          ),
-          createCompanionCallback: ({
-            Value<int> singleton = const Value.absent(),
-            required int counter,
-            required Uint8List stateKey,
-            required Uint8List sealedState,
-          }) =>
-              LocalCryptoStatesCompanion.insert(
-            singleton: singleton,
-            counter: counter,
-            stateKey: stateKey,
-            sealedState: sealedState,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalCryptoStatesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalCryptoStatesTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalCryptoStatesTableOrderingComposer(
+                    $db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalCryptoStatesTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              Value<int> counter = const Value.absent(),
+              Value<Uint8List> stateKey = const Value.absent(),
+              Value<Uint8List> sealedState = const Value.absent(),
+            }) =>
+                LocalCryptoStatesCompanion(
+              singleton: singleton,
+              counter: counter,
+              stateKey: stateKey,
+              sealedState: sealedState,
+            ),
+            createCompanionCallback: ({
+              Value<int> singleton = const Value.absent(),
+              required int counter,
+              required Uint8List stateKey,
+              required Uint8List sealedState,
+            }) =>
+                LocalCryptoStatesCompanion.insert(
+              singleton: singleton,
+              counter: counter,
+              stateKey: stateKey,
+              sealedState: sealedState,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalCryptoStatesTable, LocalCryptoState>(
                         table),
-                    BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalCryptoStatesTable, LocalCryptoState>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                    BaseReferences<
+                        _$EncryptedLocalDatabase,
+                        $LocalCryptoStatesTable,
+                        LocalCryptoState>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalCryptoStatesTableProcessedTableManager = ProcessedTableManager<
@@ -7509,7 +8782,7 @@ typedef $$LocalCryptoStatesTableProcessedTableManager = ProcessedTableManager<
     (
       LocalCryptoState,
       BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoStatesTable,
-          LocalCryptoState>
+          LocalCryptoState>,
     ),
     LocalCryptoState,
     PrefetchHooks Function()>;
@@ -7540,16 +8813,24 @@ class $$LocalCryptoRecordsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<int> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnFilters(column));
+        column: $table.kind,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get recordId => $composableBuilder(
-      column: $table.recordId, builder: (column) => ColumnFilters(column));
+        column: $table.recordId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get generation => $composableBuilder(
-      column: $table.generation, builder: (column) => ColumnFilters(column));
+        column: $table.generation,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get sealed => $composableBuilder(
-      column: $table.sealed, builder: (column) => ColumnFilters(column));
+        column: $table.sealed,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalCryptoRecordsTableOrderingComposer
@@ -7562,16 +8843,24 @@ class $$LocalCryptoRecordsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<int> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnOrderings(column));
+        column: $table.kind,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get recordId => $composableBuilder(
-      column: $table.recordId, builder: (column) => ColumnOrderings(column));
+        column: $table.recordId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get generation => $composableBuilder(
-      column: $table.generation, builder: (column) => ColumnOrderings(column));
+        column: $table.generation,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get sealed => $composableBuilder(
-      column: $table.sealed, builder: (column) => ColumnOrderings(column));
+        column: $table.sealed,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalCryptoRecordsTableAnnotationComposer
@@ -7590,7 +8879,9 @@ class $$LocalCryptoRecordsTableAnnotationComposer
       $composableBuilder(column: $table.recordId, builder: (column) => column);
 
   GeneratedColumn<int> get generation => $composableBuilder(
-      column: $table.generation, builder: (column) => column);
+        column: $table.generation,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<Uint8List> get sealed =>
       $composableBuilder(column: $table.sealed, builder: (column) => column);
@@ -7608,62 +8899,71 @@ class $$LocalCryptoRecordsTableTableManager extends RootTableManager<
     (
       LocalCryptoRecord,
       BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable,
-          LocalCryptoRecord>
+          LocalCryptoRecord>,
     ),
     LocalCryptoRecord,
     PrefetchHooks Function()> {
   $$LocalCryptoRecordsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalCryptoRecordsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalCryptoRecordsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalCryptoRecordsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalCryptoRecordsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<int> kind = const Value.absent(),
-            Value<Uint8List> recordId = const Value.absent(),
-            Value<int> generation = const Value.absent(),
-            Value<Uint8List> sealed = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalCryptoRecordsCompanion(
-            kind: kind,
-            recordId: recordId,
-            generation: generation,
-            sealed: sealed,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required int kind,
-            required Uint8List recordId,
-            required int generation,
-            required Uint8List sealed,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalCryptoRecordsCompanion.insert(
-            kind: kind,
-            recordId: recordId,
-            generation: generation,
-            sealed: sealed,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalCryptoRecordsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalCryptoRecordsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalCryptoRecordsTableOrderingComposer(
+                    $db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalCryptoRecordsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<int> kind = const Value.absent(),
+              Value<Uint8List> recordId = const Value.absent(),
+              Value<int> generation = const Value.absent(),
+              Value<Uint8List> sealed = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalCryptoRecordsCompanion(
+              kind: kind,
+              recordId: recordId,
+              generation: generation,
+              sealed: sealed,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required int kind,
+              required Uint8List recordId,
+              required int generation,
+              required Uint8List sealed,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalCryptoRecordsCompanion.insert(
+              kind: kind,
+              recordId: recordId,
+              generation: generation,
+              sealed: sealed,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalCryptoRecordsTable, LocalCryptoRecord>(
-                        table),
+                      table,
+                    ),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalCryptoRecordsTable,
-                        LocalCryptoRecord>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalCryptoRecord>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalCryptoRecordsTableProcessedTableManager = ProcessedTableManager<
@@ -7678,7 +8978,7 @@ typedef $$LocalCryptoRecordsTableProcessedTableManager = ProcessedTableManager<
     (
       LocalCryptoRecord,
       BaseReferences<_$EncryptedLocalDatabase, $LocalCryptoRecordsTable,
-          LocalCryptoRecord>
+          LocalCryptoRecord>,
     ),
     LocalCryptoRecord,
     PrefetchHooks Function()>;
@@ -7705,10 +9005,14 @@ class $$LocalMetadataTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnFilters(column));
+        column: $table.name,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get value => $composableBuilder(
-      column: $table.value, builder: (column) => ColumnFilters(column));
+        column: $table.value,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalMetadataTableOrderingComposer
@@ -7721,10 +9025,14 @@ class $$LocalMetadataTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnOrderings(column));
+        column: $table.name,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get value => $composableBuilder(
-      column: $table.value, builder: (column) => ColumnOrderings(column));
+        column: $table.value,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalMetadataTableAnnotationComposer
@@ -7755,50 +9063,55 @@ class $$LocalMetadataTableTableManager extends RootTableManager<
     (
       LocalMetadataData,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMetadataTable,
-          LocalMetadataData>
+          LocalMetadataData>,
     ),
     LocalMetadataData,
     PrefetchHooks Function()> {
   $$LocalMetadataTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalMetadataTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalMetadataTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalMetadataTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalMetadataTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> name = const Value.absent(),
-            Value<String> value = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMetadataCompanion(
-            name: name,
-            value: value,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String name,
-            required String value,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMetadataCompanion.insert(
-            name: name,
-            value: value,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalMetadataTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalMetadataTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalMetadataTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalMetadataTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> name = const Value.absent(),
+              Value<String> value = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMetadataCompanion(
+              name: name,
+              value: value,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String name,
+              required String value,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMetadataCompanion.insert(
+              name: name,
+              value: value,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalMetadataTable, LocalMetadataData>(table),
                     BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalMetadataTable, LocalMetadataData>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        $LocalMetadataTable, LocalMetadataData>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalMetadataTableProcessedTableManager = ProcessedTableManager<
@@ -7813,7 +9126,7 @@ typedef $$LocalMetadataTableProcessedTableManager = ProcessedTableManager<
     (
       LocalMetadataData,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMetadataTable,
-          LocalMetadataData>
+          LocalMetadataData>,
     ),
     LocalMetadataData,
     PrefetchHooks Function()>;
@@ -7844,17 +9157,24 @@ class $$LocalMlsTransitionsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get messageId => $composableBuilder(
-      column: $table.messageId, builder: (column) => ColumnFilters(column));
+        column: $table.messageId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get cursor => $composableBuilder(
-      column: $table.cursor, builder: (column) => ColumnFilters(column));
+        column: $table.cursor,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get counter => $composableBuilder(
-      column: $table.counter, builder: (column) => ColumnFilters(column));
+        column: $table.counter,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalMlsTransitionsTableOrderingComposer
@@ -7867,17 +9187,24 @@ class $$LocalMlsTransitionsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get messageId => $composableBuilder(
-      column: $table.messageId, builder: (column) => ColumnOrderings(column));
+        column: $table.messageId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get cursor => $composableBuilder(
-      column: $table.cursor, builder: (column) => ColumnOrderings(column));
+        column: $table.cursor,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get counter => $composableBuilder(
-      column: $table.counter, builder: (column) => ColumnOrderings(column));
+        column: $table.counter,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalMlsTransitionsTableAnnotationComposer
@@ -7893,7 +9220,9 @@ class $$LocalMlsTransitionsTableAnnotationComposer
       $composableBuilder(column: $table.messageId, builder: (column) => column);
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get cursor =>
       $composableBuilder(column: $table.cursor, builder: (column) => column);
@@ -7914,63 +9243,74 @@ class $$LocalMlsTransitionsTableTableManager extends RootTableManager<
     (
       LocalMlsTransition,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMlsTransitionsTable,
-          LocalMlsTransition>
+          LocalMlsTransition>,
     ),
     LocalMlsTransition,
     PrefetchHooks Function()> {
   $$LocalMlsTransitionsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalMlsTransitionsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalMlsTransitionsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalMlsTransitionsTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalMlsTransitionsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> messageId = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<int> cursor = const Value.absent(),
-            Value<int> counter = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMlsTransitionsCompanion(
-            messageId: messageId,
-            conversationId: conversationId,
-            cursor: cursor,
-            counter: counter,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String messageId,
-            required String conversationId,
-            required int cursor,
-            required int counter,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMlsTransitionsCompanion.insert(
-            messageId: messageId,
-            conversationId: conversationId,
-            cursor: cursor,
-            counter: counter,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalMlsTransitionsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalMlsTransitionsTableFilterComposer(
+                    $db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalMlsTransitionsTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalMlsTransitionsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> messageId = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<int> cursor = const Value.absent(),
+              Value<int> counter = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMlsTransitionsCompanion(
+              messageId: messageId,
+              conversationId: conversationId,
+              cursor: cursor,
+              counter: counter,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String messageId,
+              required String conversationId,
+              required int cursor,
+              required int counter,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMlsTransitionsCompanion.insert(
+              messageId: messageId,
+              conversationId: conversationId,
+              cursor: cursor,
+              counter: counter,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalMlsTransitionsTable, LocalMlsTransition>(
-                        table),
+                      table,
+                    ),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalMlsTransitionsTable,
-                        LocalMlsTransition>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalMlsTransition>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalMlsTransitionsTableProcessedTableManager = ProcessedTableManager<
@@ -7985,7 +9325,7 @@ typedef $$LocalMlsTransitionsTableProcessedTableManager = ProcessedTableManager<
     (
       LocalMlsTransition,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMlsTransitionsTable,
-          LocalMlsTransition>
+          LocalMlsTransition>,
     ),
     LocalMlsTransition,
     PrefetchHooks Function()>;
@@ -8032,44 +9372,64 @@ class $$LocalMlsOutboxEntriesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey,
-      builder: (column) => ColumnFilters(column));
+        column: $table.idempotencyKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnFilters(column));
+        column: $table.kind,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get recipientDeviceId => $composableBuilder(
-      column: $table.recipientDeviceId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.recipientDeviceId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get revocationDeviceId => $composableBuilder(
-      column: $table.revocationDeviceId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.revocationDeviceId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get payload => $composableBuilder(
-      column: $table.payload, builder: (column) => ColumnFilters(column));
+        column: $table.payload,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get stateCounter => $composableBuilder(
-      column: $table.stateCounter, builder: (column) => ColumnFilters(column));
+        column: $table.stateCounter,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get queuedAt => $composableBuilder(
-      column: $table.queuedAt, builder: (column) => ColumnFilters(column));
+        column: $table.queuedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount, builder: (column) => ColumnFilters(column));
+        column: $table.attemptCount,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt, builder: (column) => ColumnFilters(column));
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get failureClass => $composableBuilder(
-      column: $table.failureClass, builder: (column) => ColumnFilters(column));
+        column: $table.failureClass,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<bool> get terminal => $composableBuilder(
-      column: $table.terminal, builder: (column) => ColumnFilters(column));
+        column: $table.terminal,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalMlsOutboxEntriesTableOrderingComposer
@@ -8082,48 +9442,64 @@ class $$LocalMlsOutboxEntriesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.idempotencyKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnOrderings(column));
+        column: $table.kind,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get recipientDeviceId => $composableBuilder(
-      column: $table.recipientDeviceId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.recipientDeviceId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get revocationDeviceId => $composableBuilder(
-      column: $table.revocationDeviceId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.revocationDeviceId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get payload => $composableBuilder(
-      column: $table.payload, builder: (column) => ColumnOrderings(column));
+        column: $table.payload,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get stateCounter => $composableBuilder(
-      column: $table.stateCounter,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.stateCounter,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get queuedAt => $composableBuilder(
-      column: $table.queuedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.queuedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.attemptCount,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get failureClass => $composableBuilder(
-      column: $table.failureClass,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.failureClass,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<bool> get terminal => $composableBuilder(
-      column: $table.terminal, builder: (column) => ColumnOrderings(column));
+        column: $table.terminal,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalMlsOutboxEntriesTableAnnotationComposer
@@ -8136,37 +9512,53 @@ class $$LocalMlsOutboxEntriesTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get idempotencyKey => $composableBuilder(
-      column: $table.idempotencyKey, builder: (column) => column);
+        column: $table.idempotencyKey,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get kind =>
       $composableBuilder(column: $table.kind, builder: (column) => column);
 
   GeneratedColumn<String> get recipientDeviceId => $composableBuilder(
-      column: $table.recipientDeviceId, builder: (column) => column);
+        column: $table.recipientDeviceId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get revocationDeviceId => $composableBuilder(
-      column: $table.revocationDeviceId, builder: (column) => column);
+        column: $table.revocationDeviceId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<Uint8List> get payload =>
       $composableBuilder(column: $table.payload, builder: (column) => column);
 
   GeneratedColumn<int> get stateCounter => $composableBuilder(
-      column: $table.stateCounter, builder: (column) => column);
+        column: $table.stateCounter,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get queuedAt =>
       $composableBuilder(column: $table.queuedAt, builder: (column) => column);
 
   GeneratedColumn<int> get attemptCount => $composableBuilder(
-      column: $table.attemptCount, builder: (column) => column);
+        column: $table.attemptCount,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get nextAttemptAt => $composableBuilder(
-      column: $table.nextAttemptAt, builder: (column) => column);
+        column: $table.nextAttemptAt,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get failureClass => $composableBuilder(
-      column: $table.failureClass, builder: (column) => column);
+        column: $table.failureClass,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<bool> get terminal =>
       $composableBuilder(column: $table.terminal, builder: (column) => column);
@@ -8184,96 +9576,109 @@ class $$LocalMlsOutboxEntriesTableTableManager extends RootTableManager<
     (
       LocalMlsOutboxEntry,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMlsOutboxEntriesTable,
-          LocalMlsOutboxEntry>
+          LocalMlsOutboxEntry>,
     ),
     LocalMlsOutboxEntry,
     PrefetchHooks Function()> {
   $$LocalMlsOutboxEntriesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalMlsOutboxEntriesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalMlsOutboxEntriesTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalMlsOutboxEntriesTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalMlsOutboxEntriesTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> idempotencyKey = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<String> kind = const Value.absent(),
-            Value<String?> recipientDeviceId = const Value.absent(),
-            Value<String?> revocationDeviceId = const Value.absent(),
-            Value<Uint8List> payload = const Value.absent(),
-            Value<int> stateCounter = const Value.absent(),
-            Value<int> queuedAt = const Value.absent(),
-            Value<int> attemptCount = const Value.absent(),
-            Value<int?> nextAttemptAt = const Value.absent(),
-            Value<String?> failureClass = const Value.absent(),
-            Value<bool> terminal = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMlsOutboxEntriesCompanion(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            kind: kind,
-            recipientDeviceId: recipientDeviceId,
-            revocationDeviceId: revocationDeviceId,
-            payload: payload,
-            stateCounter: stateCounter,
-            queuedAt: queuedAt,
-            attemptCount: attemptCount,
-            nextAttemptAt: nextAttemptAt,
-            failureClass: failureClass,
-            terminal: terminal,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String idempotencyKey,
-            required String conversationId,
-            required String kind,
-            Value<String?> recipientDeviceId = const Value.absent(),
-            Value<String?> revocationDeviceId = const Value.absent(),
-            required Uint8List payload,
-            required int stateCounter,
-            required int queuedAt,
-            Value<int> attemptCount = const Value.absent(),
-            Value<int?> nextAttemptAt = const Value.absent(),
-            Value<String?> failureClass = const Value.absent(),
-            Value<bool> terminal = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMlsOutboxEntriesCompanion.insert(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            kind: kind,
-            recipientDeviceId: recipientDeviceId,
-            revocationDeviceId: revocationDeviceId,
-            payload: payload,
-            stateCounter: stateCounter,
-            queuedAt: queuedAt,
-            attemptCount: attemptCount,
-            nextAttemptAt: nextAttemptAt,
-            failureClass: failureClass,
-            terminal: terminal,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalMlsOutboxEntriesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalMlsOutboxEntriesTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalMlsOutboxEntriesTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalMlsOutboxEntriesTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> idempotencyKey = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<String> kind = const Value.absent(),
+              Value<String?> recipientDeviceId = const Value.absent(),
+              Value<String?> revocationDeviceId = const Value.absent(),
+              Value<Uint8List> payload = const Value.absent(),
+              Value<int> stateCounter = const Value.absent(),
+              Value<int> queuedAt = const Value.absent(),
+              Value<int> attemptCount = const Value.absent(),
+              Value<int?> nextAttemptAt = const Value.absent(),
+              Value<String?> failureClass = const Value.absent(),
+              Value<bool> terminal = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMlsOutboxEntriesCompanion(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              kind: kind,
+              recipientDeviceId: recipientDeviceId,
+              revocationDeviceId: revocationDeviceId,
+              payload: payload,
+              stateCounter: stateCounter,
+              queuedAt: queuedAt,
+              attemptCount: attemptCount,
+              nextAttemptAt: nextAttemptAt,
+              failureClass: failureClass,
+              terminal: terminal,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String idempotencyKey,
+              required String conversationId,
+              required String kind,
+              Value<String?> recipientDeviceId = const Value.absent(),
+              Value<String?> revocationDeviceId = const Value.absent(),
+              required Uint8List payload,
+              required int stateCounter,
+              required int queuedAt,
+              Value<int> attemptCount = const Value.absent(),
+              Value<int?> nextAttemptAt = const Value.absent(),
+              Value<String?> failureClass = const Value.absent(),
+              Value<bool> terminal = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMlsOutboxEntriesCompanion.insert(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              kind: kind,
+              recipientDeviceId: recipientDeviceId,
+              revocationDeviceId: revocationDeviceId,
+              payload: payload,
+              stateCounter: stateCounter,
+              queuedAt: queuedAt,
+              attemptCount: attemptCount,
+              nextAttemptAt: nextAttemptAt,
+              failureClass: failureClass,
+              terminal: terminal,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalMlsOutboxEntriesTable,
-                        LocalMlsOutboxEntry>(table),
+                        LocalMlsOutboxEntry>(
+                      table,
+                    ),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalMlsOutboxEntriesTable,
-                        LocalMlsOutboxEntry>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalMlsOutboxEntry>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalMlsOutboxEntriesTableProcessedTableManager
@@ -8289,7 +9694,7 @@ typedef $$LocalMlsOutboxEntriesTableProcessedTableManager
         (
           LocalMlsOutboxEntry,
           BaseReferences<_$EncryptedLocalDatabase, $LocalMlsOutboxEntriesTable,
-              LocalMlsOutboxEntry>
+              LocalMlsOutboxEntry>,
         ),
         LocalMlsOutboxEntry,
         PrefetchHooks Function()>;
@@ -8320,18 +9725,24 @@ class $$LocalPeerVerificationsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get peerAccountId => $composableBuilder(
-      column: $table.peerAccountId, builder: (column) => ColumnFilters(column));
+        column: $table.peerAccountId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<Uint8List> get transcriptHash => $composableBuilder(
-      column: $table.transcriptHash,
-      builder: (column) => ColumnFilters(column));
+        column: $table.transcriptHash,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get verifiedAt => $composableBuilder(
-      column: $table.verifiedAt, builder: (column) => ColumnFilters(column));
+        column: $table.verifiedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalPeerVerificationsTableOrderingComposer
@@ -8344,19 +9755,24 @@ class $$LocalPeerVerificationsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get peerAccountId => $composableBuilder(
-      column: $table.peerAccountId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.peerAccountId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<Uint8List> get transcriptHash => $composableBuilder(
-      column: $table.transcriptHash,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.transcriptHash,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get verifiedAt => $composableBuilder(
-      column: $table.verifiedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.verifiedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalPeerVerificationsTableAnnotationComposer
@@ -8369,16 +9785,24 @@ class $$LocalPeerVerificationsTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get peerAccountId => $composableBuilder(
-      column: $table.peerAccountId, builder: (column) => column);
+        column: $table.peerAccountId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<Uint8List> get transcriptHash => $composableBuilder(
-      column: $table.transcriptHash, builder: (column) => column);
+        column: $table.transcriptHash,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get verifiedAt => $composableBuilder(
-      column: $table.verifiedAt, builder: (column) => column);
+        column: $table.verifiedAt,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalPeerVerificationsTableTableManager extends RootTableManager<
@@ -8393,64 +9817,75 @@ class $$LocalPeerVerificationsTableTableManager extends RootTableManager<
     (
       LocalPeerVerification,
       BaseReferences<_$EncryptedLocalDatabase, $LocalPeerVerificationsTable,
-          LocalPeerVerification>
+          LocalPeerVerification>,
     ),
     LocalPeerVerification,
     PrefetchHooks Function()> {
   $$LocalPeerVerificationsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalPeerVerificationsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalPeerVerificationsTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalPeerVerificationsTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalPeerVerificationsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> conversationId = const Value.absent(),
-            Value<String> peerAccountId = const Value.absent(),
-            Value<Uint8List> transcriptHash = const Value.absent(),
-            Value<int> verifiedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPeerVerificationsCompanion(
-            conversationId: conversationId,
-            peerAccountId: peerAccountId,
-            transcriptHash: transcriptHash,
-            verifiedAt: verifiedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String conversationId,
-            required String peerAccountId,
-            required Uint8List transcriptHash,
-            required int verifiedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPeerVerificationsCompanion.insert(
-            conversationId: conversationId,
-            peerAccountId: peerAccountId,
-            transcriptHash: transcriptHash,
-            verifiedAt: verifiedAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalPeerVerificationsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalPeerVerificationsTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalPeerVerificationsTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalPeerVerificationsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> conversationId = const Value.absent(),
+              Value<String> peerAccountId = const Value.absent(),
+              Value<Uint8List> transcriptHash = const Value.absent(),
+              Value<int> verifiedAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPeerVerificationsCompanion(
+              conversationId: conversationId,
+              peerAccountId: peerAccountId,
+              transcriptHash: transcriptHash,
+              verifiedAt: verifiedAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String conversationId,
+              required String peerAccountId,
+              required Uint8List transcriptHash,
+              required int verifiedAt,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPeerVerificationsCompanion.insert(
+              conversationId: conversationId,
+              peerAccountId: peerAccountId,
+              transcriptHash: transcriptHash,
+              verifiedAt: verifiedAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalPeerVerificationsTable,
                         LocalPeerVerification>(table),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalPeerVerificationsTable,
-                        LocalPeerVerification>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalPeerVerification>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalPeerVerificationsTableProcessedTableManager
@@ -8466,7 +9901,7 @@ typedef $$LocalPeerVerificationsTableProcessedTableManager
         (
           LocalPeerVerification,
           BaseReferences<_$EncryptedLocalDatabase, $LocalPeerVerificationsTable,
-              LocalPeerVerification>
+              LocalPeerVerification>,
         ),
         LocalPeerVerification,
         PrefetchHooks Function()>;
@@ -8533,74 +9968,114 @@ class $$LocalMessagesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get key => $composableBuilder(
-      column: $table.key, builder: (column) => ColumnFilters(column));
+        column: $table.key,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get serverMessageId => $composableBuilder(
-      column: $table.serverMessageId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.serverMessageId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get senderAccountId => $composableBuilder(
-      column: $table.senderAccountId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.senderAccountId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get senderDeviceId => $composableBuilder(
-      column: $table.senderDeviceId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.senderDeviceId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnFilters(column));
+        column: $table.kind,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get body => $composableBuilder(
-      column: $table.body, builder: (column) => ColumnFilters(column));
+        column: $table.body,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get replyTo => $composableBuilder(
-      column: $table.replyTo, builder: (column) => ColumnFilters(column));
+        column: $table.replyTo,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+        column: $table.createdAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get editedAt => $composableBuilder(
-      column: $table.editedAt, builder: (column) => ColumnFilters(column));
+        column: $table.editedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+        column: $table.deletedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get state => $composableBuilder(
-      column: $table.state, builder: (column) => ColumnFilters(column));
+        column: $table.state,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get searchId => $composableBuilder(
-      column: $table.searchId, builder: (column) => ColumnFilters(column));
+        column: $table.searchId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get hiddenAt => $composableBuilder(
-      column: $table.hiddenAt, builder: (column) => ColumnFilters(column));
+        column: $table.hiddenAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get formatJson => $composableBuilder(
-      column: $table.formatJson, builder: (column) => ColumnFilters(column));
+        column: $table.formatJson,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get forwardHops => $composableBuilder(
-      column: $table.forwardHops, builder: (column) => ColumnFilters(column));
+        column: $table.forwardHops,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnFilters(column));
+        column: $table.channelId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<bool> get senderHidden => $composableBuilder(
-      column: $table.senderHidden, builder: (column) => ColumnFilters(column));
+        column: $table.senderHidden,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<bool> get senderRemoved => $composableBuilder(
-      column: $table.senderRemoved, builder: (column) => ColumnFilters(column));
+        column: $table.senderRemoved,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get c7Gen => $composableBuilder(
-      column: $table.c7Gen, builder: (column) => ColumnFilters(column));
+        column: $table.c7Gen,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get c7Former => $composableBuilder(
-      column: $table.c7Former, builder: (column) => ColumnFilters(column));
+        column: $table.c7Former,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -8613,76 +10088,114 @@ class $$LocalMessagesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get key => $composableBuilder(
-      column: $table.key, builder: (column) => ColumnOrderings(column));
+        column: $table.key,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get serverMessageId => $composableBuilder(
-      column: $table.serverMessageId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.serverMessageId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get senderAccountId => $composableBuilder(
-      column: $table.senderAccountId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.senderAccountId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get senderDeviceId => $composableBuilder(
-      column: $table.senderDeviceId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.senderDeviceId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnOrderings(column));
+        column: $table.kind,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get body => $composableBuilder(
-      column: $table.body, builder: (column) => ColumnOrderings(column));
+        column: $table.body,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get replyTo => $composableBuilder(
-      column: $table.replyTo, builder: (column) => ColumnOrderings(column));
+        column: $table.replyTo,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+        column: $table.createdAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get editedAt => $composableBuilder(
-      column: $table.editedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.editedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get deletedAt => $composableBuilder(
-      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.deletedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get state => $composableBuilder(
-      column: $table.state, builder: (column) => ColumnOrderings(column));
+        column: $table.state,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get searchId => $composableBuilder(
-      column: $table.searchId, builder: (column) => ColumnOrderings(column));
+        column: $table.searchId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get hiddenAt => $composableBuilder(
-      column: $table.hiddenAt, builder: (column) => ColumnOrderings(column));
+        column: $table.hiddenAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get formatJson => $composableBuilder(
-      column: $table.formatJson, builder: (column) => ColumnOrderings(column));
+        column: $table.formatJson,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get forwardHops => $composableBuilder(
-      column: $table.forwardHops, builder: (column) => ColumnOrderings(column));
+        column: $table.forwardHops,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+        column: $table.channelId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<bool> get senderHidden => $composableBuilder(
-      column: $table.senderHidden,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.senderHidden,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<bool> get senderRemoved => $composableBuilder(
-      column: $table.senderRemoved,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.senderRemoved,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get c7Gen => $composableBuilder(
-      column: $table.c7Gen, builder: (column) => ColumnOrderings(column));
+        column: $table.c7Gen,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get c7Former => $composableBuilder(
-      column: $table.c7Former, builder: (column) => ColumnOrderings(column));
+        column: $table.c7Former,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -8698,16 +10211,24 @@ class $$LocalMessagesTableAnnotationComposer
       $composableBuilder(column: $table.key, builder: (column) => column);
 
   GeneratedColumn<String> get serverMessageId => $composableBuilder(
-      column: $table.serverMessageId, builder: (column) => column);
+        column: $table.serverMessageId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get senderAccountId => $composableBuilder(
-      column: $table.senderAccountId, builder: (column) => column);
+        column: $table.senderAccountId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get senderDeviceId => $composableBuilder(
-      column: $table.senderDeviceId, builder: (column) => column);
+        column: $table.senderDeviceId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get kind =>
       $composableBuilder(column: $table.kind, builder: (column) => column);
@@ -8740,19 +10261,27 @@ class $$LocalMessagesTableAnnotationComposer
       $composableBuilder(column: $table.hiddenAt, builder: (column) => column);
 
   GeneratedColumn<String> get formatJson => $composableBuilder(
-      column: $table.formatJson, builder: (column) => column);
+        column: $table.formatJson,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get forwardHops => $composableBuilder(
-      column: $table.forwardHops, builder: (column) => column);
+        column: $table.forwardHops,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get channelId =>
       $composableBuilder(column: $table.channelId, builder: (column) => column);
 
   GeneratedColumn<bool> get senderHidden => $composableBuilder(
-      column: $table.senderHidden, builder: (column) => column);
+        column: $table.senderHidden,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<bool> get senderRemoved => $composableBuilder(
-      column: $table.senderRemoved, builder: (column) => column);
+        column: $table.senderRemoved,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get c7Gen =>
       $composableBuilder(column: $table.c7Gen, builder: (column) => column);
@@ -8773,130 +10302,135 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
     (
       LocalMessage,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMessagesTable,
-          LocalMessage>
+          LocalMessage>,
     ),
     LocalMessage,
     PrefetchHooks Function()> {
   $$LocalMessagesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalMessagesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalMessagesTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalMessagesTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalMessagesTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> key = const Value.absent(),
-            Value<String?> serverMessageId = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<String> senderAccountId = const Value.absent(),
-            Value<String> senderDeviceId = const Value.absent(),
-            Value<String> kind = const Value.absent(),
-            Value<String?> body = const Value.absent(),
-            Value<String?> replyTo = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int?> editedAt = const Value.absent(),
-            Value<int?> deletedAt = const Value.absent(),
-            Value<String> state = const Value.absent(),
-            Value<int?> expiresAt = const Value.absent(),
-            Value<int?> searchId = const Value.absent(),
-            Value<int?> hiddenAt = const Value.absent(),
-            Value<String?> formatJson = const Value.absent(),
-            Value<int?> forwardHops = const Value.absent(),
-            Value<String?> channelId = const Value.absent(),
-            Value<bool?> senderHidden = const Value.absent(),
-            Value<bool?> senderRemoved = const Value.absent(),
-            Value<String?> c7Gen = const Value.absent(),
-            Value<int?> c7Former = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMessagesCompanion(
-            key: key,
-            serverMessageId: serverMessageId,
-            conversationId: conversationId,
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-            kind: kind,
-            body: body,
-            replyTo: replyTo,
-            createdAt: createdAt,
-            editedAt: editedAt,
-            deletedAt: deletedAt,
-            state: state,
-            expiresAt: expiresAt,
-            searchId: searchId,
-            hiddenAt: hiddenAt,
-            formatJson: formatJson,
-            forwardHops: forwardHops,
-            channelId: channelId,
-            senderHidden: senderHidden,
-            senderRemoved: senderRemoved,
-            c7Gen: c7Gen,
-            c7Former: c7Former,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String key,
-            Value<String?> serverMessageId = const Value.absent(),
-            required String conversationId,
-            required String senderAccountId,
-            required String senderDeviceId,
-            required String kind,
-            Value<String?> body = const Value.absent(),
-            Value<String?> replyTo = const Value.absent(),
-            required int createdAt,
-            Value<int?> editedAt = const Value.absent(),
-            Value<int?> deletedAt = const Value.absent(),
-            required String state,
-            Value<int?> expiresAt = const Value.absent(),
-            Value<int?> searchId = const Value.absent(),
-            Value<int?> hiddenAt = const Value.absent(),
-            Value<String?> formatJson = const Value.absent(),
-            Value<int?> forwardHops = const Value.absent(),
-            Value<String?> channelId = const Value.absent(),
-            Value<bool?> senderHidden = const Value.absent(),
-            Value<bool?> senderRemoved = const Value.absent(),
-            Value<String?> c7Gen = const Value.absent(),
-            Value<int?> c7Former = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMessagesCompanion.insert(
-            key: key,
-            serverMessageId: serverMessageId,
-            conversationId: conversationId,
-            senderAccountId: senderAccountId,
-            senderDeviceId: senderDeviceId,
-            kind: kind,
-            body: body,
-            replyTo: replyTo,
-            createdAt: createdAt,
-            editedAt: editedAt,
-            deletedAt: deletedAt,
-            state: state,
-            expiresAt: expiresAt,
-            searchId: searchId,
-            hiddenAt: hiddenAt,
-            formatJson: formatJson,
-            forwardHops: forwardHops,
-            channelId: channelId,
-            senderHidden: senderHidden,
-            senderRemoved: senderRemoved,
-            c7Gen: c7Gen,
-            c7Former: c7Former,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalMessagesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalMessagesTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalMessagesTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalMessagesTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> key = const Value.absent(),
+              Value<String?> serverMessageId = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<String> senderAccountId = const Value.absent(),
+              Value<String> senderDeviceId = const Value.absent(),
+              Value<String> kind = const Value.absent(),
+              Value<String?> body = const Value.absent(),
+              Value<String?> replyTo = const Value.absent(),
+              Value<int> createdAt = const Value.absent(),
+              Value<int?> editedAt = const Value.absent(),
+              Value<int?> deletedAt = const Value.absent(),
+              Value<String> state = const Value.absent(),
+              Value<int?> expiresAt = const Value.absent(),
+              Value<int?> searchId = const Value.absent(),
+              Value<int?> hiddenAt = const Value.absent(),
+              Value<String?> formatJson = const Value.absent(),
+              Value<int?> forwardHops = const Value.absent(),
+              Value<String?> channelId = const Value.absent(),
+              Value<bool?> senderHidden = const Value.absent(),
+              Value<bool?> senderRemoved = const Value.absent(),
+              Value<String?> c7Gen = const Value.absent(),
+              Value<int?> c7Former = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMessagesCompanion(
+              key: key,
+              serverMessageId: serverMessageId,
+              conversationId: conversationId,
+              senderAccountId: senderAccountId,
+              senderDeviceId: senderDeviceId,
+              kind: kind,
+              body: body,
+              replyTo: replyTo,
+              createdAt: createdAt,
+              editedAt: editedAt,
+              deletedAt: deletedAt,
+              state: state,
+              expiresAt: expiresAt,
+              searchId: searchId,
+              hiddenAt: hiddenAt,
+              formatJson: formatJson,
+              forwardHops: forwardHops,
+              channelId: channelId,
+              senderHidden: senderHidden,
+              senderRemoved: senderRemoved,
+              c7Gen: c7Gen,
+              c7Former: c7Former,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String key,
+              Value<String?> serverMessageId = const Value.absent(),
+              required String conversationId,
+              required String senderAccountId,
+              required String senderDeviceId,
+              required String kind,
+              Value<String?> body = const Value.absent(),
+              Value<String?> replyTo = const Value.absent(),
+              required int createdAt,
+              Value<int?> editedAt = const Value.absent(),
+              Value<int?> deletedAt = const Value.absent(),
+              required String state,
+              Value<int?> expiresAt = const Value.absent(),
+              Value<int?> searchId = const Value.absent(),
+              Value<int?> hiddenAt = const Value.absent(),
+              Value<String?> formatJson = const Value.absent(),
+              Value<int?> forwardHops = const Value.absent(),
+              Value<String?> channelId = const Value.absent(),
+              Value<bool?> senderHidden = const Value.absent(),
+              Value<bool?> senderRemoved = const Value.absent(),
+              Value<String?> c7Gen = const Value.absent(),
+              Value<int?> c7Former = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMessagesCompanion.insert(
+              key: key,
+              serverMessageId: serverMessageId,
+              conversationId: conversationId,
+              senderAccountId: senderAccountId,
+              senderDeviceId: senderDeviceId,
+              kind: kind,
+              body: body,
+              replyTo: replyTo,
+              createdAt: createdAt,
+              editedAt: editedAt,
+              deletedAt: deletedAt,
+              state: state,
+              expiresAt: expiresAt,
+              searchId: searchId,
+              hiddenAt: hiddenAt,
+              formatJson: formatJson,
+              forwardHops: forwardHops,
+              channelId: channelId,
+              senderHidden: senderHidden,
+              senderRemoved: senderRemoved,
+              c7Gen: c7Gen,
+              c7Former: c7Former,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalMessagesTable, LocalMessage>(table),
                     BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalMessagesTable, LocalMessage>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        $LocalMessagesTable, LocalMessage>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalMessagesTableProcessedTableManager = ProcessedTableManager<
@@ -8911,7 +10445,7 @@ typedef $$LocalMessagesTableProcessedTableManager = ProcessedTableManager<
     (
       LocalMessage,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMessagesTable,
-          LocalMessage>
+          LocalMessage>,
     ),
     LocalMessage,
     PrefetchHooks Function()>;
@@ -8942,17 +10476,24 @@ class $$LocalMessageReactionsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get reactorAccountId => $composableBuilder(
-      column: $table.reactorAccountId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.reactorAccountId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get reaction => $composableBuilder(
-      column: $table.reaction, builder: (column) => ColumnFilters(column));
+        column: $table.reaction,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+        column: $table.updatedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalMessageReactionsTableOrderingComposer
@@ -8965,17 +10506,24 @@ class $$LocalMessageReactionsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get reactorAccountId => $composableBuilder(
-      column: $table.reactorAccountId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.reactorAccountId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get reaction => $composableBuilder(
-      column: $table.reaction, builder: (column) => ColumnOrderings(column));
+        column: $table.reaction,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.updatedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalMessageReactionsTableAnnotationComposer
@@ -8991,7 +10539,9 @@ class $$LocalMessageReactionsTableAnnotationComposer
       $composableBuilder(column: $table.targetKey, builder: (column) => column);
 
   GeneratedColumn<String> get reactorAccountId => $composableBuilder(
-      column: $table.reactorAccountId, builder: (column) => column);
+        column: $table.reactorAccountId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get reaction =>
       $composableBuilder(column: $table.reaction, builder: (column) => column);
@@ -9012,64 +10562,75 @@ class $$LocalMessageReactionsTableTableManager extends RootTableManager<
     (
       LocalMessageReaction,
       BaseReferences<_$EncryptedLocalDatabase, $LocalMessageReactionsTable,
-          LocalMessageReaction>
+          LocalMessageReaction>,
     ),
     LocalMessageReaction,
     PrefetchHooks Function()> {
   $$LocalMessageReactionsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalMessageReactionsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalMessageReactionsTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalMessageReactionsTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalMessageReactionsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> targetKey = const Value.absent(),
-            Value<String> reactorAccountId = const Value.absent(),
-            Value<String> reaction = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMessageReactionsCompanion(
-            targetKey: targetKey,
-            reactorAccountId: reactorAccountId,
-            reaction: reaction,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String targetKey,
-            required String reactorAccountId,
-            required String reaction,
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalMessageReactionsCompanion.insert(
-            targetKey: targetKey,
-            reactorAccountId: reactorAccountId,
-            reaction: reaction,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalMessageReactionsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalMessageReactionsTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalMessageReactionsTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalMessageReactionsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> targetKey = const Value.absent(),
+              Value<String> reactorAccountId = const Value.absent(),
+              Value<String> reaction = const Value.absent(),
+              Value<int> updatedAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMessageReactionsCompanion(
+              targetKey: targetKey,
+              reactorAccountId: reactorAccountId,
+              reaction: reaction,
+              updatedAt: updatedAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String targetKey,
+              required String reactorAccountId,
+              required String reaction,
+              required int updatedAt,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalMessageReactionsCompanion.insert(
+              targetKey: targetKey,
+              reactorAccountId: reactorAccountId,
+              reaction: reaction,
+              updatedAt: updatedAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalMessageReactionsTable,
                         LocalMessageReaction>(table),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalMessageReactionsTable,
-                        LocalMessageReaction>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalMessageReaction>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalMessageReactionsTableProcessedTableManager
@@ -9085,7 +10646,7 @@ typedef $$LocalMessageReactionsTableProcessedTableManager
         (
           LocalMessageReaction,
           BaseReferences<_$EncryptedLocalDatabase, $LocalMessageReactionsTable,
-              LocalMessageReaction>
+              LocalMessageReaction>,
         ),
         LocalMessageReaction,
         PrefetchHooks Function()>;
@@ -9116,17 +10677,24 @@ class $$LocalDraftsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get body => $composableBuilder(
-      column: $table.body, builder: (column) => ColumnFilters(column));
+        column: $table.body,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get replyTo => $composableBuilder(
-      column: $table.replyTo, builder: (column) => ColumnFilters(column));
+        column: $table.replyTo,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+        column: $table.updatedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalDraftsTableOrderingComposer
@@ -9139,17 +10707,24 @@ class $$LocalDraftsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get body => $composableBuilder(
-      column: $table.body, builder: (column) => ColumnOrderings(column));
+        column: $table.body,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get replyTo => $composableBuilder(
-      column: $table.replyTo, builder: (column) => ColumnOrderings(column));
+        column: $table.replyTo,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.updatedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalDraftsTableAnnotationComposer
@@ -9162,7 +10737,9 @@ class $$LocalDraftsTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get body =>
       $composableBuilder(column: $table.body, builder: (column) => column);
@@ -9185,58 +10762,63 @@ class $$LocalDraftsTableTableManager extends RootTableManager<
     $$LocalDraftsTableUpdateCompanionBuilder,
     (
       LocalDraft,
-      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>,
     ),
     LocalDraft,
     PrefetchHooks Function()> {
   $$LocalDraftsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalDraftsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalDraftsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalDraftsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalDraftsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> conversationId = const Value.absent(),
-            Value<String> body = const Value.absent(),
-            Value<String?> replyTo = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalDraftsCompanion(
-            conversationId: conversationId,
-            body: body,
-            replyTo: replyTo,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String conversationId,
-            required String body,
-            Value<String?> replyTo = const Value.absent(),
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalDraftsCompanion.insert(
-            conversationId: conversationId,
-            body: body,
-            replyTo: replyTo,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalDraftsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalDraftsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalDraftsTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalDraftsTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> conversationId = const Value.absent(),
+              Value<String> body = const Value.absent(),
+              Value<String?> replyTo = const Value.absent(),
+              Value<int> updatedAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalDraftsCompanion(
+              conversationId: conversationId,
+              body: body,
+              replyTo: replyTo,
+              updatedAt: updatedAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String conversationId,
+              required String body,
+              Value<String?> replyTo = const Value.absent(),
+              required int updatedAt,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalDraftsCompanion.insert(
+              conversationId: conversationId,
+              body: body,
+              replyTo: replyTo,
+              updatedAt: updatedAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalDraftsTable, LocalDraft>(table),
                     BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable,
-                        LocalDraft>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalDraft>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalDraftsTableProcessedTableManager = ProcessedTableManager<
@@ -9250,7 +10832,7 @@ typedef $$LocalDraftsTableProcessedTableManager = ProcessedTableManager<
     $$LocalDraftsTableUpdateCompanionBuilder,
     (
       LocalDraft,
-      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>
+      BaseReferences<_$EncryptedLocalDatabase, $LocalDraftsTable, LocalDraft>,
     ),
     LocalDraft,
     PrefetchHooks Function()>;
@@ -9277,11 +10859,14 @@ class $$LocalConversationMutesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get mutedUntil => $composableBuilder(
-      column: $table.mutedUntil, builder: (column) => ColumnFilters(column));
+        column: $table.mutedUntil,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalConversationMutesTableOrderingComposer
@@ -9294,11 +10879,14 @@ class $$LocalConversationMutesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get mutedUntil => $composableBuilder(
-      column: $table.mutedUntil, builder: (column) => ColumnOrderings(column));
+        column: $table.mutedUntil,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalConversationMutesTableAnnotationComposer
@@ -9311,10 +10899,14 @@ class $$LocalConversationMutesTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get mutedUntil => $composableBuilder(
-      column: $table.mutedUntil, builder: (column) => column);
+        column: $table.mutedUntil,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalConversationMutesTableTableManager extends RootTableManager<
@@ -9329,56 +10921,67 @@ class $$LocalConversationMutesTableTableManager extends RootTableManager<
     (
       LocalConversationMute,
       BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
-          LocalConversationMute>
+          LocalConversationMute>,
     ),
     LocalConversationMute,
     PrefetchHooks Function()> {
   $$LocalConversationMutesTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalConversationMutesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalConversationMutesTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalConversationMutesTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalConversationMutesTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> conversationId = const Value.absent(),
-            Value<int?> mutedUntil = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationMutesCompanion(
-            conversationId: conversationId,
-            mutedUntil: mutedUntil,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String conversationId,
-            Value<int?> mutedUntil = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationMutesCompanion.insert(
-            conversationId: conversationId,
-            mutedUntil: mutedUntil,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalConversationMutesTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalConversationMutesTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalConversationMutesTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalConversationMutesTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> conversationId = const Value.absent(),
+              Value<int?> mutedUntil = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationMutesCompanion(
+              conversationId: conversationId,
+              mutedUntil: mutedUntil,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String conversationId,
+              Value<int?> mutedUntil = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationMutesCompanion.insert(
+              conversationId: conversationId,
+              mutedUntil: mutedUntil,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalConversationMutesTable,
                         LocalConversationMute>(table),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalConversationMutesTable,
-                        LocalConversationMute>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalConversationMute>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalConversationMutesTableProcessedTableManager
@@ -9394,7 +10997,7 @@ typedef $$LocalConversationMutesTableProcessedTableManager
         (
           LocalConversationMute,
           BaseReferences<_$EncryptedLocalDatabase, $LocalConversationMutesTable,
-              LocalConversationMute>
+              LocalConversationMute>,
         ),
         LocalConversationMute,
         PrefetchHooks Function()>;
@@ -9429,27 +11032,39 @@ class $$LocalPinsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnFilters(column));
+        column: $table.channelId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get pinnedByAccountId => $composableBuilder(
-      column: $table.pinnedByAccountId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.pinnedByAccountId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get pinnedAt => $composableBuilder(
-      column: $table.pinnedAt, builder: (column) => ColumnFilters(column));
+        column: $table.pinnedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get appliedOrder => $composableBuilder(
-      column: $table.appliedOrder, builder: (column) => ColumnFilters(column));
+        column: $table.appliedOrder,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnFilters(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalPinsTableOrderingComposer
@@ -9462,28 +11077,39 @@ class $$LocalPinsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+        column: $table.channelId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get pinnedByAccountId => $composableBuilder(
-      column: $table.pinnedByAccountId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.pinnedByAccountId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get pinnedAt => $composableBuilder(
-      column: $table.pinnedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.pinnedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get appliedOrder => $composableBuilder(
-      column: $table.appliedOrder,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.appliedOrder,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get expiresAt => $composableBuilder(
-      column: $table.expiresAt, builder: (column) => ColumnOrderings(column));
+        column: $table.expiresAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalPinsTableAnnotationComposer
@@ -9496,7 +11122,9 @@ class $$LocalPinsTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get channelId =>
       $composableBuilder(column: $table.channelId, builder: (column) => column);
@@ -9505,13 +11133,17 @@ class $$LocalPinsTableAnnotationComposer
       $composableBuilder(column: $table.targetKey, builder: (column) => column);
 
   GeneratedColumn<String> get pinnedByAccountId => $composableBuilder(
-      column: $table.pinnedByAccountId, builder: (column) => column);
+        column: $table.pinnedByAccountId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get pinnedAt =>
       $composableBuilder(column: $table.pinnedAt, builder: (column) => column);
 
   GeneratedColumn<int> get appliedOrder => $composableBuilder(
-      column: $table.appliedOrder, builder: (column) => column);
+        column: $table.appliedOrder,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get expiresAt =>
       $composableBuilder(column: $table.expiresAt, builder: (column) => column);
@@ -9528,70 +11160,75 @@ class $$LocalPinsTableTableManager extends RootTableManager<
     $$LocalPinsTableUpdateCompanionBuilder,
     (
       LocalPin,
-      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>,
     ),
     LocalPin,
     PrefetchHooks Function()> {
   $$LocalPinsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalPinsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalPinsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalPinsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalPinsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> conversationId = const Value.absent(),
-            Value<String?> channelId = const Value.absent(),
-            Value<String> targetKey = const Value.absent(),
-            Value<String> pinnedByAccountId = const Value.absent(),
-            Value<int> pinnedAt = const Value.absent(),
-            Value<int> appliedOrder = const Value.absent(),
-            Value<int> expiresAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPinsCompanion(
-            conversationId: conversationId,
-            channelId: channelId,
-            targetKey: targetKey,
-            pinnedByAccountId: pinnedByAccountId,
-            pinnedAt: pinnedAt,
-            appliedOrder: appliedOrder,
-            expiresAt: expiresAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String conversationId,
-            Value<String?> channelId = const Value.absent(),
-            required String targetKey,
-            required String pinnedByAccountId,
-            required int pinnedAt,
-            Value<int> appliedOrder = const Value.absent(),
-            required int expiresAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPinsCompanion.insert(
-            conversationId: conversationId,
-            channelId: channelId,
-            targetKey: targetKey,
-            pinnedByAccountId: pinnedByAccountId,
-            pinnedAt: pinnedAt,
-            appliedOrder: appliedOrder,
-            expiresAt: expiresAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalPinsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalPinsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalPinsTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalPinsTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> conversationId = const Value.absent(),
+              Value<String?> channelId = const Value.absent(),
+              Value<String> targetKey = const Value.absent(),
+              Value<String> pinnedByAccountId = const Value.absent(),
+              Value<int> pinnedAt = const Value.absent(),
+              Value<int> appliedOrder = const Value.absent(),
+              Value<int> expiresAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPinsCompanion(
+              conversationId: conversationId,
+              channelId: channelId,
+              targetKey: targetKey,
+              pinnedByAccountId: pinnedByAccountId,
+              pinnedAt: pinnedAt,
+              appliedOrder: appliedOrder,
+              expiresAt: expiresAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String conversationId,
+              Value<String?> channelId = const Value.absent(),
+              required String targetKey,
+              required String pinnedByAccountId,
+              required int pinnedAt,
+              Value<int> appliedOrder = const Value.absent(),
+              required int expiresAt,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPinsCompanion.insert(
+              conversationId: conversationId,
+              channelId: channelId,
+              targetKey: targetKey,
+              pinnedByAccountId: pinnedByAccountId,
+              pinnedAt: pinnedAt,
+              appliedOrder: appliedOrder,
+              expiresAt: expiresAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalPinsTable, LocalPin>(table),
                     BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable,
-                        LocalPin>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalPin>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalPinsTableProcessedTableManager = ProcessedTableManager<
@@ -9605,7 +11242,7 @@ typedef $$LocalPinsTableProcessedTableManager = ProcessedTableManager<
     $$LocalPinsTableUpdateCompanionBuilder,
     (
       LocalPin,
-      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>
+      BaseReferences<_$EncryptedLocalDatabase, $LocalPinsTable, LocalPin>,
     ),
     LocalPin,
     PrefetchHooks Function()>;
@@ -9642,27 +11279,39 @@ class $$LocalPendingPinsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get actionKey => $composableBuilder(
-      column: $table.actionKey, builder: (column) => ColumnFilters(column));
+        column: $table.actionKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnFilters(column));
+        column: $table.channelId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnFilters(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<String> get accountId => $composableBuilder(
-      column: $table.accountId, builder: (column) => ColumnFilters(column));
+        column: $table.accountId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<bool> get pinned => $composableBuilder(
-      column: $table.pinned, builder: (column) => ColumnFilters(column));
+        column: $table.pinned,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get durationSeconds => $composableBuilder(
-      column: $table.durationSeconds,
-      builder: (column) => ColumnFilters(column));
+        column: $table.durationSeconds,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalPendingPinsTableOrderingComposer
@@ -9675,27 +11324,39 @@ class $$LocalPendingPinsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get actionKey => $composableBuilder(
-      column: $table.actionKey, builder: (column) => ColumnOrderings(column));
+        column: $table.actionKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get channelId => $composableBuilder(
-      column: $table.channelId, builder: (column) => ColumnOrderings(column));
+        column: $table.channelId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get targetKey => $composableBuilder(
-      column: $table.targetKey, builder: (column) => ColumnOrderings(column));
+        column: $table.targetKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<String> get accountId => $composableBuilder(
-      column: $table.accountId, builder: (column) => ColumnOrderings(column));
+        column: $table.accountId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<bool> get pinned => $composableBuilder(
-      column: $table.pinned, builder: (column) => ColumnOrderings(column));
+        column: $table.pinned,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get durationSeconds => $composableBuilder(
-      column: $table.durationSeconds,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.durationSeconds,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalPendingPinsTableAnnotationComposer
@@ -9711,7 +11372,9 @@ class $$LocalPendingPinsTableAnnotationComposer
       $composableBuilder(column: $table.actionKey, builder: (column) => column);
 
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get channelId =>
       $composableBuilder(column: $table.channelId, builder: (column) => column);
@@ -9726,7 +11389,9 @@ class $$LocalPendingPinsTableAnnotationComposer
       $composableBuilder(column: $table.pinned, builder: (column) => column);
 
   GeneratedColumn<int> get durationSeconds => $composableBuilder(
-      column: $table.durationSeconds, builder: (column) => column);
+        column: $table.durationSeconds,
+        builder: (column) => column,
+      );
 }
 
 class $$LocalPendingPinsTableTableManager extends RootTableManager<
@@ -9741,70 +11406,76 @@ class $$LocalPendingPinsTableTableManager extends RootTableManager<
     (
       LocalPendingPin,
       BaseReferences<_$EncryptedLocalDatabase, $LocalPendingPinsTable,
-          LocalPendingPin>
+          LocalPendingPin>,
     ),
     LocalPendingPin,
     PrefetchHooks Function()> {
   $$LocalPendingPinsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalPendingPinsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalPendingPinsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalPendingPinsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalPendingPinsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> actionKey = const Value.absent(),
-            Value<String> conversationId = const Value.absent(),
-            Value<String?> channelId = const Value.absent(),
-            Value<String> targetKey = const Value.absent(),
-            Value<String> accountId = const Value.absent(),
-            Value<bool> pinned = const Value.absent(),
-            Value<int?> durationSeconds = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPendingPinsCompanion(
-            actionKey: actionKey,
-            conversationId: conversationId,
-            channelId: channelId,
-            targetKey: targetKey,
-            accountId: accountId,
-            pinned: pinned,
-            durationSeconds: durationSeconds,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String actionKey,
-            required String conversationId,
-            Value<String?> channelId = const Value.absent(),
-            required String targetKey,
-            required String accountId,
-            required bool pinned,
-            Value<int?> durationSeconds = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalPendingPinsCompanion.insert(
-            actionKey: actionKey,
-            conversationId: conversationId,
-            channelId: channelId,
-            targetKey: targetKey,
-            accountId: accountId,
-            pinned: pinned,
-            durationSeconds: durationSeconds,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalPendingPinsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalPendingPinsTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalPendingPinsTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalPendingPinsTableAnnotationComposer(
+                    $db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> actionKey = const Value.absent(),
+              Value<String> conversationId = const Value.absent(),
+              Value<String?> channelId = const Value.absent(),
+              Value<String> targetKey = const Value.absent(),
+              Value<String> accountId = const Value.absent(),
+              Value<bool> pinned = const Value.absent(),
+              Value<int?> durationSeconds = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPendingPinsCompanion(
+              actionKey: actionKey,
+              conversationId: conversationId,
+              channelId: channelId,
+              targetKey: targetKey,
+              accountId: accountId,
+              pinned: pinned,
+              durationSeconds: durationSeconds,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String actionKey,
+              required String conversationId,
+              Value<String?> channelId = const Value.absent(),
+              required String targetKey,
+              required String accountId,
+              required bool pinned,
+              Value<int?> durationSeconds = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalPendingPinsCompanion.insert(
+              actionKey: actionKey,
+              conversationId: conversationId,
+              channelId: channelId,
+              targetKey: targetKey,
+              accountId: accountId,
+              pinned: pinned,
+              durationSeconds: durationSeconds,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalPendingPinsTable, LocalPendingPin>(table),
                     BaseReferences<_$EncryptedLocalDatabase,
-                        $LocalPendingPinsTable, LocalPendingPin>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        $LocalPendingPinsTable, LocalPendingPin>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalPendingPinsTableProcessedTableManager = ProcessedTableManager<
@@ -9819,7 +11490,7 @@ typedef $$LocalPendingPinsTableProcessedTableManager = ProcessedTableManager<
     (
       LocalPendingPin,
       BaseReferences<_$EncryptedLocalDatabase, $LocalPendingPinsTable,
-          LocalPendingPin>
+          LocalPendingPin>,
     ),
     LocalPendingPin,
     PrefetchHooks Function()>;
@@ -9846,10 +11517,14 @@ class $$LocalStarredTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get messageKey => $composableBuilder(
-      column: $table.messageKey, builder: (column) => ColumnFilters(column));
+        column: $table.messageKey,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get starredAt => $composableBuilder(
-      column: $table.starredAt, builder: (column) => ColumnFilters(column));
+        column: $table.starredAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalStarredTableOrderingComposer
@@ -9862,10 +11537,14 @@ class $$LocalStarredTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get messageKey => $composableBuilder(
-      column: $table.messageKey, builder: (column) => ColumnOrderings(column));
+        column: $table.messageKey,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get starredAt => $composableBuilder(
-      column: $table.starredAt, builder: (column) => ColumnOrderings(column));
+        column: $table.starredAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalStarredTableAnnotationComposer
@@ -9878,7 +11557,9 @@ class $$LocalStarredTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get messageKey => $composableBuilder(
-      column: $table.messageKey, builder: (column) => column);
+        column: $table.messageKey,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get starredAt =>
       $composableBuilder(column: $table.starredAt, builder: (column) => column);
@@ -9896,50 +11577,55 @@ class $$LocalStarredTableTableManager extends RootTableManager<
     (
       LocalStarredData,
       BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
-          LocalStarredData>
+          LocalStarredData>,
     ),
     LocalStarredData,
     PrefetchHooks Function()> {
   $$LocalStarredTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalStarredTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalStarredTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalStarredTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalStarredTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> messageKey = const Value.absent(),
-            Value<int> starredAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalStarredCompanion(
-            messageKey: messageKey,
-            starredAt: starredAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String messageKey,
-            required int starredAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalStarredCompanion.insert(
-            messageKey: messageKey,
-            starredAt: starredAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalStarredTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalStarredTableFilterComposer($db: db, $table: table),
+            createOrderingComposer: () =>
+                $$LocalStarredTableOrderingComposer($db: db, $table: table),
+            createComputedFieldComposer: () =>
+                $$LocalStarredTableAnnotationComposer($db: db, $table: table),
+            updateCompanionCallback: ({
+              Value<String> messageKey = const Value.absent(),
+              Value<int> starredAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalStarredCompanion(
+              messageKey: messageKey,
+              starredAt: starredAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String messageKey,
+              required int starredAt,
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalStarredCompanion.insert(
+              messageKey: messageKey,
+              starredAt: starredAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalStarredTable, LocalStarredData>(table),
                     BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
-                        LocalStarredData>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalStarredData>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalStarredTableProcessedTableManager = ProcessedTableManager<
@@ -9954,7 +11640,7 @@ typedef $$LocalStarredTableProcessedTableManager = ProcessedTableManager<
     (
       LocalStarredData,
       BaseReferences<_$EncryptedLocalDatabase, $LocalStarredTable,
-          LocalStarredData>
+          LocalStarredData>,
     ),
     LocalStarredData,
     PrefetchHooks Function()>;
@@ -9983,14 +11669,19 @@ class $$LocalConversationPrefsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnFilters(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get archivedAt => $composableBuilder(
-      column: $table.archivedAt, builder: (column) => ColumnFilters(column));
+        column: $table.archivedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 
   ColumnFilters<int> get pinnedAt => $composableBuilder(
-      column: $table.pinnedAt, builder: (column) => ColumnFilters(column));
+        column: $table.pinnedAt,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$LocalConversationPrefsTableOrderingComposer
@@ -10003,14 +11694,19 @@ class $$LocalConversationPrefsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get conversationId => $composableBuilder(
-      column: $table.conversationId,
-      builder: (column) => ColumnOrderings(column));
+        column: $table.conversationId,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get archivedAt => $composableBuilder(
-      column: $table.archivedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.archivedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 
   ColumnOrderings<int> get pinnedAt => $composableBuilder(
-      column: $table.pinnedAt, builder: (column) => ColumnOrderings(column));
+        column: $table.pinnedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$LocalConversationPrefsTableAnnotationComposer
@@ -10023,10 +11719,14 @@ class $$LocalConversationPrefsTableAnnotationComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   GeneratedColumn<String> get conversationId => $composableBuilder(
-      column: $table.conversationId, builder: (column) => column);
+        column: $table.conversationId,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get archivedAt => $composableBuilder(
-      column: $table.archivedAt, builder: (column) => column);
+        column: $table.archivedAt,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<int> get pinnedAt =>
       $composableBuilder(column: $table.pinnedAt, builder: (column) => column);
@@ -10044,60 +11744,71 @@ class $$LocalConversationPrefsTableTableManager extends RootTableManager<
     (
       LocalConversationPref,
       BaseReferences<_$EncryptedLocalDatabase, $LocalConversationPrefsTable,
-          LocalConversationPref>
+          LocalConversationPref>,
     ),
     LocalConversationPref,
     PrefetchHooks Function()> {
   $$LocalConversationPrefsTableTableManager(
-      _$EncryptedLocalDatabase db, $LocalConversationPrefsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$LocalConversationPrefsTableFilterComposer(
-                  $db: db, $table: table),
-          createOrderingComposer: () =>
-              $$LocalConversationPrefsTableOrderingComposer(
-                  $db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$LocalConversationPrefsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> conversationId = const Value.absent(),
-            Value<int?> archivedAt = const Value.absent(),
-            Value<int?> pinnedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationPrefsCompanion(
-            conversationId: conversationId,
-            archivedAt: archivedAt,
-            pinnedAt: pinnedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String conversationId,
-            Value<int?> archivedAt = const Value.absent(),
-            Value<int?> pinnedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              LocalConversationPrefsCompanion.insert(
-            conversationId: conversationId,
-            archivedAt: archivedAt,
-            pinnedAt: pinnedAt,
-            rowid: rowid,
-          ),
-          withReferenceMapper: (p0) => p0
-              .map((e) => (
+    _$EncryptedLocalDatabase db,
+    $LocalConversationPrefsTable table,
+  ) : super(
+          TableManagerState(
+            db: db,
+            table: table,
+            createFilteringComposer: () =>
+                $$LocalConversationPrefsTableFilterComposer(
+              $db: db,
+              $table: table,
+            ),
+            createOrderingComposer: () =>
+                $$LocalConversationPrefsTableOrderingComposer(
+              $db: db,
+              $table: table,
+            ),
+            createComputedFieldComposer: () =>
+                $$LocalConversationPrefsTableAnnotationComposer(
+              $db: db,
+              $table: table,
+            ),
+            updateCompanionCallback: ({
+              Value<String> conversationId = const Value.absent(),
+              Value<int?> archivedAt = const Value.absent(),
+              Value<int?> pinnedAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationPrefsCompanion(
+              conversationId: conversationId,
+              archivedAt: archivedAt,
+              pinnedAt: pinnedAt,
+              rowid: rowid,
+            ),
+            createCompanionCallback: ({
+              required String conversationId,
+              Value<int?> archivedAt = const Value.absent(),
+              Value<int?> pinnedAt = const Value.absent(),
+              Value<int> rowid = const Value.absent(),
+            }) =>
+                LocalConversationPrefsCompanion.insert(
+              conversationId: conversationId,
+              archivedAt: archivedAt,
+              pinnedAt: pinnedAt,
+              rowid: rowid,
+            ),
+            withReferenceMapper: (p0) => p0
+                .map(
+                  (e) => (
                     e.readTable<$LocalConversationPrefsTable,
                         LocalConversationPref>(table),
                     BaseReferences<
                         _$EncryptedLocalDatabase,
                         $LocalConversationPrefsTable,
-                        LocalConversationPref>(db, table, e)
-                  ))
-              .toList(),
-          prefetchHooksCallback: null,
-        ));
+                        LocalConversationPref>(db, table, e),
+                  ),
+                )
+                .toList(),
+            prefetchHooksCallback: null,
+          ),
+        );
 }
 
 typedef $$LocalConversationPrefsTableProcessedTableManager
@@ -10113,7 +11824,7 @@ typedef $$LocalConversationPrefsTableProcessedTableManager
         (
           LocalConversationPref,
           BaseReferences<_$EncryptedLocalDatabase, $LocalConversationPrefsTable,
-              LocalConversationPref>
+              LocalConversationPref>,
         ),
         LocalConversationPref,
         PrefetchHooks Function()>;
@@ -10127,7 +11838,9 @@ class $EncryptedLocalDatabaseManager {
       $$LocalConversationsTableTableManager(_db, _db.localConversations);
   $$LocalCiphertextEnvelopesTableTableManager get localCiphertextEnvelopes =>
       $$LocalCiphertextEnvelopesTableTableManager(
-          _db, _db.localCiphertextEnvelopes);
+        _db,
+        _db.localCiphertextEnvelopes,
+      );
   $$LocalSyncStatesTableTableManager get localSyncStates =>
       $$LocalSyncStatesTableTableManager(_db, _db.localSyncStates);
   $$LocalOutboxEntriesTableTableManager get localOutboxEntries =>
@@ -10144,7 +11857,9 @@ class $EncryptedLocalDatabaseManager {
       $$LocalMlsOutboxEntriesTableTableManager(_db, _db.localMlsOutboxEntries);
   $$LocalPeerVerificationsTableTableManager get localPeerVerifications =>
       $$LocalPeerVerificationsTableTableManager(
-          _db, _db.localPeerVerifications);
+        _db,
+        _db.localPeerVerifications,
+      );
   $$LocalMessagesTableTableManager get localMessages =>
       $$LocalMessagesTableTableManager(_db, _db.localMessages);
   $$LocalMessageReactionsTableTableManager get localMessageReactions =>
@@ -10153,7 +11868,9 @@ class $EncryptedLocalDatabaseManager {
       $$LocalDraftsTableTableManager(_db, _db.localDrafts);
   $$LocalConversationMutesTableTableManager get localConversationMutes =>
       $$LocalConversationMutesTableTableManager(
-          _db, _db.localConversationMutes);
+        _db,
+        _db.localConversationMutes,
+      );
   $$LocalPinsTableTableManager get localPins =>
       $$LocalPinsTableTableManager(_db, _db.localPins);
   $$LocalPendingPinsTableTableManager get localPendingPins =>
@@ -10162,5 +11879,7 @@ class $EncryptedLocalDatabaseManager {
       $$LocalStarredTableTableManager(_db, _db.localStarred);
   $$LocalConversationPrefsTableTableManager get localConversationPrefs =>
       $$LocalConversationPrefsTableTableManager(
-          _db, _db.localConversationPrefs);
+        _db,
+        _db.localConversationPrefs,
+      );
 }

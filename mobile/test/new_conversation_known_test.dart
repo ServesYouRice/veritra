@@ -63,21 +63,23 @@ Future<(AppState, _Api)> _state(
   WidgetTester tester, {
   List<Conversation>? list,
 }) async {
-  final api = _Api(list ??
-      <Conversation>[
-        _dm('d_ana', 'acct_ana'),
-        _dm('d_bo', 'acct_bo'),
-        // A stranger's request, and a blocked account.
-        _dm('d_eve', 'acct_eve', createdBy: 'acct_eve'),
-        _dm('d_bad', 'acct_bad'),
-        Conversation(
-          id: 'g',
-          kind: 'group',
-          title: 'Family',
-          createdBy: 'acct_me',
-        ),
-        Conversation(id: 'shared', kind: 'community_shared'),
-      ]);
+  final api = _Api(
+    list ??
+        <Conversation>[
+          _dm('d_ana', 'acct_ana'),
+          _dm('d_bo', 'acct_bo'),
+          // A stranger's request, and a blocked account.
+          _dm('d_eve', 'acct_eve', createdBy: 'acct_eve'),
+          _dm('d_bad', 'acct_bad'),
+          Conversation(
+            id: 'g',
+            kind: 'group',
+            title: 'Family',
+            createdBy: 'acct_me',
+          ),
+          Conversation(id: 'shared', kind: 'community_shared'),
+        ],
+  );
   final state = AppState(
     apiClientFactory: (_) => api,
     cryptoService: TestOnlyCryptoService(),
@@ -99,17 +101,29 @@ Future<(AppState, _Api)> _state(
       'g': <ConversationMember>[
         ConversationMember(accountId: 'acct_me', username: 'me', role: 'owner'),
         ConversationMember(
-            accountId: 'acct_cy', username: 'cy', role: 'member'),
+          accountId: 'acct_cy',
+          username: 'cy',
+          role: 'member',
+        ),
         // In a group with this person, but a request in a chat of two.
         ConversationMember(
-            accountId: 'acct_eve', username: 'eve', role: 'member'),
+          accountId: 'acct_eve',
+          username: 'eve',
+          role: 'member',
+        ),
         ConversationMember(
-            accountId: 'acct_bad', username: 'bad', role: 'member'),
+          accountId: 'acct_bad',
+          username: 'bad',
+          role: 'member',
+        ),
       ],
       // A community channel's members are not people this device chats with.
       'shared': <ConversationMember>[
         ConversationMember(
-            accountId: 'acct_stray', username: 'stray', role: 'member'),
+          accountId: 'acct_stray',
+          username: 'stray',
+          role: 'member',
+        ),
       ],
     };
   return (state, api);
@@ -127,33 +141,44 @@ Widget _app(Widget home) => MaterialApp(
     );
 
 Widget _opener(AppState state, {void Function(Conversation?)? onResult}) =>
-    _app(Builder(
-      builder: (context) => Scaffold(
-        body: TextButton(
-          onPressed: () async {
-            final result = await showNewConversationSheet(context, state);
-            onResult?.call(result);
-          },
-          child: const Text('open'),
+    _app(
+      Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () async {
+              final result = await showNewConversationSheet(context, state);
+              onResult?.call(result);
+            },
+            child: const Text('open'),
+          ),
         ),
       ),
-    ));
+    );
 
 void main() {
   testWidgets('who is known: chats of two and group members, never a stranger',
-      (tester) async {
+      (
+    tester,
+  ) async {
     final (state, _) = await _state(tester);
     final people = knownPeople(state);
-    expect(
-      people.map((person) => person.id),
-      <String>['acct_ana', 'acct_bo', 'acct_cy'],
-    );
+    expect(people.map((person) => person.id), <String>[
+      'acct_ana',
+      'acct_bo',
+      'acct_cy',
+    ]);
     // Not yourself, not a blocked account, not a pending request (even one who
     // is also in a group), not a community channel's member.
     expect(
       people.map((person) => person.id),
-      isNot(anyOf(contains('acct_me'), contains('acct_bad'),
-          contains('acct_eve'), contains('acct_stray'))),
+      isNot(
+        anyOf(
+          contains('acct_me'),
+          contains('acct_bad'),
+          contains('acct_eve'),
+          contains('acct_stray'),
+        ),
+      ),
     );
   });
 
@@ -162,8 +187,9 @@ void main() {
     expect(knownPeople(state).first.label, '@ana');
   });
 
-  testWidgets('the sheet lists them, and the button says Message',
-      (tester) async {
+  testWidgets('the sheet lists them, and the button says Message', (
+    tester,
+  ) async {
     final (state, api) = await _state(tester);
     await tester.pumpWidget(_opener(state));
     await tester.tap(find.text('open'));
@@ -171,7 +197,9 @@ void main() {
 
     expect(find.text(englishL10n.accountPickerKnown), findsOneWidget);
     expect(
-        find.byKey(const ValueKey<String>('known-acct_ana')), findsOneWidget);
+      find.byKey(const ValueKey<String>('known-acct_ana')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey<String>('known-acct_bo')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('known-acct_eve')), findsNothing);
     expect(find.widgetWithText(FilledButton, 'Message'), findsOneWidget);
@@ -188,7 +216,9 @@ void main() {
     await tester.enterText(find.byType(TextField), 'an');
     await tester.pump();
     expect(
-        find.byKey(const ValueKey<String>('known-acct_ana')), findsOneWidget);
+      find.byKey(const ValueKey<String>('known-acct_ana')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey<String>('known-acct_bo')), findsNothing);
     // Nothing was asked of the server before the pause that follows typing.
     expect(api.searches, isEmpty);
@@ -201,8 +231,9 @@ void main() {
     expect(api.searches, <String>['zed']);
   });
 
-  testWidgets('tapping a person starts the chat and the list opens it',
-      (tester) async {
+  testWidgets('tapping a person starts the chat and the list opens it', (
+    tester,
+  ) async {
     final (state, _) = await _state(tester);
     await tester.pumpWidget(_app(ChatListScreen(state: state)));
     await tester.pump();
@@ -223,8 +254,9 @@ void main() {
     expect(state.selectedConversationId, 'd_ana');
   });
 
-  testWidgets('a person picked for a group is added, not opened',
-      (tester) async {
+  testWidgets('a person picked for a group is added, not opened', (
+    tester,
+  ) async {
     final (state, _) = await _state(tester);
     Conversation? result;
     await tester.pumpWidget(_opener(state, onResult: (c) => result = c));
@@ -242,9 +274,13 @@ void main() {
 
   testWidgets('a plain AccountPicker offers no list', (tester) async {
     final (state, _) = await _state(tester);
-    await tester.pumpWidget(_app(Scaffold(
-      body: AccountPicker(state: state, onChanged: (_) {}),
-    )));
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          body: AccountPicker(state: state, onChanged: (_) {}),
+        ),
+      ),
+    );
     expect(find.text(englishL10n.accountPickerKnown), findsNothing);
     expect(find.byType(ListTile), findsNothing);
   });

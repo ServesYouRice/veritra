@@ -78,8 +78,9 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
         : await widget.state.rejectOwnerKey(item);
     if (!mounted) return;
     if (!done) {
-      ScaffoldMessenger.maybeOf(context)
-          ?.showSnackBar(SnackBar(content: Text(l10n.l2OwnerKeyStale)));
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(l10n.l2OwnerKeyStale)));
     }
     setState(() {
       _owners = widget.state.sealedProvableOwnerCount();
@@ -88,8 +89,12 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
   }
 
   /// A key code, shown only under "Technical details".
-  Widget _code(BuildContext context, String label, List<int> key,
-      {Key? valueKey}) {
+  Widget _code(
+    BuildContext context,
+    String label,
+    List<int> key, {
+    Key? valueKey,
+  }) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: BoneSpacing.xs),
@@ -119,13 +124,12 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            switch (item.change) {
-              OwnerKeyChange.changed => l10n.l2OwnerKeyChanged(item.inboxId),
-              OwnerKeyChange.added => l10n.l2OwnerKeyAdded(item.inboxId),
-              OwnerKeyChange.missing => l10n.l2OwnerKeyMissing(item.inboxId),
-            },
-            style: theme.textTheme.bodyMedium,
-          ),
+              switch (item.change) {
+                OwnerKeyChange.changed => l10n.l2OwnerKeyChanged(item.inboxId),
+                OwnerKeyChange.added => l10n.l2OwnerKeyAdded(item.inboxId),
+                OwnerKeyChange.missing => l10n.l2OwnerKeyMissing(item.inboxId),
+              },
+              style: theme.textTheme.bodyMedium),
           const SizedBox(height: BoneSpacing.xs),
           Text(l10n.l2OwnerKeyQuestion, style: theme.textTheme.titleSmall),
           if (_showCodes) ...<Widget>[
@@ -186,9 +190,11 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
     final theme = Theme.of(context);
     if (_keptOldKey) {
       return <Widget>[
-        Text(l10n.l2SealedKeyKept,
-            key: const ValueKey('sealed-key-kept'),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.l2SealedKeyKept,
+          key: const ValueKey('sealed-key-kept'),
+          style: theme.textTheme.bodyMedium,
+        ),
         Align(
           alignment: AlignmentDirectional.centerStart,
           child: TextButton(
@@ -199,9 +205,11 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
       ];
     }
     return <Widget>[
-      Text(l10n.l2SealedKeyQuestion,
-          key: const ValueKey('sealed-key-question'),
-          style: theme.textTheme.titleMedium),
+      Text(
+        l10n.l2SealedKeyQuestion,
+        key: const ValueKey('sealed-key-question'),
+        style: theme.textTheme.titleMedium,
+      ),
       const SizedBox(height: BoneSpacing.xs),
       Text(l10n.l2SealedKeyChanged, style: theme.textTheme.bodyMedium),
       const SizedBox(height: BoneSpacing.md),
@@ -257,8 +265,10 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
                   ListTile(
                     key: const ValueKey('sealed-status'),
                     title: Text(l10n.l2SealedKeyTile),
-                    subtitle:
-                        Text(summary, key: const ValueKey('sealed-summary')),
+                    subtitle: Text(
+                      summary,
+                      key: const ValueKey('sealed-summary'),
+                    ),
                     trailing: StatusPill(
                       label: on ? l10n.l2SealedOn : l10n.l2SealedOff,
                       tone: on
@@ -285,8 +295,10 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       const SizedBox(height: BoneSpacing.xl),
-                      Text(l10n.l2OwnerKeysReviewIntro,
-                          style: theme.textTheme.bodyMedium),
+                      Text(
+                        l10n.l2OwnerKeysReviewIntro,
+                        style: theme.textTheme.bodyMedium,
+                      ),
                       for (final item in items) _reviewItem(context, item),
                     ],
                   );
@@ -318,19 +330,28 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
                 child: TextButton.icon(
                   key: const ValueKey('sealed-technical-details'),
                   onPressed: () => setState(() => _showCodes = !_showCodes),
-                  icon:
-                      Icon(_showCodes ? Icons.expand_less : Icons.expand_more),
+                  icon: Icon(
+                    _showCodes ? Icons.expand_less : Icons.expand_more,
+                  ),
                   label: Text(l10n.l2SealedTechnicalDetails),
                 ),
               ),
               if (_showCodes) ...<Widget>[
                 Text(l10n.l2SealedKeyIntro, style: theme.textTheme.bodySmall),
                 if (pin != null)
-                  _code(context, l10n.l2SealedKeyPinned, pin.publicKey,
-                      valueKey: const ValueKey('sealed-key-pinned')),
+                  _code(
+                    context,
+                    l10n.l2SealedKeyPinned,
+                    pin.publicKey,
+                    valueKey: const ValueKey('sealed-key-pinned'),
+                  ),
                 if (changed)
-                  _code(context, l10n.l2SealedKeyNew, pin.seenPublicKey!,
-                      valueKey: const ValueKey('sealed-key-seen')),
+                  _code(
+                    context,
+                    l10n.l2SealedKeyNew,
+                    pin.seenPublicKey!,
+                    valueKey: const ValueKey('sealed-key-seen'),
+                  ),
               ],
             ],
           );

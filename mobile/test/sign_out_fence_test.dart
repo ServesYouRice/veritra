@@ -126,7 +126,9 @@ class _HeldMuteApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-      String token, String conversationId) {
+    String token,
+    String conversationId,
+  ) {
     asked.complete();
     return reply.future;
   }

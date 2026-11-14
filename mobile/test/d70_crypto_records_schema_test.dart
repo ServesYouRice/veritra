@@ -24,35 +24,44 @@ class _FailAfterVersion extends EncryptedLocalDatabase {
 }
 
 const _session = Session(
-    baseUrl: 'https://example.test',
-    token: 't',
-    accountId: 'acct_a',
-    deviceId: 'dev_a');
+  baseUrl: 'https://example.test',
+  token: 't',
+  accountId: 'acct_a',
+  deviceId: 'dev_a',
+);
 
 const _sessionJson =
     '{"base_url":"https://example.test","token":"t","account_id":"acct_a",'
     '"device_id":"dev_a"}';
 
 Future<int> _version(EncryptedLocalDatabase db) async =>
-    (await db.customSelect('PRAGMA user_version').getSingle())
-        .read<int>('user_version');
+    (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+      'user_version',
+    );
 
 Future<bool> _hasRecordsTable(EncryptedLocalDatabase db) async => (await db
-        .customSelect("SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='local_crypto_records'")
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='local_crypto_records'",
+        )
         .get())
     .isNotEmpty;
 
 Future<void> _seedRecords(EncryptedLocalDatabase db) async {
   await db.customStatement(
-      'INSERT INTO local_crypto_records (kind, record_id, generation, sealed) '
-      "VALUES (2, x'0102', 3, x'aa'), (1, x'', 3, x'bb')");
+    'INSERT INTO local_crypto_records (kind, record_id, generation, sealed) '
+    "VALUES (2, x'0102', 3, x'aa'), (1, x'', 3, x'bb')",
+  );
 }
 
 Future<void> _seedState(EncryptedLocalDatabase db) async {
   await db.writeSessionJson(_sessionJson);
   await db.writeCryptoState(
-      counter: 3, stateKey: List.filled(32, 7), sealedState: [9], cursor: 5);
+    counter: 3,
+    stateKey: List.filled(32, 7),
+    sealedState: [9],
+    cursor: 5,
+  );
   await _seedRecords(db);
 }
 
@@ -70,7 +79,9 @@ void main() {
     expect(await db.readCryptoRecords(), isEmpty);
     expect(await _hasRecordsTable(db), isTrue);
     expect(
-        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(16));
+      EncryptedLocalDatabase.currentSchemaVersion,
+      greaterThanOrEqualTo(16),
+    );
     expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
   });
 
@@ -79,10 +90,11 @@ void main() {
     var db = EncryptedLocalDatabase(NativeDatabase(file));
     await db.writeSessionJson(_sessionJson);
     await db.writeCryptoState(
-        counter: 4,
-        stateKey: List.filled(32, 1),
-        sealedState: [5, 6],
-        cursor: 8);
+      counter: 4,
+      stateKey: List.filled(32, 1),
+      sealedState: [5, 6],
+      cursor: 8,
+    );
     await stripCryptoRecordsSchema(db);
     await db.customStatement('PRAGMA user_version = 15');
     await db.close();
@@ -99,38 +111,47 @@ void main() {
     expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
   });
 
-  test('a failed 15 to 16 upgrade rolls back and the next open retries it',
-      () async {
-    final (_, file) = await _tempFile();
-    var db = EncryptedLocalDatabase(NativeDatabase(file));
-    await db.writeCryptoState(
-        counter: 2, stateKey: List.filled(32, 1), sealedState: [5], cursor: 1);
-    await stripCryptoRecordsSchema(db);
-    await db.customStatement('PRAGMA user_version = 15');
-    await db.close();
+  test(
+    'a failed 15 to 16 upgrade rolls back and the next open retries it',
+    () async {
+      final (_, file) = await _tempFile();
+      var db = EncryptedLocalDatabase(NativeDatabase(file));
+      await db.writeCryptoState(
+        counter: 2,
+        stateKey: List.filled(32, 1),
+        sealedState: [5],
+        cursor: 1,
+      );
+      await stripCryptoRecordsSchema(db);
+      await db.customStatement('PRAGMA user_version = 15');
+      await db.close();
 
-    final failing = _FailAfterVersion(NativeDatabase(file));
-    await expectLater(failing.readCryptoState(), throwsA(anything));
-    expect(failing.upgradeStarted, isTrue);
-    await failing.close();
+      final failing = _FailAfterVersion(NativeDatabase(file));
+      await expectLater(failing.readCryptoState(), throwsA(anything));
+      expect(failing.upgradeStarted, isTrue);
+      await failing.close();
 
-    final raw = sqlite3.open(file.path);
-    try {
-      expect(raw.select('PRAGMA user_version').single['user_version'], 15);
-      expect(
-          raw.select("SELECT name FROM sqlite_master WHERE type='table' "
-              "AND name='local_crypto_records'"),
-          isEmpty);
-    } finally {
-      raw.close();
-    }
+      final raw = sqlite3.open(file.path);
+      try {
+        expect(raw.select('PRAGMA user_version').single['user_version'], 15);
+        expect(
+          raw.select(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='local_crypto_records'",
+          ),
+          isEmpty,
+        );
+      } finally {
+        raw.close();
+      }
 
-    db = EncryptedLocalDatabase(NativeDatabase(file));
-    addTearDown(db.close);
-    expect((await db.readCryptoState())?.counter, 2);
-    expect(await _hasRecordsTable(db), isTrue);
-    expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
-  });
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      addTearDown(db.close);
+      expect((await db.readCryptoState())?.counter, 2);
+      expect(await _hasRecordsTable(db), isTrue);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
+    },
+  );
 
   test('records read back ordered by kind, then id bytes', () async {
     final (_, file) = await _tempFile();
@@ -139,10 +160,9 @@ void main() {
     await _seedRecords(db);
     final rows = await db.readCryptoRecords();
     expect(
-        rows.map((r) => '${r.kind}:${r.recordId.join(',')}:${r.generation}'), [
-      '1::3',
-      '2:1,2:3',
-    ]);
+      rows.map((r) => '${r.kind}:${r.recordId.join(',')}:${r.generation}'),
+      ['1::3', '2:1,2:3'],
+    );
   });
 
   group('every SQL path that deletes the crypto state deletes the records', () {
@@ -160,16 +180,17 @@ void main() {
       'identity reset (sign-in as a new identity)': (db) =>
           db.writeSessionJson(_sessionJson, clearIdentityState: true),
       'legacy import': (db) => db.importLegacy(
-          sessionJson: _sessionJson,
-          conversations: const [],
-          envelopes: const [],
-          outbox: const [],
-          cryptoState: (
-            counter: 1,
-            stateKey: List.filled(32, 2),
-            sealedState: [1]
+            sessionJson: _sessionJson,
+            conversations: const [],
+            envelopes: const [],
+            outbox: const [],
+            cryptoState: (
+              counter: 1,
+              stateKey: List.filled(32, 2),
+              sealedState: [1],
+            ),
+            cursor: 0,
           ),
-          cursor: 0),
       'clearAll (LocalStore.clear: sign-out without a kept device)': (db) =>
           db.clearAll(),
     };
@@ -181,20 +202,22 @@ void main() {
     }
 
     test(
-        'sign-out keeping the device (cached clear), and MLS commits, keep the records',
-        () async {
-      await db.clearCachedState();
-      await db.writeSessionJson(null);
-      await db.writeSessionJson(_sessionJson);
-      await db.commitLocalMlsState(
+      'sign-out keeping the device (cached clear), and MLS commits, keep the records',
+      () async {
+        await db.clearCachedState();
+        await db.writeSessionJson(null);
+        await db.writeSessionJson(_sessionJson);
+        await db.commitLocalMlsState(
           expectedCounter: 3,
           expectedCursor: 5,
           counter: 4,
           stateKey: List.filled(32, 7),
-          sealedState: [10]);
-      expect((await db.readCryptoState())?.counter, 4);
-      expect(await db.readCryptoRecords(), hasLength(2));
-    });
+          sealedState: [10],
+        );
+        expect((await db.readCryptoState())?.counter, 4);
+        expect(await db.readCryptoRecords(), hasLength(2));
+      },
+    );
   });
 
   group('MemoryLocalStore drops records with the crypto state', () {
@@ -208,29 +231,34 @@ void main() {
       final store = MemoryLocalStore();
       await store.saveSession(_session);
       await store.commitLocalMlsState(
-          expectedCounter: 0,
-          expectedCursor: 0,
-          state: StoredCryptoState(
-              counter: 1, stateKey: List.filled(32, 3), sealedState: [4]));
+        expectedCounter: 0,
+        expectedCursor: 0,
+        state: StoredCryptoState(
+          counter: 1,
+          stateKey: List.filled(32, 3),
+          sealedState: [4],
+        ),
+      );
       store.seedCryptoRecordsForTest(seed);
       expect(
-          (await store.loadCryptoRecords())
-              .map((r) => '${r.kind}:${r.recordId.join(',')}'),
-          [
-            '1:',
-            '2:1,0',
-            '2:9',
-          ]);
+        (await store.loadCryptoRecords()).map(
+          (r) => '${r.kind}:${r.recordId.join(',')}',
+        ),
+        ['1:', '2:1,0', '2:9'],
+      );
       return store;
     }
 
     test('identity change', () async {
       final store = await seeded();
-      await store.saveSession(const Session(
+      await store.saveSession(
+        const Session(
           baseUrl: 'https://example.test',
           token: 't',
           accountId: 'acct_b',
-          deviceId: 'dev_b'));
+          deviceId: 'dev_b',
+        ),
+      );
       expect(await store.loadCryptoRecords(), isEmpty);
     });
 

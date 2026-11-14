@@ -62,10 +62,9 @@ void main() {
     expect(created, isNotNull);
     expect(api.lastConversationBody?['kind'], 'group');
     expect(api.lastConversationBody?['title'], 'Family');
-    expect(
-      api.lastConversationBody?['member_account_ids'],
-      <String>['acct_other'],
-    );
+    expect(api.lastConversationBody?['member_account_ids'], <String>[
+      'acct_other',
+    ]);
     expect(state.selectedConversationId, created!.id);
     expect(state.conversations.first.id, created.id);
   });
@@ -80,22 +79,24 @@ void main() {
     expect(state.invites, hasLength(1));
   });
 
-  test('createCommunity then createChannel opens a channel conversation',
-      () async {
-    final api = FakeFeatureApiClient();
-    final state = _connectedState(api);
+  test(
+    'createCommunity then createChannel opens a channel conversation',
+    () async {
+      final api = FakeFeatureApiClient();
+      final state = _connectedState(api);
 
-    final community = await state.createCommunity('Neighborhood');
-    expect(community, isNotNull);
-    expect(state.communities, hasLength(1));
+      final community = await state.createCommunity('Neighborhood');
+      expect(community, isNotNull);
+      expect(state.communities, hasLength(1));
 
-    await state.createChannel(community!.id, 'general');
-    expect(state.channelsByCommunity[community.id], hasLength(1));
-    expect(state.conversations, isNotEmpty);
-    expect(state.conversations.first.kind, 'community_channel');
-    expect(state.conversations.first.communityId, community.id);
-    expect(state.selectedConversationId, state.conversations.first.id);
-  });
+      await state.createChannel(community!.id, 'general');
+      expect(state.channelsByCommunity[community.id], hasLength(1));
+      expect(state.conversations, isNotEmpty);
+      expect(state.conversations.first.kind, 'community_channel');
+      expect(state.conversations.first.communityId, community.id);
+      expect(state.selectedConversationId, state.conversations.first.id);
+    },
+  );
 
   test('registerWithInvite establishes a session', () async {
     final api = FakeFeatureApiClient();
@@ -230,7 +231,9 @@ class FakeFeatureApiClient extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<ConversationMember>> communityMembers(
-      String token, String communityId) async {
+    String token,
+    String communityId,
+  ) async {
     return <ConversationMember>[
       if (_communities.any((c) => c.id == communityId))
         ConversationMember(accountId: 'acct_owner', role: 'owner'),
@@ -272,7 +275,8 @@ class FakeFeatureApiClient extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
-      String inviteCode) async {
+    String inviteCode,
+  ) async {
     return const EnrollmentReservation(
       id: 'enroll_1',
       accountId: 'acct_new',

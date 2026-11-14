@@ -98,57 +98,73 @@ class _IdleSync implements SyncService {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a failed reload after the purge hides expired text and retries',
-      () async {
-    final soon = DateTime.now().toUtc().add(const Duration(milliseconds: 300));
-    final store = _HistoryStore()
-      ..rows = <LocalMessage>[
-        _row('soon', 'soon text', expiresAt: soon),
-        _row('live', 'live text'),
-      ];
-    final api = ApiClient(baseUrl: 'https://localhost:8080');
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: _HistoryMls(),
-      localStore: store,
-      syncServiceFactory: (_, __) => _IdleSync(),
-    )
-      ..api = api
-      ..session = _session
-      ..conversations = <Conversation>[
-        Conversation(id: 'conv_1', kind: 'group', createdBy: 'acct_own'),
-      ];
-    addTearDown(state.dispose);
-    await state.refreshHistory('conv_1');
-    expect(state.timelineFor('conv_1').map((e) => e.id),
-        unorderedEquals(<String>['dev_peer:soon', 'dev_peer:live']));
+  test(
+    'a failed reload after the purge hides expired text and retries',
+    () async {
+      final soon = DateTime.now().toUtc().add(
+            const Duration(milliseconds: 300),
+          );
+      final store = _HistoryStore()
+        ..rows = <LocalMessage>[
+          _row('soon', 'soon text', expiresAt: soon),
+          _row('live', 'live text'),
+        ];
+      final api = ApiClient(baseUrl: 'https://localhost:8080');
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: _HistoryMls(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _IdleSync(),
+      )
+        ..api = api
+        ..session = _session
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group', createdBy: 'acct_own'),
+        ];
+      addTearDown(state.dispose);
+      await state.refreshHistory('conv_1');
+      expect(
+        state.timelineFor('conv_1').map((e) => e.id),
+        unorderedEquals(<String>['dev_peer:soon', 'dev_peer:live']),
+      );
 
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    store.failLoads = true;
-    var notified = 0;
-    state.addListener(() => notified++);
-    await state.purgeExpiredMessages();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      store.failLoads = true;
+      var notified = 0;
+      state.addListener(() => notified++);
+      await state.purgeExpiredMessages();
 
-    expect(store.rows.map((r) => r.key), <String>['dev_peer:live'],
-        reason: 'the database delete itself worked');
-    expect(
-        state.timelineFor('conv_1').map((e) => e.id), <String>['dev_peer:live'],
-        reason: 'expired text is still in the chat after a failed reload');
-    expect(state.historyFor('conv_1').forKey('dev_peer:soon'), isNull,
-        reason: 'replies, pins and starred read the cached history too');
-    expect(notified, greaterThan(0));
-    expect(await store.nextMessageExpiry(), isNull);
+      expect(
+          store.rows.map((r) => r.key),
+          <String>[
+            'dev_peer:live',
+          ],
+          reason: 'the database delete itself worked');
+      expect(
+        state.timelineFor('conv_1').map((e) => e.id),
+        <String>['dev_peer:live'],
+        reason: 'expired text is still in the chat after a failed reload',
+      );
+      expect(
+        state.historyFor('conv_1').forKey('dev_peer:soon'),
+        isNull,
+        reason: 'replies, pins and starred read the cached history too',
+      );
+      expect(notified, greaterThan(0));
+      expect(await store.nextMessageExpiry(), isNull);
 
-    // Nothing is left to expire, yet the failed reload is tried again.
-    store.failLoads = false;
-    final loadsBefore = store.loads;
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (store.loads == loadsBefore && DateTime.now().isBefore(deadline)) {
+      // Nothing is left to expire, yet the failed reload is tried again.
+      store.failLoads = false;
+      final loadsBefore = store.loads;
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (store.loads == loadsBefore && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(store.loads, greaterThan(loadsBefore), reason: 'never retried');
-    expect(state.historyFor('conv_1').messages.map((m) => m.body),
-        <String?>['live text']);
-  });
+      expect(store.loads, greaterThan(loadsBefore), reason: 'never retried');
+      expect(state.historyFor('conv_1').messages.map((m) => m.body), <String?>[
+        'live text',
+      ]);
+    },
+  );
 }

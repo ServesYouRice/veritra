@@ -140,7 +140,9 @@ class FakeSfu implements SfuConnection {
 
   @override
   Future<RoomFrameCryptor> senderCryptor(
-      SfuLocalTrack track, String participantId) async {
+    SfuLocalTrack track,
+    String participantId,
+  ) async {
     log.add('sender cryptor $participantId');
     final c = FakeCryptor(participantId, log, failEnable: failSenderEnable);
     cryptors.add(c);
@@ -149,7 +151,9 @@ class FakeSfu implements SfuConnection {
 
   @override
   Future<RoomFrameCryptor> receiverCryptor(
-      SfuRemoteTrack track, String participantId) async {
+    SfuRemoteTrack track,
+    String participantId,
+  ) async {
     log.add('receiver cryptor ${track.sid} $participantId');
     final c = FakeCryptor(participantId, log, failEnable: failReceiverEnable);
     cryptors.add(c);
@@ -171,15 +175,25 @@ class FakeSfu implements SfuConnection {
   }
 
   FakeCryptor? receiverFor(String sid) => cryptors
-      .where((c) =>
-          !c.disposed &&
-          log.contains('receiver cryptor $sid ${c.participantId}'))
+      .where(
+        (c) =>
+            !c.disposed &&
+            log.contains('receiver cryptor $sid ${c.participantId}'),
+      )
       .lastOrNull;
 }
 
 class MediaDevice {
-  MediaDevice._(this.self, this.crypto, this.api, this.keys, this.provider,
-      this.engine, this.sfu, this.media);
+  MediaDevice._(
+    this.self,
+    this.crypto,
+    this.api,
+    this.keys,
+    this.provider,
+    this.engine,
+    this.sfu,
+    this.media,
+  );
   final CallMember self;
   final FakeCrypto crypto;
   final FakeApi api;
@@ -189,8 +203,13 @@ class MediaDevice {
   final FakeSfu sfu;
   final RoomMediaSession media;
 
-  static Future<MediaDevice> create(String name, FakeServer server,
-      FakeClock clock, FakeParent parent, FakeHub hub) async {
+  static Future<MediaDevice> create(
+    String name,
+    FakeServer server,
+    FakeClock clock,
+    FakeParent parent,
+    FakeHub hub,
+  ) async {
     final self = member(name);
     final crypto = FakeCrypto(self);
     final api = FakeApi(server, self);
@@ -241,8 +260,11 @@ void main() {
     return d;
   }
 
-  Future<void> admit(MediaDevice existing, MediaDevice joiner,
-      {List<MediaDevice> others = const []}) async {
+  Future<void> admit(
+    MediaDevice existing,
+    MediaDevice joiner, {
+    List<MediaDevice> others = const [],
+  }) async {
     existing.engine.refresh();
     await existing.settle();
     await clock.advance(const Duration(milliseconds: 250));
@@ -269,10 +291,12 @@ void main() {
   test('the key provider gets exactly the fail-closed options', () async {
     rtc.KeyProviderOptions? seen;
     final log = <String>[];
-    await WebRtcFrameKeys.open(create: (options) async {
-      seen = options;
-      return FakeKeyProvider(log);
-    });
+    await WebRtcFrameKeys.open(
+      create: (options) async {
+        seen = options;
+        return FakeKeyProvider(log);
+      },
+    );
     final options = seen!;
     expect(options.discardFrameWhenCryptorNotReady, isTrue);
     expect(options.sharedKey, isFalse);
@@ -286,68 +310,81 @@ void main() {
 
   test('no fail-closed key provider means no call', () async {
     await expectLater(
-        WebRtcFrameKeys.open(
-            settings: const RoomCryptorSettings(useMagicBytes: true),
-            create: (_) async => FakeKeyProvider([])),
-        throwsA(isA<FrameEncryptionUnavailable>()));
-    await expectLater(
-        WebRtcFrameKeys.open(
-            create: (_) async => throw UnsupportedError('no frame cryptor')),
-        throwsA(isA<FrameEncryptionUnavailable>()));
-  });
-
-  test('voice is published disabled, then encrypted and keyed, then enabled',
-      () async {
-    final a = await start('a');
-    expect(a.engine.phase, RoomPhase.active);
-    final log = a.sfu.log;
-    final publish = log.indexOf('publish 0');
-    final cryptor = log.indexOf('sender cryptor acct_a/dev_a:0');
-    final enabled = log.indexOf('cryptor acct_a/dev_a:0 enabled=true');
-    final index = log.indexOf('cryptor acct_a/dev_a:0 index=0');
-    final open = log.indexOf('track TR_sfu_a_0 enabled=true');
-    expect(publish, greaterThanOrEqualTo(0));
-    expect(cryptor, greaterThan(publish));
-    expect(enabled, greaterThan(cryptor));
-    expect(index, greaterThan(enabled));
-    expect(open, greaterThan(index),
-        reason: 'the capture opens only once a key index is set');
-    expect(a.provider.keys.containsKey('acct_a/dev_a:0@0'), isTrue);
-    expect(a.sfu.published.single.enabled, isTrue);
-    await end([a]);
-  });
-
-  test('a sender cryptor that will not enable ends the call, never sends',
-      () async {
-    final self = member('a');
-    final provider = FakeKeyProvider([]);
-    final keys = await WebRtcFrameKeys.open(create: (_) async => provider);
-    final engine = RoomEngine(
-      api: FakeApi(server, self),
-      crypto: FakeCrypto(self),
-      parent: parent,
-      keys: keys,
-      scheduler: clock,
-      selfAccountId: self.accountId,
-      selfDeviceId: self.deviceId,
+      WebRtcFrameKeys.open(
+        settings: const RoomCryptorSettings(useMagicBytes: true),
+        create: (_) async => FakeKeyProvider([]),
+      ),
+      throwsA(isA<FrameEncryptionUnavailable>()),
     );
-    final sfu = FakeSfu(hub, 'sfu_a')..failSenderEnable = true;
-    final media = RoomMediaSession(engine: engine, keys: keys, sfu: sfu)
-      ..start();
-    await engine.join('conv_1');
-    for (var i = 0; i < 4; i++) {
-      await pump();
-      await media.idle;
-    }
-    expect(engine.phase, RoomPhase.failed);
-    expect(engine.failure, RoomFailure.cryptorNotFailClosed);
-    expect(
-        sfu.log
-            .where((l) => l.contains('enabled=true') && l.startsWith('track')),
-        isEmpty);
-    expect(sfu.log, contains('disconnect'));
-    engine.dispose();
+    await expectLater(
+      WebRtcFrameKeys.open(
+        create: (_) async => throw UnsupportedError('no frame cryptor'),
+      ),
+      throwsA(isA<FrameEncryptionUnavailable>()),
+    );
   });
+
+  test(
+    'voice is published disabled, then encrypted and keyed, then enabled',
+    () async {
+      final a = await start('a');
+      expect(a.engine.phase, RoomPhase.active);
+      final log = a.sfu.log;
+      final publish = log.indexOf('publish 0');
+      final cryptor = log.indexOf('sender cryptor acct_a/dev_a:0');
+      final enabled = log.indexOf('cryptor acct_a/dev_a:0 enabled=true');
+      final index = log.indexOf('cryptor acct_a/dev_a:0 index=0');
+      final open = log.indexOf('track TR_sfu_a_0 enabled=true');
+      expect(publish, greaterThanOrEqualTo(0));
+      expect(cryptor, greaterThan(publish));
+      expect(enabled, greaterThan(cryptor));
+      expect(index, greaterThan(enabled));
+      expect(
+        open,
+        greaterThan(index),
+        reason: 'the capture opens only once a key index is set',
+      );
+      expect(a.provider.keys.containsKey('acct_a/dev_a:0@0'), isTrue);
+      expect(a.sfu.published.single.enabled, isTrue);
+      await end([a]);
+    },
+  );
+
+  test(
+    'a sender cryptor that will not enable ends the call, never sends',
+    () async {
+      final self = member('a');
+      final provider = FakeKeyProvider([]);
+      final keys = await WebRtcFrameKeys.open(create: (_) async => provider);
+      final engine = RoomEngine(
+        api: FakeApi(server, self),
+        crypto: FakeCrypto(self),
+        parent: parent,
+        keys: keys,
+        scheduler: clock,
+        selfAccountId: self.accountId,
+        selfDeviceId: self.deviceId,
+      );
+      final sfu = FakeSfu(hub, 'sfu_a')..failSenderEnable = true;
+      final media = RoomMediaSession(engine: engine, keys: keys, sfu: sfu)
+        ..start();
+      await engine.join('conv_1');
+      for (var i = 0; i < 4; i++) {
+        await pump();
+        await media.idle;
+      }
+      expect(engine.phase, RoomPhase.failed);
+      expect(engine.failure, RoomFailure.cryptorNotFailClosed);
+      expect(
+        sfu.log.where(
+          (l) => l.contains('enabled=true') && l.startsWith('track'),
+        ),
+        isEmpty,
+      );
+      expect(sfu.log, contains('disconnect'));
+      engine.dispose();
+    },
+  );
 
   test('a key the provider refuses ends the call', () async {
     final a = await start('a');
@@ -361,67 +398,78 @@ void main() {
     a.engine.dispose();
   });
 
-  test('a remote track binds only through its sender\'s sealed announcement',
-      () async {
-    final a = await start('a');
-    final b2 = await start('b');
-    // Before b is in the call group, a already receives b's SFU track: it
-    // gets a receiver cryptor with no key and stays silent.
-    final early = a.sfu.remote['TR_sfu_b_0'];
-    if (early != null) {
-      expect(early.playing, isFalse);
-      expect(a.media.boundTracks, isEmpty);
-    }
-    await admit(a, b2);
-    final track = a.sfu.remote['TR_sfu_b_0']!;
-    expect(a.media.boundTracks, {'TR_sfu_b_0': 'acct_b/dev_b:0'});
-    expect(track.playing, isTrue);
-    // One receiver cryptor per track, keyed by its alias, which holds b's
-    // voice key of this epoch.
-    expect(a.sfu.receiverFor('TR_sfu_b_0')!.participantId, 'rx:TR_sfu_b_0');
-    expect(a.sfu.receiverFor('TR_sfu_b_0')!.enabled, isTrue);
-    expect(a.provider.keys['rx:TR_sfu_b_0@1'], isNotNull);
-    expect(a.provider.keys['rx:TR_sfu_b_0@1'],
-        a.provider.keys['acct_b/dev_b:0@1']);
-    expect(b2.media.boundTracks, {'TR_sfu_a_0': 'acct_a/dev_a:0'});
-    // The data the SFU carried names no account or device.
-    for (final data in [...a.sfu.sent, ...b2.sfu.sent]) {
-      expect(s(data.sublist(0, RoomEngine.signalMagic.length + 10)),
-          isNot(contains('acct_')));
-    }
-    await end([a, b2]);
-  });
+  test(
+    'a remote track binds only through its sender\'s sealed announcement',
+    () async {
+      final a = await start('a');
+      final b2 = await start('b');
+      // Before b is in the call group, a already receives b's SFU track: it
+      // gets a receiver cryptor with no key and stays silent.
+      final early = a.sfu.remote['TR_sfu_b_0'];
+      if (early != null) {
+        expect(early.playing, isFalse);
+        expect(a.media.boundTracks, isEmpty);
+      }
+      await admit(a, b2);
+      final track = a.sfu.remote['TR_sfu_b_0']!;
+      expect(a.media.boundTracks, {'TR_sfu_b_0': 'acct_b/dev_b:0'});
+      expect(track.playing, isTrue);
+      // One receiver cryptor per track, keyed by its alias, which holds b's
+      // voice key of this epoch.
+      expect(a.sfu.receiverFor('TR_sfu_b_0')!.participantId, 'rx:TR_sfu_b_0');
+      expect(a.sfu.receiverFor('TR_sfu_b_0')!.enabled, isTrue);
+      expect(a.provider.keys['rx:TR_sfu_b_0@1'], isNotNull);
+      expect(
+        a.provider.keys['rx:TR_sfu_b_0@1'],
+        a.provider.keys['acct_b/dev_b:0@1'],
+      );
+      expect(b2.media.boundTracks, {'TR_sfu_a_0': 'acct_a/dev_a:0'});
+      // The data the SFU carried names no account or device.
+      for (final data in [...a.sfu.sent, ...b2.sfu.sent]) {
+        expect(
+          s(data.sublist(0, RoomEngine.signalMagic.length + 10)),
+          isNot(contains('acct_')),
+        );
+      }
+      await end([a, b2]);
+    },
+  );
 
-  test('an announcement from the wrong SFU identity or the SFU binds nothing',
-      () async {
-    final a = await start('a');
-    final b2 = await start('b');
-    await admit(a, b2);
-    expect(a.media.boundTracks['TR_sfu_b_0'], 'acct_b/dev_b:0');
-    // The SFU claims a track of another connection under b's announced id:
-    // the announcement names b's connection, so it stays unbound and silent.
-    final claimed = FakeRemoteTrack('TR_sfu_b_0', 'sfu_c');
-    a.sfu.emit(SfuTrackSubscribed(claimed));
-    await a.settle();
-    expect(a.media.boundTracks, isEmpty);
-    expect(claimed.playing, isFalse);
-    // b's genuine announcement replayed from another connection, or as the
-    // SFU's own data, binds nothing to that connection.
-    final genuine = b2.sfu.sent.last;
-    a.sfu.emit(SfuData('sfu_c', genuine));
-    a.sfu.emit(SfuData(null, genuine));
-    a.sfu.emit(SfuData('sfu_c', b('VB6S not sealed')));
-    await a.settle();
-    expect(a.media.boundTracks, isEmpty);
-    expect(claimed.playing, isFalse);
-    // The claimed track's cryptor holds no key of b's.
-    final cryptors = a.sfu.cryptors
-        .where((c) => c.participantId == 'rx:TR_sfu_b_0' && !c.disposed);
-    expect(cryptors, hasLength(1));
-    expect(a.provider.keys['rx:TR_sfu_b_0@1'],
-        isNot(a.provider.keys['acct_b/dev_b:0@1']));
-    await end([a, b2]);
-  });
+  test(
+    'an announcement from the wrong SFU identity or the SFU binds nothing',
+    () async {
+      final a = await start('a');
+      final b2 = await start('b');
+      await admit(a, b2);
+      expect(a.media.boundTracks['TR_sfu_b_0'], 'acct_b/dev_b:0');
+      // The SFU claims a track of another connection under b's announced id:
+      // the announcement names b's connection, so it stays unbound and silent.
+      final claimed = FakeRemoteTrack('TR_sfu_b_0', 'sfu_c');
+      a.sfu.emit(SfuTrackSubscribed(claimed));
+      await a.settle();
+      expect(a.media.boundTracks, isEmpty);
+      expect(claimed.playing, isFalse);
+      // b's genuine announcement replayed from another connection, or as the
+      // SFU's own data, binds nothing to that connection.
+      final genuine = b2.sfu.sent.last;
+      a.sfu.emit(SfuData('sfu_c', genuine));
+      a.sfu.emit(SfuData(null, genuine));
+      a.sfu.emit(SfuData('sfu_c', b('VB6S not sealed')));
+      await a.settle();
+      expect(a.media.boundTracks, isEmpty);
+      expect(claimed.playing, isFalse);
+      // The claimed track's cryptor holds no key of b's.
+      final cryptors = a.sfu.cryptors.where(
+        (c) => c.participantId == 'rx:TR_sfu_b_0' && !c.disposed,
+      );
+      expect(cryptors, hasLength(1));
+      expect(
+        a.provider.keys['rx:TR_sfu_b_0@1'],
+        isNot(a.provider.keys['acct_b/dev_b:0@1']),
+      );
+      await end([a, b2]);
+    },
+  );
 
   test('a member removed from the parent loses its track binding', () async {
     final a = await start('a');
@@ -435,8 +483,11 @@ void main() {
     await a.settle();
     expect(a.engine.roster.map((m) => m.id), ['acct_a/dev_a']);
     expect(a.media.boundTracks, isEmpty);
-    expect(a.sfu.remote['TR_sfu_b_0']!.playing, isFalse,
-        reason: 'frames from a removed member are never played');
+    expect(
+      a.sfu.remote['TR_sfu_b_0']!.playing,
+      isFalse,
+      reason: 'frames from a removed member are never played',
+    );
     await end([a, b2]);
   });
 
@@ -484,34 +535,40 @@ void main() {
     expect(a.sfu.receiverFor('TR_sfu_b_0')!.disposed, isFalse);
     // c's track was bound to c the whole time, with its own single cryptor.
     expect(a.media.boundTracks['TR_sfu_c_0'], 'acct_c/dev_c:0');
-    expect(a.provider.keys['rx:TR_sfu_c_0@3'],
-        a.provider.keys['acct_c/dev_c:0@3']);
+    expect(
+      a.provider.keys['rx:TR_sfu_c_0@3'],
+      a.provider.keys['acct_c/dev_c:0@3'],
+    );
     await end([a, b2, c]);
   });
 
-  test('a receiver cryptor that will not enable unsubscribes the track',
-      () async {
-    final a = await start('a');
-    a.sfu.failReceiverEnable = true;
-    final b2 = await start('b');
-    await admit(a, b2);
-    expect(a.sfu.remote['TR_sfu_b_0']!.unsubscribed, isTrue);
-    await end([a, b2]);
-  });
+  test(
+    'a receiver cryptor that will not enable unsubscribes the track',
+    () async {
+      final a = await start('a');
+      a.sfu.failReceiverEnable = true;
+      final b2 = await start('b');
+      await admit(a, b2);
+      expect(a.sfu.remote['TR_sfu_b_0']!.unsubscribed, isTrue);
+      await end([a, b2]);
+    },
+  );
 
-  test('a remote track that cannot be muted is dropped, never played',
-      () async {
-    final a = await start('a');
-    final b2 = await start('b');
-    await admit(a, b2);
-    final stuck = FakeRemoteTrack('TR_stuck', 'sfu_b')..refusesMute = true;
-    a.sfu.emit(SfuTrackSubscribed(stuck));
-    await a.settle();
-    expect(stuck.unsubscribed, isTrue);
-    expect(a.sfu.receiverFor('TR_stuck'), isNull);
-    expect(a.media.boundTracks.containsKey('TR_stuck'), isFalse);
-    await end([a, b2]);
-  });
+  test(
+    'a remote track that cannot be muted is dropped, never played',
+    () async {
+      final a = await start('a');
+      final b2 = await start('b');
+      await admit(a, b2);
+      final stuck = FakeRemoteTrack('TR_stuck', 'sfu_b')..refusesMute = true;
+      a.sfu.emit(SfuTrackSubscribed(stuck));
+      await a.settle();
+      expect(stuck.unsubscribed, isTrue);
+      expect(a.sfu.receiverFor('TR_stuck'), isNull);
+      expect(a.media.boundTracks.containsKey('TR_stuck'), isFalse);
+      await end([a, b2]);
+    },
+  );
 
   test('mute keeps the capture disabled, and unmute opens it again', () async {
     final a = await start('a');
@@ -542,51 +599,55 @@ void main() {
         scheduler: clock,
       );
       await expectLater(
-          factory.open('conv_1'), throwsA(isA<FrameEncryptionUnavailable>()));
+        factory.open('conv_1'),
+        throwsA(isA<FrameEncryptionUnavailable>()),
+      );
       expect(source.opened, 0);
     });
 
-    test('a parent roster change refreshes the call, and closeAll ends it',
-        () async {
-      final source = _FakeSource(parent);
-      final roster = ChangeNotifier();
-      final provider = FakeKeyProvider([]);
-      final factory = RoomCallFactory(
-        api: FakeApi(server, member('a')),
-        crypto: source,
-        selfAccountId: 'acct_a',
-        selfDeviceId: 'dev_a',
-        rosterChanges: roster,
-        openKeys: () => WebRtcFrameKeys.open(create: (_) async => provider),
-        connectSfu: (_) => FakeSfu(hub, 'sfu_a'),
-        scheduler: clock,
-      );
-      final call = await factory.open('conv_1');
-      await call.engine.join('conv_1');
-      await pump();
-      expect(call.engine.phase, RoomPhase.active);
-      final b2 = await start('b');
-      await pump();
-      // A change that is not to the parent's members does nothing.
-      roster.notifyListeners();
-      await pump();
-      await clock.advance(const Duration(milliseconds: 250));
-      expect(server.epoch, 0, reason: 'no refresh ran (the poll is 2 s)');
-      parent.list.add(member('d'));
-      roster.notifyListeners();
-      await pump();
-      await clock.advance(const Duration(milliseconds: 250));
-      await b2.settle();
-      expect(server.epoch, 1, reason: 'the roster change ran a refresh');
-      expect(factory.openCalls, 1);
-      await factory.closeAll();
-      expect(factory.openCalls, 0);
-      expect(source.handles.single.closed, isTrue);
-      expect(provider.disposed, isTrue);
-      expect(call.engine.phase, RoomPhase.left);
-      await expectLater(factory.open('conv_1'), throwsStateError);
-      await end([b2]);
-    });
+    test(
+      'a parent roster change refreshes the call, and closeAll ends it',
+      () async {
+        final source = _FakeSource(parent);
+        final roster = ChangeNotifier();
+        final provider = FakeKeyProvider([]);
+        final factory = RoomCallFactory(
+          api: FakeApi(server, member('a')),
+          crypto: source,
+          selfAccountId: 'acct_a',
+          selfDeviceId: 'dev_a',
+          rosterChanges: roster,
+          openKeys: () => WebRtcFrameKeys.open(create: (_) async => provider),
+          connectSfu: (_) => FakeSfu(hub, 'sfu_a'),
+          scheduler: clock,
+        );
+        final call = await factory.open('conv_1');
+        await call.engine.join('conv_1');
+        await pump();
+        expect(call.engine.phase, RoomPhase.active);
+        final b2 = await start('b');
+        await pump();
+        // A change that is not to the parent's members does nothing.
+        roster.notifyListeners();
+        await pump();
+        await clock.advance(const Duration(milliseconds: 250));
+        expect(server.epoch, 0, reason: 'no refresh ran (the poll is 2 s)');
+        parent.list.add(member('d'));
+        roster.notifyListeners();
+        await pump();
+        await clock.advance(const Duration(milliseconds: 250));
+        await b2.settle();
+        expect(server.epoch, 1, reason: 'the roster change ran a refresh');
+        expect(factory.openCalls, 1);
+        await factory.closeAll();
+        expect(factory.openCalls, 0);
+        expect(source.handles.single.closed, isTrue);
+        expect(provider.disposed, isTrue);
+        expect(call.engine.phase, RoomPhase.left);
+        await expectLater(factory.open('conv_1'), throwsStateError);
+        await end([b2]);
+      },
+    );
   });
 }
 

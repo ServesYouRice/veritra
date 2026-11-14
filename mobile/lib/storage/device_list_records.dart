@@ -78,7 +78,7 @@ class DeviceListPin {
   /// The pairs the head lists now.
   List<DeviceListKeyRow> get listed => [
         for (final key in keys)
-          if (key.listed) key
+          if (key.listed) key,
       ];
 
   DeviceListPin copyWith({bool? conflict, int? checkedAt, int? pinnedAt}) =>

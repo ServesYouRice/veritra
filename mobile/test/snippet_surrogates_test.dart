@@ -77,8 +77,11 @@ void main() {
         for (var after = 0; after <= 2 * radius + 4; after++) {
           final text = '${smile * before}needle${smile * after}';
           final snippet = snippetFor(text, terms, radius: radius);
-          expect(_wellFormed(snippet), isTrue,
-              reason: 'radius $radius, $before before, $after after: $snippet');
+          expect(
+            _wellFormed(snippet),
+            isTrue,
+            reason: 'radius $radius, $before before, $after after: $snippet',
+          );
         }
       }
     }
@@ -90,8 +93,11 @@ void main() {
         final text =
             '${'a' * lead}$smile${'b' * gap}${smile * 30}needle ${smile * 30}';
         final snippet = snippetFor(text, terms, radius: 8);
-        expect(_wellFormed(snippet), isTrue,
-            reason: 'lead $lead, gap $gap: $snippet');
+        expect(
+          _wellFormed(snippet),
+          isTrue,
+          reason: 'lead $lead, gap $gap: $snippet',
+        );
       }
     }
   });
@@ -101,8 +107,11 @@ void main() {
     for (var lead = 0; lead < 24; lead++) {
       final text = '${'a' * lead}x${smile}x${'a' * 60}';
       final snippet = snippetFor(text, <String>['x${smile}x'], radius: 6);
-      expect(_wellFormed(snippet), isTrue,
-          reason: 'lead $lead produced $snippet');
+      expect(
+        _wellFormed(snippet),
+        isTrue,
+        reason: 'lead $lead produced $snippet',
+      );
     }
   });
 
@@ -112,8 +121,11 @@ void main() {
       for (var lead = 0; lead <= 2 * radius + 2; lead++) {
         final text = '${'a' * lead}İ${smile * 40}';
         final snippet = snippetFor(text, terms, radius: radius);
-        expect(_wellFormed(snippet), isTrue,
-            reason: 'radius $radius lead $lead produced $snippet');
+        expect(
+          _wellFormed(snippet),
+          isTrue,
+          reason: 'radius $radius lead $lead produced $snippet',
+        );
         expect(snippet, endsWith('…'));
       }
     }
@@ -144,9 +156,11 @@ void main() {
     ];
     for (final sample in samples) {
       for (final radius in <int>[3, 8, 20, 48]) {
-        expect(snippetFor(sample, terms, radius: radius),
-            _reference(sample, terms, radius: radius),
-            reason: '"$sample" radius $radius');
+        expect(
+          snippetFor(sample, terms, radius: radius),
+          _reference(sample, terms, radius: radius),
+          reason: '"$sample" radius $radius',
+        );
       }
     }
   });

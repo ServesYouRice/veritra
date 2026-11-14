@@ -130,13 +130,15 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
         await service.publishKey();
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l10n.c6ReportsKeyReady)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.c6ReportsKeyReady)));
       await _load();
     } catch (err) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(describeError(err, l10n))));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(describeError(err, l10n))));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -149,7 +151,10 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
     final dismissed = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => OwnerReportDetailScreen(
-            service: service, report: report, state: widget.state),
+          service: service,
+          report: report,
+          state: widget.state,
+        ),
       ),
     );
     if (dismissed == true && mounted) await _load();
@@ -170,7 +175,8 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                 : ListView(
                     // The 16 dp side gutter every screen shares.
                     padding: const EdgeInsets.symmetric(
-                        horizontal: BoneSpacing.gutter),
+                      horizontal: BoneSpacing.gutter,
+                    ),
                     children: <Widget>[
                       // The inbox leads with the reports; the report key is
                       // set-up and comes after them.
@@ -182,49 +188,62 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                           message: l10n.c6ReportsEmptyDetail,
                         )
                       else
-                        TileGroup(children: <Widget>[
-                          for (final report in reports)
-                            ListTile(
-                              leading: Icon(report.isOpen
-                                  ? Icons.flag_outlined
-                                  : Icons.lock_outline),
-                              title: Text(
-                                report.text ??
-                                    (report.isOpen
-                                        ? l10n.c6ReportsNoText
-                                        : l10n.c6ReportsLocked),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                        TileGroup(
+                          children: <Widget>[
+                            for (final report in reports)
+                              ListTile(
+                                leading: Icon(
+                                  report.isOpen
+                                      ? Icons.flag_outlined
+                                      : Icons.lock_outline,
+                                ),
+                                title: Text(
+                                  report.text ??
+                                      (report.isOpen
+                                          ? l10n.c6ReportsNoText
+                                          : l10n.c6ReportsLocked),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                // U33: the reporter's reason leads the second
+                                // line; a locked report shows none (it is
+                                // inside the seal).
+                                subtitle: Text(
+                                  <String>[
+                                    if (report.reason case final reason?)
+                                      l10n.c6ReportsRowReason(
+                                        reportReasonLabel(l10n, reason),
+                                      ),
+                                    l10n.c6ReportsFiledBy(
+                                      _personName(
+                                        widget.state,
+                                        report.row.reporterAccountId,
+                                      ),
+                                      formatDateTime(
+                                          context, report.row.createdAt),
+                                    ),
+                                  ].join('\n'),
+                                ),
+                                isThreeLine: report.reason != null,
+                                onTap: () => _openDetail(report),
                               ),
-                              // U33: the reporter's reason leads the second
-                              // line; a locked report shows none (it is
-                              // inside the seal).
-                              subtitle: Text(<String>[
-                                if (report.reason case final reason?)
-                                  l10n.c6ReportsRowReason(
-                                      reportReasonLabel(l10n, reason)),
-                                l10n.c6ReportsFiledBy(
-                                    _personName(widget.state,
-                                        report.row.reporterAccountId),
-                                    formatDateTime(
-                                        context, report.row.createdAt)),
-                              ].join('\n')),
-                              isThreeLine: report.reason != null,
-                              onTap: () => _openDetail(report),
-                            ),
-                        ]),
+                          ],
+                        ),
                       SectionHeader(l10n.c6ReportsKeySection),
                       _keyTile(context, key),
                       if (widget.communityId == null) ...<Widget>[
                         SectionHeader(l10n.c6ReportsCommunity),
-                        TileGroup(children: <Widget>[
-                          ListTile(
-                            enabled: false,
-                            leading: const Icon(Icons.groups_outlined),
-                            title: Text(l10n.c6ReportsCommunity),
-                            subtitle: Text(l10n.c6ReportsCommunityUnavailable),
-                          ),
-                        ]),
+                        TileGroup(
+                          children: <Widget>[
+                            ListTile(
+                              enabled: false,
+                              leading: const Icon(Icons.groups_outlined),
+                              title: Text(l10n.c6ReportsCommunity),
+                              subtitle:
+                                  Text(l10n.c6ReportsCommunityUnavailable),
+                            ),
+                          ],
+                        ),
                       ],
                       const SizedBox(height: BoneSpacing.lg),
                     ],
@@ -248,44 +267,49 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
     };
     final hasKey = state != OwnerReportKeyState.none &&
         state != OwnerReportKeyState.heldElsewhere;
-    return TileGroup(children: <Widget>[
-      ListTile(
-        leading: Icon(hasKey ? Icons.key : Icons.key_off_outlined),
-        title: Text(title),
-        subtitle: code != null
-            ? SelectableText(l10n.c6ReportsKeyCode(reportKeyFingerprint(code)))
-            : null,
-      ),
-      if (state == OwnerReportKeyState.none ||
-          state == OwnerReportKeyState.heldElsewhere)
+    return TileGroup(
+      children: <Widget>[
         ListTile(
-          leading: const Icon(Icons.add),
-          title: Text(l10n.c6ReportsKeyCreate),
-          enabled: !_busy,
-          onTap: () => _publish(
-              create: true,
-              replace: state == OwnerReportKeyState.heldElsewhere),
-        )
-      else ...<Widget>[
-        // A moderator inbox whose key another inbox's replace left behind:
-        // publish this device's key there too (the seed is per account).
-        if (state == OwnerReportKeyState.unpublished ||
-            (widget.communityId != null &&
-                state == OwnerReportKeyState.replacedElsewhere))
-          ListTile(
-            leading: const Icon(Icons.publish_outlined),
-            title: Text(l10n.c6ReportsKeyPublish),
-            enabled: !_busy,
-            onTap: () => _publish(create: false, replace: false),
-          ),
-        ListTile(
-          leading: const Icon(Icons.autorenew),
-          title: Text(l10n.c6ReportsKeyReplace),
-          enabled: !_busy,
-          onTap: () => _publish(create: true, replace: true),
+          leading: Icon(hasKey ? Icons.key : Icons.key_off_outlined),
+          title: Text(title),
+          subtitle: code != null
+              ? SelectableText(
+                  l10n.c6ReportsKeyCode(reportKeyFingerprint(code)),
+                )
+              : null,
         ),
+        if (state == OwnerReportKeyState.none ||
+            state == OwnerReportKeyState.heldElsewhere)
+          ListTile(
+            leading: const Icon(Icons.add),
+            title: Text(l10n.c6ReportsKeyCreate),
+            enabled: !_busy,
+            onTap: () => _publish(
+              create: true,
+              replace: state == OwnerReportKeyState.heldElsewhere,
+            ),
+          )
+        else ...<Widget>[
+          // A moderator inbox whose key another inbox's replace left behind:
+          // publish this device's key there too (the seed is per account).
+          if (state == OwnerReportKeyState.unpublished ||
+              (widget.communityId != null &&
+                  state == OwnerReportKeyState.replacedElsewhere))
+            ListTile(
+              leading: const Icon(Icons.publish_outlined),
+              title: Text(l10n.c6ReportsKeyPublish),
+              enabled: !_busy,
+              onTap: () => _publish(create: false, replace: false),
+            ),
+          ListTile(
+            leading: const Icon(Icons.autorenew),
+            title: Text(l10n.c6ReportsKeyReplace),
+            enabled: !_busy,
+            onTap: () => _publish(create: true, replace: true),
+          ),
+        ],
       ],
-    ]);
+    );
   }
 }
 
@@ -343,8 +367,9 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
     if (text == null) return;
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(context.l10n.c6ReportsCopied)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.c6ReportsCopied)));
   }
 
   Future<void> _dismiss() async {
@@ -360,8 +385,9 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
     try {
       await widget.service.dismiss(widget.report.row);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l10n.c6ReportsDismissed)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.c6ReportsDismissed)));
       Navigator.of(context).pop(true);
     } catch (err) {
       if (mounted) setState(() => _error = describeError(err, l10n));
@@ -388,8 +414,10 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
         child: ListView(
           padding: const EdgeInsets.all(BoneSpacing.gutter),
           children: <Widget>[
-            Text(l10n.c6ReportsFiled(formatDateTime(context, row.createdAt)),
-                style: theme.textTheme.labelLarge),
+            Text(
+              l10n.c6ReportsFiled(formatDateTime(context, row.createdAt)),
+              style: theme.textTheme.labelLarge,
+            ),
             const SizedBox(height: BoneSpacing.sm),
             Text(l10n.c6ReportsReporter(_name(row.reporterAccountId))),
             if (widget.state case final state?)
@@ -404,23 +432,27 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
             if (report.isOpen) ...<Widget>[
               const SizedBox(height: BoneSpacing.xs),
               Text(
-                key: const Key('report-reason'),
-                switch (report.reason) {
-                  final reason? =>
-                    l10n.c6ReportsReason(reportReasonLabel(l10n, reason)),
-                  null => l10n.c6ReportsReasonNone,
-                },
-              ),
+                  key: const Key('report-reason'),
+                  switch (report.reason) {
+                    final reason? => l10n.c6ReportsReason(
+                        reportReasonLabel(l10n, reason),
+                      ),
+                    null => l10n.c6ReportsReasonNone,
+                  }),
               if (report.reason != null)
-                Text(l10n.c6ReportsReasonNotChecked,
-                    style: theme.textTheme.bodySmall),
+                Text(
+                  l10n.c6ReportsReasonNotChecked,
+                  style: theme.textTheme.bodySmall,
+                ),
             ],
             const SizedBox(height: BoneSpacing.lg),
             if (lockedText != null)
               Text(lockedText)
             else ...<Widget>[
-              Text(l10n.c6ReportsMessageLabel,
-                  style: theme.textTheme.labelLarge),
+              Text(
+                l10n.c6ReportsMessageLabel,
+                style: theme.textTheme.labelLarge,
+              ),
               const SizedBox(height: BoneSpacing.sm),
               Container(
                 padding: const EdgeInsets.all(BoneSpacing.md),
@@ -454,42 +486,42 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
       ReportVerdict.verified => (
           l10n.c6VerdictVerified,
           l10n.c6VerdictVerifiedDetail,
-          StatusTone.verified
+          StatusTone.verified,
         ),
       ReportVerdict.mismatch => (
           l10n.c6VerdictMismatch,
           l10n.c6VerdictMismatchDetail,
-          StatusTone.error
+          StatusTone.error,
         ),
       ReportVerdict.recordGone => (
           l10n.c6VerdictGone,
           l10n.c6VerdictGoneDetail,
-          StatusTone.warning
+          StatusTone.warning,
         ),
       ReportVerdict.unfranked => (
           l10n.c6VerdictUnfranked,
           l10n.c6VerdictUnfrankedDetail,
-          StatusTone.warning
+          StatusTone.warning,
         ),
       ReportVerdict.senderUnverified => (
           l10n.c6VerdictSenderUnverified,
           l10n.c6VerdictSenderUnverifiedDetail,
-          StatusTone.warning
+          StatusTone.warning,
         ),
       ReportVerdict.verifiedServerTrusted => (
           l10n.c6VerdictServerTrusted,
           l10n.c6VerdictServerTrustedDetail,
-          StatusTone.warning
+          StatusTone.warning,
         ),
       ReportVerdict.notDesignated => (
           l10n.c6VerdictNotDesignated,
           l10n.c6VerdictNotDesignatedDetail,
-          StatusTone.warning
+          StatusTone.warning,
         ),
       ReportVerdict.proofFailed => (
           l10n.c6VerdictProofFailed,
           l10n.c6VerdictProofFailedDetail,
-          StatusTone.error
+          StatusTone.error,
         ),
     };
     final record = result.record;

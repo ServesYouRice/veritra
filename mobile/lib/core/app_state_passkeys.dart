@@ -64,7 +64,9 @@ extension PasskeyActions on AppState {
         info: info,
         registration: false,
         options: () => client.passkeyLoginOptions(
-            deviceId: deviceId, deviceSecret: deviceSecret),
+          deviceId: deviceId,
+          deviceSecret: deviceSecret,
+        ),
         ceremony: passkeyClient.get,
         finish: (ceremony, credential) async {
           // Read before saving the new session: a different identity wipes
@@ -104,8 +106,9 @@ extension PasskeyActions on AppState {
     required Future<Map<String, Object?>> Function(Map<String, Object?>)
         ceremony,
     required Future<void> Function(
-            PasskeyCeremony, Map<String, Object?> credential)
-        finish,
+      PasskeyCeremony,
+      Map<String, Object?> credential,
+    ) finish,
   }) async {
     final started = await options();
     try {

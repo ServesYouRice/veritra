@@ -74,51 +74,56 @@ Map<String, Object?> _attachment(String id, String name, String type) =>
 Future<void> _seed(LocalStore store) async {
   await store.saveCryptoState(
     StoredCryptoState(
-        counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
+      counter: 1,
+      stateKey: List.filled(32, 1),
+      sealedState: [1],
+    ),
     0,
   );
-  await store.commitMlsTransition(MlsStateTransition(
-    messageId: 'seed',
-    conversationId: 'conv',
-    expectedCounter: 1,
-    expectedCursor: 0,
-    state: StoredCryptoState(
-        counter: 2, stateKey: List.filled(32, 1), sealedState: [2]),
-    cursor: 1,
-    messageEffects: [
-      InsertMessageEffect(
-        key: 'bobdev:text',
-        conversationId: 'conv',
-        senderAccountId: 'bob',
-        senderDeviceId: 'bobdev',
-        kind: LocalMessageKind.text,
-        body: 'hello there',
-        createdAt: 1,
-        state: LocalMessageState.received,
+  await store.commitMlsTransition(
+    MlsStateTransition(
+      messageId: 'seed',
+      conversationId: 'conv',
+      expectedCounter: 1,
+      expectedCursor: 0,
+      state: StoredCryptoState(
+        counter: 2,
+        stateKey: List.filled(32, 1),
+        sealedState: [2],
       ),
-      InsertMessageEffect(
-        key: 'bobdev:files',
-        conversationId: 'conv',
-        senderAccountId: 'bob',
-        senderDeviceId: 'bobdev',
-        kind: LocalMessageKind.attachment,
-        body: jsonEncode(<Object?>[
-          _attachment('att_photo', 'photo.png', 'image/png'),
-          _attachment('att_doc', 'report.pdf', 'application/pdf'),
-        ]),
-        createdAt: 2,
-        state: LocalMessageState.received,
-      ),
-    ],
-  ));
+      cursor: 1,
+      messageEffects: [
+        InsertMessageEffect(
+          key: 'bobdev:text',
+          conversationId: 'conv',
+          senderAccountId: 'bob',
+          senderDeviceId: 'bobdev',
+          kind: LocalMessageKind.text,
+          body: 'hello there',
+          createdAt: 1,
+          state: LocalMessageState.received,
+        ),
+        InsertMessageEffect(
+          key: 'bobdev:files',
+          conversationId: 'conv',
+          senderAccountId: 'bob',
+          senderDeviceId: 'bobdev',
+          kind: LocalMessageKind.attachment,
+          body: jsonEncode(<Object?>[
+            _attachment('att_photo', 'photo.png', 'image/png'),
+            _attachment('att_doc', 'report.pdf', 'application/pdf'),
+          ]),
+          createdAt: 2,
+          state: LocalMessageState.received,
+        ),
+      ],
+    ),
+  );
 }
 
 /// Opens the chat with one text message and one message with two
 /// attachments, with semantics on, and runs [body].
-Future<void> _inChat(
-  WidgetTester tester,
-  Future<void> Function() body,
-) async {
+Future<void> _inChat(WidgetTester tester, Future<void> Function() body) async {
   final semantics = tester.ensureSemantics();
   final state = _State()
     ..session = const Session(
@@ -135,11 +140,13 @@ Future<void> _inChat(
   try {
     await _seed(state.localStoreOverride!);
     await state.refreshHistory('conv');
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: ChatScreen(state: state, conversationId: 'conv'),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ChatScreen(state: state, conversationId: 'conv'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(state.attachmentsAvailable, isTrue);
     await body();
@@ -150,19 +157,21 @@ Future<void> _inChat(
   }
 }
 
-Finder _tile(String name) => find.ancestor(
-      of: find.text(name),
-      matching: find.byType(AttachmentTile),
-    );
+Finder _tile(String name) =>
+    find.ancestor(of: find.text(name), matching: find.byType(AttachmentTile));
 
 void main() {
-  testWidgets('each attachment of a bubble is a node with a tap action',
-      (tester) async {
+  testWidgets('each attachment of a bubble is a node with a tap action', (
+    tester,
+  ) async {
     await _inChat(tester, () async {
       final photo = tester.getSemantics(_tile('photo.png'));
       expect(photo.label, contains('photo.png'));
-      expect(photo.getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
-          reason: 'the image tile can be activated');
+      expect(
+        photo.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: 'the image tile can be activated',
+      );
       final pdf = tester.getSemantics(_tile('report.pdf'));
       expect(pdf.label, contains('report.pdf'));
       expect(pdf.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
@@ -178,8 +187,9 @@ void main() {
     });
   });
 
-  testWidgets('the attachment bubble is announced once, not per child',
-      (tester) async {
+  testWidgets('the attachment bubble is announced once, not per child', (
+    tester,
+  ) async {
     await _inChat(tester, () async {
       expect(
         find.semantics.byLabel(RegExp(r'^Attachment from bob')),
@@ -188,14 +198,17 @@ void main() {
     });
   });
 
-  testWidgets('a text bubble keeps its merged label and its long press',
-      (tester) async {
+  testWidgets('a text bubble keeps its merged label and its long press', (
+    tester,
+  ) async {
     await _inChat(tester, () async {
       final bubble = tester.getSemantics(find.byType(FormattedMessage));
       expect(bubble.label, contains('hello there'));
       expect(bubble.label, contains('bob'));
-      expect(bubble.getSemanticsData().hasAction(SemanticsAction.longPress),
-          isTrue);
+      expect(
+        bubble.getSemanticsData().hasAction(SemanticsAction.longPress),
+        isTrue,
+      );
     });
   });
 }

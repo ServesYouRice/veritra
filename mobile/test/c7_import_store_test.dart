@@ -45,12 +45,14 @@ void main() {
       'targets come, and nothing doubles', () async {
     final database = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(database.close);
-    await database.writeSessionJson(jsonEncode(<String, Object?>{
-      'base_url': 'https://example.test',
-      'token': 'token',
-      'account_id': 'acct_dave',
-      'device_id': 'dev_dave',
-    }));
+    await database.writeSessionJson(
+      jsonEncode(<String, Object?>{
+        'base_url': 'https://example.test',
+        'token': 'token',
+        'account_id': 'acct_dave',
+        'device_id': 'dev_dave',
+      }),
+    );
     // Page one (newest): the author's delete and edit, without targets.
     final newer = <MessageEffect>[
       action('del'),
@@ -87,8 +89,11 @@ void main() {
         row.key: row,
     };
     final gone = rows['dev_bob:gone'];
-    expect(gone == null || gone.deletedAt != null, isTrue,
-        reason: 'the deleted post never shows');
+    expect(
+      gone == null || gone.deletedAt != null,
+      isTrue,
+      reason: 'the deleted post never shows',
+    );
     expect(gone?.body, anyOf(isNull, isEmpty));
     expect(rows['dev_bob:kept']!.body, 'kept, edited');
     expect(rows['dev_bob:kept']!.c7Gen, 'ab' * 32);

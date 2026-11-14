@@ -43,8 +43,10 @@ abstract interface class InfoEditPolicy {
 /// server's word for a role), so nothing is shown until C4's role record is
 /// readable.
 class GovernanceInfoEditPolicy implements InfoEditPolicy {
-  const GovernanceInfoEditPolicy(this.roles,
-      {this.channelInfoRestricted = false});
+  const GovernanceInfoEditPolicy(
+    this.roles, {
+    this.channelInfoRestricted = false,
+  });
 
   final GovernanceState? roles;
 
@@ -127,7 +129,10 @@ enum InfoKeptReason { notAnnounced, notNewer, refused }
 
 /// Opens a blob with a key. In the app this is [CommunityInfoCodec.open].
 typedef InfoOpener = CommunityInfoRecord Function(
-    List<int> key, ServedCommunityInfo served, int cachedRevision);
+  List<int> key,
+  ServedCommunityInfo served,
+  int cachedRevision,
+);
 
 /// Judges one fetched record. Pure: the caller loads [keys] (for the home
 /// subject) and [updates] (for the subject) from the local store and acts on
@@ -146,23 +151,27 @@ InfoVerdict judgeCommunityInfo({
     return const InfoKept(InfoKeptReason.notNewer);
   }
   final key = keys
-      .where((k) =>
-          k.subjectKind == home.keySubjectKind &&
-          k.subjectId == home.keySubjectId &&
-          k.conversationId == home.conversationId &&
-          k.keyId == served.keyId &&
-          k.key != null)
+      .where(
+        (k) =>
+            k.subjectKind == home.keySubjectKind &&
+            k.subjectId == home.keySubjectId &&
+            k.conversationId == home.conversationId &&
+            k.keyId == served.keyId &&
+            k.key != null,
+      )
       .lastOrNull;
   if (key == null) return InfoNeedsKey(home);
   final digest = CommunityInfoCodec.recordSha256(served.blob);
-  final announced = updates.any((u) =>
-      u.subjectKind == served.subjectKind &&
-      u.subjectId == served.subjectId &&
-      u.conversationId == home.conversationId &&
-      u.revision == served.version &&
-      u.keyId == served.keyId &&
-      u.recordSha256 == digest &&
-      policy.mayEdit(u.senderAccountId, served.subjectKind));
+  final announced = updates.any(
+    (u) =>
+        u.subjectKind == served.subjectKind &&
+        u.subjectId == served.subjectId &&
+        u.conversationId == home.conversationId &&
+        u.revision == served.version &&
+        u.keyId == served.keyId &&
+        u.recordSha256 == digest &&
+        policy.mayEdit(u.senderAccountId, served.subjectKind),
+  );
   if (!announced) return const InfoKept(InfoKeptReason.notAnnounced);
   final CommunityInfoRecord record;
   try {

@@ -50,12 +50,7 @@ Future<void> openAttachment(
     );
     return;
   }
-  await saveAttachmentAs(
-    context,
-    state,
-    entry,
-    conversationId: conversationId,
-  );
+  await saveAttachmentAs(context, state, entry, conversationId: conversationId);
 }
 
 /// Phones hand a decrypted file to whichever app handles its type.
@@ -122,10 +117,7 @@ Future<File> newOpenedCopy(Directory root, String fileName) async {
 }
 
 /// Deletes the folder of [copy] (made by [newOpenedCopy]) after [lifetime].
-Timer expireOpenedCopy(
-  File copy, {
-  Duration lifetime = _openedFileLifetime,
-}) {
+Timer expireOpenedCopy(File copy, {Duration lifetime = _openedFileLifetime}) {
   return Timer(lifetime, () async {
     try {
       await copy.parent.delete(recursive: true);
@@ -164,8 +156,9 @@ Future<void> openAttachmentExternally(
         // Purged at the next start instead.
       }
     }
-    messenger
-        .showSnackBar(SnackBar(content: Text(l10n.attachmentDownloadFailed)));
+    messenger.showSnackBar(
+      SnackBar(content: Text(l10n.attachmentDownloadFailed)),
+    );
     return;
   }
   final file = created;

@@ -37,23 +37,34 @@ void main() {
 
     test('throws on a transcript_mismatch answer', () async {
       final completion = client.completeDeviceLinkClaim(
-          'link', 'claim-token', _bytes(7), _bytes(9));
+        'link',
+        'claim-token',
+        _bytes(7),
+        _bytes(9),
+      );
       final refused = expectLater(
-          completion,
-          throwsA(
-              isA<ApiException>().having((e) => e.statusCode, 'status', 409)));
+        completion,
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 409)),
+      );
       await answer(409, <String, Object?>{'error': 'transcript_mismatch'});
       await refused;
     });
 
     test('throws when the session carries another transcript', () async {
       final completion = client.completeDeviceLinkClaim(
-          'link', 'claim-token', _bytes(7), _bytes(9));
+        'link',
+        'claim-token',
+        _bytes(7),
+        _bytes(9),
+      );
       final refused = expectLater(
-          completion,
-          throwsA(isA<ApiException>()
+        completion,
+        throwsA(
+          isA<ApiException>()
               .having((e) => e.statusCode, 'status', 409)
-              .having((e) => e.serverCode, 'code', 'transcript_mismatch')));
+              .having((e) => e.serverCode, 'code', 'transcript_mismatch'),
+        ),
+      );
       final transcript = _bytes(7)..[31] = 6;
       await answer(200, <String, Object?>{
         'token': 'linked',

@@ -18,17 +18,18 @@ class K2TransferId {
 /// random, a native output of [K2NativeControls.k2ReceiveBegin] (pass zeros
 /// there, the returned value afterwards).
 class K2LinkContext {
-  const K2LinkContext(
-      {required this.id,
-      required this.accountId,
-      required this.nonce,
-      required this.sourceDeviceId,
-      required this.sourceSigningKey,
-      required this.recipientDeviceId,
-      required this.recipientSigningKey,
-      required this.transferPublicKey,
-      required this.sourceCommitment,
-      required this.recipientRandom});
+  const K2LinkContext({
+    required this.id,
+    required this.accountId,
+    required this.nonce,
+    required this.sourceDeviceId,
+    required this.sourceSigningKey,
+    required this.recipientDeviceId,
+    required this.recipientSigningKey,
+    required this.transferPublicKey,
+    required this.sourceCommitment,
+    required this.recipientRandom,
+  });
   final K2TransferId id;
   final String accountId, sourceDeviceId, recipientDeviceId;
   final List<int> nonce,
@@ -144,8 +145,12 @@ class K2ApprovalRequest {
 }
 
 extension K2NativeControls on NativeCryptoDevice {
-  K2ReceiveResult k2ReceiveBegin(K2LinkContext context, List<int> secret,
-      {required int originalExpiresAt, required int now}) {
+  K2ReceiveResult k2ReceiveBegin(
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+    required int now,
+  }) {
     final w = _K2Writer(1);
     context._write(w);
     w.fixed(secret, 16);
@@ -160,12 +165,15 @@ extension K2NativeControls on NativeCryptoDevice {
   /// The source accepts the claim. [sourceRandom] must open
   /// [K2LinkContext.sourceCommitment]; reveal it to the server only after
   /// this record is committed (L1-3).
-  K2Verification k2SourceAccept(K2LinkContext context, List<int> secret,
-      {required int originalExpiresAt,
-      required int now,
-      required List<int> transcriptHash,
-      required List<int> claimTag,
-      required List<int> sourceRandom}) {
+  K2Verification k2SourceAccept(
+    K2LinkContext context,
+    List<int> secret, {
+    required int originalExpiresAt,
+    required int now,
+    required List<int> transcriptHash,
+    required List<int> claimTag,
+    required List<int> sourceRandom,
+  }) {
     final w = _K2Writer(2);
     context._write(w);
     w.fixed(secret, 16);
@@ -182,8 +190,11 @@ extension K2NativeControls on NativeCryptoDevice {
 
   /// The new device's SAS from the source's revealed random (ABI 18). Read
   /// only; refused when the random does not open the pinned commitment.
-  String k2RevealSas(K2TransferId id, List<int> sourceRandom,
-      {required int now}) {
+  String k2RevealSas(
+    K2TransferId id,
+    List<int> sourceRandom, {
+    required int now,
+  }) {
     final w = _K2Writer(12);
     id._write(w);
     w.fixed(sourceRandom, 32);
@@ -217,16 +228,18 @@ extension K2NativeControls on NativeCryptoDevice {
     return result;
   }
 
-  K2ProofResult k2EnrollmentProof(K2TransferId id,
-      {required int now,
-      required String locator,
-      required List<int> reservationRequestId,
-      required String deviceName,
-      required List<int> challenge,
-      required List<int> keyPackage,
-      required List<int> claimTokenHash,
-      required List<int> deviceSecretHash,
-      required List<int> initialSessionHash}) {
+  K2ProofResult k2EnrollmentProof(
+    K2TransferId id, {
+    required int now,
+    required String locator,
+    required List<int> reservationRequestId,
+    required String deviceName,
+    required List<int> challenge,
+    required List<int> keyPackage,
+    required List<int> claimTokenHash,
+    required List<int> deviceSecretHash,
+    required List<int> initialSessionHash,
+  }) {
     final w = _K2Writer(4);
     id._write(w);
     w.u64(now);
@@ -258,8 +271,10 @@ extension K2NativeControls on NativeCryptoDevice {
     return timestamp;
   }
 
-  K2ApprovalRequest k2SourceApprovalRequest(K2TransferId id,
-      {required int now}) {
+  K2ApprovalRequest k2SourceApprovalRequest(
+    K2TransferId id, {
+    required int now,
+  }) {
     final w = _K2Writer(6);
     id._write(w);
     w.u64(now);
@@ -269,8 +284,12 @@ extension K2NativeControls on NativeCryptoDevice {
     return result;
   }
 
-  int k2ApplyApproval(K2TransferId id, List<int> approvalTag,
-      {required int approvedAt, required int now}) {
+  int k2ApplyApproval(
+    K2TransferId id,
+    List<int> approvalTag, {
+    required int approvedAt,
+    required int now,
+  }) {
     final w = _K2Writer(7);
     id._write(w);
     w.fixed(approvalTag, 32);

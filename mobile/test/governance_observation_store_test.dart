@@ -27,40 +27,55 @@ void main() {
   final now = DateTime.utc(2026, 11, 11, 1, 2, 3, 4, 5);
   final genesis = GovernanceState.genesis('owner');
   final open = genesis.copyWith(
-      rev: 1, election: Election(opened: 1, electorate: {'alice'}));
+    rev: 1,
+    election: Election(opened: 1, electorate: {'alice'}),
+  );
   const session = Session(
-      baseUrl: 'https://chat.example.org',
-      token: 'token',
-      accountId: 'owner',
-      deviceId: 'device');
+    baseUrl: 'https://chat.example.org',
+    token: 'token',
+    accountId: 'owner',
+    deviceId: 'device',
+  );
 
-  GovernanceObservationChange change(GovernanceState state, DateTime at,
-          {String sender = 'alice', String group = 'shared'}) =>
+  GovernanceObservationChange change(
+    GovernanceState state,
+    DateTime at, {
+    String sender = 'alice',
+    String group = 'shared',
+  }) =>
       GovernanceObservationChange(
-          groupId: group,
-          state: state,
-          authenticatedSender: sender,
-          receivedAt: at);
+        groupId: group,
+        state: state,
+        authenticatedSender: sender,
+        receivedAt: at,
+      );
 
-  StoredCryptoState crypto(int counter,
-          {List<CryptoRecordChange> changes = const []}) =>
+  StoredCryptoState crypto(
+    int counter, {
+    List<CryptoRecordChange> changes = const [],
+  }) =>
       StoredCryptoState(
-          counter: counter,
-          stateKey: List.filled(32, 1),
-          sealedState: [counter],
-          changes: changes);
+        counter: counter,
+        stateKey: List.filled(32, 1),
+        sealedState: [counter],
+        changes: changes,
+      );
 
   MlsStateTransition transition(
-          int previous, GovernanceObservationChange observation,
-          {int? cursor, String? id}) =>
+    int previous,
+    GovernanceObservationChange observation, {
+    int? cursor,
+    String? id,
+  }) =>
       MlsStateTransition(
-          messageId: id ?? 'event_${previous + 1}',
-          conversationId: 'conversation',
-          expectedCounter: previous,
-          expectedCursor: cursor ?? previous,
-          cursor: (cursor ?? previous) + 1,
-          state: crypto(previous + 1),
-          governanceObservation: observation);
+        messageId: id ?? 'event_${previous + 1}',
+        conversationId: 'conversation',
+        expectedCounter: previous,
+        expectedCursor: cursor ?? previous,
+        cursor: (cursor ?? previous) + 1,
+        state: crypto(previous + 1),
+        governanceObservation: observation,
+      );
 
   late Directory directory;
   final databases = <EncryptedLocalDatabase>[];
@@ -79,14 +94,15 @@ void main() {
 
   SecureLocalStore secure({MlsCommitFailureInjector? failure}) =>
       SecureLocalStore(
-          storage: const FlutterSecureStorage(),
-          directoryProvider: () async => directory,
-          mlsCommitFailureInjector: failure,
-          databaseFactory: (file, keyHex) {
-            final database = openEncryptedLocalDatabase(file, keyHex);
-            databases.add(database);
-            return database;
-          });
+        storage: const FlutterSecureStorage(),
+        directoryProvider: () async => directory,
+        mlsCommitFailureInjector: failure,
+        databaseFactory: (file, keyHex) {
+          final database = openEncryptedLocalDatabase(file, keyHex);
+          databases.add(database);
+          return database;
+        },
+      );
 
   Future<void> closeDatabases() async {
     for (final database in databases) {
@@ -99,104 +115,139 @@ void main() {
     final label = memory ? 'memory' : 'SQLite';
     LocalStore store() => memory ? MemoryLocalStore() : secure();
 
-    test('$label: accepted events preserve waits; owner activity blocks a vote',
-        () async {
-      final s = store();
-      await s.commitMlsTransition(transition(0, change(genesis, now)));
-      final first = await s.loadGovernanceObservations('shared');
-      expect(first, GovernanceObservations.firstSeen(genesis, now));
-      final openedAt = now.add(ownerInactivityWait);
-      await s.commitMlsTransition(transition(1, change(open, openedAt)));
-      final seen = (await s.loadGovernanceObservations('shared'))!;
-      expect(seen.lastOwnerActivity, now);
-      expect(seen.electionSeen, openedAt);
-      await s.commitMlsTransition(
-          transition(2, change(open, openedAt.add(electionWait))));
-      expect(await s.loadGovernanceObservations('shared'), seen);
-      expect(
+    test(
+      '$label: accepted events preserve waits; owner activity blocks a vote',
+      () async {
+        final s = store();
+        await s.commitMlsTransition(transition(0, change(genesis, now)));
+        final first = await s.loadGovernanceObservations('shared');
+        expect(first, GovernanceObservations.firstSeen(genesis, now));
+        final openedAt = now.add(ownerInactivityWait);
+        await s.commitMlsTransition(transition(1, change(open, openedAt)));
+        final seen = (await s.loadGovernanceObservations('shared'))!;
+        expect(seen.lastOwnerActivity, now);
+        expect(seen.electionSeen, openedAt);
+        await s.commitMlsTransition(
+          transition(2, change(open, openedAt.add(electionWait))),
+        );
+        expect(await s.loadGovernanceObservations('shared'), seen);
+        expect(
           mayVoteNow(
-              now: openedAt.add(electionWait),
-              openedSeen: seen.electionSeen!,
-              lastOwnerActivity: seen.lastOwnerActivity),
-          isTrue);
-      final ownerAt = openedAt.add(electionWait);
-      await s.commitMlsTransition(
-          transition(3, change(open, ownerAt, sender: 'owner')));
-      final active = (await s.loadGovernanceObservations('shared'))!;
-      expect(active.lastOwnerActivity, ownerAt);
-      expect(active.electionSeen, openedAt);
-      expect(
+            now: openedAt.add(electionWait),
+            openedSeen: seen.electionSeen!,
+            lastOwnerActivity: seen.lastOwnerActivity,
+          ),
+          isTrue,
+        );
+        final ownerAt = openedAt.add(electionWait);
+        await s.commitMlsTransition(
+          transition(3, change(open, ownerAt, sender: 'owner')),
+        );
+        final active = (await s.loadGovernanceObservations('shared'))!;
+        expect(active.lastOwnerActivity, ownerAt);
+        expect(active.electionSeen, openedAt);
+        expect(
           mayVoteNow(
-              now: ownerAt,
-              openedSeen: active.electionSeen!,
-              lastOwnerActivity: active.lastOwnerActivity),
-          isFalse);
-      await s.commitMlsTransition(
-          transition(4, change(open, now, sender: 'owner')));
-      expect(await s.loadGovernanceObservations('shared'), active);
-      final cancelled = open.copyWith(rev: 2, clearElection: true);
-      await s.commitMlsTransition(
-          transition(5, change(cancelled, ownerAt, sender: 'owner')));
-      expect(
-          (await s.loadGovernanceObservations('shared'))!.electionSeen, isNull);
-      expect(await s.loadGovernanceObservations('another-group'), isNull);
-    });
-
-    test('$label: replay and stale counter cannot overwrite observations',
-        () async {
-      final s = store();
-      await s.commitMlsTransition(transition(0, change(genesis, now)));
-      final before = await s.loadGovernanceObservations('shared');
-      await expectLater(
-          s.commitMlsTransition(
-              transition(0, change(open, now.add(ownerInactivityWait)))),
-          throwsStateError);
-      await expectLater(
-          s.commitMlsTransition(transition(
-              1, change(open, now.add(ownerInactivityWait)),
-              id: 'event_1')),
-          throwsStateError);
-      expect(await s.loadGovernanceObservations('shared'), before);
-      expect((await s.loadCryptoState())!.counter, 1);
-      expect(await s.loadSyncCursor(), 1);
-    });
+            now: ownerAt,
+            openedSeen: active.electionSeen!,
+            lastOwnerActivity: active.lastOwnerActivity,
+          ),
+          isFalse,
+        );
+        await s.commitMlsTransition(
+          transition(4, change(open, now, sender: 'owner')),
+        );
+        expect(await s.loadGovernanceObservations('shared'), active);
+        final cancelled = open.copyWith(rev: 2, clearElection: true);
+        await s.commitMlsTransition(
+          transition(5, change(cancelled, ownerAt, sender: 'owner')),
+        );
+        expect(
+          (await s.loadGovernanceObservations('shared'))!.electionSeen,
+          isNull,
+        );
+        expect(await s.loadGovernanceObservations('another-group'), isNull);
+      },
+    );
 
     test(
-        '$label: own messages and accepted local commits update clocks atomically',
-        () async {
-      final s = store();
-      await s.commitMlsTransition(transition(0, change(open, now)));
-      final at = now.add(const Duration(days: 2));
-      final outgoing = OutgoingApplicationStateTransition(
+      '$label: replay and stale counter cannot overwrite observations',
+      () async {
+        final s = store();
+        await s.commitMlsTransition(transition(0, change(genesis, now)));
+        final before = await s.loadGovernanceObservations('shared');
+        await expectLater(
+          s.commitMlsTransition(
+            transition(0, change(open, now.add(ownerInactivityWait))),
+          ),
+          throwsStateError,
+        );
+        await expectLater(
+          s.commitMlsTransition(
+            transition(
+              1,
+              change(open, now.add(ownerInactivityWait)),
+              id: 'event_1',
+            ),
+          ),
+          throwsStateError,
+        );
+        expect(await s.loadGovernanceObservations('shared'), before);
+        expect((await s.loadCryptoState())!.counter, 1);
+        expect(await s.loadSyncCursor(), 1);
+      },
+    );
+
+    test(
+      '$label: own messages and accepted local commits update clocks atomically',
+      () async {
+        final s = store();
+        await s.commitMlsTransition(transition(0, change(open, now)));
+        final at = now.add(const Duration(days: 2));
+        final outgoing = OutgoingApplicationStateTransition(
           expectedCounter: 1,
           expectedCursor: 1,
           state: crypto(2),
           envelope: MessageEnvelope(
-              conversationId: 'conversation',
-              idempotencyKey: 'outgoing',
-              ciphertext: [1],
-              cryptoProtocol: 'mls10-openmls-v1'),
-          governanceObservation: change(open, at, sender: 'owner'));
-      await s.commitOutgoingApplicationTransition(outgoing);
-      expect((await s.loadGovernanceObservations('shared'))!.lastOwnerActivity,
-          at);
-      await expectLater(
-          s.commitOutgoingApplicationTransition(outgoing), throwsStateError);
-      final transferred = open.copyWith(
-          rev: 2, owner: 'alice', ownerRev: 2, clearElection: true);
-      await s.commitLocalMlsState(
+            conversationId: 'conversation',
+            idempotencyKey: 'outgoing',
+            ciphertext: [1],
+            cryptoProtocol: 'mls10-openmls-v1',
+          ),
+          governanceObservation: change(open, at, sender: 'owner'),
+        );
+        await s.commitOutgoingApplicationTransition(outgoing);
+        expect(
+          (await s.loadGovernanceObservations('shared'))!.lastOwnerActivity,
+          at,
+        );
+        await expectLater(
+          s.commitOutgoingApplicationTransition(outgoing),
+          throwsStateError,
+        );
+        final transferred = open.copyWith(
+          rev: 2,
+          owner: 'alice',
+          ownerRev: 2,
+          clearElection: true,
+        );
+        await s.commitLocalMlsState(
           expectedCounter: 2,
           expectedCursor: 1,
           state: crypto(3),
           governanceObservation: change(
-              transferred, at.add(const Duration(days: 1)),
-              sender: 'owner'));
-      final observed = (await s.loadGovernanceObservations('shared'))!;
-      expect(observed.owner, 'alice');
-      expect(observed.ownerRev, 2);
-      expect(observed.lastOwnerActivity, at.add(const Duration(days: 1)));
-      expect(observed.electionSeen, isNull);
-    });
+            transferred,
+            at.add(const Duration(days: 1)),
+            sender: 'owner',
+          ),
+        );
+        final observed = (await s.loadGovernanceObservations('shared'))!;
+        expect(observed.owner, 'alice');
+        expect(observed.ownerRev, 2);
+        expect(observed.lastOwnerActivity, at.add(const Duration(days: 1)));
+        expect(observed.electionSeen, isNull);
+      },
+    );
 
     test('$label: clocks follow crypto lifetime', () async {
       final s = store();
@@ -214,11 +265,14 @@ void main() {
       await s.saveCryptoState(crypto(2), 1);
       expect(await s.loadGovernanceObservations('shared'), isNull);
       await s.commitMlsTransition(transition(2, change(open, now), cursor: 1));
-      await s.saveSession(const Session(
+      await s.saveSession(
+        const Session(
           baseUrl: 'https://chat.example.org',
           token: 'other',
           accountId: 'other',
-          deviceId: 'other-device'));
+          deviceId: 'other-device',
+        ),
+      );
       expect(await s.loadGovernanceObservations('shared'), isNull);
       await s.commitMlsTransition(transition(0, change(open, now)));
       await s.clear();
@@ -229,56 +283,69 @@ void main() {
       final s = store();
       await s.commitMlsTransition(transition(0, change(open, now)));
       await s.commitMlsTransition(
-          transition(1, change(genesis, now, group: 'other')));
+        transition(1, change(genesis, now, group: 'other')),
+      );
       await s.commitLocalMlsState(
-          expectedCounter: 2,
-          expectedCursor: 2,
-          governanceObservation: change(open, now.add(const Duration(days: 1))),
-          state: crypto(3, changes: [
+        expectedCounter: 2,
+        expectedCursor: 2,
+        governanceObservation: change(open, now.add(const Duration(days: 1))),
+        state: crypto(
+          3,
+          changes: [
             CryptoRecordChange(
-                kind: cryptoRecordKindGroup,
-                recordId: utf8.encode('shared'),
-                generation: 3,
-                sealed: null)
-          ]));
+              kind: cryptoRecordKindGroup,
+              recordId: utf8.encode('shared'),
+              generation: 3,
+              sealed: null,
+            ),
+          ],
+        ),
+      );
       expect(await s.loadGovernanceObservations('shared'), isNull);
       expect(await s.loadGovernanceObservations('other'), isNotNull);
     });
   }
 
   test(
-      'SQLite: close and reopen preserves microsecond clocks and election identity',
-      () async {
-    final first = secure();
-    await first.commitMlsTransition(transition(0, change(open, now)));
-    final observed = await first.loadGovernanceObservations('shared');
-    await closeDatabases();
-    final reopened = secure();
-    expect(await reopened.loadGovernanceObservations('shared'), observed);
-    expect((await reopened.loadCryptoState())!.counter, 1);
-    expect(await reopened.loadSyncCursor(), 1);
-  });
+    'SQLite: close and reopen preserves microsecond clocks and election identity',
+    () async {
+      final first = secure();
+      await first.commitMlsTransition(transition(0, change(open, now)));
+      final observed = await first.loadGovernanceObservations('shared');
+      await closeDatabases();
+      final reopened = secure();
+      expect(await reopened.loadGovernanceObservations('shared'), observed);
+      expect((await reopened.loadCryptoState())!.counter, 1);
+      expect(await reopened.loadSyncCursor(), 1);
+    },
+  );
 
   for (final stage in MlsCommitStage.values) {
     test(
-        'SQLite: failure at ${stage.name} rolls observations back with MLS and cursor',
-        () async {
-      var fail = false;
-      final s = secure(failure: (point) async {
-        if (fail && point == stage) throw StateError('injected failure');
-      });
-      await s.commitMlsTransition(transition(0, change(genesis, now)));
-      final before = await s.loadGovernanceObservations('shared');
-      fail = true;
-      final next = transition(1, change(open, now.add(ownerInactivityWait)));
-      await expectLater(s.commitMlsTransition(next), throwsStateError);
-      expect(await s.loadGovernanceObservations('shared'), before);
-      expect((await s.loadCryptoState())!.counter, 1);
-      expect(await s.loadSyncCursor(), 1);
-      fail = false;
-      await s.commitMlsTransition(next);
-      expect((await s.loadGovernanceObservations('shared'))!.electionOpened, 1);
-    });
+      'SQLite: failure at ${stage.name} rolls observations back with MLS and cursor',
+      () async {
+        var fail = false;
+        final s = secure(
+          failure: (point) async {
+            if (fail && point == stage) throw StateError('injected failure');
+          },
+        );
+        await s.commitMlsTransition(transition(0, change(genesis, now)));
+        final before = await s.loadGovernanceObservations('shared');
+        fail = true;
+        final next = transition(1, change(open, now.add(ownerInactivityWait)));
+        await expectLater(s.commitMlsTransition(next), throwsStateError);
+        expect(await s.loadGovernanceObservations('shared'), before);
+        expect((await s.loadCryptoState())!.counter, 1);
+        expect(await s.loadSyncCursor(), 1);
+        fail = false;
+        await s.commitMlsTransition(next);
+        expect(
+          (await s.loadGovernanceObservations('shared'))!.electionOpened,
+          1,
+        );
+      },
+    );
   }
 
   Future<File> schema34() async {
@@ -297,27 +364,33 @@ void main() {
     expect(await db.readMetadata('retained'), 'value');
     expect(await db.readGovernanceObservations('shared'), isNull);
     expect(
-        (await db.customSelect('PRAGMA user_version').getSingle())
-            .read<int>('user_version'),
-        EncryptedLocalDatabase.currentSchemaVersion);
+      (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+        'user_version',
+      ),
+      EncryptedLocalDatabase.currentSchemaVersion,
+    );
   });
 
-  test('failed C4 schema upgrade rolls back table and version; retry succeeds',
-      () async {
-    final file = await schema34();
-    final failing = _FailUpgrade(NativeDatabase(file));
-    await expectLater(failing.readMetadata('retained'), throwsStateError);
-    await failing.close();
-    final raw = sqlite3.open(file.path);
-    expect(raw.select('PRAGMA user_version').single['user_version'], 34);
-    expect(
+  test(
+    'failed C4 schema upgrade rolls back table and version; retry succeeds',
+    () async {
+      final file = await schema34();
+      final failing = _FailUpgrade(NativeDatabase(file));
+      await expectLater(failing.readMetadata('retained'), throwsStateError);
+      await failing.close();
+      final raw = sqlite3.open(file.path);
+      expect(raw.select('PRAGMA user_version').single['user_version'], 34);
+      expect(
         raw.select(
-            "SELECT name FROM sqlite_master WHERE name = 'local_governance_observations'"),
-        isEmpty);
-    raw.close();
-    final retry = EncryptedLocalDatabase(NativeDatabase(file));
-    databases.add(retry);
-    expect(await retry.readMetadata('retained'), 'value');
-    expect(await retry.readGovernanceObservations('shared'), isNull);
-  });
+          "SELECT name FROM sqlite_master WHERE name = 'local_governance_observations'",
+        ),
+        isEmpty,
+      );
+      raw.close();
+      final retry = EncryptedLocalDatabase(NativeDatabase(file));
+      databases.add(retry);
+      expect(await retry.readMetadata('retained'), 'value');
+      expect(await retry.readGovernanceObservations('shared'), isNull);
+    },
+  );
 }

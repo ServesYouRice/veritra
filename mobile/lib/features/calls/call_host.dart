@@ -76,14 +76,16 @@ class _CallHostState extends State<CallHost> {
     _token = token;
     if (token == null) return;
     final service = NativeCallService(
-        api: api!,
-        token: token,
-        crypto: crypto as MlsConversationCryptoService,
-        incoming: state.callSignals);
+      api: api!,
+      token: token,
+      crypto: crypto as MlsConversationCryptoService,
+      incoming: state.callSignals,
+    );
     final controller = CallController(
-        service: service,
-        selfAccountId: session!.accountId,
-        speakerSupported: Platform.isAndroid || Platform.isIOS);
+      service: service,
+      selfAccountId: session!.accountId,
+      speakerSupported: Platform.isAndroid || Platform.isIOS,
+    );
     _service = service;
     _controller = controller;
     state.callController.value = controller;
@@ -101,8 +103,10 @@ class _CallHostState extends State<CallHost> {
         rosterChanges: state,
         connectSfu: LiveKitSfuConnection.new,
       );
-      state.roomSession.value =
-          RoomSession(openCall: rooms.open, nameFor: _nameFor);
+      state.roomSession.value = RoomSession(
+        openCall: rooms.open,
+        nameFor: _nameFor,
+      );
     }
     if (mounted) setState(() {});
   }
@@ -210,30 +214,41 @@ class _CallHostState extends State<CallHost> {
     final conversation = _conversationOf(conversationId);
     return conversation == null
         ? context.l10n.callUnknownContact
-        : conversationTitle(context.l10n, conversation,
-            profiles: widget.state.profiles);
+        : conversationTitle(
+            context.l10n,
+            conversation,
+            profiles: widget.state.profiles,
+          );
   }
 
   /// The chat's photo, or its coloured initials; null for an unknown chat.
   Widget? _avatarFor(
-      BuildContext context, String? conversationId, double radius) {
+    BuildContext context,
+    String? conversationId,
+    double radius,
+  ) {
     final conversation = _conversationOf(conversationId);
     return conversation == null
         ? null
-        : conversationAvatar(context, conversation,
-            radius: radius, profiles: widget.state.profiles);
+        : conversationAvatar(
+            context,
+            conversation,
+            radius: radius,
+            profiles: widget.state.profiles,
+          );
   }
 }
 
 /// The missed / declined / failed notice after a call.
 class CallNoticeCard extends StatelessWidget {
-  const CallNoticeCard(
-      {required this.notice,
-      required this.title,
-      required this.onDismiss,
-      this.avatar,
-      this.onCallBack,
-      super.key});
+  const CallNoticeCard({
+    required this.notice,
+    required this.title,
+    required this.onDismiss,
+    this.avatar,
+    this.onCallBack,
+    super.key,
+  });
 
   final CallNotice notice;
   final String title;
@@ -264,7 +279,9 @@ class CallNoticeCard extends StatelessWidget {
       color: Theme.of(context).colorScheme.surfaceContainerHigh,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-            horizontal: BoneSpacing.lg, vertical: BoneSpacing.sm),
+          horizontal: BoneSpacing.lg,
+          vertical: BoneSpacing.sm,
+        ),
         child: Row(
           children: <Widget>[
             avatar ?? Icon(icon),
@@ -290,8 +307,12 @@ class CallNoticeCard extends StatelessWidget {
 
 /// Full-screen incoming, outgoing and in-call UI.
 class CallScreen extends StatefulWidget {
-  const CallScreen(
-      {required this.controller, required this.title, this.avatar, super.key});
+  const CallScreen({
+    required this.controller,
+    required this.title,
+    this.avatar,
+    super.key,
+  });
 
   final CallController controller;
   final String title;
@@ -377,32 +398,42 @@ class _CallScreenState extends State<CallScreen> {
             children: <Widget>[
               if (showVideo)
                 Positioned.fill(
-                    child: RTCVideoView(_remote,
-                        objectFit:
-                            RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)),
+                  child: RTCVideoView(
+                    _remote,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                  ),
+                ),
               Column(
                 children: <Widget>[
                   const SizedBox(height: BoneSpacing.xl * 2),
                   if (!showVideo && widget.avatar != null)
                     KeyedSubtree(
-                        key: const Key('call-avatar'), child: widget.avatar!)
+                      key: const Key('call-avatar'),
+                      child: widget.avatar!,
+                    )
                   else if (!showVideo)
                     CircleAvatar(
-                        radius: 48,
-                        child: Text(
-                            widget.title.isEmpty
-                                ? '?'
-                                : widget.title.characters.first.toUpperCase(),
-                            style: theme.textTheme.displaySmall)),
+                      radius: 48,
+                      child: Text(
+                        widget.title.isEmpty
+                            ? '?'
+                            : widget.title.characters.first.toUpperCase(),
+                        style: theme.textTheme.displaySmall,
+                      ),
+                    ),
                   const SizedBox(height: BoneSpacing.lg),
-                  Text(widget.title,
-                      key: const Key('call-title'),
-                      style: theme.textTheme.headlineSmall,
-                      textAlign: TextAlign.center),
+                  Text(
+                    widget.title,
+                    key: const Key('call-title'),
+                    style: theme.textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
                   const SizedBox(height: BoneSpacing.sm),
-                  Text(_status(c),
-                      key: const Key('call-status'),
-                      style: theme.textTheme.titleMedium),
+                  Text(
+                    _status(c),
+                    key: const Key('call-status'),
+                    style: theme.textTheme.titleMedium,
+                  ),
                   const Spacer(),
                   if (c.phase == CallPhase.ringingIn)
                     _incomingButtons(c)
@@ -419,10 +450,12 @@ class _CallScreenState extends State<CallScreen> {
                   height: 128,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: RTCVideoView(_local,
-                        mirror: true,
-                        objectFit:
-                            RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
+                    child: RTCVideoView(
+                      _local,
+                      mirror: true,
+                      objectFit:
+                          RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                    ),
                   ),
                 ),
             ],
@@ -438,17 +471,19 @@ class _CallScreenState extends State<CallScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: <Widget>[
         _RoundButton(
-            key: const Key('call-decline'),
-            icon: Icons.call_end,
-            label: l10n.callDecline,
-            color: Colors.red,
-            onPressed: c.decline),
+          key: const Key('call-decline'),
+          icon: Icons.call_end,
+          label: l10n.callDecline,
+          color: Colors.red,
+          onPressed: c.decline,
+        ),
         _RoundButton(
-            key: const Key('call-accept'),
-            icon: c.video ? Icons.videocam : Icons.call,
-            label: l10n.callAccept,
-            color: Colors.green,
-            onPressed: c.accept),
+          key: const Key('call-accept'),
+          icon: c.video ? Icons.videocam : Icons.call,
+          label: l10n.callAccept,
+          color: Colors.green,
+          onPressed: c.accept,
+        ),
       ],
     );
   }
@@ -462,44 +497,49 @@ class _CallScreenState extends State<CallScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: <Widget>[
         _RoundButton(
-            key: const Key('call-mute'),
-            icon: c.muted ? Icons.mic_off : Icons.mic,
-            label: c.muted ? l10n.callUnmute : l10n.callMute,
-            selected: c.muted,
-            onPressed: canControl ? c.toggleMute : null),
+          key: const Key('call-mute'),
+          icon: c.muted ? Icons.mic_off : Icons.mic,
+          label: c.muted ? l10n.callUnmute : l10n.callMute,
+          selected: c.muted,
+          onPressed: canControl ? c.toggleMute : null,
+        ),
         if (c.speakerSupported)
           _RoundButton(
-              key: const Key('call-speaker'),
-              icon: c.speakerOn ? Icons.volume_up : Icons.volume_down,
-              label: l10n.callSpeaker,
-              selected: c.speakerOn,
-              onPressed: canControl ? c.toggleSpeaker : null),
+            key: const Key('call-speaker'),
+            icon: c.speakerOn ? Icons.volume_up : Icons.volume_down,
+            label: l10n.callSpeaker,
+            selected: c.speakerOn,
+            onPressed: canControl ? c.toggleSpeaker : null,
+          ),
         if (c.video)
           _RoundButton(
-              key: const Key('call-camera'),
-              icon: c.cameraOff ? Icons.videocam_off : Icons.videocam,
-              label: c.cameraOff ? l10n.callCameraOn : l10n.callCameraOff,
-              selected: c.cameraOff,
-              onPressed: canControl ? c.toggleCamera : null),
+            key: const Key('call-camera'),
+            icon: c.cameraOff ? Icons.videocam_off : Icons.videocam,
+            label: c.cameraOff ? l10n.callCameraOn : l10n.callCameraOff,
+            selected: c.cameraOff,
+            onPressed: canControl ? c.toggleCamera : null,
+          ),
         _RoundButton(
-            key: const Key('call-hangup'),
-            icon: Icons.call_end,
-            label: l10n.callHangUp,
-            color: Colors.red,
-            onPressed: c.hangUp),
+          key: const Key('call-hangup'),
+          icon: Icons.call_end,
+          label: l10n.callHangUp,
+          color: Colors.red,
+          onPressed: c.hangUp,
+        ),
       ],
     );
   }
 }
 
 class _RoundButton extends StatelessWidget {
-  const _RoundButton(
-      {required this.icon,
-      required this.label,
-      required this.onPressed,
-      this.color,
-      this.selected = false,
-      super.key});
+  const _RoundButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.color,
+    this.selected = false,
+    super.key,
+  });
 
   final IconData icon;
   final String label;
@@ -516,27 +556,27 @@ class _RoundButton extends StatelessWidget {
         // A tooltip would need an Overlay, which this host's routes lack;
         // the label is spoken through Semantics instead.
         Semantics(
-            container: true,
-            label: label,
-            child: IconButton.filled(
-              iconSize: 28,
-              style: IconButton.styleFrom(
-                minimumSize: const Size(64, 64),
-                backgroundColor: color ??
-                    (selected
-                        ? scheme.primary
-                        : scheme.surfaceContainerHighest),
-                foregroundColor: color != null
-                    ? Colors.white
-                    : (selected ? scheme.onPrimary : scheme.onSurface),
-              ),
-              onPressed: onPressed,
-              icon: Icon(icon),
-            )),
+          container: true,
+          label: label,
+          child: IconButton.filled(
+            iconSize: 28,
+            style: IconButton.styleFrom(
+              minimumSize: const Size(64, 64),
+              backgroundColor: color ??
+                  (selected ? scheme.primary : scheme.surfaceContainerHighest),
+              foregroundColor: color != null
+                  ? Colors.white
+                  : (selected ? scheme.onPrimary : scheme.onSurface),
+            ),
+            onPressed: onPressed,
+            icon: Icon(icon),
+          ),
+        ),
         const SizedBox(height: BoneSpacing.xs),
         // The button's own label already speaks the name.
         ExcludeSemantics(
-            child: Text(label, style: Theme.of(context).textTheme.labelMedium)),
+          child: Text(label, style: Theme.of(context).textTheme.labelMedium),
+        ),
       ],
     );
   }

@@ -44,10 +44,11 @@ void main() {
       );
 
   Future<int> run({bool Function()? active}) => announcer().run(
-      key: encoded,
-      moderated: const [(_community, _group)],
-      unlisted: unlisted,
-      active: active);
+        key: encoded,
+        moderated: const [(_community, _group)],
+        unlisted: unlisted,
+        active: active,
+      );
 
   setUp(() {
     store = MemoryLocalStore();
@@ -106,11 +107,13 @@ void main() {
     final other = List<int>.filled(32, 5);
     listed[_community] = other;
     expect(
-        await announcer().run(
-            key: base64Encode(other),
-            moderated: const [(_community, _group)],
-            unlisted: unlisted),
-        1);
+      await announcer().run(
+        key: base64Encode(other),
+        moderated: const [(_community, _group)],
+        unlisted: unlisted,
+      ),
+      1,
+    );
     expect(sent.last, '$_group:${base64Encode(other)}');
   });
 
@@ -119,14 +122,19 @@ void main() {
         announcer().askMissing(group: _group, moderators: moderators);
 
     Future<void> announced(String account) => store.saveSetting(
-        reportKeyAnnouncementSetting(_group, account), encoded);
+          reportKeyAnnouncementSetting(_group, account),
+          encoded,
+        );
 
     test('asks once for the moderators it lacks, sorted', () async {
       await announced('acct_b');
       expect(await ask({'acct_c', 'acct_a', 'acct_b'}), isTrue);
       expect(asked, ['$_group|acct_a,acct_c']);
-      expect(await ask({'acct_c', 'acct_a', 'acct_b'}), isFalse,
-          reason: 'the same set is not asked for again soon');
+      expect(
+        await ask({'acct_c', 'acct_a', 'acct_b'}),
+        isFalse,
+        reason: 'the same set is not asked for again soon',
+      );
     });
 
     test('a changed set is asked for at once; the same one weekly', () async {
@@ -141,13 +149,15 @@ void main() {
       expect(asked, hasLength(3));
     });
 
-    test('nothing is asked when every moderator announced, or none exist',
-        () async {
-      await announced('acct_a');
-      expect(await ask({'acct_a'}), isFalse);
-      expect(await ask(const <String>{}), isFalse);
-      expect(asked, isEmpty);
-    });
+    test(
+      'nothing is asked when every moderator announced, or none exist',
+      () async {
+        await announced('acct_a');
+        expect(await ask({'acct_a'}), isFalse);
+        expect(await ask(const <String>{}), isFalse);
+        expect(asked, isEmpty);
+      },
+    );
 
     test('a request that queued nothing is tried again', () async {
       sendOk = false;
@@ -158,13 +168,16 @@ void main() {
 
     test('at most the request limit is named', () async {
       expect(
-          await ask({
-            for (var i = 0; i < maxReportKeyRequestAccounts + 5; i++)
-              'acct_${i.toString().padLeft(3, '0')}'
-          }),
-          isTrue);
-      expect(asked.single.split('|').last.split(','),
-          hasLength(maxReportKeyRequestAccounts));
+        await ask({
+          for (var i = 0; i < maxReportKeyRequestAccounts + 5; i++)
+            'acct_${i.toString().padLeft(3, '0')}',
+        }),
+        isTrue,
+      );
+      expect(
+        asked.single.split('|').last.split(','),
+        hasLength(maxReportKeyRequestAccounts),
+      );
     });
   });
 

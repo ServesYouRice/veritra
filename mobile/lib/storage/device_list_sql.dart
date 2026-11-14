@@ -20,43 +20,50 @@ part of 'encrypted_database.dart';
 
 extension DeviceListSql on EncryptedLocalDatabase {
   Future<void> _createDeviceLists() async {
-    await customStatement('CREATE TABLE IF NOT EXISTS local_device_list_heads ('
-        'account_id TEXT PRIMARY KEY NOT NULL '
-        'CHECK(length(account_id) BETWEEN 1 AND 128), '
-        'version INTEGER NOT NULL CHECK(version >= 1), '
-        'list_hash BLOB NOT NULL CHECK(length(list_hash) = 32), '
-        'list_id BLOB NOT NULL CHECK(length(list_id) = 32), '
-        'head_statement BLOB NOT NULL '
-        'CHECK(length(head_statement) BETWEEN 1 AND 4096), '
-        "state TEXT NOT NULL CHECK(state IN ('ok', 'conflict')), "
-        'checked_at INTEGER NOT NULL, '
-        'recovery_key BLOB CHECK(recovery_key IS NULL OR '
-        'length(recovery_key) = 32))');
-    await customStatement('CREATE TABLE IF NOT EXISTS local_device_list_keys ('
-        'account_id TEXT NOT NULL, '
-        'device_id BLOB NOT NULL CHECK(length(device_id) BETWEEN 1 AND 128), '
-        'signing_key BLOB NOT NULL CHECK(length(signing_key) = 32), '
-        'added_version INTEGER NOT NULL CHECK(added_version >= 1), '
-        'removed_version INTEGER NOT NULL CHECK(removed_version >= 0), '
-        'PRIMARY KEY (account_id, device_id, signing_key))');
     await customStatement(
-        'CREATE TABLE IF NOT EXISTS local_device_list_conflicts ('
-        'account_id TEXT NOT NULL, '
-        'version INTEGER NOT NULL, '
-        'pinned_statement BLOB NOT NULL, '
-        'other_statement BLOB NOT NULL, '
-        'recorded_at INTEGER NOT NULL, '
-        'PRIMARY KEY (account_id, version))');
-    await customStatement('CREATE TABLE IF NOT EXISTS local_approval_leaves ('
-        'conversation_id TEXT NOT NULL '
-        'CHECK(length(conversation_id) BETWEEN 1 AND 128), '
-        'account_id BLOB NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128), '
-        'device_id BLOB NOT NULL CHECK(length(device_id) BETWEEN 1 AND 128), '
-        'signing_key BLOB NOT NULL CHECK(length(signing_key) = 32), '
-        "verdict TEXT NOT NULL CHECK(verdict IN "
-        "('approved', 'removed', 'unapproved', 'checking')), "
-        'updated_at INTEGER NOT NULL, '
-        'PRIMARY KEY (conversation_id, account_id, device_id))');
+      'CREATE TABLE IF NOT EXISTS local_device_list_heads ('
+      'account_id TEXT PRIMARY KEY NOT NULL '
+      'CHECK(length(account_id) BETWEEN 1 AND 128), '
+      'version INTEGER NOT NULL CHECK(version >= 1), '
+      'list_hash BLOB NOT NULL CHECK(length(list_hash) = 32), '
+      'list_id BLOB NOT NULL CHECK(length(list_id) = 32), '
+      'head_statement BLOB NOT NULL '
+      'CHECK(length(head_statement) BETWEEN 1 AND 4096), '
+      "state TEXT NOT NULL CHECK(state IN ('ok', 'conflict')), "
+      'checked_at INTEGER NOT NULL, '
+      'recovery_key BLOB CHECK(recovery_key IS NULL OR '
+      'length(recovery_key) = 32))',
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_device_list_keys ('
+      'account_id TEXT NOT NULL, '
+      'device_id BLOB NOT NULL CHECK(length(device_id) BETWEEN 1 AND 128), '
+      'signing_key BLOB NOT NULL CHECK(length(signing_key) = 32), '
+      'added_version INTEGER NOT NULL CHECK(added_version >= 1), '
+      'removed_version INTEGER NOT NULL CHECK(removed_version >= 0), '
+      'PRIMARY KEY (account_id, device_id, signing_key))',
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_device_list_conflicts ('
+      'account_id TEXT NOT NULL, '
+      'version INTEGER NOT NULL, '
+      'pinned_statement BLOB NOT NULL, '
+      'other_statement BLOB NOT NULL, '
+      'recorded_at INTEGER NOT NULL, '
+      'PRIMARY KEY (account_id, version))',
+    );
+    await customStatement(
+      'CREATE TABLE IF NOT EXISTS local_approval_leaves ('
+      'conversation_id TEXT NOT NULL '
+      'CHECK(length(conversation_id) BETWEEN 1 AND 128), '
+      'account_id BLOB NOT NULL CHECK(length(account_id) BETWEEN 1 AND 128), '
+      'device_id BLOB NOT NULL CHECK(length(device_id) BETWEEN 1 AND 128), '
+      'signing_key BLOB NOT NULL CHECK(length(signing_key) = 32), '
+      "verdict TEXT NOT NULL CHECK(verdict IN "
+      "('approved', 'removed', 'unapproved', 'checking')), "
+      'updated_at INTEGER NOT NULL, '
+      'PRIMARY KEY (conversation_id, account_id, device_id))',
+    );
   }
 
   Future<void> _clearDeviceLists() async {
@@ -68,13 +75,15 @@ extension DeviceListSql on EncryptedLocalDatabase {
 
   Future<DeviceListPin?> readDeviceListPin(String accountId) async {
     final head = await customSelect(
-        'SELECT * FROM local_device_list_heads WHERE account_id = ?',
-        variables: [Variable.withString(accountId)]).getSingleOrNull();
+      'SELECT * FROM local_device_list_heads WHERE account_id = ?',
+      variables: [Variable.withString(accountId)],
+    ).getSingleOrNull();
     if (head == null) return null;
     final keys = await customSelect(
-        'SELECT * FROM local_device_list_keys WHERE account_id = ? '
-        'ORDER BY added_version, device_id',
-        variables: [Variable.withString(accountId)]).get();
+      'SELECT * FROM local_device_list_keys WHERE account_id = ? '
+      'ORDER BY added_version, device_id',
+      variables: [Variable.withString(accountId)],
+    ).get();
     return DeviceListPin(
       accountId: accountId,
       version: head.read<int>('version'),
@@ -102,13 +111,16 @@ extension DeviceListSql on EncryptedLocalDatabase {
   /// Replaces the pin of [pin.accountId] only while the stored one is still
   /// at [expectedVersion] (null: none stored), so a pin only moves forward
   /// along what this device verified. Returns whether it was written.
-  Future<bool> writeDeviceListPin(DeviceListPin pin,
-          {required int? expectedVersion}) =>
+  Future<bool> writeDeviceListPin(
+    DeviceListPin pin, {
+    required int? expectedVersion,
+  }) =>
       transaction(() async {
         final current = await customSelect(
-            'SELECT version, state, pinned_at, checked_at '
-            'FROM local_device_list_heads WHERE account_id = ?',
-            variables: [Variable.withString(pin.accountId)]).getSingleOrNull();
+          'SELECT version, state, pinned_at, checked_at '
+          'FROM local_device_list_heads WHERE account_id = ?',
+          variables: [Variable.withString(pin.accountId)],
+        ).getSingleOrNull();
         final currentVersion = current?.read<int>('version');
         if (currentVersion != expectedVersion) return false;
         if (current != null && current.read<String>('state') == 'conflict') {
@@ -124,38 +136,41 @@ extension DeviceListSql on EncryptedLocalDatabase {
             : (current.readNullable<int>('pinned_at') ??
                 current.read<int>('checked_at'));
         await customStatement(
-            'INSERT OR REPLACE INTO local_device_list_heads (account_id, '
-            'version, list_hash, list_id, head_statement, state, checked_at, '
-            'recovery_key, pinned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [
-              pin.accountId,
-              pin.version,
-              Uint8List.fromList(pin.listHash),
-              Uint8List.fromList(pin.listId),
-              Uint8List.fromList(pin.headStatement),
-              pin.conflict ? 'conflict' : 'ok',
-              pin.checkedAt,
-              pin.recoveryKey == null
-                  ? null
-                  : Uint8List.fromList(pin.recoveryKey!),
-              pinnedAt,
-            ]);
+          'INSERT OR REPLACE INTO local_device_list_heads (account_id, '
+          'version, list_hash, list_id, head_statement, state, checked_at, '
+          'recovery_key, pinned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [
+            pin.accountId,
+            pin.version,
+            Uint8List.fromList(pin.listHash),
+            Uint8List.fromList(pin.listId),
+            Uint8List.fromList(pin.headStatement),
+            pin.conflict ? 'conflict' : 'ok',
+            pin.checkedAt,
+            pin.recoveryKey == null
+                ? null
+                : Uint8List.fromList(pin.recoveryKey!),
+            pinnedAt,
+          ],
+        );
         await customStatement(
-            'DELETE FROM local_device_list_keys WHERE account_id = ?',
-            [pin.accountId]);
+          'DELETE FROM local_device_list_keys WHERE account_id = ?',
+          [pin.accountId],
+        );
         for (final key in pin.keys) {
           await customStatement(
-              'INSERT INTO local_device_list_keys (account_id, device_id, '
-              'signing_key, added_version, removed_version, frank_key) '
-              'VALUES (?, ?, ?, ?, ?, ?)',
-              [
-                pin.accountId,
-                Uint8List.fromList(key.deviceId),
-                Uint8List.fromList(key.signingKey),
-                key.addedVersion,
-                key.removedVersion,
-                key.frankKey == null ? null : Uint8List.fromList(key.frankKey!),
-              ]);
+            'INSERT INTO local_device_list_keys (account_id, device_id, '
+            'signing_key, added_version, removed_version, frank_key) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            [
+              pin.accountId,
+              Uint8List.fromList(key.deviceId),
+              Uint8List.fromList(key.signingKey),
+              key.addedVersion,
+              key.removedVersion,
+              key.frankKey == null ? null : Uint8List.fromList(key.frankKey!),
+            ],
+          );
         }
         return true;
       });
@@ -163,9 +178,10 @@ extension DeviceListSql on EncryptedLocalDatabase {
   /// Records when [accountId]'s pin was last checked (nothing newer seen).
   Future<void> touchDeviceListPin(String accountId, int checkedAt) =>
       customStatement(
-          'UPDATE local_device_list_heads SET checked_at = ? '
-          'WHERE account_id = ?',
-          [checkedAt, accountId]);
+        'UPDATE local_device_list_heads SET checked_at = ? '
+        'WHERE account_id = ?',
+        [checkedAt, accountId],
+      );
 
   /// Marks [accountId] as in conflict and keeps both statements as proof.
   Future<void> writeDeviceListConflict({
@@ -177,35 +193,38 @@ extension DeviceListSql on EncryptedLocalDatabase {
   }) =>
       transaction(() async {
         await customStatement(
-            "UPDATE local_device_list_heads SET state = 'conflict' "
-            'WHERE account_id = ?',
-            [accountId]);
+          "UPDATE local_device_list_heads SET state = 'conflict' "
+          'WHERE account_id = ?',
+          [accountId],
+        );
         await customStatement(
-            'INSERT OR IGNORE INTO local_device_list_conflicts (account_id, '
-            'version, pinned_statement, other_statement, recorded_at) '
-            'VALUES (?, ?, ?, ?, ?)',
-            [
-              accountId,
-              version,
-              Uint8List.fromList(pinnedStatement),
-              Uint8List.fromList(otherStatement),
-              recordedAt,
-            ]);
+          'INSERT OR IGNORE INTO local_device_list_conflicts (account_id, '
+          'version, pinned_statement, other_statement, recorded_at) '
+          'VALUES (?, ?, ?, ?, ?)',
+          [
+            accountId,
+            version,
+            Uint8List.fromList(pinnedStatement),
+            Uint8List.fromList(otherStatement),
+            recordedAt,
+          ],
+        );
       });
 
   Future<List<ApprovalLeaf>> readApprovalLeaves(String conversationId) async {
     final rows = await customSelect(
-        'SELECT * FROM local_approval_leaves WHERE conversation_id = ? '
-        'ORDER BY account_id, device_id',
-        variables: [Variable.withString(conversationId)]).get();
+      'SELECT * FROM local_approval_leaves WHERE conversation_id = ? '
+      'ORDER BY account_id, device_id',
+      variables: [Variable.withString(conversationId)],
+    ).get();
     return rows.map(_leafFromRow).toList(growable: false);
   }
 
   Future<List<String>> readHeldConversations() async {
     final rows = await customSelect(
-            'SELECT DISTINCT conversation_id FROM local_approval_leaves '
-            "WHERE verdict != 'approved' ORDER BY conversation_id")
-        .get();
+      'SELECT DISTINCT conversation_id FROM local_approval_leaves '
+      "WHERE verdict != 'approved' ORDER BY conversation_id",
+    ).get();
     return [for (final row in rows) row.read<String>('conversation_id')];
   }
 
@@ -222,31 +241,35 @@ extension DeviceListSql on EncryptedLocalDatabase {
       transaction(() => _writeApprovalLeavesInTransaction(change));
 
   Future<void> _writeApprovalLeavesInTransaction(
-      ApprovalLeafChange? change) async {
+    ApprovalLeafChange? change,
+  ) async {
     if (change == null) return;
     if (change.replaceAll) {
       await customStatement(
-          'DELETE FROM local_approval_leaves WHERE conversation_id = ?',
-          [change.conversationId]);
+        'DELETE FROM local_approval_leaves WHERE conversation_id = ?',
+        [change.conversationId],
+      );
     }
     for (final leaf in change.leaves) {
       if (!leaf.isStorable) continue;
       await customStatement(
-          'INSERT OR REPLACE INTO local_approval_leaves (conversation_id, '
-          'account_id, device_id, signing_key, verdict, updated_at) '
-          'VALUES (?, ?, ?, ?, ?, ?)',
-          [
-            change.conversationId,
-            Uint8List.fromList(leaf.accountId),
-            Uint8List.fromList(leaf.deviceId),
-            Uint8List.fromList(leaf.signingKey),
-            leaf.verdict.name,
-            leaf.updatedAt,
-          ]);
+        'INSERT OR REPLACE INTO local_approval_leaves (conversation_id, '
+        'account_id, device_id, signing_key, verdict, updated_at) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          change.conversationId,
+          Uint8List.fromList(leaf.accountId),
+          Uint8List.fromList(leaf.deviceId),
+          Uint8List.fromList(leaf.signingKey),
+          leaf.verdict.name,
+          leaf.updatedAt,
+        ],
+      );
     }
   }
 
   Future<void> deleteApprovalLeaves(String conversationId) => customStatement(
-      'DELETE FROM local_approval_leaves WHERE conversation_id = ?',
-      [conversationId]);
+        'DELETE FROM local_approval_leaves WHERE conversation_id = ?',
+        [conversationId],
+      );
 }

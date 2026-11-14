@@ -22,10 +22,7 @@ typedef SyncOwnerWork = Future<void> Function();
 /// the ordered event/crypto/storage transaction. A request arriving during a
 /// run is coalesced into one follow-up pass instead of starting a second owner.
 class AccountSyncEngine {
-  AccountSyncEngine({
-    required this.isOwner,
-    required this.work,
-  });
+  AccountSyncEngine({required this.isOwner, required this.work});
 
   final bool Function() isOwner;
   final SyncOwnerWork work;
@@ -210,26 +207,31 @@ class WebSocketSyncService implements SyncService {
       _controller.add(const <String, Object?>{'type': 'sync.connected'});
     }
     final done = Completer<void>();
-    socket.listen((data) {
-      if (!_disposed && !_controller.isClosed && data is String) {
-        try {
-          _controller.add(Map<String, Object?>.from(jsonDecode(data) as Map));
-        } catch (err, stackTrace) {
+    socket.listen(
+      (data) {
+        if (!_disposed && !_controller.isClosed && data is String) {
+          try {
+            _controller.add(Map<String, Object?>.from(jsonDecode(data) as Map));
+          } catch (err, stackTrace) {
+            _controller.addError(err, stackTrace);
+          }
+        }
+      },
+      onDone: () {
+        if (!done.isCompleted) {
+          done.complete();
+        }
+      },
+      onError: (Object err, StackTrace stackTrace) {
+        if (!_disposed && !_controller.isClosed) {
           _controller.addError(err, stackTrace);
         }
-      }
-    }, onDone: () {
-      if (!done.isCompleted) {
-        done.complete();
-      }
-    }, onError: (Object err, StackTrace stackTrace) {
-      if (!_disposed && !_controller.isClosed) {
-        _controller.addError(err, stackTrace);
-      }
-      if (!done.isCompleted) {
-        done.complete();
-      }
-    }, cancelOnError: true);
+        if (!done.isCompleted) {
+          done.complete();
+        }
+      },
+      cancelOnError: true,
+    );
     await done.future;
     _socket = null;
     return DateTime.now().difference(connectedAt);

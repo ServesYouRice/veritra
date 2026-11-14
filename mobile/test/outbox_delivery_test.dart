@@ -65,82 +65,95 @@ void main() {
     expect(remaining, 0);
     expect(api.peak, 1, reason: 'two flushes ran at the same time');
     expect(api.sent, hasLength(3));
-    expect(api.sent.toSet(), hasLength(3),
-        reason: 'an envelope was sent twice');
+    expect(
+      api.sent.toSet(),
+      hasLength(3),
+      reason: 'an envelope was sent twice',
+    );
     state.dispose();
   });
 
-  test('99 queued: the 100th send is accepted, the 101st refused unencrypted',
-      () async {
-    final store = MemoryLocalStore();
-    for (var index = 0; index < maxPendingEnvelopes - 1; index++) {
-      await store.enqueueEnvelope(_envelope('queued_$index'));
-    }
-    final api = _DeliveryApi()..gate = Completer<void>();
-    final crypto = _CountingCrypto();
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: crypto,
-      localStore: store,
-      syncServiceFactory: (_, __) => _NoopSync(),
-    )
-      ..api = api
-      ..session = _session
-      ..conversations = <Conversation>[
-        Conversation(id: 'conv_1', kind: 'group'),
-      ];
+  test(
+    '99 queued: the 100th send is accepted, the 101st refused unencrypted',
+    () async {
+      final store = MemoryLocalStore();
+      for (var index = 0; index < maxPendingEnvelopes - 1; index++) {
+        await store.enqueueEnvelope(_envelope('queued_$index'));
+      }
+      final api = _DeliveryApi()..gate = Completer<void>();
+      final crypto = _CountingCrypto();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: crypto,
+        localStore: store,
+        syncServiceFactory: (_, __) => _NoopSync(),
+      )
+        ..api = api
+        ..session = _session
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ];
 
-    expect(await state.sendMessageTo('conv_1', 'hundredth'), isTrue);
-    expect(await store.pendingEnvelopes(), hasLength(maxPendingEnvelopes));
-    expect(crypto.encryptCalls, 1);
-    expect(await state.sendMessageTo('conv_1', 'one too many'), isFalse);
-    expect(crypto.encryptCalls, 1, reason: 'encrypted past the bound');
-    final keys =
-        (await store.pendingEnvelopes()).map((item) => item.idempotencyKey);
-    expect(keys, hasLength(maxPendingEnvelopes));
-    expect(keys, contains('queued_0'));
-    api.gate!.complete();
-    state.dispose();
-  });
+      expect(await state.sendMessageTo('conv_1', 'hundredth'), isTrue);
+      expect(await store.pendingEnvelopes(), hasLength(maxPendingEnvelopes));
+      expect(crypto.encryptCalls, 1);
+      expect(await state.sendMessageTo('conv_1', 'one too many'), isFalse);
+      expect(crypto.encryptCalls, 1, reason: 'encrypted past the bound');
+      final keys = (await store.pendingEnvelopes()).map(
+        (item) => item.idempotencyKey,
+      );
+      expect(keys, hasLength(maxPendingEnvelopes));
+      expect(keys, contains('queued_0'));
+      api.gate!.complete();
+      state.dispose();
+    },
+  );
 
   for (final status in <int>[404, 409, 413, 422, 507]) {
-    test('$status is terminal: kept for copy or discard, never resent',
-        () async {
-      final store = MemoryLocalStore();
-      await store.enqueueEnvelope(_envelope('terminal_$status'),
-          draftText: 'draft $status');
-      final api = _DeliveryApi()
-        ..failure = ApiException(
+    test(
+      '$status is terminal: kept for copy or discard, never resent',
+      () async {
+        final store = MemoryLocalStore();
+        await store.enqueueEnvelope(
+          _envelope('terminal_$status'),
+          draftText: 'draft $status',
+        );
+        final api = _DeliveryApi()
+          ..failure = ApiException(
             status,
             status == 507
                 ? '{"error":"storage_quota_exceeded"}'
-                : '{"error":"rejected"}');
-      final state = stateFor(store, api);
+                : '{"error":"rejected"}',
+          );
+        final state = stateFor(store, api);
 
-      await state.retryEnvelope('terminal_$status');
+        await state.retryEnvelope('terminal_$status');
 
-      expect(api.sent, <String>['terminal_$status']);
-      expect(
-          state.outboxState('terminal_$status'), OutboxDeliveryState.terminal);
-      final record = (await store.pendingEnvelopeRecords()).single;
-      expect(record.terminal, isTrue);
-      expect(record.draftText, 'draft $status');
-      expect(state.session, isNotNull, reason: 'a rejection is not a logout');
-      expect(
-        state.outboxFailureMessage('terminal_$status'),
-        status == 507
-            ? state.l10n.apiErrorStorageFull
-            : state.l10n.outboxSendFailed,
-      );
+        expect(api.sent, <String>['terminal_$status']);
+        expect(
+          state.outboxState('terminal_$status'),
+          OutboxDeliveryState.terminal,
+        );
+        final record = (await store.pendingEnvelopeRecords()).single;
+        expect(record.terminal, isTrue);
+        expect(record.draftText, 'draft $status');
+        expect(state.session, isNotNull, reason: 'a rejection is not a logout');
+        expect(
+          state.outboxFailureMessage('terminal_$status'),
+          status == 507
+              ? state.l10n.apiErrorStorageFull
+              : state.l10n.outboxSendFailed,
+        );
 
-      // A terminal item is not retried, by the worker or by the user.
-      await state.retryEnvelope('terminal_$status');
-      expect(api.sent, hasLength(1));
+        // A terminal item is not retried, by the worker or by the user.
+        await state.retryEnvelope('terminal_$status');
+        expect(api.sent, hasLength(1));
 
-      await state.discardEnvelope('terminal_$status');
-      expect(await store.pendingEnvelopes(), isEmpty);
-      state.dispose();
-    });
+        await state.discardEnvelope('terminal_$status');
+        expect(await store.pendingEnvelopes(), isEmpty);
+        state.dispose();
+      },
+    );
   }
 
   test('quota copy names the cause and the fix', () {
@@ -148,31 +161,35 @@ void main() {
     final copy = state.l10n.apiErrorStorageFull.toLowerCase();
     expect(copy, contains('storage'));
     expect(copy, anyOf(contains('delete'), contains('administrator')));
-    expect(state.l10n.outboxSendFailed.toLowerCase(),
-        allOf(contains('copy'), contains('discard')));
+    expect(
+      state.l10n.outboxSendFailed.toLowerCase(),
+      allOf(contains('copy'), contains('discard')),
+    );
     state.dispose();
   });
 
-  test('401 signs out but keeps the accepted envelope for reauthentication',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(_session);
-    await store.enqueueEnvelope(_envelope('auth_401'), draftText: 'draft');
-    final api = _DeliveryApi()
-      ..failure = ApiException(401, '{"error":"unauthorized"}');
-    final state = stateFor(store, api);
+  test(
+    '401 signs out but keeps the accepted envelope for reauthentication',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(_session);
+      await store.enqueueEnvelope(_envelope('auth_401'), draftText: 'draft');
+      final api = _DeliveryApi()
+        ..failure = ApiException(401, '{"error":"unauthorized"}');
+      final state = stateFor(store, api);
 
-    await state.retryEnvelope('auth_401');
+      await state.retryEnvelope('auth_401');
 
-    expect(api.sent, <String>['auth_401']);
-    expect(state.session, isNull);
-    final record = (await store.pendingEnvelopeRecords()).single;
-    expect(record.envelope.idempotencyKey, 'auth_401');
-    expect(record.terminal, isFalse);
-    expect(record.failureClass, 'auth');
-    expect(record.draftText, 'draft');
-    state.dispose();
-  });
+      expect(api.sent, <String>['auth_401']);
+      expect(state.session, isNull);
+      final record = (await store.pendingEnvelopeRecords()).single;
+      expect(record.envelope.idempotencyKey, 'auth_401');
+      expect(record.terminal, isFalse);
+      expect(record.failureClass, 'auth');
+      expect(record.draftText, 'draft');
+      state.dispose();
+    },
+  );
 }
 
 MessageEnvelope _envelope(String key) => MessageEnvelope(

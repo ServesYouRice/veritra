@@ -98,24 +98,33 @@ class FakePeer implements RTCPeerConnection {
     if (failure != null) throw failure;
   }
 
-  void emitCandidate(String? candidate,
-          {String? sdpMid = '0', int? sdpMLineIndex = 0}) =>
+  void emitCandidate(
+    String? candidate, {
+    String? sdpMid = '0',
+    int? sdpMLineIndex = 0,
+  }) =>
       onIceCandidate?.call(RTCIceCandidate(candidate, sdpMid, sdpMLineIndex));
 
-  void emitTrack(MediaStream stream) => onTrack?.call(RTCTrackEvent(
-      streams: <MediaStream>[stream], track: FakeTrack(log, 'remote')));
+  void emitTrack(MediaStream stream) => onTrack?.call(
+        RTCTrackEvent(
+          streams: <MediaStream>[stream],
+          track: FakeTrack(log, 'remote'),
+        ),
+      );
 
   @override
-  Future<RTCSessionDescription> createOffer(
-      [Map<String, dynamic>? constraints]) async {
+  Future<RTCSessionDescription> createOffer([
+    Map<String, dynamic>? constraints,
+  ]) async {
     log.add('peer.createOffer');
     _maybeFail('createOffer');
     return RTCSessionDescription('offer-sdp', 'offer');
   }
 
   @override
-  Future<RTCSessionDescription> createAnswer(
-      [Map<String, dynamic>? constraints]) async {
+  Future<RTCSessionDescription> createAnswer([
+    Map<String, dynamic>? constraints,
+  ]) async {
     log.add('peer.createAnswer');
     _maybeFail('createAnswer');
     return RTCSessionDescription('answer-sdp', 'answer');
@@ -147,8 +156,10 @@ class FakePeer implements RTCPeerConnection {
   }
 
   @override
-  Future<RTCRtpSender> addTrack(MediaStreamTrack track,
-      [MediaStream? stream]) async {
+  Future<RTCRtpSender> addTrack(
+    MediaStreamTrack track, [
+    MediaStream? stream,
+  ]) async {
     log.add('peer.addTrack');
     _maybeFail('addTrack');
     return _FakeSender();
@@ -194,7 +205,8 @@ class FakeMediaFactory implements CallMediaFactory {
 
   @override
   Future<RTCPeerConnection> createPeer(
-      Map<String, Object?> configuration) async {
+    Map<String, Object?> configuration,
+  ) async {
     log.add('media.createPeer');
     final failure = failures['createPeer'];
     if (failure != null) throw failure;
@@ -209,10 +221,14 @@ class FakeMediaFactory implements CallMediaFactory {
     log.add('media.getUserMedia');
     final failure = failures['getUserMedia'];
     if (failure != null) throw failure;
-    final stream = FakeStream(log, 'local${streams.length}', tracks: [
-      FakeTrack(log, 'audio'),
-      if (constraints['video'] == true) FakeTrack(log, 'video'),
-    ]);
+    final stream = FakeStream(
+      log,
+      'local${streams.length}',
+      tracks: [
+        FakeTrack(log, 'audio'),
+        if (constraints['video'] == true) FakeTrack(log, 'video'),
+      ],
+    );
     streams.add(stream);
     return stream;
   }
@@ -226,7 +242,9 @@ class FakeCallCrypto implements MlsConversationCryptoService {
 
   @override
   Future<EncryptedCallSignal> encryptCallSignal(
-      String conversationId, Map<String, Object?> signal) async {
+    String conversationId,
+    Map<String, Object?> signal,
+  ) async {
     log.add('crypto.encrypt:${signal['kind']}');
     final error = failure;
     if (error != null) throw error;
@@ -245,7 +263,11 @@ class FakeCallCrypto implements MlsConversationCryptoService {
 /// One recorded transitionCall request.
 class TransitionRequest {
   TransitionRequest(
-      this.callId, this.state, this.expectedVersion, this.metadata);
+    this.callId,
+    this.state,
+    this.expectedVersion,
+    this.metadata,
+  );
   final String callId;
   final String state;
   final int expectedVersion;
@@ -281,7 +303,7 @@ class FakeCallApi implements ApiClient {
       'urls': <String>['turn:turn.example.test:3478'],
       'username': 'u',
       'credential': 'c',
-    }
+    },
   ];
 
   final Map<String, Object> failures = <String, Object>{};
@@ -313,8 +335,11 @@ class FakeCallApi implements ApiClient {
   }
 
   @override
-  Future<CallSession> createCall(String token, String conversationId,
-      Map<String, Object?> encryptedMetadata) async {
+  Future<CallSession> createCall(
+    String token,
+    String conversationId,
+    Map<String, Object?> encryptedMetadata,
+  ) async {
     log.add('api.createCall');
     created.add(encryptedMetadata);
     final gate = createGate;
@@ -333,8 +358,12 @@ class FakeCallApi implements ApiClient {
     required int expectedVersion,
     Map<String, Object?>? encryptedMetadata,
   }) async {
-    final request =
-        TransitionRequest(callId, state, expectedVersion, encryptedMetadata);
+    final request = TransitionRequest(
+      callId,
+      state,
+      expectedVersion,
+      encryptedMetadata,
+    );
     log.add('api.transitionCall:$state@$expectedVersion');
     transitions.add(request);
     final gate = transitionGate;
@@ -348,10 +377,11 @@ class FakeCallApi implements ApiClient {
       throw versionConflict();
     }
     final next = callSession(
-        id: callId,
-        conversationId: current.conversationId,
-        state: state,
-        version: current.version + 1);
+      id: callId,
+      conversationId: current.conversationId,
+      state: state,
+      version: current.version + 1,
+    );
     server[callId] = next;
     return next;
   }

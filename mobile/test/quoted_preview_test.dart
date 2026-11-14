@@ -40,12 +40,21 @@ void main() {
   final l10n = englishL10n;
   const smile = '\u{1F600}'; // two UTF-16 units
   // One grapheme: four people joined by zero-width joiners.
-  final family = String.fromCharCodes(
-      <int>[0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467, 0x200D, 0x1F466]);
+  final family = String.fromCharCodes(<int>[
+    0x1F468,
+    0x200D,
+    0x1F469,
+    0x200D,
+    0x1F467,
+    0x200D,
+    0x1F466,
+  ]);
 
   test('a short body is quoted as is', () {
-    expect(quotedPreview(l10n, _row('hello   there\n friend')),
-        'hello there friend');
+    expect(
+      quotedPreview(l10n, _row('hello   there\n friend')),
+      'hello there friend',
+    );
     expect(quotedPreview(l10n, _row('x' * 80)), 'x' * 80);
   });
 

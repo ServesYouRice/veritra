@@ -27,13 +27,14 @@ void main() {
   late List<_FailingOpenDatabase> opened;
 
   SecureLocalStore store() => SecureLocalStore(
-      storage: const FlutterSecureStorage(),
-      directoryProvider: () async => directory,
-      databaseFactory: (file, key) {
-        final db = _FailingOpenDatabase();
-        opened.add(db);
-        return db;
-      });
+        storage: const FlutterSecureStorage(),
+        directoryProvider: () async => directory,
+        databaseFactory: (file, key) {
+          final db = _FailingOpenDatabase();
+          opened.add(db);
+          return db;
+        },
+      );
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('veritra-open-close-');
@@ -52,13 +53,20 @@ void main() {
   });
 
   test('a rejected key closes the handle of an existing database', () async {
-    FlutterSecureStorage.setMockInitialValues(
-        {'veritra.database_key.v1': 'ab' * 32});
+    FlutterSecureStorage.setMockInitialValues({
+      'veritra.database_key.v1': 'ab' * 32,
+    });
     await File('${directory.path}/veritra-local.db').writeAsBytes([1, 2, 3]);
     await expectLater(
-        store().loadSession(),
-        throwsA(isA<LocalStoreUnavailableException>()
-            .having((e) => e.kind, 'kind', LocalStoreFailureKind.keyRejected)));
+      store().loadSession(),
+      throwsA(
+        isA<LocalStoreUnavailableException>().having(
+          (e) => e.kind,
+          'kind',
+          LocalStoreFailureKind.keyRejected,
+        ),
+      ),
+    );
     expect(opened, hasLength(1));
     expect(opened.single.closed, isTrue);
   });

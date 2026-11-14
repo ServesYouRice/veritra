@@ -23,7 +23,10 @@ void main() {
   const channel = 'chan_1';
   final now = DateTime.now().millisecondsSinceEpoch;
   final shared = Conversation(
-      id: conversation, kind: 'community_shared', communityId: 'comm_1');
+    id: conversation,
+    kind: 'community_shared',
+    communityId: 'comm_1',
+  );
 
   InsertMessageEffect post(String key, {String? body, int? former}) {
     final effect = InsertMessageEffect(
@@ -57,9 +60,10 @@ void main() {
       final dir = await tempDir();
       EncryptedLocalDatabase? db;
       store = SecureLocalStore(
-          directoryProvider: () async => dir,
-          databaseFactory: (_, __) =>
-              db ??= EncryptedLocalDatabase(NativeDatabase.memory()));
+        directoryProvider: () async => dir,
+        databaseFactory: (_, __) =>
+            db ??= EncryptedLocalDatabase(NativeDatabase.memory()),
+      );
       addTearDown(() async {
         await db?.close();
         await SecureLocalStore.releaseInstanceLocks();
@@ -67,30 +71,41 @@ void main() {
     } else {
       store = MemoryLocalStore();
     }
-    await store.saveSession(Session(
+    await store.saveSession(
+      Session(
         baseUrl: 'https://example.test',
         token: 'token-$device',
         accountId: 'acct_dave',
-        deviceId: device));
+        deviceId: device,
+      ),
+    );
     await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
-        0);
+      StoredCryptoState(
+        counter: 1,
+        stateKey: List.filled(32, 7),
+        sealedState: [8],
+      ),
+      0,
+    );
     await store.saveSnapshot(
-        [shared], const <String, List<ReceivedMessageEnvelope>>{}, 0);
+      [shared],
+      const <String, List<ReceivedMessageEnvelope>>{},
+      0,
+    );
     return store;
   }
 
   HistoryImportContext context(HistorySnapshot snapshot) =>
       HistoryImportContext(
-          origin: 'https://example.test',
-          accountId: 'acct_dave',
-          sourceDeviceId: 'dev_dave',
-          recipientDeviceId: 'dev_new',
-          transferId: 'transfer',
-          snapshotCounter: snapshot.counter,
-          snapshotCreatedAt: snapshot.createdAt,
-          digest: 'a' * 64);
+        origin: 'https://example.test',
+        accountId: 'acct_dave',
+        sourceDeviceId: 'dev_dave',
+        recipientDeviceId: 'dev_new',
+        transferId: 'transfer',
+        snapshotCounter: snapshot.counter,
+        snapshotCreatedAt: snapshot.createdAt,
+        digest: 'a' * 64,
+      );
 
   for (final sqlite in [false, true]) {
     final label = sqlite ? 'SQLite' : 'memory';
@@ -108,17 +123,19 @@ void main() {
       // An edit never clears the mark.
       await source.importC7History(const <MessageEffect>[
         EditMessageEffect(
-            targetKey: 'dev_bob:former',
-            editorAccountId: 'acct_bob',
-            body: 'edited',
-            at: 5,
-            conversationId: conversation,
-            channelId: channel),
+          targetKey: 'dev_bob:former',
+          editorAccountId: 'acct_bob',
+          body: 'edited',
+          at: 5,
+          conversationId: conversation,
+          channelId: channel,
+        ),
       ]);
       final bytes = await source.exportHistorySnapshot();
       // K1 backups take the same export with disappearing messages left out.
       HistorySnapshot.decode(
-          await source.exportHistorySnapshot(omitDisappearing: true));
+        await source.exportHistorySnapshot(omitDisappearing: true),
+      );
       final snapshot = HistorySnapshot.decode(bytes);
       final rows = (jsonDecode(utf8.decode(bytes))['messages'] as List)
           .cast<Map<String, dynamic>>();
@@ -146,33 +163,37 @@ void main() {
 
   test('a snapshot mark is 1 (named), 2 (unnamed) or absent, nothing else', () {
     LocalMessage message(String key, {int? former}) => LocalMessage(
-        key: 'dev:$key',
-        conversationId: 'conv',
-        senderAccountId: 'bob',
-        senderDeviceId: 'dev',
-        kind: 'text',
-        body: key,
-        createdAt: 1,
-        state: 'received',
-        senderHidden: false,
-        c7Former: former);
+          key: 'dev:$key',
+          conversationId: 'conv',
+          senderAccountId: 'bob',
+          senderDeviceId: 'dev',
+          kind: 'text',
+          body: key,
+          createdAt: 1,
+          state: 'received',
+          senderHidden: false,
+          c7Former: former,
+        );
     final bytes = HistorySnapshot(
-        accountId: 'alice',
-        sourceDeviceId: 'source',
-        counter: 1,
-        createdAt: 2,
-        conversations: const [HistoryConversation('conv', 'dm')],
-        messages: [message('marked', former: C7FormerMark.unnamed)],
-        reactions: const [],
-        pins: const [],
-        starred: const {},
-        preferences: const []).encode();
+      accountId: 'alice',
+      sourceDeviceId: 'source',
+      counter: 1,
+      createdAt: 2,
+      conversations: const [HistoryConversation('conv', 'dm')],
+      messages: [message('marked', former: C7FormerMark.unnamed)],
+      reactions: const [],
+      pins: const [],
+      starred: const {},
+      preferences: const [],
+    ).encode();
     final root = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     final marked = (root['messages'] as List).single as Map<String, dynamic>;
     for (final bad in <Object>[false, true, 'yes', 0, 3, '2']) {
       marked['c7Former'] = bad;
-      expect(() => HistorySnapshot.decode(utf8.encode(jsonEncode(root))),
-          throwsFormatException);
+      expect(
+        () => HistorySnapshot.decode(utf8.encode(jsonEncode(root))),
+        throwsFormatException,
+      );
     }
   });
 
@@ -185,45 +206,54 @@ void main() {
   });
 
   for (final from in [41, 36, 12]) {
-    test('schema $from upgrades to 42 with the mark column, rows kept',
-        () async {
-      final file = File('${(await tempDir()).path}/local.db');
-      var database = EncryptedLocalDatabase(NativeDatabase(file));
-      await database.applyMessageEffects([post('old')]);
-      if (from == 12) {
-        await stripW8Schema(database);
-      } else {
-        await database.customStatement(
-            'ALTER TABLE local_messages DROP COLUMN c7_former');
-        // At 41 too: a store another package numbered past 41 without C7's
-        // columns (the L2 merge) still gets c7_gen, since the step is gated
-        // on the column check, not on the version.
-        await database
-            .customStatement('ALTER TABLE local_messages DROP COLUMN c7_gen');
-        if (from == 36) {
+    test(
+      'schema $from upgrades to 42 with the mark column, rows kept',
+      () async {
+        final file = File('${(await tempDir()).path}/local.db');
+        var database = EncryptedLocalDatabase(NativeDatabase(file));
+        await database.applyMessageEffects([post('old')]);
+        if (from == 12) {
+          await stripW8Schema(database);
+        } else {
           await database.customStatement(
-              'ALTER TABLE local_messages DROP COLUMN sender_removed');
+            'ALTER TABLE local_messages DROP COLUMN c7_former',
+          );
+          // At 41 too: a store another package numbered past 41 without C7's
+          // columns (the L2 merge) still gets c7_gen, since the step is gated
+          // on the column check, not on the version.
+          await database.customStatement(
+            'ALTER TABLE local_messages DROP COLUMN c7_gen',
+          );
+          if (from == 36) {
+            await database.customStatement(
+              'ALTER TABLE local_messages DROP COLUMN sender_removed',
+            );
+          }
         }
-      }
-      await database.customStatement('PRAGMA user_version = $from');
-      await database.close();
+        await database.customStatement('PRAGMA user_version = $from');
+        await database.close();
 
-      database = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(database.close);
-      final kept = (await database.readMessages(conversation)).single;
-      expect(kept.body, 'old');
-      expect(kept.c7Former, isNull);
-      expect(
+        database = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(database.close);
+        final kept = (await database.readMessages(conversation)).single;
+        expect(kept.body, 'old');
+        expect(kept.c7Former, isNull);
+        expect(
           (await database.customSelect('PRAGMA user_version').getSingle())
               .read<int>('user_version'),
-          EncryptedLocalDatabase.currentSchemaVersion);
-      await database.applyMessageEffects(
-          [post('new', former: C7FormerMark.unnamed).withC7Gen('ab' * 32)]);
-      final marked = (await database.readMessages(conversation))
-          .firstWhere((m) => m.key == 'dev_bob:new');
-      expect(marked.c7Former, C7FormerMark.unnamed);
-      expect(marked.c7Gen, 'ab' * 32);
-    });
+          EncryptedLocalDatabase.currentSchemaVersion,
+        );
+        await database.applyMessageEffects([
+          post('new', former: C7FormerMark.unnamed).withC7Gen('ab' * 32),
+        ]);
+        final marked = (await database.readMessages(
+          conversation,
+        ))
+            .firstWhere((m) => m.key == 'dev_bob:new');
+        expect(marked.c7Former, C7FormerMark.unnamed);
+        expect(marked.c7Gen, 'ab' * 32);
+      },
+    );
   }
 
   test('the upgrade step runs again harmlessly (renumbering-safe)', () async {
@@ -234,14 +264,18 @@ void main() {
     await database.customStatement('PRAGMA user_version = 40');
     await database.close();
     database = EncryptedLocalDatabase(NativeDatabase(file));
-    expect((await database.readMessages(conversation)).single.c7Former,
-        C7FormerMark.named);
+    expect(
+      (await database.readMessages(conversation)).single.c7Former,
+      C7FormerMark.named,
+    );
     await database.close();
     final raw = sqlite3.open(file.path);
     try {
       expect(raw.select('SELECT c7_former FROM local_messages').single[0], 1);
-      expect(() => raw.execute('UPDATE local_messages SET c7_former = 3'),
-          throwsA(anything));
+      expect(
+        () => raw.execute('UPDATE local_messages SET c7_former = 3'),
+        throwsA(anything),
+      );
     } finally {
       raw.close();
     }

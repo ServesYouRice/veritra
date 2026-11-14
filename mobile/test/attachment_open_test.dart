@@ -33,34 +33,44 @@ void main() {
     expect(await second.readAsString(), 'second');
   });
 
-  test('the first copy\'s expiry leaves a later copy of the same name alone',
-      () async {
-    final first = await open('report.pdf', 'first');
-    expireOpenedCopy(first, lifetime: const Duration(milliseconds: 200));
+  test(
+    'the first copy\'s expiry leaves a later copy of the same name alone',
+    () async {
+      final first = await open('report.pdf', 'first');
+      expireOpenedCopy(first, lifetime: const Duration(milliseconds: 200));
 
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    final second = await open('report.pdf', 'second');
-    expireOpenedCopy(second, lifetime: const Duration(milliseconds: 200));
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final second = await open('report.pdf', 'second');
+      expireOpenedCopy(second, lifetime: const Duration(milliseconds: 200));
 
-    // The first timer has fired (at 200 ms); the second has not (at 320 ms).
-    await Future<void>.delayed(const Duration(milliseconds: 130));
-    expect(await first.exists(), isFalse);
-    expect(await second.exists(), isTrue,
-        reason: 'a newer copy must live its own lifetime');
-    expect(await second.readAsString(), 'second');
+      // The first timer has fired (at 200 ms); the second has not (at 320 ms).
+      await Future<void>.delayed(const Duration(milliseconds: 130));
+      expect(await first.exists(), isFalse);
+      expect(
+        await second.exists(),
+        isTrue,
+        reason: 'a newer copy must live its own lifetime',
+      );
+      expect(await second.readAsString(), 'second');
 
-    // Every copy is still deleted after its own lifetime.
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    expect(await second.exists(), isFalse);
-    expect(await root.list().toList(), isEmpty,
-        reason: 'no empty folder is left behind');
-  });
+      // Every copy is still deleted after its own lifetime.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(await second.exists(), isFalse);
+      expect(
+        await root.list().toList(),
+        isEmpty,
+        reason: 'no empty folder is left behind',
+      );
+    },
+  );
 
   test('the expiry of an already purged copy is harmless', () async {
     final copy = await open('report.pdf', 'x');
     await copy.parent.delete(recursive: true);
-    final timer =
-        expireOpenedCopy(copy, lifetime: const Duration(milliseconds: 10));
+    final timer = expireOpenedCopy(
+      copy,
+      lifetime: const Duration(milliseconds: 10),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 60));
     expect(timer.isActive, isFalse);
   });
@@ -80,8 +90,10 @@ void main() {
         null,
       ),
     );
-    final opened = Directory('${cache.path}${Platform.pathSeparator}'
-        'veritra-open');
+    final opened = Directory(
+      '${cache.path}${Platform.pathSeparator}'
+      'veritra-open',
+    );
     final one = await newOpenedCopy(opened, 'a.pdf');
     final two = await newOpenedCopy(opened, 'a.pdf');
     await one.writeAsString('1');

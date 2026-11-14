@@ -35,8 +35,11 @@ final class C7Reference {
 /// `"C7R1" | body_key | sha256(sealed_body)`.
 Uint8List encodeC7Reference(List<int> bodyKey, List<int> sealedBody) {
   if (bodyKey.length != 32) throw ArgumentError('body key must be 32 bytes');
-  return Uint8List.fromList(
-      <int>[...c7ReferenceMagic, ...bodyKey, ...sha256(sealedBody)]);
+  return Uint8List.fromList(<int>[
+    ...c7ReferenceMagic,
+    ...bodyKey,
+    ...sha256(sealedBody),
+  ]);
 }
 
 /// The reference in a decrypted MLS plaintext, or null when the plaintext is
@@ -149,16 +152,18 @@ C7SealedMessage c7SealMessage({
           actionId: actionId,
         );
   try {
-    final signature = sign(c7PostSignedFields(
-      communityId: communityId,
-      channelId: channelId ?? '',
-      actionId: actionId,
-      groupId: conversationId,
-      epoch: epoch,
-      senderDeviceId: senderDeviceId,
-      generation: generation,
-      paddedVap1: paddedVap1,
-    ));
+    final signature = sign(
+      c7PostSignedFields(
+        communityId: communityId,
+        channelId: channelId ?? '',
+        actionId: actionId,
+        groupId: conversationId,
+        epoch: epoch,
+        senderDeviceId: senderDeviceId,
+        generation: generation,
+        paddedVap1: paddedVap1,
+      ),
+    );
     final body = keys.sealBody(
       bodyKey: bodyKey,
       aad: C7Keys.bodyAad(
@@ -206,8 +211,12 @@ int? c7HistorySyncChannelCount(int length) {
 /// A live member's open of a two-part message: the padded VAP1 and, for a
 /// `history_sync`, the slots after body0 ([trailer], empty otherwise).
 final class C7Opened {
-  const C7Opened(this.paddedVap1, this.trailer,
-      {required this.bodyKey, required this.signature});
+  const C7Opened(
+    this.paddedVap1,
+    this.trailer, {
+    required this.bodyKey,
+    required this.signature,
+  });
   final Uint8List paddedVap1;
   final Uint8List trailer;
 
@@ -256,7 +265,10 @@ C7Opened? c7OpenLiveParts({
   ({Uint8List signature, Uint8List paddedVap1})? tryOpen(Uint8List sealed) {
     try {
       return keys.openBody(
-          bodyKey: reference.bodyKey, aad: aad, sealed: sealed);
+        bodyKey: reference.bodyKey,
+        aad: aad,
+        sealed: sealed,
+      );
     } on Object {
       return null;
     }
@@ -265,9 +277,12 @@ C7Opened? c7OpenLiveParts({
   if (bytes.length <= 65536 + 124) {
     final whole = tryOpen(bytes);
     if (whole != null) {
-      return C7Opened(Uint8List.fromList(whole.paddedVap1), Uint8List(0),
-          bodyKey: Uint8List.fromList(reference.bodyKey),
-          signature: Uint8List.fromList(whole.signature));
+      return C7Opened(
+        Uint8List.fromList(whole.paddedVap1),
+        Uint8List(0),
+        bodyKey: Uint8List.fromList(reference.bodyKey),
+        signature: Uint8List.fromList(whole.signature),
+      );
     }
   }
   final n = channelId == null ? c7HistorySyncChannelCount(bytes.length) : null;
@@ -275,10 +290,12 @@ C7Opened? c7OpenLiveParts({
   final split = c7Body0PaddedLength(n) + 124;
   final first = tryOpen(Uint8List.sublistView(bytes, 0, split));
   if (first == null) return null;
-  return C7Opened(Uint8List.fromList(first.paddedVap1),
-      Uint8List.fromList(Uint8List.sublistView(bytes, split)),
-      bodyKey: Uint8List.fromList(reference.bodyKey),
-      signature: Uint8List.fromList(first.signature));
+  return C7Opened(
+    Uint8List.fromList(first.paddedVap1),
+    Uint8List.fromList(Uint8List.sublistView(bytes, split)),
+    bodyKey: Uint8List.fromList(reference.bodyKey),
+    signature: Uint8List.fromList(first.signature),
+  );
 }
 
 /// [c7OpenLiveParts] for a message that is not a `history_sync`: the padded

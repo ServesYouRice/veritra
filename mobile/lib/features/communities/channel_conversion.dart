@@ -12,8 +12,11 @@ import '../../ui/format.dart';
 /// the open channel; otherwise they stay with the people who already had
 /// them (review INFO). Making an open channel private asks who stays
 /// instead ([pickChannelConversionMembers]).
-Future<bool> confirmChannelConversion(BuildContext context,
-    {required bool toPrivate, bool earlierOpen = true}) async {
+Future<bool> confirmChannelConversion(
+  BuildContext context, {
+  required bool toPrivate,
+  bool earlierOpen = true,
+}) async {
   if (toPrivate) return true;
   final l10n = context.l10n;
   final confirmed = await showDialog<bool>(
@@ -21,9 +24,11 @@ Future<bool> confirmChannelConversion(BuildContext context,
     builder: (context) => AlertDialog(
       title: Text(l10n.channelConvertOpenTitle),
       content: SingleChildScrollView(
-        child: Text(earlierOpen
-            ? l10n.channelConvertOpenConfirm
-            : l10n.channelConvertOpenConfirmKept),
+        child: Text(
+          earlierOpen
+              ? l10n.channelConvertOpenConfirm
+              : l10n.channelConvertOpenConfirmKept,
+        ),
       ),
       actions: [
         TextButton(
@@ -47,12 +52,16 @@ Future<bool> confirmChannelConversion(BuildContext context,
 /// accept until the readers have loaded: a failed load must not read as
 /// "nobody ticked".
 Future<List<ConversationMember>?> pickChannelConversionMembers(
-    BuildContext context, AppState state, Channel channel) {
+  BuildContext context,
+  AppState state,
+  Channel channel,
+) {
   // Fetched once, whatever rebuilds the dialog's route; a failure is null
   // here, never an error left unhandled until the dialog listens.
   final readers = state.channelReaders(channel).then<List<ConversationMember>?>(
-      (readers) => readers,
-      onError: (Object _) => null);
+        (readers) => readers,
+        onError: (Object _) => null,
+      );
   return showDialog<List<ConversationMember>>(
     context: context,
     builder: (_) => _ConversionMembersDialog(readers: readers),
@@ -101,15 +110,19 @@ class _ConversionMembersDialogState extends State<_ConversionMembersDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(readers.isEmpty
-              ? l10n.channelConvertPrivateNoReaders
-              : l10n.channelConvertPrivatePick),
+          Text(
+            readers.isEmpty
+                ? l10n.channelConvertPrivateNoReaders
+                : l10n.channelConvertPrivatePick,
+          ),
           for (final reader in readers)
             CheckboxListTile(
               value: !_unticked.contains(reader.accountId),
-              onChanged: (ticked) => setState(() => ticked == true
-                  ? _unticked.remove(reader.accountId)
-                  : _unticked.add(reader.accountId)),
+              onChanged: (ticked) => setState(
+                () => ticked == true
+                    ? _unticked.remove(reader.accountId)
+                    : _unticked.add(reader.accountId),
+              ),
               title: Text(accountLabel(reader.accountId, reader.username)),
               contentPadding: EdgeInsets.zero,
             ),
@@ -143,8 +156,11 @@ class _ConversionMembersDialogState extends State<_ConversionMembersDialog> {
 /// in: the channel has a new home. Ticked readers the server refused to add
 /// are named in a snack bar first, so the admin can add them by hand.
 class ChannelConversionAction extends StatefulWidget {
-  const ChannelConversionAction(
-      {required this.state, required this.channel, super.key});
+  const ChannelConversionAction({
+    required this.state,
+    required this.channel,
+    super.key,
+  });
 
   final AppState state;
   final Channel channel;
@@ -163,7 +179,10 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
     var members = const <ConversationMember>[];
     if (_toPrivate) {
       final picked = await pickChannelConversionMembers(
-          context, widget.state, widget.channel);
+        context,
+        widget.state,
+        widget.channel,
+      );
       if (picked == null || !mounted) return;
       members = picked;
     } else {
@@ -174,14 +193,19 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
       if (!mounted) return;
       final earlierOpen = widget.state.channelHistoryAvailable &&
           (view == null || view.full || view.pending);
-      final confirmed = await confirmChannelConversion(context,
-          toPrivate: _toPrivate, earlierOpen: earlierOpen);
+      final confirmed = await confirmChannelConversion(
+        context,
+        toPrivate: _toPrivate,
+        earlierOpen: earlierOpen,
+      );
       if (!confirmed || !mounted) return;
     }
     setState(() => _sending = true);
-    final done = await widget.state.convertChannel(widget.channel,
-        toPrivate: _toPrivate,
-        members: <String>[for (final member in members) member.accountId]);
+    final done = await widget.state.convertChannel(
+      widget.channel,
+      toPrivate: _toPrivate,
+      members: <String>[for (final member in members) member.accountId],
+    );
     if (!mounted) return;
     setState(() => _sending = false);
     if (!done) return;
@@ -190,14 +214,16 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
       final names = <String>[
         for (final account in notAdded)
           accountLabel(
-              account,
-              members
-                  .where((member) => member.accountId == account)
-                  .firstOrNull
-                  ?.username),
+            account,
+            members
+                .where((member) => member.accountId == account)
+                .firstOrNull
+                ?.username,
+          ),
       ].join(', ');
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text(context.l10n.channelConvertNotAdded(names))));
+        SnackBar(content: Text(context.l10n.channelConvertNotAdded(names))),
+      );
     }
     Navigator.of(context).pop(false);
   }
@@ -210,9 +236,9 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
       child: TextButton.icon(
         onPressed: _sending ? null : _convert,
         icon: Icon(_toPrivate ? Icons.lock_outline : Icons.lock_open_outlined),
-        label: Text(_toPrivate
-            ? l10n.channelConvertToPrivate
-            : l10n.channelConvertToOpen),
+        label: Text(
+          _toPrivate ? l10n.channelConvertToPrivate : l10n.channelConvertToOpen,
+        ),
       ),
     );
   }

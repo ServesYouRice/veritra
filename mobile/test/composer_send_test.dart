@@ -109,16 +109,20 @@ void main() {
   });
 
   Future<void> pumpHost(WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(
-        body: Builder(builder: (built) {
-          context = built;
-          return const SizedBox();
-        }),
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Builder(
+            builder: (built) {
+              context = built;
+              return const SizedBox();
+            },
+          ),
+        ),
       ),
-    ));
+    );
   }
 
   PendingAttachment file(String name, {bool temporary = false}) {
@@ -170,8 +174,9 @@ void main() {
     await done;
   });
 
-  testWidgets('the temporary copy of a file being sent outlives its removal',
-      (tester) async {
+  testWidgets('the temporary copy of a file being sent outlives its removal', (
+    tester,
+  ) async {
     await pumpHost(tester);
     final pasted = file('pasted.png', temporary: true);
     tray.add(pasted);
@@ -180,17 +185,24 @@ void main() {
       await _settle();
 
       await tray.remove(pasted);
-      expect(File(pasted.path).existsSync(), isTrue,
-          reason: 'the send is still reading it');
+      expect(
+        File(pasted.path).existsSync(),
+        isTrue,
+        reason: 'the send is still reading it',
+      );
       state.finish('pasted.png');
       await done;
-      expect(File(pasted.path).existsSync(), isFalse,
-          reason: 'deleted once the send ended');
+      expect(
+        File(pasted.path).existsSync(),
+        isFalse,
+        reason: 'deleted once the send ended',
+      );
     });
   });
 
-  testWidgets('clearing keeps the in-flight temporary copy until it ends',
-      (tester) async {
+  testWidgets('clearing keeps the in-flight temporary copy until it ends', (
+    tester,
+  ) async {
     await pumpHost(tester);
     final first = file('first.png', temporary: true);
     final second = file('second.png', temporary: true);
@@ -203,8 +215,11 @@ void main() {
 
       await tray.clear();
       expect(File(first.path).existsSync(), isTrue);
-      expect(File(second.path).existsSync(), isFalse,
-          reason: 'a file that is not being sent goes at once');
+      expect(
+        File(second.path).existsSync(),
+        isFalse,
+        reason: 'a file that is not being sent goes at once',
+      );
       state.finish('first.png');
       await done;
       expect(File(first.path).existsSync(), isFalse);
@@ -220,7 +235,11 @@ void main() {
     await tester.pump();
     final second = send();
     await tester.pump();
-    expect(state.sends, <String>['a.txt'],
+    expect(
+        state.sends,
+        <String>[
+          'a.txt',
+        ],
         reason: 'the second call sends none');
     expect(await second, isFalse);
     expect(tray.isSending, isTrue);
@@ -233,8 +252,9 @@ void main() {
     expect(tray.isSending, isFalse);
   });
 
-  testWidgets('a second call during the clean-up of a file sends nothing',
-      (tester) async {
+  testWidgets('a second call during the clean-up of a file sends nothing', (
+    tester,
+  ) async {
     await pumpHost(tester);
     final b = file('b.txt');
     await tester.runAsync(() async {
@@ -255,7 +275,11 @@ void main() {
 
       final second = send();
       await _settle();
-      expect(state.sends, <String>['a.png'],
+      expect(
+          state.sends,
+          <String>[
+            'a.png',
+          ],
           reason: 'b must not be sent by a second call');
       expect(await second, isFalse);
 
@@ -304,8 +328,9 @@ void main() {
     expect(await again, isTrue);
   });
 
-  testWidgets('disposing the tray during a send leaves no listener error',
-      (tester) async {
+  testWidgets('disposing the tray during a send leaves no listener error', (
+    tester,
+  ) async {
     await pumpHost(tester);
     final pasted = file('pasted.png', temporary: true);
     tray.add(pasted);

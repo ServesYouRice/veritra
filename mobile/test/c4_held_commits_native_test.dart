@@ -38,130 +38,199 @@ void main() {
     return all;
   }
 
-  test('a newcomer holds an honest leave it cannot prove, never refuses it',
-      () async {
-    final [alice, bob, carol, dave] =
-        await clients(['alice', 'bob', 'carol', 'dave']);
-    await alice.service.initializeConversation(
-        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
-    await _deliver(alice, joiners: [bob, carol]);
-    // Bob becomes an admin: his leave then needs a proof.
-    await alice.service.stageRoleChange(
-        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
-    await _deliver(alice, members: [bob, carol]);
-    expect((await carol.service.governanceView('conv_1'))!.record.admins,
-        contains(bob.account));
-
-    // Bob's own leave reaches the members of today.
-    final leave = await bob.service
-        .encryptPayload('conv_1', AppPayloadType.memberLeave, const {});
-    await bob.store.removePendingEnvelope(leave.idempotencyKey);
-    expect((leave.cryptoMetadata as Map)[leaveNoticeMetadataKey], isTrue);
-    for (final member in [alice, carol]) {
-      await member.receive(bob, leave);
+  test(
+    'a newcomer holds an honest leave it cannot prove, never refuses it',
+    () async {
+      final [alice, bob, carol, dave] = await clients([
+        'alice',
+        'bob',
+        'carol',
+        'dave',
+      ]);
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+        await carol.keyPackage(),
+      ]);
+      await _deliver(alice, joiners: [bob, carol]);
+      // Bob becomes an admin: his leave then needs a proof.
+      await alice.service.stageRoleChange(
+        'conv_1',
+        (c, _, __) => c.setRole(bob.account, BuiltInRole.admin),
+      );
+      await _deliver(alice, members: [bob, carol]);
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-          isNotNull);
-    }
-    // Dave joins after it: his Welcome carries no proof.
-    await alice.service
-        .stageMembershipChange('conv_1', adds: [await dave.keyPackage()]);
-    await _deliver(alice, joiners: [dave], members: [bob, carol]);
-    expect(
-        await dave.store
-            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-        isNull);
+        (await carol.service.governanceView('conv_1'))!.record.admins,
+        contains(bob.account),
+      );
 
-    // Carol (a plain member) commits Bob's removal with her proof.
-    await carol.service.stageMembershipChange('conv_1',
-        removes: [(accountId: bob.account, deviceId: bob.device)]);
-    final removal = await _complete(carol);
-    await alice.applyCommit(carol, removal);
-    expect((await alice.service.governanceView('conv_1'))!.record.admins,
-        isNot(contains(bob.account)));
+      // Bob's own leave reaches the members of today.
+      final leave = await bob.service.encryptPayload(
+        'conv_1',
+        AppPayloadType.memberLeave,
+        const {},
+      );
+      await bob.store.removePendingEnvelope(leave.idempotencyKey);
+      expect((leave.cryptoMetadata as Map)[leaveNoticeMetadataKey], isTrue);
+      for (final member in [alice, carol]) {
+        await member.receive(bob, leave);
+        expect(
+          await member.store.loadSetting(
+            governanceLeaveSetting('conv_1', bob.account),
+          ),
+          isNotNull,
+        );
+      }
+      // Dave joins after it: his Welcome carries no proof.
+      await alice.service.stageMembershipChange(
+        'conv_1',
+        adds: [await dave.keyPackage()],
+      );
+      await _deliver(alice, joiners: [dave], members: [bob, carol]);
+      expect(
+        await dave.store.loadSetting(
+          governanceLeaveSetting('conv_1', bob.account),
+        ),
+        isNull,
+      );
 
-    // Dave holds it (retried by sync), and again on every retry; nothing
-    // merges, and his group stays at the epoch before it.
-    final before = (await dave.service.governanceView('conv_1'))!.record;
-    for (var attempt = 0; attempt < 2; attempt++) {
-      await expectLater(
+      // Carol (a plain member) commits Bob's removal with her proof.
+      await carol.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)],
+      );
+      final removal = await _complete(carol);
+      await alice.applyCommit(carol, removal);
+      expect(
+        (await alice.service.governanceView('conv_1'))!.record.admins,
+        isNot(contains(bob.account)),
+      );
+
+      // Dave holds it (retried by sync), and again on every retry; nothing
+      // merges, and his group stays at the epoch before it.
+      final before = (await dave.service.governanceView('conv_1'))!.record;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await expectLater(
           dave.applyCommit(carol, removal),
-          throwsA(isA<GovernanceHeldException>()
-              .having((e) => e.reason, 'reason', 'removal_unproven')));
-      expect((await dave.service.governanceView('conv_1'))!.record, before);
-    }
-  }, skip: skip);
+          throwsA(
+            isA<GovernanceHeldException>().having(
+              (e) => e.reason,
+              'reason',
+              'removal_unproven',
+            ),
+          ),
+        );
+        expect((await dave.service.governanceView('conv_1'))!.record, before);
+      }
+    },
+    skip: skip,
+  );
 
   // Review M1 (owner decision B): a stolen or replaced phone its account's
   // list removed is still in the tree and can post a valid member_leave;
   // it must not prove the governing account's leave.
   test('a leave proof from a removed leaf proves nothing', () async {
     final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
-    await alice.service.initializeConversation(
-        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+      await carol.keyPackage(),
+    ]);
     await _deliver(alice, joiners: [bob, carol]);
     await alice.service.stageRoleChange(
-        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
+      'conv_1',
+      (c, _, __) => c.setRole(bob.account, BuiltInRole.admin),
+    );
     await _deliver(alice, members: [bob, carol]);
     // Carol's pin shows Bob's phone removed; Alice's does not yet.
     carol.lists.markRemoved(bob.account, bob.device);
-    final leave = await bob.service
-        .encryptPayload('conv_1', AppPayloadType.memberLeave, const {});
+    final leave = await bob.service.encryptPayload(
+      'conv_1',
+      AppPayloadType.memberLeave,
+      const {},
+    );
     await bob.store.removePendingEnvelope(leave.idempotencyKey);
     await carol.receive(bob, leave);
     await alice.receive(bob, leave);
     expect(
-        await carol.store
-            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-        isNull);
+      await carol.store.loadSetting(
+        governanceLeaveSetting('conv_1', bob.account),
+      ),
+      isNull,
+    );
     expect(
-        await alice.store
-            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-        isNotNull);
+      await alice.store.loadSetting(
+        governanceLeaveSetting('conv_1', bob.account),
+      ),
+      isNotNull,
+    );
   }, skip: skip);
 
-  test('a role commit from a leaf not approved yet is held, then merges',
-      () async {
-    final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
-    await alice.service.initializeConversation(
-        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
-    await _deliver(alice, joiners: [bob, carol]);
-    // Bob's pin of Alice's list is stale: her leaf is unknown to it.
-    bob.lists.remove(alice.account, alice.device);
-    await alice.service.stageRoleChange('conv_1',
-        (c, _, __) => c.setRole(carol.account, BuiltInRole.moderator));
-    final commit = await _complete(alice);
-    await carol.applyCommit(alice, commit);
-    await expectLater(
+  test(
+    'a role commit from a leaf not approved yet is held, then merges',
+    () async {
+      final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+        await carol.keyPackage(),
+      ]);
+      await _deliver(alice, joiners: [bob, carol]);
+      // Bob's pin of Alice's list is stale: her leaf is unknown to it.
+      bob.lists.remove(alice.account, alice.device);
+      await alice.service.stageRoleChange(
+        'conv_1',
+        (c, _, __) => c.setRole(carol.account, BuiltInRole.moderator),
+      );
+      final commit = await _complete(alice);
+      await carol.applyCommit(alice, commit);
+      await expectLater(
         bob.applyCommit(alice, commit),
-        throwsA(isA<GovernanceHeldException>()
-            .having((e) => e.reason, 'reason', 'committer_unapproved')));
-    expect((await bob.service.governanceView('conv_1'))!.record.moderators,
-        isEmpty);
-    // A later read of the list approves the leaf: the retry merges.
-    await bob.trust(alice);
-    await bob.applyCommit(alice, commit);
-    expect((await bob.service.governanceView('conv_1'))!.record.moderators,
-        {carol.account});
-  }, skip: skip);
+        throwsA(
+          isA<GovernanceHeldException>().having(
+            (e) => e.reason,
+            'reason',
+            'committer_unapproved',
+          ),
+        ),
+      );
+      expect(
+        (await bob.service.governanceView('conv_1'))!.record.moderators,
+        isEmpty,
+      );
+      // A later read of the list approves the leaf: the retry merges.
+      await bob.trust(alice);
+      await bob.applyCommit(alice, commit);
+      expect((await bob.service.governanceView('conv_1'))!.record.moderators, {
+        carol.account,
+      });
+    },
+    skip: skip,
+  );
 
   test('the leave-notice mark carries only a member_leave', () async {
     final [alice, bob] = await clients(['alice', 'bob']);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _deliver(alice, joiners: [bob]);
     final text = await alice.service.encryptPayload(
-        'conv_1', AppPayloadType.text, const {'text': 'past the rules'});
+      'conv_1',
+      AppPayloadType.text,
+      const {'text': 'past the rules'},
+    );
     await alice.store.removePendingEnvelope(text.idempotencyKey);
-    expect((text.cryptoMetadata as Map).containsKey(leaveNoticeMetadataKey),
-        isFalse);
+    expect(
+      (text.cryptoMetadata as Map).containsKey(leaveNoticeMetadataKey),
+      isFalse,
+    );
     // A server (or a sender) that marks a post to get it past the posting
     // rules gets an invalid row, never the text.
-    await bob.receive(alice, text, metadata: <String, Object?>{
-      ...text.cryptoMetadata,
-      leaveNoticeMetadataKey: true,
-    });
+    await bob.receive(
+      alice,
+      text,
+      metadata: <String, Object?>{
+        ...text.cryptoMetadata,
+        leaveNoticeMetadataKey: true,
+      },
+    );
     final rows = await bob.store.loadMessages('conv_1');
     expect(rows.single.kind, LocalMessageKind.invalid);
     expect(rows.single.body, isNull);
@@ -172,20 +241,34 @@ void main() {
   // after the leave merges an honest removal instead of holding it.
   Future<({_Client alice, _Client bob, _Client carol, _Client dave})>
       adminLeaves({bool signed = true, bool cancel = false}) async {
-    final [alice, bob, carol, dave] =
-        await clients(['alice', 'bob', 'carol', 'dave']);
-    await alice.service.initializeConversation(
-        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
+    final [alice, bob, carol, dave] = await clients([
+      'alice',
+      'bob',
+      'carol',
+      'dave',
+    ]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+      await carol.keyPackage(),
+    ]);
     await _deliver(alice, joiners: [bob, carol]);
     await alice.service.stageRoleChange(
-        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
+      'conv_1',
+      (c, _, __) => c.setRole(bob.account, BuiltInRole.admin),
+    );
     await _deliver(alice, members: [bob, carol]);
     final notices = <MessageEnvelope>[
-      await bob.service
-          .encryptPayload('conv_1', AppPayloadType.memberLeave, const {}),
+      await bob.service.encryptPayload(
+        'conv_1',
+        AppPayloadType.memberLeave,
+        const {},
+      ),
       if (signed)
         await bob.service.encryptPayload(
-            'conv_1', AppPayloadType.memberLeaveSigned, const {}),
+          'conv_1',
+          AppPayloadType.memberLeaveSigned,
+          const {},
+        ),
     ];
     for (final notice in notices) {
       await bob.store.removePendingEnvelope(notice.idempotencyKey);
@@ -196,20 +279,25 @@ void main() {
     }
     for (final member in [alice, carol]) {
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
-          signed ? isNotNull : isNull);
+        await member.store.loadSetting(
+          governanceLeaveSignedSetting('conv_1', bob.account),
+        ),
+        signed ? isNotNull : isNull,
+      );
     }
     // The plain member_leave sets the marker too (round 7): it is a proof on
     // its own, and the signed statement after it is best effort.
     expect(
-        await bob.store.loadSetting(governanceLeaveSignedOutSetting('conv_1')),
-        '1');
+      await bob.store.loadSetting(governanceLeaveSignedOutSetting('conv_1')),
+      '1',
+    );
     for (final member in [alice, carol]) {
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-          isNotNull);
+        await member.store.loadSetting(
+          governanceLeaveSetting('conv_1', bob.account),
+        ),
+        isNotNull,
+      );
     }
     if (cancel) {
       // The server refused Bob's leave: his self-update voids the statement
@@ -217,57 +305,80 @@ void main() {
       await bob.service.stageSelfUpdate('conv_1');
       await _deliver(bob, members: [alice, carol]);
       expect(
-          await bob.store
-              .loadSetting(governanceLeaveSignedOutSetting('conv_1')),
-          isNull);
+        await bob.store.loadSetting(governanceLeaveSignedOutSetting('conv_1')),
+        isNull,
+      );
     }
-    await alice.service
-        .stageMembershipChange('conv_1', adds: [await dave.keyPackage()]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      adds: [await dave.keyPackage()],
+    );
     await _deliver(alice, joiners: [dave], members: [bob, carol]);
     expect(
-        await dave.store
-            .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
-        isNull);
+      await dave.store.loadSetting(
+        governanceLeaveSignedSetting('conv_1', bob.account),
+      ),
+      isNull,
+    );
     return (alice: alice, bob: bob, carol: carol, dave: dave);
   }
 
   test('a newcomer merges a leave proven in the commit itself', () async {
     final (:alice, :bob, :carol, :dave) = await adminLeaves();
-    await carol.service.stageMembershipChange('conv_1',
-        removes: [(accountId: bob.account, deviceId: bob.device)]);
+    await carol.service.stageMembershipChange(
+      'conv_1',
+      removes: [(accountId: bob.account, deviceId: bob.device)],
+    );
     final removal = await _complete(carol);
     await dave.applyCommit(carol, removal);
-    expect((await dave.service.governanceView('conv_1'))!.record.admins,
-        isNot(contains(bob.account)));
+    expect(
+      (await dave.service.governanceView('conv_1'))!.record.admins,
+      isNot(contains(bob.account)),
+    );
     await alice.applyCommit(carol, removal);
     // Spent by the removal it proved.
     for (final member in [alice, carol]) {
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
-          isNull);
+        await member.store.loadSetting(
+          governanceLeaveSignedSetting('conv_1', bob.account),
+        ),
+        isNull,
+      );
     }
   }, skip: skip);
 
-  test('an in-commit proof counts only from a leaf its list approves',
-      () async {
-    final (:alice, :bob, :carol, :dave) = await adminLeaves();
-    // Dave's pin does not list Bob's leaf yet (owner decision B).
-    dave.lists.remove(bob.account, bob.device);
-    await carol.service.stageMembershipChange('conv_1',
-        removes: [(accountId: bob.account, deviceId: bob.device)]);
-    final removal = await _complete(carol);
-    await expectLater(
+  test(
+    'an in-commit proof counts only from a leaf its list approves',
+    () async {
+      final (:alice, :bob, :carol, :dave) = await adminLeaves();
+      // Dave's pin does not list Bob's leaf yet (owner decision B).
+      dave.lists.remove(bob.account, bob.device);
+      await carol.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)],
+      );
+      final removal = await _complete(carol);
+      await expectLater(
         dave.applyCommit(carol, removal),
-        throwsA(isA<GovernanceHeldException>()
-            .having((e) => e.reason, 'reason', 'removal_unproven')));
-    // A later read approves it: the retry merges.
-    await dave.trust(bob);
-    await dave.applyCommit(carol, removal);
-    expect((await dave.service.governanceView('conv_1'))!.record.admins,
-        isNot(contains(bob.account)));
-    expect(alice, isNotNull);
-  }, skip: skip);
+        throwsA(
+          isA<GovernanceHeldException>().having(
+            (e) => e.reason,
+            'reason',
+            'removal_unproven',
+          ),
+        ),
+      );
+      // A later read approves it: the retry merges.
+      await dave.trust(bob);
+      await dave.applyCommit(carol, removal);
+      expect(
+        (await dave.service.governanceView('conv_1'))!.record.admins,
+        isNot(contains(bob.account)),
+      );
+      expect(alice, isNotNull);
+    },
+    skip: skip,
+  );
 
   // Review MEDIUM (round 7): a leave proof was kept until a removal, a
   // re-add or a Welcome, so a cancelled leave left every member holding
@@ -277,73 +388,105 @@ void main() {
     final (:alice, :bob, :carol, :dave) = await adminLeaves(cancel: true);
     for (final member in [alice, carol, dave]) {
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-          isNull,
-          reason: 'the member_leave is void');
+        await member.store.loadSetting(
+          governanceLeaveSetting('conv_1', bob.account),
+        ),
+        isNull,
+        reason: 'the member_leave is void',
+      );
       expect(
-          await member.store
-              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
-          isNull,
-          reason: 'the signed statement is void');
+        await member.store.loadSetting(
+          governanceLeaveSignedSetting('conv_1', bob.account),
+        ),
+        isNull,
+        reason: 'the signed statement is void',
+      );
     }
     // So no plain member can remove Bob on it any more: the removal stays
     // pending for a device that can prove it (or the owner, who may kick).
     await expectLater(
-        carol.service.stageMembershipChange('conv_1',
-            removes: [(accountId: bob.account, deviceId: bob.device)]),
-        throwsA(isA<GovernanceRemovalUnprovenException>()));
+      carol.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)],
+      ),
+      throwsA(isA<GovernanceRemovalUnprovenException>()),
+    );
     expect(await carol.store.pendingMlsMessages(), isEmpty);
   }, skip: skip);
 
-  test('a commit from a leaf its list does not approve voids nothing',
-      () async {
-    final (:alice, :bob, :carol, :dave) = await adminLeaves();
-    // Carol's pin no longer lists Bob's leaf: a leaf under Bob's id that
-    // her list does not approve may be anyone's, so its commit must not
-    // void Bob's honest leave on her device. (Alice's list approves it.)
-    carol.lists.remove(bob.account, bob.device);
-    await bob.service.stageSelfUpdate('conv_1');
-    await _deliver(bob, members: [alice, carol, dave]);
-    expect(
-        await alice.store
-            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-        isNull);
-    expect(
-        await carol.store
-            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
-        isNotNull);
-    expect(
-        await carol.store
-            .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
-        isNotNull);
-  }, skip: skip);
+  test(
+    'a commit from a leaf its list does not approve voids nothing',
+    () async {
+      final (:alice, :bob, :carol, :dave) = await adminLeaves();
+      // Carol's pin no longer lists Bob's leaf: a leaf under Bob's id that
+      // her list does not approve may be anyone's, so its commit must not
+      // void Bob's honest leave on her device. (Alice's list approves it.)
+      carol.lists.remove(bob.account, bob.device);
+      await bob.service.stageSelfUpdate('conv_1');
+      await _deliver(bob, members: [alice, carol, dave]);
+      expect(
+        await alice.store.loadSetting(
+          governanceLeaveSetting('conv_1', bob.account),
+        ),
+        isNull,
+      );
+      expect(
+        await carol.store.loadSetting(
+          governanceLeaveSetting('conv_1', bob.account),
+        ),
+        isNotNull,
+      );
+      expect(
+        await carol.store.loadSetting(
+          governanceLeaveSignedSetting('conv_1', bob.account),
+        ),
+        isNotNull,
+      );
+    },
+    skip: skip,
+  );
 
-  test('a leaver on an older build sends no statement: newcomers hold',
-      () async {
-    final (:alice, :bob, :carol, :dave) = await adminLeaves(signed: false);
-    await carol.service.stageMembershipChange('conv_1',
-        removes: [(accountId: bob.account, deviceId: bob.device)]);
-    final removal = await _complete(carol);
-    await expectLater(
+  test(
+    'a leaver on an older build sends no statement: newcomers hold',
+    () async {
+      final (:alice, :bob, :carol, :dave) = await adminLeaves(signed: false);
+      await carol.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)],
+      );
+      final removal = await _complete(carol);
+      await expectLater(
         dave.applyCommit(carol, removal),
-        throwsA(isA<GovernanceHeldException>()
-            .having((e) => e.reason, 'reason', 'removal_unproven')));
-    await alice.applyCommit(carol, removal);
-    expect(bob, isNotNull);
-  }, skip: skip);
+        throwsA(
+          isA<GovernanceHeldException>().having(
+            (e) => e.reason,
+            'reason',
+            'removal_unproven',
+          ),
+        ),
+      );
+      await alice.applyCommit(carol, removal);
+      expect(bob, isNotNull);
+    },
+    skip: skip,
+  );
 
   test('a signed statement arrives as a framed, hidden row', () async {
     final [alice, bob] = await clients(['alice', 'bob']);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _deliver(alice, joiners: [bob]);
-    final sent = await bob.service
-        .encryptPayload('conv_1', AppPayloadType.memberLeaveSigned, const {});
+    final sent = await bob.service.encryptPayload(
+      'conv_1',
+      AppPayloadType.memberLeaveSigned,
+      const {},
+    );
     await bob.store.removePendingEnvelope(sent.idempotencyKey);
     await alice.receive(bob, sent);
-    final stored = await alice.store
-        .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account));
+    final stored = await alice.store.loadSetting(
+      governanceLeaveSignedSetting('conv_1', bob.account),
+    );
     expect(isValidLeaveSignedBody({'statement': stored}), isTrue);
     final rows = await alice.store.loadMessages('conv_1');
     expect(rows.single.kind, LocalMessageKind.action);
@@ -374,7 +517,9 @@ class _Client {
   int _events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String name) async {
+    NativeCryptoBindings bindings,
+    String name,
+  ) async {
     final account = 'acct_$name';
     final device = 'dev_$name';
     final local = MemoryLocalStore();
@@ -382,25 +527,32 @@ class _Client {
     final lists = TestDeviceLists();
     service.deviceListPins = lists;
     service.conversationAuthority = _Group();
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$device',
-      accountId: account,
-      deviceId: device,
-      challenge: const <int>[1, 2, 3],
-    ));
-    await service.activateSession(Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: account,
-      deviceId: device,
-    ));
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$device',
+        accountId: account,
+        deviceId: device,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
+    await service.activateSession(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: account,
+        deviceId: device,
+      ),
+    );
     final client = _Client(service, local, account, device, lists);
     lists.approve(account, device, await service.currentSigningKey());
     return client;
   }
 
   Future<void> trust(_Client other) async => lists.approve(
-      other.account, other.device, await other.service.currentSigningKey());
+        other.account,
+        other.device,
+        await other.service.currentSigningKey(),
+      );
 
   int nextEvent() => ++_events;
 
@@ -415,35 +567,43 @@ class _Client {
       );
 
   Future<void> applyCommit(
-          _Client from, ({String key, List<int> commit}) staged) =>
-      service.processMlsMessage(MlsMessage(
-        id: 'mls_${staged.key}',
-        conversationId: 'conv_1',
-        senderAccountId: from.account,
-        senderDeviceId: from.device,
-        kind: 'commit',
-        payload: staged.commit,
-        idempotencyKey: staged.key,
-        syncEventId: nextEvent(),
-        createdAt: DateTime.now().toUtc(),
-      ));
+    _Client from,
+    ({String key, List<int> commit}) staged,
+  ) =>
+      service.processMlsMessage(
+        MlsMessage(
+          id: 'mls_${staged.key}',
+          conversationId: 'conv_1',
+          senderAccountId: from.account,
+          senderDeviceId: from.device,
+          kind: 'commit',
+          payload: staged.commit,
+          idempotencyKey: staged.key,
+          syncEventId: nextEvent(),
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
 
-  Future<List<int>?> receive(_Client from, MessageEnvelope sent,
-          {Map<String, Object?>? metadata}) =>
+  Future<List<int>?> receive(
+    _Client from,
+    MessageEnvelope sent, {
+    Map<String, Object?>? metadata,
+  }) =>
       service.processApplicationMessage(
-          ReceivedMessageEnvelope(
-            id: 'srv_${++_serverIds}',
-            conversationId: sent.conversationId,
-            senderAccountId: from.account,
-            senderDeviceId: from.device,
-            idempotencyKey: sent.idempotencyKey,
-            ciphertext: sent.ciphertext,
-            cryptoProtocol: sent.cryptoProtocol,
-            cryptoMetadata: metadata ?? sent.cryptoMetadata,
-            createdAt: DateTime.now().toUtc(),
-            frankCommit: sent.frankCommit,
-          ),
-          nextEvent());
+        ReceivedMessageEnvelope(
+          id: 'srv_${++_serverIds}',
+          conversationId: sent.conversationId,
+          senderAccountId: from.account,
+          senderDeviceId: from.device,
+          idempotencyKey: sent.idempotencyKey,
+          ciphertext: sent.ciphertext,
+          cryptoProtocol: sent.cryptoProtocol,
+          cryptoMetadata: metadata ?? sent.cryptoMetadata,
+          createdAt: DateTime.now().toUtc(),
+          frankCommit: sent.frankCommit,
+        ),
+        nextEvent(),
+      );
 }
 
 /// Completes [from]'s one pending commit bundle as the server accepting it.
@@ -456,28 +616,34 @@ Future<({String key, List<int> commit})> _complete(_Client from) async {
 
 /// Completes [from]'s pending bundle and delivers it: the commit to
 /// [members], the Welcome to [joiners].
-Future<void> _deliver(_Client from,
-    {List<_Client> joiners = const [],
-    List<_Client> members = const []}) async {
+Future<void> _deliver(
+  _Client from, {
+  List<_Client> joiners = const [],
+  List<_Client> members = const [],
+}) async {
   final item = (await from.store.pendingMlsMessages()).single;
   final bundle = MlsCommitBundle.decode(item.payload);
   await from.service.completeCommitBundle(item);
   for (final member in members) {
-    await member
-        .applyCommit(from, (key: item.idempotencyKey, commit: bundle.commit));
+    await member.applyCommit(from, (
+      key: item.idempotencyKey,
+      commit: bundle.commit,
+    ));
   }
   for (final joiner in joiners) {
-    await joiner.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: 'conv_1',
-      senderAccountId: from.account,
-      senderDeviceId: from.device,
-      kind: 'welcome',
-      payload: bundle.welcome,
-      idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.device}',
-      syncEventId: joiner.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-      recipientDeviceId: joiner.device,
-    ));
+    await joiner.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_${++_serverIds}',
+        conversationId: 'conv_1',
+        senderAccountId: from.account,
+        senderDeviceId: from.device,
+        kind: 'welcome',
+        payload: bundle.welcome,
+        idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.device}',
+        syncEventId: joiner.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+        recipientDeviceId: joiner.device,
+      ),
+    );
   }
 }

@@ -15,8 +15,10 @@ void main() {
   // flutter_test escalates into a test failure.
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel(eventChannelName),
-            (MethodCall call) async => null);
+        .setMockMethodCallHandler(
+      const MethodChannel(eventChannelName),
+      (MethodCall call) async => null,
+    );
   });
 
   tearDown(() {
@@ -29,7 +31,9 @@ void main() {
       final disabled = DisabledMobilePushService();
       expect(await disabled.events.isEmpty, isTrue);
       await disabled.register(
-          instance: 'https://example.com', vapid: 'test_vapid');
+        instance: 'https://example.com',
+        vapid: 'test_vapid',
+      );
       await disabled.pickDistributor();
       await disabled.unregister('https://example.com');
       expect(await disabled.pendingWakeGeneration(), 0);
@@ -48,8 +52,9 @@ void main() {
       methodCalls.clear();
       methodResult = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(const MethodChannel(methodChannelName),
-              (MethodCall call) async {
+          .setMockMethodCallHandler(const MethodChannel(methodChannelName), (
+        MethodCall call,
+      ) async {
         methodCalls.add(call);
         return methodResult;
       });
@@ -58,7 +63,9 @@ void main() {
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-              const MethodChannel(methodChannelName), null);
+        const MethodChannel(methodChannelName),
+        null,
+      );
     });
 
     test('register invokes method channel with instance and vapid', () async {
@@ -66,7 +73,9 @@ void main() {
       addTearDown(service.dispose);
 
       await service.register(
-          instance: 'https://example.com', vapid: 'vapid_key');
+        instance: 'https://example.com',
+        vapid: 'vapid_key',
+      );
       expect(methodCalls, hasLength(1));
       expect(methodCalls.first.method, 'register');
       expect(methodCalls.first.arguments, {
@@ -80,8 +89,10 @@ void main() {
       final service = PlatformMobilePushService();
       addTearDown(service.dispose);
 
-      await service
-          .register(instance: 'acct:dev', providers: const <String>['fcm']);
+      await service.register(
+        instance: 'acct:dev',
+        providers: const <String>['fcm'],
+      );
       expect(methodCalls.single.arguments, {
         'instance': 'acct:dev',
         'vapid': '',
@@ -89,26 +100,34 @@ void main() {
       });
     });
 
-    test('notification permission is read and requested as a typed value',
-        () async {
-      final service = PlatformMobilePushService();
-      addTearDown(service.dispose);
+    test(
+      'notification permission is read and requested as a typed value',
+      () async {
+        final service = PlatformMobilePushService();
+        addTearDown(service.dispose);
 
-      methodResult = 'not_determined';
-      expect(await service.notificationPermission(),
-          NotificationPermission.notDetermined);
-      methodResult = 'granted';
-      expect(await service.requestNotificationPermission(),
-          NotificationPermission.granted);
-      methodResult = 'something else';
-      expect(await service.notificationPermission(),
-          NotificationPermission.unsupported);
-      expect(methodCalls.map((call) => call.method), <String>[
-        'notificationPermission',
-        'requestNotificationPermission',
-        'notificationPermission',
-      ]);
-    });
+        methodResult = 'not_determined';
+        expect(
+          await service.notificationPermission(),
+          NotificationPermission.notDetermined,
+        );
+        methodResult = 'granted';
+        expect(
+          await service.requestNotificationPermission(),
+          NotificationPermission.granted,
+        );
+        methodResult = 'something else';
+        expect(
+          await service.notificationPermission(),
+          NotificationPermission.unsupported,
+        );
+        expect(methodCalls.map((call) => call.method), <String>[
+          'notificationPermission',
+          'requestNotificationPermission',
+          'notificationPermission',
+        ]);
+      },
+    );
 
     test('pickDistributor invokes method channel without arguments', () async {
       final service = PlatformMobilePushService();
@@ -129,93 +148,100 @@ void main() {
       expect(methodCalls.first.arguments, {'instance': 'https://example.com'});
     });
 
-    test('pendingEndpoint decodes the record and rejects malformed ones',
-        () async {
-      final service = PlatformMobilePushService();
-      addTearDown(service.dispose);
+    test(
+      'pendingEndpoint decodes the record and rejects malformed ones',
+      () async {
+        final service = PlatformMobilePushService();
+        addTearDown(service.dispose);
 
-      methodResult = <Object?, Object?>{
-        'generation': 5,
-        'provider': 'webpush',
-        'instance': 'acct:dev',
-        'endpoint': 'https://push.example/abc',
-        'publicKey': 'pk',
-        'authSecret': 'auth',
-      };
-      final event = await service.pendingEndpoint();
-      expect(event?.generation, 5);
-      expect(event?.provider, 'webpush');
-      expect(event?.authSecret, 'auth');
+        methodResult = <Object?, Object?>{
+          'generation': 5,
+          'provider': 'webpush',
+          'instance': 'acct:dev',
+          'endpoint': 'https://push.example/abc',
+          'publicKey': 'pk',
+          'authSecret': 'auth',
+        };
+        final event = await service.pendingEndpoint();
+        expect(event?.generation, 5);
+        expect(event?.provider, 'webpush');
+        expect(event?.authSecret, 'auth');
 
-      methodResult = <Object?, Object?>{
-        'generation': 5,
-        'provider': 'webpush',
-        'instance': 'acct:dev',
-        'endpoint': 7,
-        'publicKey': 'pk',
-        'authSecret': 'auth',
-      };
-      expect(await service.pendingEndpoint(), isNull);
-      methodResult = <Object?, Object?>{
-        'provider': 'fcm',
-        'instance': 'acct:dev',
-        'endpoint': 't',
-        'publicKey': '',
-        'authSecret': '',
-      };
-      expect(await service.pendingEndpoint(), isNull); // generation missing
-      methodResult = null;
-      expect(await service.pendingEndpoint(), isNull);
-    });
-
-    test('acknowledgeEndpoint sends the generation and refuses non-positive',
-        () async {
-      final service = PlatformMobilePushService();
-      addTearDown(service.dispose);
-
-      methodResult = true;
-      expect(await service.acknowledgeEndpoint(5), isTrue);
-      expect(methodCalls.single.method, 'acknowledgeEndpoint');
-      expect(methodCalls.single.arguments, {'generation': 5});
-      methodCalls.clear();
-      expect(await service.acknowledgeEndpoint(0), isFalse);
-      expect(methodCalls, isEmpty);
-    });
-
-    test('pendingWakeGeneration returns parsed int and handles non-numbers',
-        () async {
-      final service = PlatformMobilePushService();
-      addTearDown(service.dispose);
-
-      methodResult = 42;
-      expect(await service.pendingWakeGeneration(), 42);
-
-      methodResult = 7.0;
-      expect(await service.pendingWakeGeneration(), 7);
-
-      methodResult = 'not_a_number';
-      expect(await service.pendingWakeGeneration(), 0);
-
-      methodResult = null;
-      expect(await service.pendingWakeGeneration(), 0);
-    });
+        methodResult = <Object?, Object?>{
+          'generation': 5,
+          'provider': 'webpush',
+          'instance': 'acct:dev',
+          'endpoint': 7,
+          'publicKey': 'pk',
+          'authSecret': 'auth',
+        };
+        expect(await service.pendingEndpoint(), isNull);
+        methodResult = <Object?, Object?>{
+          'provider': 'fcm',
+          'instance': 'acct:dev',
+          'endpoint': 't',
+          'publicKey': '',
+          'authSecret': '',
+        };
+        expect(await service.pendingEndpoint(), isNull); // generation missing
+        methodResult = null;
+        expect(await service.pendingEndpoint(), isNull);
+      },
+    );
 
     test(
-        'acknowledgeWake rejects non-positive generations without invoking native',
-        () async {
-      final service = PlatformMobilePushService();
-      addTearDown(service.dispose);
+      'acknowledgeEndpoint sends the generation and refuses non-positive',
+      () async {
+        final service = PlatformMobilePushService();
+        addTearDown(service.dispose);
 
-      expect(await service.acknowledgeWake(0), isFalse);
-      expect(await service.acknowledgeWake(-1), isFalse);
-      expect(methodCalls, isEmpty);
+        methodResult = true;
+        expect(await service.acknowledgeEndpoint(5), isTrue);
+        expect(methodCalls.single.method, 'acknowledgeEndpoint');
+        expect(methodCalls.single.arguments, {'generation': 5});
+        methodCalls.clear();
+        expect(await service.acknowledgeEndpoint(0), isFalse);
+        expect(methodCalls, isEmpty);
+      },
+    );
 
-      methodResult = true;
-      expect(await service.acknowledgeWake(5), isTrue);
-      expect(methodCalls, hasLength(1));
-      expect(methodCalls.first.method, 'acknowledgeWake');
-      expect(methodCalls.first.arguments, {'generation': 5});
-    });
+    test(
+      'pendingWakeGeneration returns parsed int and handles non-numbers',
+      () async {
+        final service = PlatformMobilePushService();
+        addTearDown(service.dispose);
+
+        methodResult = 42;
+        expect(await service.pendingWakeGeneration(), 42);
+
+        methodResult = 7.0;
+        expect(await service.pendingWakeGeneration(), 7);
+
+        methodResult = 'not_a_number';
+        expect(await service.pendingWakeGeneration(), 0);
+
+        methodResult = null;
+        expect(await service.pendingWakeGeneration(), 0);
+      },
+    );
+
+    test(
+      'acknowledgeWake rejects non-positive generations without invoking native',
+      () async {
+        final service = PlatformMobilePushService();
+        addTearDown(service.dispose);
+
+        expect(await service.acknowledgeWake(0), isFalse);
+        expect(await service.acknowledgeWake(-1), isFalse);
+        expect(methodCalls, isEmpty);
+
+        methodResult = true;
+        expect(await service.acknowledgeWake(5), isTrue);
+        expect(methodCalls, hasLength(1));
+        expect(methodCalls.first.method, 'acknowledgeWake');
+        expect(methodCalls.first.arguments, {'generation': 5});
+      },
+    );
   });
 
   group('PlatformMobilePushService event channel decoding', () {
@@ -227,14 +253,18 @@ void main() {
 
     setUp(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(const MethodChannel(methodChannelName),
-              (MethodCall call) async => null);
+          .setMockMethodCallHandler(
+        const MethodChannel(methodChannelName),
+        (MethodCall call) async => null,
+      );
     });
 
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-              const MethodChannel(methodChannelName), null);
+        const MethodChannel(methodChannelName),
+        null,
+      );
     });
 
     test('decodes valid endpoint, wake, and unregistered events', () async {
@@ -275,7 +305,9 @@ void main() {
       expect(endpointEvent.instance, 'https://node.example.com');
       expect(endpointEvent.provider, 'fcm');
       expect(
-          endpointEvent.endpoint, 'https://fcm.googleapis.com/fcm/send/token');
+        endpointEvent.endpoint,
+        'https://fcm.googleapis.com/fcm/send/token',
+      );
       expect(endpointEvent.publicKey, 'pubkey123');
       expect(endpointEvent.authSecret, 'secret456');
 

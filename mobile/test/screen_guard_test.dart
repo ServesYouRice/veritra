@@ -45,35 +45,39 @@ void main() {
       expect(channelCalls.last.arguments, <String, Object?>{'secure': false});
     });
 
-    test('on Android, isSecure invokes method channel and returns result',
-        () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-
-      final result = await guard.isSecure();
-      expect(result, isTrue);
-      expect(channelCalls, hasLength(1));
-      expect(channelCalls.first.method, 'isSecure');
-    });
-
-    test('on non-Android, setSecure and isSecure do not invoke method channel',
-        () async {
-      for (final platform in [
-        TargetPlatform.iOS,
-        TargetPlatform.windows,
-        TargetPlatform.linux,
-        TargetPlatform.macOS,
-      ]) {
-        debugDefaultTargetPlatformOverride = platform;
-        channelCalls.clear();
-
-        await guard.setSecure(true);
-        expect(channelCalls, isEmpty);
+    test(
+      'on Android, isSecure invokes method channel and returns result',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
 
         final result = await guard.isSecure();
-        expect(result, isFalse);
-        expect(channelCalls, isEmpty);
-      }
-    });
+        expect(result, isTrue);
+        expect(channelCalls, hasLength(1));
+        expect(channelCalls.first.method, 'isSecure');
+      },
+    );
+
+    test(
+      'on non-Android, setSecure and isSecure do not invoke method channel',
+      () async {
+        for (final platform in [
+          TargetPlatform.iOS,
+          TargetPlatform.windows,
+          TargetPlatform.linux,
+          TargetPlatform.macOS,
+        ]) {
+          debugDefaultTargetPlatformOverride = platform;
+          channelCalls.clear();
+
+          await guard.setSecure(true);
+          expect(channelCalls, isEmpty);
+
+          final result = await guard.isSecure();
+          expect(result, isFalse);
+          expect(channelCalls, isEmpty);
+        }
+      },
+    );
 
     test('platform exceptions fail closed and do not throw', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;

@@ -37,7 +37,8 @@ class EncryptedCallSignal {
 abstract class CryptoService {
   Future<String> deviceLinkLocator(List<int> secret);
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation);
+    EnrollmentReservation reservation,
+  );
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext);
   // The v2 link derivation was retired with ABI 18 (L1-3): device links run
   // on K2TransferCryptoService, whose SAS needs the source's committed random.
@@ -78,11 +79,16 @@ abstract class MlsConversationCryptoService implements CryptoService {
   /// when this device has no such group.
   Future<({int epoch, bool pending})?> groupEpoch(String conversationId);
   Future<ConversationSafetyNumber> conversationSafetyNumber(
-      String conversationId);
+    String conversationId,
+  );
   Future<EncryptedCallSignal> encryptCallSignal(
-      String conversationId, Map<String, Object?> signal);
+    String conversationId,
+    Map<String, Object?> signal,
+  );
   Future<Map<String, Object?>?> processCallSignal(
-      CallSession call, int syncEventId);
+    CallSession call,
+    int syncEventId,
+  );
 
   /// [attachmentRefs] names the uploaded ciphertext blobs the message
   /// refers to, so the server expires them with it.
@@ -108,16 +114,24 @@ abstract class MlsConversationCryptoService implements CryptoService {
 /// or the permit has ended; callers still drain that transaction normally.
 abstract interface class BoundedMlsConversationCryptoService
     implements MlsConversationCryptoService {
-  Future<void> activateExistingSessionBounded(Session session,
-      {required void Function() checkCanCommit});
-  Future<void> processMlsMessageBounded(MlsMessage message,
-      {required void Function() checkCanCommit});
+  Future<void> activateExistingSessionBounded(
+    Session session, {
+    required void Function() checkCanCommit,
+  });
+  Future<void> processMlsMessageBounded(
+    MlsMessage message, {
+    required void Function() checkCanCommit,
+  });
   Future<List<int>?> processApplicationMessageBounded(
-      ReceivedMessageEnvelope envelope, int syncEventId,
-      {required void Function() checkCanCommit});
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    required void Function() checkCanCommit,
+  });
   Future<Map<String, Object?>?> processCallSignalBounded(
-      CallSession call, int syncEventId,
-      {required void Function() checkCanCommit});
+    CallSession call,
+    int syncEventId, {
+    required void Function() checkCanCommit,
+  });
 }
 
 /// Periodic MLS self-update (docs/crypto.md, change log 2026-10-31). Kept
@@ -210,8 +224,10 @@ abstract interface class ApprovedDeviceDiscoveryCryptoService {
   /// new approved device; [excluding] names accounts whose removal is
   /// pending, which never gain a device.
   Future<List<MlsDeviceRef>> missingApprovedDevices(
-      String? conversationId, Iterable<String> accountIds,
-      {Set<String> excluding = const <String>{}});
+    String? conversationId,
+    Iterable<String> accountIds, {
+    Set<String> excluding = const <String>{},
+  });
 }
 
 /// A membership change named only devices that are not on their accounts'
@@ -496,11 +512,13 @@ abstract interface class SealedTokenSource {
 /// designates its commitment to, read on the token pass and kept until the
 /// next one, so a send makes no request and reads no pin.
 class SealedFrankContext {
-  SealedFrankContext(
-      {required List<int> listedKey, required List<List<int>> ownerKeys})
-      : listedKey = Uint8List.fromList(listedKey),
-        ownerKeys = List<Uint8List>.unmodifiable(
-            [for (final key in ownerKeys) Uint8List.fromList(key)]) {
+  SealedFrankContext({
+    required List<int> listedKey,
+    required List<List<int>> ownerKeys,
+  })  : listedKey = Uint8List.fromList(listedKey),
+        ownerKeys = List<Uint8List>.unmodifiable([
+          for (final key in ownerKeys) Uint8List.fromList(key),
+        ]) {
     if (this.listedKey.length != 32 ||
         this.ownerKeys.length > maxOwnerKeys ||
         this.ownerKeys.any((key) => key.length != 32)) {
@@ -554,8 +572,10 @@ abstract interface class SealedSendingCryptoService {
   /// with the sender MLS authenticated, this device's own for its own post,
   /// or with no sender when it became a placeholder.
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId,
-      {void Function()? checkCanCommit});
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  });
 
   /// Blinds [count] fresh token nonces (1 to 32) for the server's
   /// [publicKey]. `state` holds the blinds for [sealedTokenFinalize]; the
@@ -701,8 +721,11 @@ final class C7DueRequest extends C7Due {
 /// This device's own record came back stale (sent before a membership
 /// commit, sequenced after it): propose it again at the current epoch.
 final class C7DueRepropose extends C7Due {
-  const C7DueRepropose(super.conversationId, this.channelId,
-      {required this.full});
+  const C7DueRepropose(
+    super.conversationId,
+    this.channelId, {
+    required this.full,
+  });
   final String channelId;
   final bool full;
 }
@@ -713,7 +736,10 @@ final class C7DueRepropose extends C7Due {
 /// ([C7HistoryService.c7ProposeMove]) with the channel's layout generation.
 final class C7DueMove extends C7Due {
   const C7DueMove(
-      super.conversationId, this.channelId, this.fromConversationId);
+    super.conversationId,
+    this.channelId,
+    this.fromConversationId,
+  );
   final String channelId;
   final String fromConversationId;
 }
@@ -937,8 +963,10 @@ abstract interface class C7HistoryService {
   /// chain from the old group and, when both modes are `full` and this
   /// device holds the old key, wraps the old group's current generation.
   /// Null when nothing is owed any more.
-  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
-      {int? layoutGeneration});
+  Future<MessageEnvelope?> c7ProposeMove(
+    C7DueMove due, {
+    int? layoutGeneration,
+  });
 
   /// The moves whose earlier posts this device has yet to import: a `move`
   /// record with a fitting wrap reached it, live or in its own import, and
@@ -1066,14 +1094,18 @@ class UnavailableCryptoService
       throw StateError("Device linking is unavailable");
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation) async {
+    EnrollmentReservation reservation,
+  ) async {
     throw StateError(
-        'Production MLS/OpenMLS enrollment signing is not integrated');
+      'Production MLS/OpenMLS enrollment signing is not integrated',
+    );
   }
 
   @override
   Future<MessageEnvelope> encrypt(
-      String conversationId, String plaintext) async {
+    String conversationId,
+    String plaintext,
+  ) async {
     throw StateError('Production MLS/OpenMLS encryption is not integrated');
   }
 
@@ -1147,8 +1179,10 @@ abstract interface class RoleCommandCryptoService {
   /// `GovernanceCommandException` to refuse) and stages it as a commit.
   Future<void> stageRoleChange(
     String groupId,
-    GovernanceState Function(GovernanceCommands commands,
-            GovernanceObservations? observed, DateTime now)
-        build,
+    GovernanceState Function(
+      GovernanceCommands commands,
+      GovernanceObservations? observed,
+      DateTime now,
+    ) build,
   );
 }

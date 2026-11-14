@@ -213,11 +213,7 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   );
 
   @override
-  VeritraStateColors copyWith({
-    Color? verified,
-    Color? warning,
-    Color? info,
-  }) {
+  VeritraStateColors copyWith({Color? verified, Color? warning, Color? info}) {
     return VeritraStateColors(
       verified: verified ?? this.verified,
       warning: warning ?? this.warning,
@@ -226,10 +222,7 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   }
 
   @override
-  VeritraStateColors lerp(
-    ThemeExtension<VeritraStateColors>? other,
-    double t,
-  ) {
+  VeritraStateColors lerp(ThemeExtension<VeritraStateColors>? other, double t) {
     if (other is! VeritraStateColors) {
       return this;
     }

@@ -69,7 +69,10 @@ class LocalNoticeProcessor {
     final account = session.accountId, device = session.deviceId;
     if (account == null || device == null) return null;
     return LocalNoticeOwner(
-        origin: session.baseUrl, accountId: account, deviceId: device);
+      origin: session.baseUrl,
+      accountId: account,
+      deviceId: device,
+    );
   }
 
   Future<NoticePassResult> run() async {
@@ -83,8 +86,11 @@ class LocalNoticeProcessor {
 
     // A decision frozen by an earlier pass whose answer was lost keeps its ID,
     // so native recognizes a retry instead of alerting twice.
-    final frozen = await store.pendingNoticeDecision(scope,
-        now: _ms(), checkCanCommit: check);
+    final frozen = await store.pendingNoticeDecision(
+      scope,
+      now: _ms(),
+      checkCanCommit: check,
+    );
     if (frozen != null) {
       final outcome = await _decide(scope, frozen, rows, mutes);
       if (outcome == null)
@@ -96,8 +102,11 @@ class LocalNoticeProcessor {
     }
 
     for (var batch = 0; batch < maxBatches; batch++) {
-      final pending = await store.pendingNoticeReferences(scope,
-          now: _ms(), checkCanCommit: check);
+      final pending = await store.pendingNoticeReferences(
+        scope,
+        now: _ms(),
+        checkCanCommit: check,
+      );
       if (pending.isEmpty) return NoticePassResult(durable: true, shown: shown);
       final eligible = <String>[], ineligible = <String>[];
       var unknown = 0;
@@ -112,12 +121,20 @@ class LocalNoticeProcessor {
         }
       }
       if (ineligible.isNotEmpty) {
-        await store.suppressNoticeReferences(scope, ineligible,
-            now: _ms(), checkCanCommit: check);
+        await store.suppressNoticeReferences(
+          scope,
+          ineligible,
+          now: _ms(),
+          checkCanCommit: check,
+        );
       }
       if (eligible.isNotEmpty) {
-        final decision = await store.freezeNoticeDecision(scope, eligible,
-            now: _ms(), checkCanCommit: check);
+        final decision = await store.freezeNoticeDecision(
+          scope,
+          eligible,
+          now: _ms(),
+          checkCanCommit: check,
+        );
         if (decision == null)
           return NoticePassResult(durable: false, shown: shown);
         final outcome = await _decide(scope, decision, rows, mutes);
@@ -132,8 +149,12 @@ class LocalNoticeProcessor {
         return NoticePassResult(durable: false, shown: shown);
       }
     }
-    final rest = await store.pendingNoticeReferences(scope,
-        limit: 1, now: _ms(), checkCanCommit: check);
+    final rest = await store.pendingNoticeReferences(
+      scope,
+      limit: 1,
+      now: _ms(),
+      checkCanCommit: check,
+    );
     return NoticePassResult(durable: rest.isEmpty, shown: shown);
   }
 
@@ -141,10 +162,11 @@ class LocalNoticeProcessor {
   /// block or new mute since freezing suppresses the decision durably.
   /// Returns null when the policy could not be read (decision stays frozen).
   Future<LocalNoticeOutcome?> _decide(
-      LocalNoticeOwner scope,
-      LocalNoticeDecision decision,
-      Map<String, Map<String, LocalMessage>> rows,
-      Map<String, bool?> mutes) async {
+    LocalNoticeOwner scope,
+    LocalNoticeDecision decision,
+    Map<String, Map<String, LocalMessage>> rows,
+    Map<String, bool?> mutes,
+  ) async {
     // Fresh rows and mute state, read once for this decision.
     rows.clear();
     mutes.clear();
@@ -156,50 +178,66 @@ class LocalNoticeProcessor {
     }
     if (!anyEligible) {
       await store.finishNoticeDecision(
-          scope, decision.id, LocalNoticeOutcome.suppressed,
-          now: _ms(), checkCanCommit: check);
+        scope,
+        decision.id,
+        LocalNoticeOutcome.suppressed,
+        now: _ms(),
+        checkCanCommit: check,
+      );
       return LocalNoticeOutcome.suppressed;
     }
     check?.call();
     final outcome = await present(decision.id);
-    await store.finishNoticeDecision(scope, decision.id, outcome,
-        now: _ms(), checkCanCommit: check);
+    await store.finishNoticeDecision(
+      scope,
+      decision.id,
+      outcome,
+      now: _ms(),
+      checkCanCommit: check,
+    );
     return outcome;
   }
 
   Future<NoticeEligibility> _evaluate(
-      LocalNoticeReference reference,
-      Map<String, Map<String, LocalMessage>> rows,
-      Map<String, bool?> mutes) async {
+    LocalNoticeReference reference,
+    Map<String, Map<String, LocalMessage>> rows,
+    Map<String, bool?> mutes,
+  ) async {
     if (!reference.owner.matchesSession(session)) {
       return NoticeEligibility.ineligible;
     }
     final conversation = reference.conversationId;
     final byKey = rows[conversation] ??= {
-      for (final row in await store.loadMessages(conversation)) row.key: row
+      for (final row in await store.loadMessages(conversation)) row.key: row,
     };
     final now = _now();
     final candidate = messageNoticeCandidateForContext(
-        session: session,
-        envelope: NoticeMessageContext(
-            serverMessageId: reference.serverMessageId,
-            conversationId: conversation,
-            senderAccountId: reference.senderAccountId,
-            senderDeviceId: reference.senderDeviceId,
-            messageKey: reference.messageKey,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(reference.createdAt,
-                isUtc: true),
-            expiresAt: reference.expiresAt == null
-                ? null
-                : DateTime.fromMillisecondsSinceEpoch(reference.expiresAt!,
-                    isUtc: true)),
-        message: byKey[reference.messageKey],
-        now: now,
-        // Block and acceptance are applied below, where "unknown" differs
-        // from "no".
-        blocked: false,
-        conversationAccepted: true,
-        includeGenericAttachments: true);
+      session: session,
+      envelope: NoticeMessageContext(
+        serverMessageId: reference.serverMessageId,
+        conversationId: conversation,
+        senderAccountId: reference.senderAccountId,
+        senderDeviceId: reference.senderDeviceId,
+        messageKey: reference.messageKey,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+          reference.createdAt,
+          isUtc: true,
+        ),
+        expiresAt: reference.expiresAt == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                reference.expiresAt!,
+                isUtc: true,
+              ),
+      ),
+      message: byKey[reference.messageKey],
+      now: now,
+      // Block and acceptance are applied below, where "unknown" differs
+      // from "no".
+      blocked: false,
+      conversationAccepted: true,
+      includeGenericAttachments: true,
+    );
     if (candidate == null) return NoticeEligibility.ineligible;
     final blocked = await policy.blocked(reference.senderAccountId);
     if (blocked == null) return NoticeEligibility.unknown;
@@ -213,7 +251,8 @@ class LocalNoticeProcessor {
     if (muted == null) return NoticeEligibility.unknown;
     if (!muted) return NoticeEligibility.eligible;
     return candidate.allowedWhenMuted(
-            mentionsInMutedChats: policy.mentionsInMutedChats)
+      mentionsInMutedChats: policy.mentionsInMutedChats,
+    )
         ? NoticeEligibility.eligible
         : NoticeEligibility.ineligible;
   }

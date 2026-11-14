@@ -51,10 +51,12 @@ class AccountRecoveryBanner extends StatelessWidget {
     );
   }
 
-  Widget _frame(BuildContext context,
-      {required IconData icon,
-      required String message,
-      required List<Widget> actions}) {
+  Widget _frame(
+    BuildContext context, {
+    required IconData icon,
+    required String message,
+    required List<Widget> actions,
+  }) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Semantics(
@@ -82,8 +84,9 @@ class AccountRecoveryBanner extends StatelessWidget {
                   Expanded(
                     child: Text(
                       message,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: scheme.onErrorContainer),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onErrorContainer,
+                      ),
                     ),
                   ),
                 ],
@@ -101,8 +104,10 @@ class AccountRecoveryBanner extends StatelessWidget {
     return _frame(
       context,
       icon: Icons.warning_amber_outlined,
-      message: l10n.recoveryPendingNotice(pending.deviceName,
-          formatDateTime(context, pending.readyAt.toLocal())),
+      message: l10n.recoveryPendingNotice(
+        pending.deviceName,
+        formatDateTime(context, pending.readyAt.toLocal()),
+      ),
       actions: <Widget>[
         TextButton(
           onPressed: state.isBusy(Ops.accountRecovery)
@@ -147,7 +152,9 @@ class AccountRecoveryBanner extends StatelessWidget {
   }
 
   Future<void> _confirmCancel(
-      BuildContext context, PendingRecoveryRequest pending) async {
+    BuildContext context,
+    PendingRecoveryRequest pending,
+  ) async {
     final l10n = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -179,8 +186,9 @@ class AccountRecoveryBanner extends StatelessWidget {
       _ => state.errorFor(Ops.accountRecovery),
     };
     if (message != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }

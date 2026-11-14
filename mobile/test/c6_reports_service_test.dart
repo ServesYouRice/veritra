@@ -58,7 +58,9 @@ class _Server extends ApiClient {
 
   @override
   Future<ReportInbox> getReportInbox(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ReportInbox(kind: kind, recipients: keys.values.toList());
 
   @override
@@ -71,35 +73,49 @@ class _Server extends ApiClient {
     final same = old != null && _eq(old.publicKey, publicKey);
     final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
     // The token doubles as the owner's account id in this fake.
-    keys[token] =
-        ReportInboxRecipient(inboxId: token, publicKey: publicKey, keyRev: rev);
+    keys[token] = ReportInboxRecipient(
+      inboxId: token,
+      publicKey: publicKey,
+      keyRev: rev,
+    );
     return rev;
   }
 
   @override
   Future<int> putModeratorReportKey(
-      String token, String communityId, List<int> publicKey) async {
+    String token,
+    String communityId,
+    List<int> publicKey,
+  ) async {
     final inbox = communityModeratorInboxId(communityId, token);
     final old = keys[inbox];
     final same = old != null && _eq(old.publicKey, publicKey);
     final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
-    keys[inbox] =
-        ReportInboxRecipient(inboxId: inbox, publicKey: publicKey, keyRev: rev);
+    keys[inbox] = ReportInboxRecipient(
+      inboxId: inbox,
+      publicKey: publicKey,
+      keyRev: rev,
+    );
     return rev;
   }
 
   @override
   Future<ReportInboxRecipient?> getOwnModeratorReportKey(
-          String token, String communityId) async =>
+    String token,
+    String communityId,
+  ) async =>
       keys[communityModeratorInboxId(communityId, token)];
 
   @override
   Future<List<ReportCopyRow>> listModeratorReports(
-          String token, String communityId,
-          {String? afterId, int limit = 50}) async =>
+    String token,
+    String communityId, {
+    String? afterId,
+    int limit = 50,
+  }) async =>
       [
         for (final c in copies)
-          if (c.inboxId == communityModeratorInboxId(communityId, token)) c
+          if (c.inboxId == communityModeratorInboxId(communityId, token)) c,
       ];
 
   @override
@@ -126,28 +142,33 @@ class _Server extends ApiClient {
           raw['recipient_public_key'] != base64Encode(owner.publicKey)) {
         throw ApiException(409, '{"error":"report_inbox_changed"}');
       }
-      this.copies.add(ReportCopyRow(
-            id: 'row_${nextId++}',
-            reportId: reportId,
-            inboxKind: kind,
-            inboxId: owner.inboxId,
-            keyRev: owner.keyRev,
-            recipientPublicKey: owner.publicKey,
-            conversationId: conversationId,
-            reporterAccountId: _reporterAccount,
-            sealed: base64Decode(raw['sealed'] as String),
-            createdAt: DateTime.utc(2026, 11, 7),
-          ));
+      this.copies.add(
+            ReportCopyRow(
+              id: 'row_${nextId++}',
+              reportId: reportId,
+              inboxKind: kind,
+              inboxId: owner.inboxId,
+              keyRev: owner.keyRev,
+              recipientPublicKey: owner.publicKey,
+              conversationId: conversationId,
+              reporterAccountId: _reporterAccount,
+              sealed: base64Decode(raw['sealed'] as String),
+              createdAt: DateTime.utc(2026, 11, 7),
+            ),
+          );
     }
     filedReports++;
   }
 
   @override
-  Future<List<ReportCopyRow>> listOwnerReports(String token,
-          {String? afterId, int limit = 50}) async =>
+  Future<List<ReportCopyRow>> listOwnerReports(
+    String token, {
+    String? afterId,
+    int limit = 50,
+  }) async =>
       [
         for (final c in copies)
-          if (c.inboxId == token) c
+          if (c.inboxId == token) c,
       ];
 
   @override
@@ -157,7 +178,10 @@ class _Server extends ApiClient {
 
   @override
   Future<ReportEnvelopeRecord> getReportEnvelope(
-      String token, String reportRowId, String envelopeId) async {
+    String token,
+    String reportRowId,
+    String envelopeId,
+  ) async {
     envelopeRequests.add(envelopeId);
     final found = record;
     if (found == null || found.envelopeId != envelopeId) {
@@ -219,9 +243,10 @@ void main() {
   Future<void> announces(String account, List<int> key) async {
     final settings = reportKeySettingsFor(
       DecryptedAppPayload(
-          type: AppPayloadType.reportKey,
-          actionId: 'a',
-          body: {'key': base64Encode(key)}),
+        type: AppPayloadType.reportKey,
+        actionId: 'a',
+        body: {'key': base64Encode(key)},
+      ),
       conversationId: _sharedGroup,
       senderAccountId: account,
       isRecordGroup: true,
@@ -256,20 +281,25 @@ void main() {
     // is required and missing; the model and store tests run without it.
     if (nativeCryptoLibraryPath == null) return;
     crypto = NativeCryptoService(
-        bindings: NativeCryptoBindings.open(requireNativeCryptoLibrary()),
-        localStore: MemoryLocalStore());
+      bindings: NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      localStore: MemoryLocalStore(),
+    );
     store = _Store();
     server = _Server();
     seeds = MemoryReportSeedStore();
     frankKey = Uint8List.fromList(List<int>.filled(32, 9));
-    payload = Uint8List.fromList(utf8.encode(jsonEncode({
-      'v': 2,
-      'type': 'text',
-      'conversation_id': _conversation,
-      'sender_device_id': _sender,
-      'action_id': _action,
-      'body': {'text': 'the reported words'},
-    })));
+    payload = Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          'v': 2,
+          'type': 'text',
+          'conversation_id': _conversation,
+          'sender_device_id': _sender,
+          'action_id': _action,
+          'body': {'text': 'the reported words'},
+        }),
+      ),
+    );
     commit = await crypto.frankCommit(
       key: frankKey,
       conversationId: _conversation,
@@ -303,53 +333,59 @@ void main() {
     final plan = await reporter.prepare(_conversation);
     await reporter.pinKeys(plan);
     await reporter.file(
-        conversationId: _conversation,
-        messageKey: '$_sender:$_action',
-        reason: ReportReason.spam);
+      conversationId: _conversation,
+      messageKey: '$_sender:$_action',
+      reason: ReportReason.spam,
+    );
   }
 
   final Object nativeSkip = nativeCryptoSkip();
 
   test(
-      'owner key custody: the seed stays on this device, republishing is stable',
-      () async {
-    final owner = serviceFor(_ownerAccount);
-    expect((await owner.keyStatus()).state, OwnerReportKeyState.none);
-    final (key, rev) = await owner.createKey();
-    expect(rev, 1);
-    final status = await owner.keyStatus();
-    expect(status.state, OwnerReportKeyState.active);
-    expect(status.localKey, key);
-    expect(status.listedKey, key);
-    // Creating again would silently lose the seed: refused unless replacing.
-    await expectLater(owner.createKey(), throwsStateError);
-    final (again, sameRev) = await owner.publishKey();
-    expect(again, key);
-    expect(sameRev, 1);
-    // A second device holds no seed: the key is held elsewhere, and making a
-    // new one is an explicit replace.
-    final other = ReportsService(
-      api: server,
-      token: _ownerAccount,
-      accountId: _ownerAccount,
-      crypto: crypto,
-      store: store,
-      seeds: MemoryReportSeedStore(),
-    );
-    expect((await other.keyStatus()).state, OwnerReportKeyState.heldElsewhere);
-    final (replacement, newRev) = await other.createKey(replace: true);
-    expect(replacement, isNot(key));
-    expect(newRev, 2);
-    // The first device now sees the key reporters see, and that it is not its
-    // own.
-    final first = await owner.keyStatus();
-    expect(first.state, OwnerReportKeyState.replacedElsewhere);
-    expect(first.listedKey, replacement);
-    expect(first.localKey, key);
-    // A seed whose key was never published reads as unpublished.
-    server.keys.clear();
-    expect((await owner.keyStatus()).state, OwnerReportKeyState.unpublished);
-  }, skip: nativeSkip);
+    'owner key custody: the seed stays on this device, republishing is stable',
+    () async {
+      final owner = serviceFor(_ownerAccount);
+      expect((await owner.keyStatus()).state, OwnerReportKeyState.none);
+      final (key, rev) = await owner.createKey();
+      expect(rev, 1);
+      final status = await owner.keyStatus();
+      expect(status.state, OwnerReportKeyState.active);
+      expect(status.localKey, key);
+      expect(status.listedKey, key);
+      // Creating again would silently lose the seed: refused unless replacing.
+      await expectLater(owner.createKey(), throwsStateError);
+      final (again, sameRev) = await owner.publishKey();
+      expect(again, key);
+      expect(sameRev, 1);
+      // A second device holds no seed: the key is held elsewhere, and making a
+      // new one is an explicit replace.
+      final other = ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: MemoryReportSeedStore(),
+      );
+      expect(
+        (await other.keyStatus()).state,
+        OwnerReportKeyState.heldElsewhere,
+      );
+      final (replacement, newRev) = await other.createKey(replace: true);
+      expect(replacement, isNot(key));
+      expect(newRev, 2);
+      // The first device now sees the key reporters see, and that it is not its
+      // own.
+      final first = await owner.keyStatus();
+      expect(first.state, OwnerReportKeyState.replacedElsewhere);
+      expect(first.listedKey, replacement);
+      expect(first.localKey, key);
+      // A seed whose key was never published reads as unpublished.
+      server.keys.clear();
+      expect((await owner.keyStatus()).state, OwnerReportKeyState.unpublished);
+    },
+    skip: nativeSkip,
+  );
 
   test('report round trip: pin, file, open, verify, dismiss', () async {
     await ownerSetsUpKey();
@@ -360,36 +396,53 @@ void main() {
     expect(plan.canSend, isFalse);
     expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
     await expectLater(
-        reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+      reporter.file(
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam,
+      ),
+      throwsA(
+        isA<ReportFailureException>().having(
+          (e) => e.kind,
+          'kind',
+          ReportFailure.keysNotPinned,
+        ),
+      ),
+    );
     expect(server.copies, isEmpty);
 
     await reporter.pinKeys(plan);
     expect((await reporter.prepare(_conversation)).canSend, isTrue);
     await reporter.file(
-        conversationId: _conversation,
-        messageKey: '$_sender:$_action',
-        reason: ReportReason.harassment);
+      conversationId: _conversation,
+      messageKey: '$_sender:$_action',
+      reason: ReportReason.harassment,
+    );
     expect(server.copies, hasLength(1));
     // The server sees no envelope id and no text in what it stored.
-    final stored =
-        utf8.decode(server.copies.single.sealed, allowMalformed: true);
+    final stored = utf8.decode(
+      server.copies.single.sealed,
+      allowMalformed: true,
+    );
     expect(stored, isNot(contains(_envelope)));
     expect(stored, isNot(contains('the reported words')));
     expect(server.envelopeRequests, isEmpty);
 
     // A second tap on the same message files nothing more.
     await expectLater(
-        reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.alreadyReported)));
+      reporter.file(
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam,
+      ),
+      throwsA(
+        isA<ReportFailureException>().having(
+          (e) => e.kind,
+          'kind',
+          ReportFailure.alreadyReported,
+        ),
+      ),
+    );
     expect(server.filedReports, 1);
 
     // The owner opens it; listing and opening touch the server not at all
@@ -440,12 +493,18 @@ void main() {
         );
 
     expect(await verdictFor(with_()), ReportVerdict.verified);
-    expect(await verdictFor(with_(commit_: List<int>.filled(32, 1))),
-        ReportVerdict.mismatch);
     expect(
-        await verdictFor(with_(device: 'dev_other')), ReportVerdict.mismatch);
-    expect(await verdictFor(with_(conversation: 'conv_2')),
-        ReportVerdict.mismatch);
+      await verdictFor(with_(commit_: List<int>.filled(32, 1))),
+      ReportVerdict.mismatch,
+    );
+    expect(
+      await verdictFor(with_(device: 'dev_other')),
+      ReportVerdict.mismatch,
+    );
+    expect(
+      await verdictFor(with_(conversation: 'conv_2')),
+      ReportVerdict.mismatch,
+    );
     expect(await verdictFor(with_(noCommit: true)), ReportVerdict.unfranked);
     expect(await verdictFor(null), ReportVerdict.recordGone);
   }, skip: nativeSkip);
@@ -483,12 +542,19 @@ void main() {
     expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
     expect(plan.canSend, isFalse);
     await expectLater(
-        reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+      reporter.file(
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam,
+      ),
+      throwsA(
+        isA<ReportFailureException>().having(
+          (e) => e.kind,
+          'kind',
+          ReportFailure.keysNotPinned,
+        ),
+      ),
+    );
     expect(server.copies, isEmpty);
   }, skip: nativeSkip);
 
@@ -496,184 +562,254 @@ void main() {
   // pinned on first use goes to the sealed-message proofs only. Reporting
   // still shows the code first, and nothing is sealed to that key until the
   // person compared it.
-  test('a key pinned on first use for proofs still needs the code to report',
-      () async {
-    await ownerSetsUpKey();
-    final listed = server.keys[_ownerAccount]!.publicKey;
-    final watch = OwnerKeyWatch(store, _origin);
-    expect(
+  test(
+    'a key pinned on first use for proofs still needs the code to report',
+    () async {
+      await ownerSetsUpKey();
+      final listed = server.keys[_ownerAccount]!.publicKey;
+      final watch = OwnerKeyWatch(store, _origin);
+      expect(
         await watch.observe(
-            await server.getReportInbox(_reporterAccount, _conversation)),
-        isTrue);
-    expect([
-      for (final pin in await OwnerProofPins(store, _origin).effective())
-        pin.publicKey
-    ], [
-      listed
-    ]);
-    expect(await store.loadReportKeyPins(_origin), isEmpty);
+          await server.getReportInbox(_reporterAccount, _conversation),
+        ),
+        isTrue,
+      );
+      expect(
+        [
+          for (final pin in await OwnerProofPins(store, _origin).effective())
+            pin.publicKey,
+        ],
+        [listed],
+      );
+      expect(await store.loadReportKeyPins(_origin), isEmpty);
 
-    final reporter = serviceFor(_reporterAccount);
-    final plan = await reporter.prepare(_conversation);
-    expect(plan.canSend, isFalse);
-    expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
-    await expectLater(
+      final reporter = serviceFor(_reporterAccount);
+      final plan = await reporter.prepare(_conversation);
+      expect(plan.canSend, isFalse);
+      expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
+      await expectLater(
         reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
-    expect(server.copies, isEmpty);
-    expect(server.filedReports, 0);
+          conversationId: _conversation,
+          messageKey: '$_sender:$_action',
+          reason: ReportReason.spam,
+        ),
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.keysNotPinned,
+          ),
+        ),
+      );
+      expect(server.copies, isEmpty);
+      expect(server.filedReports, 0);
 
-    // The person compares the code: then, and only then, it is sent.
-    await reporter.pinKeys(plan);
-    await reporter.file(
+      // The person compares the code: then, and only then, it is sent.
+      await reporter.pinKeys(plan);
+      await reporter.file(
         conversationId: _conversation,
         messageKey: '$_sender:$_action',
-        reason: ReportReason.spam);
-    expect(server.copies.single.recipientPublicKey, listed);
-  }, skip: nativeSkip);
+        reason: ReportReason.spam,
+      );
+      expect(server.copies.single.recipientPublicKey, listed);
+    },
+    skip: nativeSkip,
+  );
 
-  test('a key compared while reporting replaces a first-use proof key',
-      () async {
-    // The server lists a key of its own at first sight: pinned for proofs.
-    final made = List<int>.filled(32, 0x5a);
-    server.keys[_ownerAccount] = ReportInboxRecipient(
-        inboxId: _ownerAccount, publicKey: made, keyRev: 1);
-    final watch = OwnerKeyWatch(store, _origin);
-    Future<bool> observe() async => watch
-        .observe(await server.getReportInbox(_reporterAccount, _conversation));
-    expect(await observe(), isTrue);
+  test(
+    'a key compared while reporting replaces a first-use proof key',
+    () async {
+      // The server lists a key of its own at first sight: pinned for proofs.
+      final made = List<int>.filled(32, 0x5a);
+      server.keys[_ownerAccount] = ReportInboxRecipient(
+        inboxId: _ownerAccount,
+        publicKey: made,
+        keyRev: 1,
+      );
+      final watch = OwnerKeyWatch(store, _origin);
+      Future<bool> observe() async => watch.observe(
+            await server.getReportInbox(_reporterAccount, _conversation),
+          );
+      expect(await observe(), isTrue);
 
-    // The real owner key is listed later; the person compares its code.
-    await ownerSetsUpKey();
-    final real = server.keys[_ownerAccount]!.publicKey;
-    final reporter = serviceFor(_reporterAccount);
-    await reporter.pinKeys(await reporter.prepare(_conversation));
-    expect([
-      for (final pin in await OwnerProofPins(store, _origin).effective())
-        pin.publicKey
-    ], [
-      real
-    ]);
-    expect(await observe(), isFalse);
-    expect(await watch.review(), isEmpty);
-  }, skip: nativeSkip);
+      // The real owner key is listed later; the person compares its code.
+      await ownerSetsUpKey();
+      final real = server.keys[_ownerAccount]!.publicKey;
+      final reporter = serviceFor(_reporterAccount);
+      await reporter.pinKeys(await reporter.prepare(_conversation));
+      expect(
+        [
+          for (final pin in await OwnerProofPins(store, _origin).effective())
+            pin.publicKey,
+        ],
+        [real],
+      );
+      expect(await observe(), isFalse);
+      expect(await watch.review(), isEmpty);
+    },
+    skip: nativeSkip,
+  );
 
-  test('a key accepted on the sealed key screen is not a report key', () async {
-    await ownerSetsUpKey();
-    final reporter = serviceFor(_reporterAccount);
-    // The person compared the owner's first key while reporting.
-    await reporter.pinKeys(await reporter.prepare(_conversation));
-    final watch = OwnerKeyWatch(store, _origin);
-    Future<void> observe() async => watch
-        .observe(await server.getReportInbox(_reporterAccount, _conversation));
-    await observe();
-    expect(await watch.review(), isEmpty);
+  test(
+    'a key accepted on the sealed key screen is not a report key',
+    () async {
+      await ownerSetsUpKey();
+      final reporter = serviceFor(_reporterAccount);
+      // The person compared the owner's first key while reporting.
+      await reporter.pinKeys(await reporter.prepare(_conversation));
+      final watch = OwnerKeyWatch(store, _origin);
+      Future<void> observe() async => watch.observe(
+            await server.getReportInbox(_reporterAccount, _conversation),
+          );
+      await observe();
+      expect(await watch.review(), isEmpty);
 
-    // The server lists another key (the owner's new device, or its own),
-    // and the person accepts it for proofs.
-    await ReportsService(
-      api: server,
-      token: _ownerAccount,
-      accountId: _ownerAccount,
-      crypto: crypto,
-      store: store,
-      seeds: MemoryReportSeedStore(),
-    ).createKey(replace: true);
-    final replaced = server.keys[_ownerAccount]!.publicKey;
-    await observe();
-    expect(await watch.accept((await watch.review()).single), isTrue);
-    expect([
-      for (final pin in await OwnerProofPins(store, _origin).effective())
-        pin.publicKey
-    ], [
-      replaced
-    ]);
+      // The server lists another key (the owner's new device, or its own),
+      // and the person accepts it for proofs.
+      await ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: MemoryReportSeedStore(),
+      ).createKey(replace: true);
+      final replaced = server.keys[_ownerAccount]!.publicKey;
+      await observe();
+      expect(await watch.accept((await watch.review()).single), isTrue);
+      expect(
+        [
+          for (final pin in await OwnerProofPins(store, _origin).effective())
+            pin.publicKey,
+        ],
+        [replaced],
+      );
 
-    // A report still asks for the code and seals nothing to that key.
-    final plan = await reporter.prepare(_conversation);
-    expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
-    expect(plan.canSend, isFalse);
-    await expectLater(
+      // A report still asks for the code and seals nothing to that key.
+      final plan = await reporter.prepare(_conversation);
+      expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
+      expect(plan.canSend, isFalse);
+      await expectLater(
         reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
-    expect(server.copies, isEmpty);
-  }, skip: nativeSkip);
+          conversationId: _conversation,
+          messageKey: '$_sender:$_action',
+          reason: ReportReason.spam,
+        ),
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.keysNotPinned,
+          ),
+        ),
+      );
+      expect(server.copies, isEmpty);
+    },
+    skip: nativeSkip,
+  );
 
-  test('this device cannot open what is sealed to a key it does not hold',
-      () async {
-    await ownerSetsUpKey();
-    await reporterTrustsAndFiles();
-    final row = (await serviceFor(_ownerAccount).list()).single;
-    // No seed on this device.
-    final blank = ReportsService(
-      api: server,
-      token: _ownerAccount,
-      accountId: _ownerAccount,
-      crypto: crypto,
-      store: store,
-      seeds: MemoryReportSeedStore(),
-    );
-    expect((await blank.open(row)).failure, ReportOpenFailure.noSeed);
-    // A different seed: sealed to an older key.
-    await blank.createKey(replace: true);
-    expect((await blank.open(row)).failure, ReportOpenFailure.otherKey);
-    // A copy opened under another reporter or conversation does not open.
-    final owner = serviceFor(_ownerAccount);
-    final tampered = ReportCopyRow(
-      id: row.id,
-      reportId: row.reportId,
-      inboxKind: row.inboxKind,
-      inboxId: row.inboxId,
-      keyRev: row.keyRev,
-      recipientPublicKey: row.recipientPublicKey,
-      conversationId: 'conv_other',
-      reporterAccountId: row.reporterAccountId,
-      sealed: row.sealed,
-      createdAt: row.createdAt,
-    );
-    expect((await owner.open(tampered)).failure, ReportOpenFailure.cannotOpen);
-  }, skip: nativeSkip);
+  test(
+    'this device cannot open what is sealed to a key it does not hold',
+    () async {
+      await ownerSetsUpKey();
+      await reporterTrustsAndFiles();
+      final row = (await serviceFor(_ownerAccount).list()).single;
+      // No seed on this device.
+      final blank = ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: MemoryReportSeedStore(),
+      );
+      expect((await blank.open(row)).failure, ReportOpenFailure.noSeed);
+      // A different seed: sealed to an older key.
+      await blank.createKey(replace: true);
+      expect((await blank.open(row)).failure, ReportOpenFailure.otherKey);
+      // A copy opened under another reporter or conversation does not open.
+      final owner = serviceFor(_ownerAccount);
+      final tampered = ReportCopyRow(
+        id: row.id,
+        reportId: row.reportId,
+        inboxKind: row.inboxKind,
+        inboxId: row.inboxId,
+        keyRev: row.keyRev,
+        recipientPublicKey: row.recipientPublicKey,
+        conversationId: 'conv_other',
+        reporterAccountId: row.reporterAccountId,
+        sealed: row.sealed,
+        createdAt: row.createdAt,
+      );
+      expect(
+        (await owner.open(tampered)).failure,
+        ReportOpenFailure.cannotOpen,
+      );
+    },
+    skip: nativeSkip,
+  );
 
-  test('community conversations and unreportable messages are refused',
-      () async {
-    await ownerSetsUpKey();
-    final reporter = serviceFor(_reporterAccount);
-    server.kind = 'community';
-    // No verified role record for the community: nobody to seal to.
-    await expectLater(
+  test(
+    'community conversations and unreportable messages are refused',
+    () async {
+      await ownerSetsUpKey();
+      final reporter = serviceFor(_reporterAccount);
+      server.kind = 'community';
+      // No verified role record for the community: nobody to seal to.
+      await expectLater(
         reporter.prepare(_conversation),
-        throwsA(isA<ReportFailureException>().having(
-            (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
-    await expectLater(
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.communityUnavailable,
+          ),
+        ),
+      );
+      await expectLater(
         reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>().having(
-            (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
-    server.kind = 'instance_owner';
-    await expectLater(
+          conversationId: _conversation,
+          messageKey: '$_sender:$_action',
+          reason: ReportReason.spam,
+        ),
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.communityUnavailable,
+          ),
+        ),
+      );
+      server.kind = 'instance_owner';
+      await expectLater(
         reporter.file(
-            conversationId: _conversation,
-            messageKey: 'dev:none',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.notReportable)));
-    server.keys.clear();
-    await expectLater(
+          conversationId: _conversation,
+          messageKey: 'dev:none',
+          reason: ReportReason.spam,
+        ),
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.notReportable,
+          ),
+        ),
+      );
+      server.keys.clear();
+      await expectLater(
         reporter.prepare(_conversation),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.noRecipients)));
-    expect(server.copies, isEmpty);
-  }, skip: nativeSkip);
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.noRecipients,
+          ),
+        ),
+      );
+      expect(server.copies, isEmpty);
+    },
+    skip: nativeSkip,
+  );
 
   test(
       'community reports seal only to verified moderators at keys they '
@@ -690,16 +826,29 @@ void main() {
     // Nothing announced yet: nothing can be sealed. (Preparing and filing
     // send nothing to the group; the app's background pass asks for keys.)
     await expectLater(
-        reporter.prepare(_conversation),
-        throwsA(isA<ReportFailureException>().having(
-            (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
+      reporter.prepare(_conversation),
+      throwsA(
+        isA<ReportFailureException>().having(
+          (e) => e.kind,
+          'kind',
+          ReportFailure.moderatorKeysPending,
+        ),
+      ),
+    );
     await expectLater(
-        reporter.file(
-            conversationId: _conversation,
-            messageKey: '$_sender:$_action',
-            reason: ReportReason.spam),
-        throwsA(isA<ReportFailureException>().having(
-            (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
+      reporter.file(
+        conversationId: _conversation,
+        messageKey: '$_sender:$_action',
+        reason: ReportReason.spam,
+      ),
+      throwsA(
+        isA<ReportFailureException>().having(
+          (e) => e.kind,
+          'kind',
+          ReportFailure.moderatorKeysPending,
+        ),
+      ),
+    );
     expect(server.copies, isEmpty);
 
     // The first moderator announced its key. For the second, the device
@@ -710,21 +859,29 @@ void main() {
     await announces('acct_member', memberKey);
     final plan = await reporter.prepare(_conversation);
     expect(plan.canSend, isTrue, reason: 'no tap for moderator keys');
-    expect(plan.check.recipients.map((r) => r.status),
-        [ReportKeyStatus.authenticated]);
-    expect(plan.check.recipients.single.recipient.inboxId,
-        communityModeratorInboxId(_community, _moderator));
+    expect(plan.check.recipients.map((r) => r.status), [
+      ReportKeyStatus.authenticated,
+    ]);
+    expect(
+      plan.check.recipients.single.recipient.inboxId,
+      communityModeratorInboxId(_community, _moderator),
+    );
     expect(plan.check.missing, isEmpty);
     expect(plan.unconfirmed, [_moderator2]);
     await reporter.pinKeys(plan);
-    expect(await store.loadReportKeyPins(_origin), isEmpty,
-        reason: 'moderator keys are never pinned');
+    expect(
+      await store.loadReportKeyPins(_origin),
+      isEmpty,
+      reason: 'moderator keys are never pinned',
+    );
     await reporter.file(
-        conversationId: _conversation,
-        messageKey: '$_sender:$_action',
-        reason: ReportReason.spam);
-    expect(server.copies.map((c) => c.inboxId),
-        [communityModeratorInboxId(_community, _moderator)]);
+      conversationId: _conversation,
+      messageKey: '$_sender:$_action',
+      reason: ReportReason.spam,
+    );
+    expect(server.copies.map((c) => c.inboxId), [
+      communityModeratorInboxId(_community, _moderator),
+    ]);
 
     // The moderator opens it with its own seed.
     final inbox = moderatorInbox(_moderator);
@@ -733,103 +890,124 @@ void main() {
   }, skip: nativeSkip);
 
   test(
-      'a moderator the verified record removes gets no new reports, even '
-      'while its announcement is kept and the server still lists its key',
-      () async {
-    server.kind = 'community';
-    await announces(_moderator, await moderatorPublishes(_moderator));
-    await announces(_moderator2, await moderatorPublishes(_moderator2));
-    moderators = verified({_moderator, _moderator2});
-    final reporter = serviceFor(_reporterAccount);
-    keepReveal('second', 'msg_envelope_2');
-    keepReveal('third', 'msg_envelope_3');
-    final mod1 = communityModeratorInboxId(_community, _moderator);
-    final mod2 = communityModeratorInboxId(_community, _moderator2);
-    Set<String> inboxesOf(String reportId) => {
-          for (final c in server.copies)
-            if (c.reportId == reportId) c.inboxId
-        };
+    'a moderator the verified record removes gets no new reports, even '
+    'while its announcement is kept and the server still lists its key',
+    () async {
+      server.kind = 'community';
+      await announces(_moderator, await moderatorPublishes(_moderator));
+      await announces(_moderator2, await moderatorPublishes(_moderator2));
+      moderators = verified({_moderator, _moderator2});
+      final reporter = serviceFor(_reporterAccount);
+      keepReveal('second', 'msg_envelope_2');
+      keepReveal('third', 'msg_envelope_3');
+      final mod1 = communityModeratorInboxId(_community, _moderator);
+      final mod2 = communityModeratorInboxId(_community, _moderator2);
+      Set<String> inboxesOf(String reportId) => {
+            for (final c in server.copies)
+              if (c.reportId == reportId) c.inboxId,
+          };
 
-    await reporter.file(
+      await reporter.file(
         conversationId: _conversation,
         messageKey: '$_sender:$_action',
-        reason: ReportReason.spam);
-    final first = server.copies.first.reportId;
-    expect(inboxesOf(first), {mod1, mod2});
+        reason: ReportReason.spam,
+      );
+      final first = server.copies.first.reportId;
+      expect(inboxesOf(first), {mod1, mod2});
 
-    // The record demotes the second moderator. Its announcement is still
-    // stored and the server still lists its key, but the next report is
-    // sealed to the first moderator only. The copy it already received
-    // stays readable by it (accepted: it was a moderator when sealed).
-    moderators = verified({_moderator});
-    await reporter.file(
+      // The record demotes the second moderator. Its announcement is still
+      // stored and the server still lists its key, but the next report is
+      // sealed to the first moderator only. The copy it already received
+      // stays readable by it (accepted: it was a moderator when sealed).
+      moderators = verified({_moderator});
+      await reporter.file(
         conversationId: _conversation,
         messageKey: '$_sender:second',
-        reason: ReportReason.spam);
-    final second = server.copies.last.reportId;
-    expect(second, isNot(first));
-    expect(inboxesOf(second), {mod1});
-    final demoted = moderatorInbox(_moderator2);
-    expect((await demoted.list()).map((c) => c.reportId), [first]);
+        reason: ReportReason.spam,
+      );
+      final second = server.copies.last.reportId;
+      expect(second, isNot(first));
+      expect(inboxesOf(second), {mod1});
+      final demoted = moderatorInbox(_moderator2);
+      expect((await demoted.list()).map((c) => c.reportId), [first]);
 
-    // With no moderator left in the record, nothing is sealed at all.
-    moderators = verified(const <String>{});
-    await expectLater(
+      // With no moderator left in the record, nothing is sealed at all.
+      moderators = verified(const <String>{});
+      await expectLater(
         reporter.prepare(_conversation),
-        throwsA(isA<ReportFailureException>()
-            .having((e) => e.kind, 'kind', ReportFailure.noRecipients)));
+        throwsA(
+          isA<ReportFailureException>().having(
+            (e) => e.kind,
+            'kind',
+            ReportFailure.noRecipients,
+          ),
+        ),
+      );
 
-    // Promoted again, same key: copies resume without a tap.
-    moderators = verified({_moderator, _moderator2});
-    await reporter.file(
+      // Promoted again, same key: copies resume without a tap.
+      moderators = verified({_moderator, _moderator2});
+      await reporter.file(
         conversationId: _conversation,
         messageKey: '$_sender:third',
-        reason: ReportReason.spam);
-    expect(inboxesOf(server.copies.last.reportId), {mod1, mod2});
-  }, skip: nativeSkip);
+        reason: ReportReason.spam,
+      );
+      expect(inboxesOf(server.copies.last.reportId), {mod1, mod2});
+    },
+    skip: nativeSkip,
+  );
 
-  test('verification shows nothing about the sender unless it matches',
-      () async {
-    await ownerSetsUpKey();
-    await reporterTrustsAndFiles();
-    final owner = serviceFor(_ownerAccount);
-    final opened = await owner.open((await owner.list()).single);
-    ReportEnvelopeRecord record(
-            {String sender = 'acct_sender', List<int>? c}) =>
-        ReportEnvelopeRecord(
-          envelopeId: _envelope,
-          conversationId: _conversation,
-          senderAccountId: sender,
-          senderDeviceId: _sender,
-          frankCommit: c,
-          createdAt: DateTime.utc(2026, 11, 7),
-        );
-    // Unfranked: no sender shown.
-    server.record = record();
-    var result = await owner.verify(opened);
-    expect(result.verdict, ReportVerdict.unfranked);
-    expect(result.record, isNull);
-    // Wrong commitment: no sender shown.
-    server.record = record(c: List<int>.filled(32, 1));
-    result = await owner.verify(opened);
-    expect(result.verdict, ReportVerdict.mismatch);
-    expect(result.record, isNull);
-    // Reporter is the sender: never verified.
-    server.record = record(sender: _reporterAccount, c: commit);
-    expect((await owner.verify(opened)).verdict, ReportVerdict.mismatch);
-    server.record = record(c: commit);
-    result = await owner.verify(opened);
-    expect(result.verdict, ReportVerdict.verified);
-    expect(result.record?.senderAccountId, 'acct_sender');
-  }, skip: nativeSkip);
+  test(
+    'verification shows nothing about the sender unless it matches',
+    () async {
+      await ownerSetsUpKey();
+      await reporterTrustsAndFiles();
+      final owner = serviceFor(_ownerAccount);
+      final opened = await owner.open((await owner.list()).single);
+      ReportEnvelopeRecord record({
+        String sender = 'acct_sender',
+        List<int>? c,
+      }) =>
+          ReportEnvelopeRecord(
+            envelopeId: _envelope,
+            conversationId: _conversation,
+            senderAccountId: sender,
+            senderDeviceId: _sender,
+            frankCommit: c,
+            createdAt: DateTime.utc(2026, 11, 7),
+          );
+      // Unfranked: no sender shown.
+      server.record = record();
+      var result = await owner.verify(opened);
+      expect(result.verdict, ReportVerdict.unfranked);
+      expect(result.record, isNull);
+      // Wrong commitment: no sender shown.
+      server.record = record(c: List<int>.filled(32, 1));
+      result = await owner.verify(opened);
+      expect(result.verdict, ReportVerdict.mismatch);
+      expect(result.record, isNull);
+      // Reporter is the sender: never verified.
+      server.record = record(sender: _reporterAccount, c: commit);
+      expect((await owner.verify(opened)).verdict, ReportVerdict.mismatch);
+      server.record = record(c: commit);
+      result = await owner.verify(opened);
+      expect(result.verdict, ReportVerdict.verified);
+      expect(result.record?.senderAccountId, 'acct_sender');
+    },
+    skip: nativeSkip,
+  );
 
-  test('the preview is the proof that is sealed, not the edited message',
-      () async {
-    final reporter = serviceFor(_reporterAccount);
-    expect(
-        await reporter.previewText('$_sender:$_action'), 'the reported words');
-    expect(await reporter.previewText('dev:none'), isNull);
-  }, skip: nativeSkip);
+  test(
+    'the preview is the proof that is sealed, not the edited message',
+    () async {
+      final reporter = serviceFor(_reporterAccount);
+      expect(
+        await reporter.previewText('$_sender:$_action'),
+        'the reported words',
+      );
+      expect(await reporter.previewText('dev:none'), isNull);
+    },
+    skip: nativeSkip,
+  );
 
   test('a failed replace puts the old seed back', () async {
     final owner = serviceFor(_ownerAccount);

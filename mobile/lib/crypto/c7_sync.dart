@@ -161,7 +161,10 @@ List<C7OpenedSlot>? c7OpenSlots({
         key: slotKey,
         aad: aad,
         sealed: Uint8List.sublistView(
-            trailer, i * c7SlotBytes, (i + 1) * c7SlotBytes),
+          trailer,
+          i * c7SlotBytes,
+          (i + 1) * c7SlotBytes,
+        ),
       );
       if (plain == null || plain.length != c7SlotPlainBytes) return null;
       out.add(C7OpenedSlot(channel, key, Uint8List.fromList(plain)));
@@ -228,7 +231,10 @@ Uint8List? c7TryStoredSlot({
 /// Checks a record's signature against [publicKey] (a key in the current
 /// tree; decision 4 and owner decision B).
 bool c7VerifyRecord(
-    NativeCryptoBindings bindings, C7Record record, Uint8List publicKey) {
+  NativeCryptoBindings bindings,
+  C7Record record,
+  Uint8List publicKey,
+) {
   try {
     return bindings.c7Verify(
       domain: c7HistorySignatureDomain,

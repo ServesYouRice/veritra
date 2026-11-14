@@ -39,12 +39,15 @@ void main() {
         home: Scaffold(body: ConnectionBanner(state: state)),
       );
 
-  testWidgets('an expired cursor offers a relink and no backup restore',
-      (tester) async {
+  testWidgets('an expired cursor offers a relink and no backup restore', (
+    tester,
+  ) async {
     final state = stateWith(SyncFailureKind.cursorExpired);
     addTearDown(state.dispose);
-    expect(state.syncRecovery!.choices,
-        orderedEquals(<SyncRecoveryChoice>[SyncRecoveryChoice.relink]));
+    expect(
+      state.syncRecovery!.choices,
+      orderedEquals(<SyncRecoveryChoice>[SyncRecoveryChoice.relink]),
+    );
 
     await tester.pumpWidget(app(state));
     expect(find.text('Messages paused'), findsOneWidget);
@@ -64,8 +67,10 @@ void main() {
   testWidgets('a local storage failure offers only a retry', (tester) async {
     final state = stateWith(SyncFailureKind.localStorage);
     addTearDown(state.dispose);
-    expect(state.syncRecovery!.choices,
-        orderedEquals(<SyncRecoveryChoice>[SyncRecoveryChoice.retry]));
+    expect(
+      state.syncRecovery!.choices,
+      orderedEquals(<SyncRecoveryChoice>[SyncRecoveryChoice.retry]),
+    );
     await tester.pumpWidget(app(state));
     expect(find.text('Try again'), findsOneWidget);
     expect(find.text('Restore from backup'), findsNothing);

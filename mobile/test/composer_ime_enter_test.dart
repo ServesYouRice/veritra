@@ -31,12 +31,16 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: false);
 
   @override
@@ -50,7 +54,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {}
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {}
 }
 
 class _Sync implements SyncService {
@@ -65,8 +72,9 @@ class _Sync implements SyncService {
 }
 
 void main() {
-  testWidgets('Enter during IME composition confirms instead of sending',
-      (tester) async {
+  testWidgets('Enter during IME composition confirms instead of sending', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final api = _Api();
@@ -87,9 +95,11 @@ void main() {
       ..conversations = <Conversation>[
         Conversation(id: 'conv_1', kind: 'group'),
       ];
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(state: state, conversationId: 'conv_1'),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv_1'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     String composerText() =>
@@ -97,11 +107,13 @@ void main() {
 
     await tester.showKeyboard(find.byType(TextField));
     // An IME is composing "ni" (for example pinyin before choosing 你).
-    tester.testTextInput.updateEditingValue(const TextEditingValue(
-      text: 'ni',
-      selection: TextSelection.collapsed(offset: 2),
-      composing: TextRange(start: 0, end: 2),
-    ));
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ni',
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange(start: 0, end: 2),
+      ),
+    );
     await tester.pump();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -110,10 +122,12 @@ void main() {
     expect(api.sends, 0);
 
     // The candidate is committed: composing ends, and Enter sends again.
-    tester.testTextInput.updateEditingValue(const TextEditingValue(
-      text: '你',
-      selection: TextSelection.collapsed(offset: 1),
-    ));
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: '你',
+        selection: TextSelection.collapsed(offset: 1),
+      ),
+    );
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
