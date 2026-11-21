@@ -24,6 +24,7 @@ import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
 import 'native_test_env.dart';
+import 'private_channel_picks.dart';
 
 // C7 full mode through real OpenMLS devices and NativeCryptoService
 // (docs/designs/C7-channel-history.md, decisions 2 to 5 and Traces 1 to 4):
@@ -112,6 +113,10 @@ void main() {
     addTearDown(c.service.dispose);
     c.service.conversationAuthority = _Authority(admins ?? const {'acct_bob'});
     c.service.c7SealedBodies = true;
+    // C3: these tests are not about who picks a private channel's readers.
+    await pickForPrivateChannel(c.store, _conversation, [
+      for (final n in ['alice', 'bob', 'carol', 'dave', 'erin']) 'acct_$n',
+    ]);
     return c;
   }
 

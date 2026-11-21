@@ -67,6 +67,7 @@ import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
+import 'roles/private_channel_membership.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -127,6 +128,7 @@ part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
 part 'app_state_previews.dart';
+part 'app_state_private_channels.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -2716,6 +2718,9 @@ class AppState extends ChangeNotifier
       communities = list;
       channelsByCommunity = channels;
       _channelCreationAccess.addAll(creationAccess);
+      // C3: a private channel's group stays one here, whatever the server
+      // labels it later.
+      await _pinRoutedPrivateChannels();
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
     }
@@ -3182,6 +3187,10 @@ class AppState extends ChangeNotifier
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
+        // C3: its creator's devices only; picked members join by commit.
+        if (creation.channel.kind == 'private' && creation.channel.isRouted) {
+          await _pinPrivateChannelGroup(creation.conversation.id);
+        }
         await _setUpConversationGroup(
           creation.conversation.id,
           kind: creation.conversation.kind,
@@ -3257,12 +3266,23 @@ class AppState extends ChangeNotifier
       // a group device, and here there is none: the add would wait forever.
       final refusal = await _noPeerRefusal(conversationId);
       if (refusal != null) throw UserFacingException(refusal);
-      await client.addConversationMember(
-        current.token,
-        conversationId,
-        accountId,
-        role: role,
-      );
+      // C3: in a private channel, only an account this user picked joins
+      // by this device's commit (the server's list only proposes).
+      final picked = await _isPrivateChannelGroup(conversationId);
+      if (picked) await _pickPrivateChannelMember(conversationId, accountId);
+      try {
+        await client.addConversationMember(
+          current.token,
+          conversationId,
+          accountId,
+          role: role,
+        );
+      } catch (_) {
+        if (picked) {
+          await _unpickPrivateChannelMember(conversationId, accountId);
+        }
+        rethrow;
+      }
       added = true;
       // Their devices join the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
@@ -9057,6 +9077,8 @@ class AppState extends ChangeNotifier
         throw StateError('the server answered with a different move');
       }
       if (!conversation.isCommunityShared) {
+        // C3: going private, only the ticked readers join, by commit.
+        if (access == 'private') await _pinPrivateChannelGroup(conversation.id);
         await _setUpConversationGroup(conversation.id, kind: conversation.kind);
       }
       final layout = result.move['layout_generation'];
@@ -9095,6 +9117,8 @@ class AppState extends ChangeNotifier
         own: true,
       );
       for (final account in adds) {
+        // C3: the admin's pick, so this device commits the add.
+        await _pickPrivateChannelMember(conversation.id, account);
         try {
           await client.addConversationMember(
             current.token,
@@ -9102,11 +9126,13 @@ class AppState extends ChangeNotifier
             account,
           );
         } on ApiException catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           // A lost session is _run's to handle.
           if (err.statusCode == 401) rethrow;
           addFailure ??= err;
           notAdded.add(account);
         } catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           addFailure ??= err;
           notAdded.add(account);
         }
@@ -10823,11 +10849,14 @@ class AppState extends ChangeNotifier
     // call adds them), except one this change removes from the
     // conversation: a departing account never gains a device. A device
     // revoke keeps its account in the list, so its siblings still join.
-    final missing = await discovery.missingApprovedDevices(
+    final listed = await discovery.missingApprovedDevices(
       creating ? null : conversationId,
       memberIds,
       excluding: removing.difference(memberIds),
     );
+    // C3: in a private channel's group, a server-proposed account nobody
+    // here picked is left out before a key package is claimed for it.
+    final missing = await _privateChannelRefs(conversationId, listed);
     // The server and native commit format cap each bundle at 256 changes.
     return missing.take(256).toList();
   }

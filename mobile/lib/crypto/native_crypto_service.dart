@@ -14,6 +14,7 @@ import '../core/roles/governance_codec.dart'
     show decodeGovernance, encodeGovernance;
 import '../core/roles/governance_commands.dart';
 import '../core/roles/posting_verdict.dart';
+import '../core/roles/private_channel_membership.dart';
 import '../core/roles/timeout_verdict.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
@@ -76,6 +77,7 @@ class NativeCryptoService
         BackupOpenCryptoService,
         CommunityInfoCryptoService,
         MlsRosterSource,
+        PrivateChannelAddGate,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -557,6 +559,150 @@ class NativeCryptoService
     } catch (_) {
       return null;
     }
+  }
+
+  // C3 private channel membership (docs/crypto.md, "C3 private channel
+  // membership"). The rules are in core/roles/private_channel_membership.dart.
+
+  /// Whether [groupId] is a private channel's own group: the authority says
+  /// so now, or this device pinned it as one earlier (a later server label
+  /// cannot switch the rule off).
+  Future<bool> _isPrivateChannelGroup(String groupId) async =>
+      _c7PrivateChannel(groupId) != null ||
+      await localStore.loadSetting(privateChannelPinSetting(groupId)) == '1';
+
+  /// The community's verified role record for a private channel's group, as
+  /// the authority maps it (the shared group's), or null.
+  GovernanceState? _privateChannelRecord(String groupId) {
+    final authority = _authority;
+    if (authority is! VerifiedRoleSource) return null;
+    try {
+      return (authority as VerifiedRoleSource).governanceOf(groupId);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The accounts this device's user picked for [groupId] that have not
+  /// lapsed.
+  Future<Map<String, int>> _privateChannelPicks(String groupId) async =>
+      decodePrivateChannelPicks(
+        await localStore.loadSetting(privateChannelPicksSetting(groupId)),
+        _clock(),
+      );
+
+  @override
+  Future<Set<String>> privateChannelAddable(
+    String conversationId,
+    Set<String> accounts,
+  ) =>
+      _privateChannelAddable(conversationId, accounts);
+
+  Future<Set<String>> _privateChannelAddable(
+    String groupId,
+    Set<String> accounts,
+  ) async {
+    if (accounts.isEmpty) return accounts;
+    final pin = privateChannelPinSetting(groupId);
+    if (await localStore.loadSetting(pin) != '1') {
+      if (_c7PrivateChannel(groupId) == null) return accounts;
+      await localStore.saveSetting(pin, '1');
+    }
+    var inGroup = const <String>{};
+    if (await _hasGroup(groupId)) {
+      inGroup = _requiredDevice().groupRoleState(groupId).accounts ??
+          const <String>{};
+    }
+    return privateChannelAddableAccounts(
+      record: _privateChannelRecord(groupId),
+      self: _requiredAccount(),
+      inGroup: inGroup,
+      picked: (await _privateChannelPicks(groupId)).keys.toSet(),
+      candidates: accounts,
+    );
+  }
+
+  /// [adds] without the devices of accounts this device may not bring into
+  /// a private channel's group.
+  Future<List<({DeviceKeyPackage package, Uint8List signingKey})>>
+      _privateChannelAdds(
+    String groupId,
+    List<({DeviceKeyPackage package, Uint8List signingKey})> adds,
+  ) async {
+    if (adds.isEmpty) return adds;
+    final allowed = await _privateChannelAddable(groupId, {
+      for (final add in adds) add.package.accountId,
+    });
+    return [
+      for (final add in adds)
+        if (allowed.contains(add.package.accountId)) add,
+    ];
+  }
+
+  /// The pick settings an accepted commit adding [added] spends.
+  Future<Map<String, String?>> _privateChannelPicksSpent(
+    String groupId,
+    Iterable<String> added,
+  ) async {
+    final picks = await _privateChannelPicks(groupId);
+    final before = picks.length;
+    picks.removeWhere((account, _) => added.contains(account));
+    if (picks.length == before) return const <String, String?>{};
+    return <String, String?>{
+      privateChannelPicksSetting(groupId): encodePrivateChannelPicks(picks),
+    };
+  }
+
+  /// Phase one's verdict on a remote commit in a group without a record of
+  /// its own. Only a private channel's group is judged: a new account needs
+  /// a committer that is an owner or admin under the community's verified
+  /// record, on a leaf its account's list approves. Held, never refused:
+  /// the shared group's commit that made the committer an admin may not
+  /// have reached this device yet (the two groups have no common order),
+  /// and the list may still approve the leaf. Nothing merges meanwhile, so
+  /// this device never encrypts to the new account.
+  Future<
+      ({
+        GovernanceObservationChange? observation,
+        Map<String, String?> settings
+      })> _judgePrivateChannelCommit(
+    String groupId,
+    IncomingCommitReview review,
+  ) async {
+    if (!await _isPrivateChannelGroup(groupId)) {
+      return (observation: null, settings: const <String, String?>{});
+    }
+    final settings = <String, String?>{privateChannelPinSetting(groupId): '1'};
+    final before = review.accountsBefore;
+    final after = review.accountsAfter;
+    final committer = review.committerAccount;
+    if (before == null || after == null || committer == null) {
+      throw const GovernanceRefusedException('ids_not_text');
+    }
+    final newcomers = after.difference(before);
+    if (newcomers.isEmpty) return (observation: null, settings: settings);
+    if (!privateChannelAddAccepted(
+      record: _privateChannelRecord(groupId),
+      committer: committer,
+      before: before,
+      after: after,
+    )) {
+      throw const GovernanceHeldException('private_add_unauthorized');
+    }
+    final verdict = await _judgeLeaf(review.committer);
+    if (verdict == LeafVerdict.checking) {
+      throw TimeoutException('approved-device list unavailable');
+    }
+    if (verdict != LeafVerdict.approved) {
+      throw const GovernanceHeldException('committer_unapproved');
+    }
+    return (
+      observation: null,
+      settings: <String, String?>{
+        ...settings,
+        ...await _privateChannelPicksSpent(groupId, newcomers),
+      },
+    );
   }
 
   @override
@@ -1814,7 +1960,10 @@ class NativeCryptoService
     List<DeviceKeyPackage> claimedPackages,
   ) =>
       _gateAdds(claimedPackages).then(
-        (approved) => _serial(() async {
+        (gated) => _serial(() async {
+          // C3: a private channel's group starts with its creator's own
+          // devices; the members its admin picks join by later commits.
+          final approved = await _privateChannelAdds(conversationId, gated);
           final previous = await _requiredState();
           try {
             final device = _requiredDevice();
@@ -1881,10 +2030,16 @@ class NativeCryptoService
             ]);
           }
           await _requireNotPaused(conversationId);
+          // C3: in a private channel's group, a new account only by this
+          // owner's or admin's own pick; members' new devices always.
+          final allowed = await _privateChannelAdds(conversationId, approved);
+          if (allowed.isEmpty && removes.isEmpty) {
+            throw PrivateChannelAddRefusedException(conversationId);
+          }
           // C4: a removal that would prune a governing account and that
           // this device cannot prove stays pending for a device that can.
           final proven = await _provenRemoves(conversationId, removes);
-          if (approved.isEmpty && proven.isEmpty) {
+          if (allowed.isEmpty && proven.isEmpty) {
             throw GovernanceRemovalUnprovenException(conversationId);
           }
           final previous = await _requiredState();
@@ -1892,11 +2047,11 @@ class NativeCryptoService
             final bundle = _stage(
               _requiredDevice(),
               conversationId,
-              adds: approved,
+              adds: allowed,
               removes: proven,
               record: await _plannedRecord(
                 conversationId,
-                adds: approved,
+                adds: allowed,
                 removes: proven,
               ),
               leaveStatements:
@@ -2037,8 +2192,16 @@ class NativeCryptoService
               expectedCursor: await localStore.loadSyncCursor(),
               state: _sealNext(previous),
               resolvedMlsOutboxKey: item.idempotencyKey,
-              // C4 proofs share the C7 settings channel.
-              c7Settings: <String, String?>{...c7Settings, ...own.settings},
+              // C4 proofs share the C7 settings channel, as do the C3
+              // picks this add spends.
+              c7Settings: <String, String?>{
+                ...c7Settings,
+                ...own.settings,
+                if (bundle.hasCommit)
+                  ...await _privateChannelPicksSpent(item.conversationId, [
+                    for (final add in bundle.added) add.accountId,
+                  ]),
+              },
               infoRemoval: infoRemovalEpoch == null
                   ? null
                   : (
@@ -2564,7 +2727,8 @@ class NativeCryptoService
       if (afterBytes != null) {
         throw const GovernanceRefusedException('record_added');
       }
-      return (observation: null, settings: const <String, String?>{});
+      // C3: a private channel's group has no record of its own.
+      return _judgePrivateChannelCommit(groupId, review);
     }
     if (afterBytes == null) {
       throw const GovernanceRefusedException('record_dropped');
@@ -2912,9 +3076,11 @@ class NativeCryptoService
               if (after.pending || after.epoch != expected) {
                 throw StateError('own MLS commit does not match the group');
               }
-              final own = _ownCommitEffects(
+              final decoded = MlsCommitBundle.decode(bundle.payload);
+              final own = _ownCommitEffects(message.conversationId, decoded);
+              final spent = await _privateChannelPicksSpent(
                 message.conversationId,
-                MlsCommitBundle.decode(bundle.payload),
+                [for (final add in decoded.added) add.accountId],
               );
               await localStore.commitMlsTransition(
                 MlsStateTransition(
@@ -2928,7 +3094,11 @@ class NativeCryptoService
                   cursor: message.syncEventId,
                   resolvedMlsOutboxKey: bundle.idempotencyKey,
                   infoRemovalEpoch: infoRemovalEpoch,
-                  c7Settings: <String, String?>{...c7Settings, ...own.settings},
+                  c7Settings: <String, String?>{
+                    ...c7Settings,
+                    ...own.settings,
+                    ...spent,
+                  },
                 ),
               );
               await _rejudgeAfterOwnCommit(message.conversationId);
