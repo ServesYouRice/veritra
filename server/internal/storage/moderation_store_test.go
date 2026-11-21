@@ -531,6 +531,31 @@ func TestAdminLiftsDepartedMembersTimeout(t *testing.T) {
 	if err := f.post(t, ctx, alice, "after-lift"); err != nil {
 		t.Fatalf("post after rejoin: %v", err)
 	}
+	// An admin of another community neither sees nor lifts this one's
+	// remembered timeouts, even where it runs a community of its own.
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, time.Hour); err != nil {
+		t.Fatalf("time out again: %v", err)
+	}
+	if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, alice.Account.ID, alice.Account.ID); err != nil {
+		t.Fatalf("leave again: %v", err)
+	}
+	carol := f.people[2]
+	other, err := f.store.CreateCommunity(ctx, carol.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, carol.Account.ID); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("outside admin lists: %v", err)
+	}
+	if _, err := f.store.SetMemberTimeout(ctx, other.ID, carol.Account.ID, alice.Account.ID, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("lift through another community: %v", err)
+	}
+	if departed, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(departed) != 1 {
+		t.Fatalf("departed after outside attempts = %+v err=%v", departed, err)
+	}
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); err != nil {
+		t.Fatalf("lift: %v", err)
+	}
 	// An expired remembered timeout cannot be lifted (nothing to lift).
 	if _, err := f.store.db.ExecContext(ctx, `INSERT INTO member_timeouts(community_id, account_id, timeout_until) VALUES(?, ?, ?)`, f.comm.ID, f.people[2].Account.ID, formatTime(time.Now().UTC().Add(-time.Minute))); err != nil {
 		t.Fatal(err)

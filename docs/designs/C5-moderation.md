@@ -45,7 +45,30 @@ with a lift button;
 a banned account's devices cannot be claimed (a claim needs membership,
 which the ban removes; tested, no separate check). The C1 community remove
 route writes a `kick` audit row. Known gaps: the instance owner's
-escalation action kinds need a table rebuild when added; MLS commits of
+escalation action kinds need a table rebuild when added; a rejoin restores
+the server's timeout but not the record's (review 2026-11-21, open): a
+removal prunes the leaver's entry from the C4 record (`removeAccount`,
+`requiredRecord`; its comment still says leaving clears the server's too,
+which migration 0095 ended), and on rejoin the trigger copies
+`member_timeouts` back onto the new membership row, so the server refuses
+the member's posts (`timed_out`) while the record has no entry. On an
+honest server no post gets through, so apps showing them is only a hostile
+server's opening (as before C5 timeouts were in the record). The larger
+effect is that admins lose sight of it: the member screen reads timeouts
+only from the record (`_timedOutUntil`), so neither "Timed out until" nor
+"Lift timeout" shows, and `GET .../timeouts` leaves out current members, so
+no screen shows the running server timeout; it can only be cleared by
+setting a new timeout and lifting that. Proposed fix (not built: it spans
+the server, the app's record commits, the UI and strings): (1) `GET
+.../timeouts` lists every running timeout with a `member` flag, and "Timed
+out after leaving" filters on it; (2) the member screen shows a server
+timeout the record lacks, with Lift (server only, as now when the record
+has no entry) and "Apply to the record", an explicit action that runs the
+existing `setTimeout` role command with `fromMs` now and the server's
+`untilMs`, only when the rejoiner is in the shared group's MLS roster,
+`until` is more than a margin ahead, and the record lets this account act
+on them (`mayActOn`); no automatic commit, so admins' devices do not race;
+(3) tests that the flag, the screen and the command each hold; MLS commits of
 legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
 (shared group, `channel_id`), C1 (membership), C4 (the signed built-in
 role state, `docs/designs/C4-custom-roles.md`) and C6 (sealed reports, design on `agent/C6`). Needs Opus review

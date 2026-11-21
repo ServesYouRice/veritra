@@ -5191,7 +5191,11 @@ show (the clock tolerance); a receiving clock more than an hour slow can
 hide an honest post sent just after the end; a post sent at an older epoch
 by a sender that had not merged the timeout commit is judged by time only
 (bounded by OpenMLS's two past epochs); a private channel's posts are judged
-by time only (their group carries no record). Builds older than this refuse
+by time only (their group carries no record). A removal prunes the
+leaver's entry, but since migration 0095 the server keeps the timeout and
+restores it on rejoin, so a rejoined member is refused by the server with no
+record entry until an admin re-applies it (open; proposed fix in
+`docs/designs/C5-moderation.md`, Known gaps). Builds older than this refuse
 a record with timeouts (unknown flag bit) and their sync of that group
 stops until they update.
 

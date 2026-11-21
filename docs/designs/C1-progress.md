@@ -179,7 +179,8 @@ design.
    does. This changes what an invitation signs (second-opinion area).
 2. Join-request notification: built 2026-11-21 (owner decision: it says
    only "New join request"): a content-free `account.join_request` event per
-   owner and admin and the generic push wake. Not built: a visible phone
+   owner and admin and the generic push wake, at most one per admin per
+   10 minutes (review 2026-11-21: refiling must not push at will). Not built: a visible phone
    notification while the app is closed (native notice text, Kotlin/Swift).
 3. Independent security review of invite v2 (the 2026-11-09 port was done
    solo at the owner's request), and native end-to-end evidence for a

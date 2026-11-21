@@ -262,7 +262,13 @@ strictly higher rank. Groups keep their existing routes.
   admin of the target (payload `{}`: no requester, username, target or name),
   published to their connected devices, plus the provider's fixed generic
   push wake (legacy-mode APNs skipped, as for recovery wakes). The app shows
-  "New join request" in the notice stack. A repeated ask tells no one. The
+  "New join request" in the notice stack. A repeated ask tells no one, and
+  an owner or admin told within the last 10 minutes is not told again by
+  any request (`joinRequestNoticeQuiet`, per account across targets and
+  requesters; review 2026-11-21: without it, cancel-and-refile or
+  decline-and-refile with one link pushed every admin on each round, up to
+  the requester's write budget). Cost: an admin who dismissed the notice
+  inside the window is not pushed for a later request; the list shows it. The
   phone's own notification while the app is closed is not built: the native
   notice is the fixed "New encrypted message" text fed by the message
   outbox, so a background admin's device syncs silently and shows the notice

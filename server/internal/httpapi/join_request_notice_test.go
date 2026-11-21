@@ -109,6 +109,30 @@ func TestJoinRequestNoticesAdminsWithAContentFreeWake(t *testing.T) {
 	if status == http.StatusOK {
 		t.Fatalf("member lists requests: %s", body)
 	}
+
+	// Declined, or cancelling, and filing again is a new request each time,
+	// but no admin is woken again inside the quiet window: an invitation
+	// link must not become a way to push the admins at will.
+	if status, body := f.do(http.MethodPut, base+"/invites-pause", adminToken, map[string]int{"seconds": 0}, nil); status != http.StatusOK {
+		t.Fatalf("resume: %d %s", status, body)
+	}
+	for i := 0; i < 4; i++ {
+		status, body := f.do(http.MethodPost, "/api/v1/membership-invites/requests", requesterToken, map[string]string{"locator": testInviteLocator}, nil)
+		if status != http.StatusCreated {
+			t.Fatalf("refile %d: %d %s", i, status, body)
+		}
+		var refiled struct {
+			ID string `json:"id"`
+		}
+		decodeBody(t, body, &refiled)
+		if status, body := f.do(http.MethodDelete, "/api/v1/join-requests/"+refiled.ID, requesterToken, nil, nil); status != http.StatusOK {
+			t.Fatalf("cancel %d: %d %s", i, status, body)
+		}
+	}
+	rec.waitFor(t, 2)
+	if got := f.count(`SELECT COUNT(*) FROM sync_events WHERE event_type = 'account.join_request'`); got != 2 {
+		t.Fatalf("notice events after refiling = %d", got)
+	}
 }
 
 // Owner decision 2026-11-21: an admin sees and lifts the timeout of someone

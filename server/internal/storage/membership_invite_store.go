@@ -560,8 +560,20 @@ func (s *Store) requestToJoin(ctx context.Context, accountID, locator string) (r
 // more owners and admins tells the earliest ones.
 const maxJoinRequestNotices = 50
 
+// joinRequestNoticeQuiet is how long an owner or admin who was just told of a
+// join request is not told again. The notice names nothing, so a second one
+// inside the window adds nothing the first did not say, and without it anyone
+// holding an invitation link could push every admin of the target on each
+// cancel-and-refile (or decline-and-refile) round, as often as the write
+// budget allows. It is per account, across targets and requesters, so more
+// requesters cannot raise it either. The cost: an admin who dismissed the
+// notice inside the window is not pushed again for a later request; the list
+// still shows it.
+const joinRequestNoticeQuiet = 10 * time.Minute
+
 // joinRequestNoticesTx records the content-free notice event for every active
-// owner and admin of target except the requester.
+// owner and admin of target except the requester, leaving out anyone already
+// told within joinRequestNoticeQuiet of now.
 func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarget, requester, now string) ([]JoinRequestNotice, error) {
 	community, conversation := target.columns()
 	rows, err := tx.QueryContext(ctx, `
@@ -590,9 +602,17 @@ func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarg
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	quietSince := formatTime(parseTime(now).Add(-joinRequestNoticeQuiet))
 	notices := make([]JoinRequestNotice, 0, len(admins))
 	for _, admin := range admins {
 		admin := admin
+		var recent int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sync_events WHERE account_id = ? AND event_type = ? AND created_at > ?)`, admin, JoinRequestNoticeEventType, quietSince).Scan(&recent); err != nil {
+			return nil, err
+		}
+		if recent != 0 {
+			continue
+		}
 		eventID, err := insertSyncEvent(ctx, tx, JoinRequestNoticeEventType, &admin, "", struct{}{}, now)
 		if err != nil {
 			return nil, err
