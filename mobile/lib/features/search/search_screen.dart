@@ -28,9 +28,10 @@ import '../../l10n/l10n.dart';
 /// username or account ID only so the user directory cannot be enumerated.
 /// Only this mode sends the query, only when the user submits it (Enter or
 /// the search button, never while typing, so prefixes of what is typed never
-/// reach the server), and only when it could be a username or an account ID
-/// ([accountLookupQuery]): a multi-word name stays on the device. Local
-/// community and channel hits update as the user types.
+/// reach the server), and only when it clearly names a person: `@` and a
+/// username, or an account ID ([accountLookupQuery]). A bare word may be a
+/// community's name, so it stays on the device. Local community and channel
+/// hits update as the user types.
 /// Message contents are ciphertext on the server and cannot be searched
 /// there by design.
 class SearchScreen extends StatefulWidget {
@@ -170,7 +171,8 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   /// A submitted query: the local hits, then accounts from the server, only
-  /// for a query that could be one.
+  /// for a query that clearly names a person ([accountLookupQuery]); any
+  /// other query, a one-word community name included, is never sent.
   Future<void> _lookUp(String value) async {
     final local = _searchLocally(value);
     if (local == null) return;

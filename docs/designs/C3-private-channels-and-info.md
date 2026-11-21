@@ -522,7 +522,12 @@ community has no shared group, so no info key home and only placeholders.
 The owner turned the layout on by default (2026-11-11), demos included;
 `PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0` turns it off (operations.md). The app
 searches community and channel names in its own decrypted records; the
-server's metadata search finds accounts only. A "Categories and icon"
+server's metadata search finds accounts only. Since 2026-11-21 (owner) the
+search box sends an account lookup only for a query that clearly names a
+person, `@` and a username or an account ID: a bare word may be a one-word
+community name, so it is searched on the device only and never sent
+(`accountLookupQuery`; `mobile/test/search_community_name_network_test.dart`
+records every request the app opens). A "Categories and icon"
 screen sets the community icon, creates and renames categories, and places
 channels (open: community record; private: the channel's own record); the
 community card groups channels by category. Key freshness: see docs/crypto.md

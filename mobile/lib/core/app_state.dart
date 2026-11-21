@@ -4233,7 +4233,8 @@ class AppState extends ChangeNotifier
   /// The server's metadata search: accounts by exact username or ID only
   /// (communities and channels are searched on the device,
   /// [searchCommunityNamesLocally]). The search screen sends only a query
-  /// that could be an account ([mayMatchAccount]).
+  /// that clearly names a person ([accountLookupQuery]), never a bare word
+  /// that could be a community's name.
   Future<List<MetadataSearchResult>> searchMetadata(String query) async {
     final current = session;
     final client = api;

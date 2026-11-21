@@ -14,13 +14,21 @@ bool mayMatchAccount(String query) {
   return _username.hasMatch(trimmed) || _accountId.hasMatch(trimmed);
 }
 
-/// What a submitted search sends for an account lookup: the trimmed query
-/// with one leading `@` dropped (people write `@alice`), or null when that
-/// could be neither a username nor an account ID, so nothing is sent.
+/// What a submitted people-and-communities search sends for an account
+/// lookup, or null when nothing may be sent.
+///
+/// The search box finds communities and channels too, and a one-word
+/// community name looks just like a username, so a bare word is ambiguous
+/// and stays on the device (owner, 2026-11-21). Only a query that clearly
+/// names a person is sent: `@` and a username (the mention convention; the
+/// `@` is dropped), or an account ID (`acct_` and 32 hex digits), with or
+/// without the `@`.
 String? accountLookupQuery(String query) {
-  var trimmed = query.trim();
-  if (trimmed.startsWith('@')) trimmed = trimmed.substring(1);
-  return mayMatchAccount(trimmed) ? trimmed : null;
+  final trimmed = query.trim();
+  if (_accountId.hasMatch(trimmed)) return trimmed;
+  if (!trimmed.startsWith('@')) return null;
+  final name = trimmed.substring(1);
+  return mayMatchAccount(name) ? name : null;
 }
 
 final RegExp _username = RegExp(r'^[A-Za-z0-9_-]{3,32}$');
