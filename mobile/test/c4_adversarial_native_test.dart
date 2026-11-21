@@ -603,6 +603,39 @@ void main() {
           GovernanceReject.election,
         );
 
+        // The owner's explicit cancel (the roles screen, and the automatic
+        // cancel's timer: closeOwnerElection) goes through stageRoleChange
+        // and its producer check, and every receiver merges it.
+        await w.alice.service.stageRoleChange(
+          group,
+          (c, _, __) => c.closeElection(),
+        );
+        await w.deliverHonest(w.alice, await _complete(w.alice));
+        final closed = await w.record(w.carol);
+        expect(closed.election, isNull);
+        expect(closed.owner, w.alice.account);
+        expect(closed.ownerRev, open.ownerRev);
+        expect(await w.record(w.bob), closed);
+
+        // The cancel was owner activity: Bob's app waits another 30 days.
+        await expectLater(
+          w.bob.service.stageRoleChange(
+            group,
+            (c, observed, now) => c.openElection(observed!, now),
+          ),
+          throwsA(
+            isA<GovernanceCommandException>()
+                .having((e) => e.reason, 'reason', 'owner_active'),
+          ),
+        );
+        _now = _now.add(const Duration(days: 31));
+        await w.bob.service.stageRoleChange(
+          group,
+          (c, observed, now) => c.openElection(observed!, now),
+        );
+        await w.deliverHonest(w.bob, await _complete(w.bob));
+        expect((await w.record(w.carol)).election, isNotNull);
+
         // Alice's honest app: her periodic self-update is the cancel.
         await w.alice.service.stageSelfUpdate(group);
         await w.deliverHonest(w.alice, await _complete(w.alice));

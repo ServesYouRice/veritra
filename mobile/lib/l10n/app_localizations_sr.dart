@@ -5181,7 +5181,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesEarlyWin =>
-      'Овај уређај је пре ове предаје видео власника пре мање од 30 дана или избор отворен краће од 7 дана. Питајте остале чланове да ли је то било очекивано.';
+      'Ова предаја је дошла раније него што овај уређај дозвољава: 30 дана без власника и 7 дана отвореног избора, оба по његовом сату. Питајте остале чланове да ли је то било очекивано.';
 
   @override
   String get rolesElectorHint =>
@@ -10643,7 +10643,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesEarlyWin =>
-      'Ovaj uređaj je pre ove predaje video vlasnika pre manje od 30 dana ili izbor otvoren kraće od 7 dana. Pitajte ostale članove da li je to bilo očekivano.';
+      'Ova predaja je došla ranije nego što ovaj uređaj dozvoljava: 30 dana bez vlasnika i 7 dana otvorenog izbora, oba po njegovom satu. Pitajte ostale članove da li je to bilo očekivano.';
 
   @override
   String get rolesElectorHint =>

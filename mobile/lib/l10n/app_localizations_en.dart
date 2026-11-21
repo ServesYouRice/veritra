@@ -5160,7 +5160,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesEarlyWin =>
-      'This device saw the owner here less than 30 days ago, or the election open for less than 7 days, before this handover. Ask the other members if it was expected.';
+      'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.';
 
   @override
   String get rolesElectorHint =>
