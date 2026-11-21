@@ -253,7 +253,7 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		}
 		now := time.Now().UTC()
 		if principal.DeviceID != "" && activity.DeviceSeenDue(now) {
-			if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil {
+			if err := a.Store.MarkDeviceSeen(r.Context(), principal.DeviceID); err != nil && !requestCancelled(r) {
 				a.warn("device_last_seen_update_failed", "err", err)
 			}
 		}
@@ -267,7 +267,9 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 					refuseUnauthenticated(w, r)
 					return
 				}
-				a.warn("session_touch_failed", "err", err)
+				if !requestCancelled(r) {
+					a.warn("session_touch_failed", "err", err)
+				}
 			}
 		}
 		next(w, r, principal)
@@ -301,11 +303,18 @@ func (a *API) refuseSessionLookup(w http.ResponseWriter, r *http.Request, err er
 		refuseUnauthenticated(w, r)
 		return
 	}
-	if !errors.Is(r.Context().Err(), context.Canceled) {
+	if !requestCancelled(r) {
 		a.warn("session_lookup_failed", "err", err)
 	}
 	w.Header().Set("Retry-After", "1")
 	writeError(w, http.StatusServiceUnavailable, "session_check_unavailable")
+}
+
+// requestCancelled reports whether the request's own context was cancelled
+// (the client went away). A failure caused by that is not worth a warning;
+// a deadline that ran out still is.
+func requestCancelled(r *http.Request) bool {
+	return errors.Is(r.Context().Err(), context.Canceled)
 }
 
 // authenticate resolves the request's session for handlers outside withAuth
