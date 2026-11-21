@@ -201,3 +201,22 @@ tests:
             exp_annotations:
               summary: The Veritra blobs file system fills within 3 days at the current rate.
               runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # Self-host limit 1 GiB: 800 MiB stays below 80%, 830 MiB is above it.
+      - series: 'veritra_go_memory_bytes{job="veritra-metrics", instance="a"}'
+        values: '838860800x30'
+      - series: 'veritra_go_memory_bytes{job="veritra-metrics", instance="b"}'
+        values: '870318080x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: VeritraMemoryHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: VeritraMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: veritra-metrics, instance: b}
+            exp_annotations:
+              summary: The Veritra server holds more than 80% of its memory limit.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks

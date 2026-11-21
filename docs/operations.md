@@ -441,6 +441,20 @@ every category row once. The mobile client writes the bounded pages to a local
 5. If rollback crosses an incompatible migration, stop the server, restore the
    matching pre-upgrade backup, and reinstall its matching binary.
 
+**The rollback rule.** Never roll back by putting the older binary back
+alone (in the owner's cluster: reverting the release commit in infra) unless
+every migration between the two releases only added tables, columns or
+indexes. Across a non-additive migration there are two ways back, and only
+two: roll forward with a fixed release, or stop the server, restore the
+backup taken before the upgrade, and start the binary that wrote it, together.
+Migrations 0092 (device list table rebuilt) and 0094 (invite codes hashed,
+column renamed) are such contract steps: going back from a release that
+has either of them to one that does not is roll forward or restore, never a
+revert. The `database_schema_newer_than_binary` warning names what the older
+binary does not know; its `/readyz` passes regardless, so health checks do
+not show a bad rollback. Data written after the upgrade is lost with the
+restore, which is why rolling forward comes first.
+
 An older binary on a newer database starts: it applies nothing, leaves the
 newer migrations alone, and (from the release that carries the warning) logs
 `database_schema_newer_than_binary` with the number and names of the
@@ -636,10 +650,15 @@ needs, whatever its files look like:
   backup and drill pods; only the metrics collector reaches port 9090.
 - **Ingress.** The hostname is DNS-only (uploads exceed Cloudflare's proxy
   limit, and TLS should end on the server). Traefik's websecure
-  `readTimeout` must be longer than the server's 15-minute transfer
-  deadline (for example 20 minutes): Traefik v3 defaults to 60 s,
-  and in the 2026-10-23 and 2026-11-12 rehearsals every upload was cut at
-  60 s (in the 2026-10-23 one, a 90-second upload ended with HTTP 502). Redirect
+  `readTimeout` and `writeTimeout` (`respondingTimeouts`) must both be
+  longer than the server's 15-minute transfer deadline (for example 20
+  minutes, as the owner's cluster sets for the whole entrypoint): the read
+  side bounds uploads, the write side attachment and backup downloads.
+  Traefik v3's read timeout defaults to 60 s (its write timeout has no
+  default limit, but one set explicitly, as infra first had at 60 s, cuts
+  downloads the same way); in the 2026-10-23 and 2026-11-12 rehearsals every
+  upload was cut at 60 s (in the 2026-10-23 one, a 90-second upload ended
+  with HTTP 502). Redirect
   HTTP to HTTPS in Traefik; with the Traefik chart k3s bundles, the redirect
   must sit under `ports.web.http`, and a top-level `ports.web.redirections`
   is silently ignored. No Buffering middleware (Traefik streams bodies
@@ -1041,8 +1060,9 @@ accounts or decisions only the owner has.
   WireGuard; k3s started with `--secrets-encryption`.
 - [ ] `scripts/smoke-deploy.sh` passed on the release commit, and the digest
   `scripts/release-image.sh` printed is committed in infra.
-- [ ] Traefik's websecure `readTimeout` is above 15 minutes (the Traefik
-  pod's arguments show it), and HTTP redirects to HTTPS.
+- [ ] Traefik's websecure `readTimeout` and `writeTimeout` are both above
+  15 minutes (the Traefik pod's arguments show them), and HTTP redirects to
+  HTTPS.
 - [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768
   succeeds (see Post-quantum TLS).
 - [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
@@ -1066,7 +1086,13 @@ endpoints.
 
 **Alert rules.** `deploy/monitoring/veritra-alerts.rules.yml` holds the
 alerts as a plain Prometheus rule file (for Grafana Cloud or Mimir:
-`mimirtool rules load veritra-alerts.rules.yml`). They read only the
+`mimirtool rules load veritra-alerts.rules.yml`), sized for the 1 GiB limit
+of the shipped Compose and systemd files. The owner's cluster loads
+`deploy/monitoring/veritra-alerts.cluster.rules.yml` as it is: the same
+rules with the memory alert at 80% of its 512 MiB limit and without
+`VeritraLatencyHigh`, whose series its collector does not forward (see
+Hosted metrics). `server/internal/app/alert_rules_test.go` fails if the two
+files differ in anything else. They read only the
 server's own series and `up`, so they fire wherever `/metrics` is scraped
 with `job="veritra-metrics"`; they need no kube-state-metrics,
 node-exporter or kubelet volume stats. What only the platform can see (a
@@ -1384,7 +1410,7 @@ Where Docker cannot run, `VERITRA_CAPACITY_HOST=1` runs the server as a host
 process (load scenario only, no CPU or memory limit; label those numbers as
 host-process numbers). `go test -run Scenario ./internal/app` replays a provider stall and a
 restart with wake work in flight. Run `promtool test rules
-veritra-alerts.test.yml` in `deploy/monitoring` after changing a rule.
+veritra-alerts.test.yml veritra-alerts.cluster.test.yml` in `deploy/monitoring` after changing a rule.
 
 **Metrics added for this contract.** SQLite pool waits and writer wait
 (`veritra_sqlite_pool_*`, `veritra_sqlite_writer_acquire_duration_seconds`),
@@ -1401,9 +1427,12 @@ and goroutines read as an activity timeline of those people. When metrics
 leave the host (Grafana Cloud), send only the series the alerts need. With
 Prometheus `remote_write`, keep them with a `write_relabel_configs` entry on
 `__name__`; the owner's cluster does the same in its collector's scrape job.
-This regex covers every rule in `deploy/monitoring` (`VeritraLatencyHigh`
-then needs a local Prometheus, because the per-route latency histogram
-stays on the host):
+This regex covers every rule in `veritra-alerts.cluster.rules.yml`, the
+profile to load where metrics leave the host; `VeritraLatencyHigh` needs a
+local Prometheus, because the per-route latency histogram stays on the host.
+The cluster's collector keeps the same series (its scrape job adds `up`
+itself), and the test above checks both against what the cluster profile
+reads:
 
 ```
 up|veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
@@ -1413,7 +1442,7 @@ up|veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|st
 |---|---|---|
 | `VeritraLocalRestoreDrillFailed` (critical) | The last backup's restore drill failed | Read the `scheduled-backup` log; run `messenger-server verify-backup` on the newest backup; treat it as unusable |
 | `VeritraServerRestarting` (warning) | More than 3 starts in an hour | Look for OOM kills (the container hit its memory limit), probe failures, a crash at startup. For OOM kills raise the memory limit or set `GOMEMLIMIT` to about 70% of it; check `veritra_realtime_connections` and large downloads |
-| `VeritraMemoryHigh` (warning) | Go holds over 80% of 1 GiB | As above; the rule's threshold must follow the limit |
+| `VeritraMemoryHigh` (warning) | Go holds over 80% of its memory limit (1 GiB; 512 MiB in the cluster profile) | As above; the rule's threshold must follow the limit |
 | `VeritraHTTPErrorsHigh` (warning) | Over 2% of requests return 5xx | Server log `level=ERROR`/`WARN`; `/readyz`; disk free; then `VeritraWriterSaturated` |
 | `VeritraLatencyHigh` (warning) | Interactive p99 over 500 ms | Check CPU throttling and writer wait; compare with the tier rating; a long backup run overlapping the busy hour shows here |
 | `VeritraWriterSaturated` (warning) | Requests queue for the single SQLite writer | Look for a long transaction (retention sweep, account export, restore); move the backup schedule off the busy hour; then a bigger tier |

@@ -1,0 +1,67 @@
+# promtool unit tests for veritra-alerts.cluster.rules.yml, the owner's
+# cluster profile. The rules it shares with veritra-alerts.rules.yml are
+# tested in veritra-alerts.test.yml (alert_rules_test.go keeps them
+# identical); these cover what differs and that the file loads. Run locally:
+#   docker run --rm -v "$PWD:/rules:ro" -w /rules --entrypoint promtool \
+#     prom/prometheus:v3.5.0 test rules veritra-alerts.cluster.test.yml
+rule_files:
+  - veritra-alerts.cluster.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      # The server container's limit is 512 MiB and GOMEMLIMIT 384 MiB:
+      # 400 MiB stays below 80%, 420 MiB is above it (the 1 GiB self-host
+      # threshold would never fire before the kernel kills the pod).
+      - series: 'veritra_go_memory_bytes{job="veritra-metrics", namespace="veritra-production", pod="a"}'
+        values: '419430400x30'
+      - series: 'veritra_go_memory_bytes{job="veritra-metrics", namespace="veritra-production", pod="b"}'
+        values: '440401920x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: VeritraMemoryHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: VeritraMemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: veritra-metrics, namespace: veritra-production, pod: b}
+            exp_annotations:
+              summary: The Veritra server holds more than 80% of its memory limit.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+
+  - interval: 1m
+    input_series:
+      # Only the instance-wide counters the collector forwards: ten requests
+      # a second, 5% of them 5xx.
+      - series: 'veritra_http_requests_total{job="veritra-metrics", namespace="veritra-production"}'
+        values: '0+600x60'
+      - series: 'veritra_http_responses_total{job="veritra-metrics", namespace="veritra-production", status_class="5xx"}'
+        values: '0+30x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: VeritraHTTPErrorsHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: More than 2% of Veritra requests fail with a server error.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      # Not in this profile: no alert, whatever the series.
+      - eval_time: 30m
+        alertname: VeritraLatencyHigh
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="veritra-metrics", namespace="veritra-production", instance="10.42.0.7:9090"}'
+        values: '1 1 0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: VeritraServerDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: VeritraServerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: veritra-metrics, namespace: veritra-production, instance: "10.42.0.7:9090"}
+            exp_annotations:
+              summary: The Veritra metrics target is down or missing.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts

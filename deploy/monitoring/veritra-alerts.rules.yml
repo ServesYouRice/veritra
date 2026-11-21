@@ -7,12 +7,18 @@
 # whoever runs the platform; the owner's cluster defines them in its infra
 # repository (docs/operations.md, "Kubernetes (k3s)").
 #
+# This is the self-host profile: the 1 GiB memory limit of the shipped
+# Compose and systemd files, and every series kept on the host. The owner's
+# cluster loads veritra-alerts.cluster.rules.yml instead (512 MiB limit, only
+# the series its collector forwards; docs/operations.md, "Hosted metrics").
+#
 # Every series is per instance; none carries a user, account, conversation,
 # device, token or endpoint label. Thresholds follow the capacity contract in
 # docs/operations.md; ratio alerts need a minimum request rate so a quiet
 # instance does not page on one error. server/internal/app/alert_rules_test.go
-# checks that every veritra_* series here is exported and every alert has a
-# runbook; `promtool test rules veritra-alerts.test.yml` tests the rules.
+# checks that every veritra_* series here is exported, every alert has a
+# runbook, and the cluster profile differs from this file only where it
+# must; `promtool test rules veritra-alerts.test.yml` tests the rules.
 groups:
   - name: veritra-backup
     rules:
@@ -69,7 +75,7 @@ groups:
           runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
       - alert: VeritraMemoryHigh
         # 80% of the 1 GiB limit the shipped Compose and systemd profiles set;
-        # change it with the limit (the owner's cluster sets 512 MiB).
+        # change it with the limit (the cluster profile uses 512 MiB).
         expr: veritra_go_memory_bytes > 0.8 * 1024 * 1024 * 1024
         for: 15m
         labels:
@@ -89,6 +95,8 @@ groups:
           runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
       - alert: VeritraLatencyHigh
         # Interactive routes only: send, sync, conversation list and history.
+        # Reads the per-route latency histogram, which stays on the host when
+        # metrics leave it, so the cluster profile has no such rule.
         expr: |
           histogram_quantile(0.99, sum by (le) (rate(veritra_http_request_duration_seconds_bucket{route=~"POST /api/v1/messages/envelopes|GET /api/v1/sync/events|GET /api/v1/conversations|/api/v1/conversations/"}[15m]))) > 0.5
             and sum(rate(veritra_http_request_duration_seconds_count{route=~"POST /api/v1/messages/envelopes|GET /api/v1/sync/events|GET /api/v1/conversations|/api/v1/conversations/"}[15m])) > 0.05
