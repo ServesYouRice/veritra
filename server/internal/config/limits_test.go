@@ -73,6 +73,24 @@ func TestLimitsRelations(t *testing.T) {
 	}
 }
 
+// The 2026-11-12 rehearsal: a 2 GiB volume needs an instance limit below the
+// 512 MiB account default. Setting only the instance limit must start; the
+// store then caps each account at the instance limit.
+func TestLimitsUnsetAccountFollowsSmallerInstance(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB", "184")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("instance limit below the account default refused: %v", err)
+	}
+	if cfg.Limits.AccountStorageBytes != 0 || cfg.Limits.InstanceStorageBytes != 184<<20 {
+		t.Fatalf("limits = %+v, want the account limit left unset", cfg.Limits)
+	}
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB", "512")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
+		t.Fatalf("explicit account limit above instance accepted: %v", err)
+	}
+}
+
 func TestDeriveInstanceStorage(t *testing.T) {
 	for _, tc := range []struct {
 		volume int64

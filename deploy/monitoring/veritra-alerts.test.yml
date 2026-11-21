@@ -125,20 +125,40 @@ tests:
 
   - interval: 1m
     input_series:
-      - series: 'up{job="veritra-metrics"}'
-        values: '1x120'
+      # The target answers for two minutes, then stops.
+      - series: 'up{job="veritra-metrics", instance="10.42.0.7:9090"}'
+        values: '1 1 0x20'
     alert_rule_test:
-      # kube-state-metrics has never seen a successful drill.
-      - eval_time: 30m
-        alertname: VeritraRestoreDrillOverdue
+      - eval_time: 4m
+        alertname: VeritraServerDown
         exp_alerts: []
-      - eval_time: 90m
-        alertname: VeritraRestoreDrillOverdue
+      - eval_time: 10m
+        alertname: VeritraServerDown
         exp_alerts:
-          - exp_labels: {severity: warning, namespace: veritra, cronjob: veritra-restore-drill}
+          - exp_labels: {severity: critical, job: veritra-metrics, instance: "10.42.0.7:9090"}
             exp_annotations:
-              summary: No successful off-host restore drill in the last 35 days.
-              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+              summary: The Veritra metrics target is down or missing.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+
+  - interval: 1m
+    input_series:
+      # 3 GiB free for the database, 5 GiB for the blobs: only the database
+      # is within twice the 2 GiB write guard.
+      - series: 'veritra_storage_filesystem_avail_bytes{job="veritra-metrics", volume="database"}'
+        values: '3221225472x30'
+      - series: 'veritra_storage_filesystem_avail_bytes{job="veritra-metrics", volume="blobs"}'
+        values: '5368709120x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: VeritraDataDiskNearWriteGuard
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: VeritraDataDiskNearWriteGuard
+        exp_alerts:
+          - exp_labels: {severity: warning, job: veritra-metrics, volume: database}
+            exp_annotations:
+              summary: Less than 4 GiB free on the Veritra database file system; writes stop below 2 GiB.
+              runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
 
   - interval: 1m
     input_series:

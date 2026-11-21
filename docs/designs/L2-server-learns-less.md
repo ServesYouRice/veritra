@@ -44,7 +44,7 @@ one. Other packages (L1, C7, #138) are claiming numbers in parallel.
 - **The proxy does log addresses.** The shipped Caddy profile
   (`deploy/caddy/Caddyfile`) deletes the URI and credential headers from its
   access and error logs but keeps `remote_ip`, timestamps, user agent and
-  sizes. Nothing in `deploy/kubernetes` turns on a Traefik access log; the
+  sizes. Nothing in `deploy/kubernetes` (since moved to infra) turns on a Traefik access log; the
   private `infra` repo decides that, so L2-2 documents keeping it off.
 - **Times are stored exactly:** `devices.last_seen_at`
   (`identity_store.go:370`), every `created_at`, and W5's delivery and read

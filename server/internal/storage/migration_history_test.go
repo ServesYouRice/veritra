@@ -247,3 +247,66 @@ func TestMigrationNumbersAreUnique(t *testing.T) {
 		seen[name[:4]] = name
 	}
 }
+
+// Rollback (handbook deploy path; operations.md "Kubernetes (k3s)"): the
+// previous image starts on a database the newer image already migrated. Its
+// migrate step must succeed without touching the newer migrations' records,
+// so reverting the release commit in infra brings the old server back. This
+// covers only the migrate step: whether the old code works on the newer
+// columns is each migration's own compatibility (VE-05).
+func TestOlderBinaryMigrateIsANoOpOnANewerSchema(t *testing.T) {
+	ctx := context.Background()
+	store := openBareStore(t)
+	if err := store.Migrate(ctx, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	_, names := migrationsUpTo(t, "0000")
+	if len(names) < 2 {
+		t.Fatalf("need at least two migrations, have %v", names)
+	}
+	newest := names[len(names)-1]
+	older, _ := migrationsUpTo(t, fmt.Sprintf("%04d", mustAtoi(t, newest[:4])-1))
+	if _, err := fs.Stat(older, newest); err == nil {
+		t.Fatalf("the older migration set still holds %s", newest)
+	}
+	before := appliedMigrationRows(t, ctx, store)
+	if err := store.Migrate(ctx, older); err != nil {
+		t.Fatalf("older binary refused the newer schema: %v", err)
+	}
+	if after := appliedMigrationRows(t, ctx, store); !reflect.DeepEqual(before, after) {
+		t.Fatalf("older migrate changed the history:\nbefore %v\nafter  %v", before, after)
+	}
+	if _, ok := before[newest]; !ok {
+		t.Fatalf("history has no row for the newest migration %s", newest)
+	}
+}
+
+func mustAtoi(t *testing.T, digits string) int {
+	t.Helper()
+	var n int
+	if _, err := fmt.Sscanf(digits, "%d", &n); err != nil {
+		t.Fatalf("migration prefix %q: %v", digits, err)
+	}
+	return n
+}
+
+func appliedMigrationRows(t *testing.T, ctx context.Context, store *Store) map[string]string {
+	t.Helper()
+	rows, err := store.db.QueryContext(ctx, `SELECT version, checksum_sha256 || '@' || applied_at FROM schema_migrations`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var version, value string
+		if err := rows.Scan(&version, &value); err != nil {
+			t.Fatal(err)
+		}
+		out[version] = value
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

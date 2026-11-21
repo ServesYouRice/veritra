@@ -245,8 +245,8 @@ direct peer is in `PRIVATE_MESSENGER_TRUSTED_PROXIES`. It reads
 throttles, setup authorization and the realtime connection limits.
 
 The shipped profiles are safe: Caddy overwrites both headers with the peer
-it saw (`deploy/caddy/Caddyfile`), and the Traefik ingress drops
-`X-Forwarded-For` from untrusted clients (`deploy/kubernetes/base`). **Any
+it saw (`deploy/caddy/Caddyfile`), and Traefik on k3s drops
+`X-Forwarded-For` from untrusted clients (see Kubernetes (k3s) below). **Any
 other reverse proxy must overwrite `X-Forwarded-For`** (or append the peer
 it saw to a chain it has validated), not just set `X-Real-IP`. A proxy that
 passes the client's own `X-Forwarded-For` through lets every client pick
@@ -516,8 +516,9 @@ off-host backup mount or an overridden database or blob directory.
 
 **Memory.** Every server process has a memory limit and `GOMEMLIMIT` at about
 75% of it: 1 GiB and `768MiB` for the server (Compose `mem_limit`, systemd
-`MemoryMax`, Kubernetes `limits.memory`), 512 MiB and `384MiB` for the backup,
-drill and restore jobs. Each Argon2id login hash takes 64 MiB and up to three
+`MemoryMax`), 512 MiB and `384MiB` for the backup,
+drill and restore jobs. The owner's k3s cluster measured 26 MB steady and
+308 MB with eight sign-ups at once, and runs 512 MiB with `384MiB`. Each Argon2id login hash takes 64 MiB and up to three
 run at once, so without `GOMEMLIMIT` a login burst can reach the limit before
 the Go runtime collects. Change the two together;
 `TestDeployMemoryLimitsCarryGOMEMLIMIT` checks the pairs.
@@ -566,8 +567,12 @@ process exits and never go stale.
 
 ## Release image
 
-`scripts/release-image.sh` is the one local release command (no hosted CI).
-It refuses a dirty tree and any commit that is not on `origin/main` (fetched
+`scripts/release-image.sh` is the local release command. `release.yml` builds
+the image on a version tag with GitHub's provenance attestation (allowed by
+the owner on 2026-11-21, handbook OWN-19), but it cannot publish until
+`scripts/release-readiness.sh` passes, which needs the signed-device evidence
+and the independent review. Which of the two images production pins is the owner's call.
+`scripts/release-image.sh` refuses a dirty tree and any commit that is not on `origin/main` (fetched
 fresh); runs `scripts/check-go-toolchain.sh` with
 `VERITRA_VERIFY_GO_IMAGE_DIGEST=1`, which asks Docker Hub for the image
 config behind the `golang` digest pinned in `server/Dockerfile` and stops
@@ -580,89 +585,90 @@ build, and it stops if HEAD moved meanwhile); scans the image with Trivy and
 stops on any HIGH or CRITICAL finding or embedded secret; runs
 `scripts/smoke-deploy.sh` on that exact image (`--skip-smoke` skips it, and
 the release record should say so); pushes
-`ghcr.io/servesyourice/veritra:<commit>`; and prints the digest. With
-`--infra-dir <folder>` it also writes that digest into the folder's
-`kustomization.yaml` and commits it there; push the infra repository to
-deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
+`ghcr.io/servesyourice/veritra:<commit>`; and prints the revision (the full
+commit) and the digest. It never writes into the infra repository (handbook
+decision OWN-03): put the digest into the environment's release file there,
+commit and push to deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
 cargo-audit, Docker with buildx and Trivy; on Windows run it from WSL (or Git
 Bash with Docker Desktop). `--no-push` builds and scans only.
 
 
 ## Kubernetes (k3s)
 
-`deploy/kubernetes/base` is a kustomize base for a single-node k3s cluster
-managed by Flux from a separate infra repository; `examples/overlay` shows
-the overlay that sets the image digest, hostname, settings and secret files.
-The base holds:
+This repository no longer ships Kubernetes manifests (handbook ALL-02,
+owner decision 2026-11-21). The owner's cluster defines Veritra in its own
+infra repository (`apps/veritra`, applied by Flux), which is the only copy
+that is maintained. A kustomize base that other k3s self-hosters can start
+from is in this repository's history at commit `39cd096`
+(`deploy/kubernetes`); it is not kept up to date. What any k3s deployment
+needs, whatever its files look like:
 
-- namespace `veritra` with Pod Security `restricted` enforced, and a service
-  account with no token mounted;
-- one `veritra-data` volume (ReadWriteOnce, node-local; SQLite must not sit
-  on NFS) sized for the data plus seven backups;
-- one Deployment replica with `strategy: Recreate`, so the old pod stops
-  before the new one starts (expect a short outage per deploy; clients
-  reconnect); `/livez`, `/readyz` probes; non-root, read-only root, all
-  capabilities dropped, seccomp `RuntimeDefault`; requests and limits on
-  every container, with `GOMEMLIMIT` set (see Memory above);
-- the namespace and `veritra-data` volume annotated
-  `kustomize.toolkit.fluxcd.io/prune: disabled`, so a file missing from infra
-  never makes Flux delete the data (local-path deletes it with the claim);
-- a Traefik `IngressRoute` with an HSTS headers middleware, a `TLSOption`
-  that offers post-quantum key exchange first (see Post-quantum TLS; needs
-  Traefik v3.5 or later), and a cert-manager `Certificate` (Cloudflare
-  DNS-01, so the DNS-only hostname works);
-- default-deny network policies that admit only Traefik to the server, DNS,
-  HTTPS to public addresses for push providers, and HTTPS for the R2 jobs;
-- the backup and restore-drill CronJobs described below.
+- **One copy, stop then start.** One Deployment replica with
+  `strategy: Recreate`: the server refuses a second writer on its data
+  directory, so the old pod must stop before the new one starts (expect a
+  short outage per deploy; clients reconnect). Grace period 40 s; startup
+  probe on `/livez` allowing 300 s for migrations; readiness on `/readyz`.
+- **No migration Job.** The server applies its migrations at startup under
+  the single-writer lock (each migration and its record in one
+  transaction), so a Job using the new image would find the old pod still
+  holding the lock and never finish. On rollback, the older binary checks
+  the checksums of the migrations it knows and leaves newer ones alone
+  (`TestOlderBinaryMigrateIsANoOpOnANewerSchema`), so it starts; it works
+  only if those newer migrations were additive. Across an incompatible
+  migration, restore the matching backup instead (see Restore safety). The
+  k3s rehearsal's upgrade and rollback used images with the same schema;
+  schema skew was rehearsed separately with local binaries
+  (`scripts/rehearse-schema-rollback.sh`, evidence in
+  `testing/evidence/server-schema-rollback-2026-11-21.md`).
+- **Data.** One ReadWriteOnce, node-local volume (SQLite must not sit on
+  NFS) sized for the data plus seven backups. Keep Flux from ever pruning
+  the namespace or the claim (`kustomize.toolkit.fluxcd.io/prune:
+  disabled`): local-path deletes the data with the claim. local-path
+  volumes report the node's disk, so set
+  `PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB` from the volume size (see
+  Admission limits).
+- **Pod hardening.** Pod Security `restricted`, no service-account token,
+  non-root (uid 65532), read-only root, all capabilities dropped, seccomp
+  `RuntimeDefault`, requests and limits on every container with
+  `GOMEMLIMIT` at about 75% of the limit (see Memory above).
+- **Network policies.** Default deny; only Traefik reaches port 8080; DNS;
+  HTTPS to public addresses for the push providers; HTTPS to R2 for the
+  backup and drill pods; only the metrics collector reaches port 9090.
+- **Ingress.** The hostname is DNS-only (uploads exceed Cloudflare's proxy
+  limit, and TLS should end on the server). Traefik's websecure
+  `readTimeout` must be longer than the server's 15-minute transfer
+  deadline (for example 20 minutes): Traefik v3 defaults to 60 s,
+  and in the 2026-10-23 and 2026-11-12 rehearsals every upload was cut at
+  60 s (in the 2026-10-23 one, a 90-second upload ended with HTTP 502). Redirect
+  HTTP to HTTPS in Traefik; with the Traefik chart k3s bundles, the redirect
+  must sit under `ports.web.http`, and a top-level `ports.web.redirections`
+  is silently ignored. No Buffering middleware (Traefik streams bodies
+  without a size limit and the server enforces its own caps: 48 MiB
+  attachments, 100 MiB backups); keep the `Host` header, which the WebSocket origin check
+  compares; keep Traefik's access log off (see Fewer address and time
+  logs). A cert-manager `Certificate` through Cloudflare DNS-01 works for
+  the DNS-only host. A route `TLSOption` offers post-quantum key exchange
+  first (see Post-quantum TLS).
+- **Client addresses.** `PRIVATE_MESSENGER_TRUSTED_PROXIES` is
+  `10.42.0.0/16`, k3s's default pod network (change it if the cluster uses
+  another `--cluster-cidr`), and only Traefik may reach the pod; set
+  `externalTrafficPolicy: Local` on Traefik's Service so it sees real
+  client addresses. If either is wrong, all users share one rate
+  limit. After the first deploy, check that two clients on different
+  networks are limited separately.
+- **Backups.** A daily CronJob (`scheduled-backup`, then rclone to R2) and a
+  monthly restore drill from R2 (see Off-host backups in R2).
+- **Flux.** Give the Kustomization a timeout that covers the Recreate stop
+  (up to 40 s) and the startup probe (up to 300 s), for example 10 minutes.
+  While a restore runs, keep Flux from scaling the server back up: scale it
+  to 0 through Git, or suspend the Kustomization and resume it afterwards.
+- **Settings and secrets.** `PRIVATE_MESSENGER_PUBLIC_ORIGIN` set to the one
+  permanent host; secrets as files through the `*_FILE` variables,
+  encrypted in Git (SOPS with age) and decrypted by Flux.
 
-Cluster-wide pieces live in infra; `examples/` has one of each:
-`traefik-helmchartconfig.yaml` raises the websecure read timeout to 16
-minutes, redirects HTTP to HTTPS and sets `externalTrafficPolicy: Local` so
-Traefik sees real client addresses; `cluster-issuer.yaml`;
-`secrets.example.yaml` (encrypt with SOPS); `flux-kustomization.yaml`. The
-timeout matters: in the 2026-10-23 rehearsal a 90-second upload was cut off
-at 60 s (HTTP 502) by Traefik's default and completed with this file. With
-the Traefik chart k3s bundles, the redirect must sit under `ports.web.http`;
-a top-level `ports.web.redirections` is silently ignored.
-Traefik streams bodies without a size limit (no Buffering middleware) and
-keeps the `Host` header, which the WebSocket Origin check compares; the
-server enforces its own caps (50 MiB attachments, 100 MiB backups).
-
-`PRIVATE_MESSENGER_TRUSTED_PROXIES` is `10.42.0.0/16`, k3s's default pod
-network; change it if the cluster uses another `--cluster-cidr`. If it, or
-the client address reaching Traefik, is wrong, all users share one rate
-limit. After the first deploy, check that two clients on different networks
-are limited separately.
-
-### Deploying with Flux
-
-`examples/flux-kustomization.yaml` is the one Flux `Kustomization` Veritra
-needs. In infra, keep a copy of `deploy/kubernetes/base` taken at the release
-commit (`apps/veritra/base`) and the overlay next to it
-(`apps/veritra/production`, with `resources: [../base]`), so infra holds
-exactly what is applied. `scripts/release-image.sh --infra-dir
-apps/veritra/production` writes the tested digest there and commits; pushing
-infra deploys. Rolling back is reverting that commit. Secrets
-(`veritra-secrets`, `veritra-r2`) are SOPS-encrypted with age in the same
-folder; Flux decrypts them with the `sops-age` Secret.
-
-There is no migration Job, unlike the handbook's pattern for other apps. The
-server applies its migrations at startup under the single-writer lock (each
-migration and its record in one transaction), so a Job using the new image
-would find the old pod still holding the lock. On rollback, the older binary
-checks the checksums of the migrations it knows and leaves newer ones alone,
-so it starts; it works only if those newer migrations were additive. Across
-an incompatible migration, restore the matching backup instead (see Restore
-safety). The k3s rehearsal's upgrade and rollback used images with the same
-schema; schema skew was rehearsed separately with local binaries
-(`scripts/rehearse-schema-rollback.sh`, evidence in
-`testing/evidence/server-schema-rollback-2026-11-21.md`).
-
-The Kustomization waits for the Deployment and the Certificate with a
-10-minute timeout, which covers the Recreate stop (up to 40 s) and the
-startup probe (up to 300 s for migrations). While a restore runs, suspend it
-(`flux suspend kustomization veritra`) so Flux does not scale the server back
-up, and resume it afterwards.
+[`DEPLOYMENT.md`](../DEPLOYMENT.md) lists the facts the owner's infra needs
+from this repository: ports, health paths, settings, the release command,
+staging checks and admin commands.
 
 
 ## TLS on a LAN install
@@ -739,14 +745,14 @@ Status as read from the code on 2026-10-31:
 | Veritra server (Go 1.26) | Does not terminate TLS. `Serve` in `server/internal/app/app.go` runs plain `ListenAndServe` behind the proxy; HSTS is set only for a TLS request, which no shipped profile sends to it | n/a |
 | Server's outbound calls (Web Push, FCM, APNs) | Yes: no `CurvePreferences` set, so Go 1.26's defaults offer X25519MLKEM768 first | `server/internal/push` |
 | Compose: Caddy `2.11.4` | Yes, by default: X25519MLKEM768, X25519, P-256 when the Caddyfile sets no `curves` (from Caddy v2.10.0, `modules/caddytls/values.go`). The Caddyfile sets none | `deploy/caddy/Caddyfile` |
-| k3s: Traefik (v3.7.13 in k3s v1.34.12) | Yes, set explicitly: TLSOption `veritra` with X25519MLKEM768, X25519, CurveP256 and a TLS 1.2 floor, used by the IngressRoute | `deploy/kubernetes/base/tlsoption.yaml` |
+| k3s: Traefik (v3.7.13 in k3s v1.34.12) | Yes, set explicitly: TLSOption `veritra` with X25519MLKEM768, X25519, CurveP256 and a TLS 1.2 floor, used by the IngressRoute | The owner's infra repository (`apps/veritra`) |
 | The app (Flutter 3.44 `dart:io`) | Not yet: its BoringSSL offers X25519, P-256, P-384 only (research note, not re-checked here), so app connections negotiate X25519 until a Flutter release with the newer BoringSSL | `mobile` |
 
-`server/cmd/messenger-server/edge_tls_test.go` checks the TLSOption's names
-against Traefik's table, and that Go's TLS (which Traefik uses) negotiates
-X25519MLKEM768 with a current client, and X25519 or P-256 with classical
-and TLS 1.2 clients. It also checks that the Caddyfile keeps Caddy's
-default.
+The owner's infra checks the TLSOption's curve names against Traefik's
+table (`bootstrap/check-rules.py`), because Traefik refuses every TLS
+connection to a route whose option names a curve it does not know.
+`server/cmd/messenger-server/edge_tls_test.go` checks that the Caddyfile
+keeps Caddy's default.
 
 **Traefik version floor.** The curve names exist from Traefik v3.5.0. An
 older Traefik does not know `X25519MLKEM768`. It logs `invalid CurveID in
@@ -788,15 +794,15 @@ jsonpath='{..image}'`. After applying, look for TLS option errors in
 
 ## Off-host backups in R2
 
-The `veritra-backup` CronJob runs daily at 03:15 UTC on the server's node.
-Its first container runs `scheduled-backup` (backup, restore drill, keep 7)
-next to the live server; that is safe because the copy uses SQLite's
-`VACUUM INTO` and takes no server lock. A second container, rclone pinned by
-digest, then copies completed `veritra-*` backups to R2 with `--checksum`
-(MD5 verified on upload) and `--immutable`. Veritra itself has no S3 code or
-R2 credentials; only rclone reads the `veritra-r2` secret, and it mounts the
-data volume read-only. rclone copies and never deletes, so the bucket's own
-rules do the expiry and the protection:
+On k3s the backup is a CronJob that runs daily at 03:15 UTC on the server's
+node. Its first container runs `scheduled-backup` (backup, restore drill,
+keep 7) next to the live server; that is safe because the copy uses
+SQLite's `VACUUM INTO` and takes no server lock. A second container, rclone
+pinned by digest, then copies completed `veritra-*` backups to R2 with
+`--checksum` (MD5 verified on upload) and `--immutable`. Veritra itself has
+no S3 code or R2 credentials; only rclone reads the R2 secret, and it
+mounts the data volume read-only. rclone copies and never deletes, so the
+bucket's own rules do the expiry and the protection:
 
 - **Bucket:** one bucket for Veritra only (the `offsite` remote points at
   `<bucket>/veritra`, objects land under `veritra/backups/veritra-*`).
@@ -811,37 +817,39 @@ rules do the expiry and the protection:
 Expect about 30 daily copies in R2 against 7 on the volume; size the bucket
 for that (R2 is free up to 10 GB, then $0.015 per GB a month).
 
-The `veritra-restore-drill` CronJob runs monthly (or on demand with
-`kubectl -n veritra create job --from=cronjob/veritra-restore-drill veritra-restore-drill-manual-1`; keep the `veritra-restore-drill-` prefix so a failure alerts):
-it downloads the newest R2 backup into scratch space and runs
-`verify-backup` on it. A failed Job is a failed drill; alert on it, and on a
-failed backup Job. Run the drill once before the server holds real
-conversations. For a real restore, use `examples/restore-job.yaml`: suspend
-Flux, scale the server to zero, restore a named backup into the volume, then
-scale back up.
+A second CronJob runs the restore drill monthly: it downloads the newest R2
+backup into scratch space and runs `verify-backup` on it. A failed drill
+Job is a failed drill; alert on it, and on a failed backup Job. Run the
+drill once before the server holds real conversations. A real restore
+stops the server, then runs `restore` on a named backup into the volume
+with the server's image, then starts the server again.
+
+In the owner's cluster none of this is run by hand: the CronJobs, a
+backup, a drill and a restore on demand are defined in infra
+(`apps/veritra`, as admin runs through Git), and its `docs/recovery.md`
+holds the rebuild and restore steps. The steps below are the same
+procedure for any k3s install.
 
 **On a rebuilt cluster** (server lost, R2 intact), rehearsed on 2026-10-23
 with an S3 stand-in for R2 (`testing/evidence/T46-deploy-smoke.md`):
 
-1. Bootstrap k3s and Flux from infra with the age key; Flux creates the
-   namespace, Secrets, an empty volume and the server. With no setup token
-   configured (see below) it refuses to start on the empty volume and
-   restarts until the restore; that is expected.
-2. `flux suspend kustomization veritra`, then
-   `kubectl -n veritra scale deployment/veritra --replicas=0` and wait for
-   the pod to go.
-3. In a copy of `examples/restore-job.yaml`, set the image to the digest
-   the server runs and `BACKUP` to the newest name from
-   `rclone lsf offsite:backups`; apply it and wait for it to complete. The
-   empty database is kept aside under a `.pre-restore-*` name.
-4. Delete the Job, scale back to 1, `flux resume kustomization veritra`,
-   then check `/readyz`, owner sign-in and an attachment download.
+1. Bootstrap k3s and Flux with the age key; Flux creates the namespace,
+   Secrets, an empty volume and the server. With no setup token configured
+   (see below) it refuses to start on the empty volume and restarts until
+   the restore; that is expected.
+2. Scale the server to zero (through Git, or suspend Flux first so it does
+   not scale it back up) and wait for the pod to go.
+3. Run the restore with the image the server runs and the newest backup
+   name from `rclone lsf offsite:backups`. The empty database is kept aside
+   under a `.pre-restore-*` name.
+4. Scale back to one, then check `/readyz`, owner sign-in and an attachment
+   download.
 
 The restored instance keeps the owner, devices, sessions and push
 registrations. Once the owner is set up, remove the setup-token key from
-`veritra-secrets` and its `PRIVATE_MESSENGER_SETUP_TOKEN_FILE` patch from the
-overlay (one without the other stops startup). A rebuilt server then
-refuses to start empty instead of offering owner setup before the restore.
+the secret and its `PRIVATE_MESSENGER_SETUP_TOKEN_FILE` variable together
+(one without the other stops startup). A rebuilt server then refuses to
+start empty instead of offering owner setup before the restore.
 
 ## Fewer address and time logs (L2-2)
 
@@ -1031,17 +1039,18 @@ accounts or decisions only the owner has.
 - [ ] Host: firewall open only for 80, 443 (and TURN, if coturn runs on the
   same VPS); 6443 and 10250 closed, `kubectl` over an SSH tunnel or
   WireGuard; k3s started with `--secrets-encryption`.
-- [ ] `scripts/smoke-deploy.sh` passed on the release commit, and
-  `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
-- [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
-  arguments show `readTimeout=16m` and the `web` redirect.
+- [ ] `scripts/smoke-deploy.sh` passed on the release commit, and the digest
+  `scripts/release-image.sh` printed is committed in infra.
+- [ ] Traefik's websecure `readTimeout` is above 15 minutes (the Traefik
+  pod's arguments show it), and HTTP redirects to HTTPS.
 - [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768
   succeeds (see Post-quantum TLS).
 - [ ] `PRIVATE_MESSENGER_TRUSTED_PROXIES` matches the cluster CIDR; two
   clients on different networks are rate-limited separately.
 - [ ] Owner set up, then the setup-token key and its `_FILE` patch removed.
-- [ ] One backup Job and one restore drill from R2 succeeded
-  (`veritra-restore-drill-manual-1`); the full restore above tried once.
+- [ ] One backup Job and one restore drill from R2 succeeded (in the
+  owner's cluster: the `backup-now` and `restore-drill-now` admin runs);
+  the full restore above tried once.
 - [ ] External uptime check on `https://<host>/healthz`; the alerts from
   [Monitoring and alerts](#monitoring-and-alerts) loaded.
 - [ ] *owner* TURN: where coturn runs (host network on the VPS, like
@@ -1055,33 +1064,25 @@ production accepts only a loopback or private IP). They hold aggregate counts
 and ages only, never users, accounts, conversations, devices, tokens or
 endpoints.
 
-**Kubernetes.** `deploy/kubernetes/examples/monitoring` is a kustomize
-component (the example overlay includes it): it binds the listener to the
-pod IP, adds a headless `veritra-metrics` Service and lets only the
-`monitoring` namespace reach port 9090. Scrape it with `servicemonitor.yaml`
-(Prometheus Operator) or `scrape-config.yml` (Grafana Alloy, plain
-Prometheus); keep `job="veritra-metrics"`. Load the rules as
-`prometheus-rules.yaml` or, for Grafana Cloud, `mimirtool rules load
-veritra-alerts.rules.yml`. They also need kube-state-metrics, cert-manager's
-metrics and node-exporter.
+**Alert rules.** `deploy/monitoring/veritra-alerts.rules.yml` holds the
+alerts as a plain Prometheus rule file (for Grafana Cloud or Mimir:
+`mimirtool rules load veritra-alerts.rules.yml`). They read only the
+server's own series and `up`, so they fire wherever `/metrics` is scraped
+with `job="veritra-metrics"`; they need no kube-state-metrics,
+node-exporter or kubelet volume stats. What only the platform can see (a
+failed copy to R2 or off-host drill, the host's disk, certificates, OOM
+kills) needs the platform's own alerts; the owner's cluster defines them,
+with the scrape job, in its infra repository (`docs/alerts.md`). On k3s,
+bind the listener to the pod IP
+(`PRIVATE_MESSENGER_MANAGEMENT_ADDR=$(POD_IP):9090`, `POD_IP` from the
+downward API) and let only the collector's namespace reach port 9090.
 
 | Alert | Means | First thing to do |
 |---|---|---|
-| `VeritraBackupStale` (critical) | No verified backup for 26 h | `kubectl -n veritra get jobs`; read the newest `veritra-backup` Job's `scheduled-backup` log |
-| `VeritraBackupNeverSucceeded` (critical) | No verified backup since install | Run the backup Job by hand: `kubectl -n veritra create job --from=cronjob/veritra-backup backup-now` |
+| `VeritraBackupStale` (critical) | No verified backup for 26 h | Read the newest backup run's `scheduled-backup` log; check that the backup job is scheduled at all |
+| `VeritraBackupNeverSucceeded` (critical) | No verified backup since install | Run a backup now (`scheduled-backup`; in the owner's cluster the `backup-now` admin run) |
 | `VeritraBackupFailing` (warning) | The last backup run(s) failed | `last_failure_step` in `<data dir>/backup-status.json` names the step (backup, verify, ...); check disk space first |
-| `VeritraBackupJobFailed` (warning) | A backup Job failed, including the copy to R2 | Read the `copy-to-r2` log; check the R2 token and bucket lock |
-| `VeritraRestoreDrillFailed` (critical) | The monthly R2 restore drill failed | Read both container logs; rerun the drill. Treat off-host backups as unproven until it passes |
-| `VeritraServerDown` (critical) | Metrics not scraped for 5 min | `kubectl -n veritra get pods`; check the pod, then the NetworkPolicy and collector |
-| `VeritraServerNotReady` (critical) | No ready server pod for 5 min | `kubectl -n veritra describe pod`; `/readyz` fails when storage is unhealthy |
-| `VeritraCertificateExpiringSoon` (warning) | Certificate expires in under 14 days | `kubectl -n veritra describe certificate veritra`; check the Cloudflare DNS-01 token |
-| `VeritraVolumeFilling`, `VeritraNodeDiskFilling` (warning) | Data volume or node disk over 80% | Grow the volume or disk; lowering `PRIVATE_MESSENGER_BACKUP_KEEP` frees the most |
-
-A failed Job keeps its alert firing until the Job is deleted
-(`kubectl -n veritra delete job <name>`); do that once the cause is fixed. A
-drill started by hand counts only if its name starts with
-`veritra-restore-drill-`. k3s `local-path` volumes report no kubelet volume
-stats, so there `VeritraNodeDiskFilling` is the disk alert.
+| `VeritraServerDown` (critical) | Metrics not scraped for 5 min, or no target at all | Check the server pod or process, then the network policy and the collector |
 
 **External uptime check.** Monitor `https://<host>/healthz` from outside
 (UptimeRobot free tier, HTTP(S) monitor, 5-minute interval, alert on any
@@ -1383,8 +1384,7 @@ Where Docker cannot run, `VERITRA_CAPACITY_HOST=1` runs the server as a host
 process (load scenario only, no CPU or memory limit; label those numbers as
 host-process numbers). `go test -run Scenario ./internal/app` replays a provider stall and a
 restart with wake work in flight. Run `promtool test rules
-veritra-alerts.test.yml` in `deploy/kubernetes/examples/monitoring` after
-changing a rule.
+veritra-alerts.test.yml` in `deploy/monitoring` after changing a rule.
 
 **Metrics added for this contract.** SQLite pool waits and writer wait
 (`veritra_sqlite_pool_*`, `veritra_sqlite_writer_acquire_duration_seconds`),
@@ -1398,15 +1398,21 @@ from fixed sets.
 
 **Hosted metrics.** Below about 20 users, per-route counts, the socket count
 and goroutines read as an activity timeline of those people. When metrics
-leave the host (Grafana Cloud), send only the series the alerts need: see
-the `write_relabel_configs` example in `scrape-config.yml`.
+leave the host (Grafana Cloud), send only the series the alerts need. With
+Prometheus `remote_write`, keep them with a `write_relabel_configs` entry on
+`__name__`; the owner's cluster does the same in its collector's scrape job.
+This regex covers every rule in `deploy/monitoring` (`VeritraLatencyHigh`
+then needs a local Prometheus, because the per-route latency histogram
+stays on the host):
+
+```
+up|veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
+```
 
 | Alert | Means | First thing to do |
 |---|---|---|
-| `VeritraRestoreDrillOverdue` (warning) | No passing R2 drill in 35 days, or never | Start one: `kubectl -n veritra create job --from=cronjob/veritra-restore-drill veritra-restore-drill-manual-1` |
 | `VeritraLocalRestoreDrillFailed` (critical) | The last backup's restore drill failed | Read the `scheduled-backup` log; run `messenger-server verify-backup` on the newest backup; treat it as unusable |
-| `VeritraServerRestarting` (warning) | More than 3 starts in an hour | `kubectl -n veritra describe pod`; look for OOM kills, probe failures, a crash at startup |
-| `VeritraServerOOMKilled` (warning) | The container hit its memory limit | Raise `limits.memory` or set `GOMEMLIMIT` to about 70% of it; check `veritra_realtime_connections` and large downloads |
+| `VeritraServerRestarting` (warning) | More than 3 starts in an hour | Look for OOM kills (the container hit its memory limit), probe failures, a crash at startup. For OOM kills raise the memory limit or set `GOMEMLIMIT` to about 70% of it; check `veritra_realtime_connections` and large downloads |
 | `VeritraMemoryHigh` (warning) | Go holds over 80% of 1 GiB | As above; the rule's threshold must follow the limit |
 | `VeritraHTTPErrorsHigh` (warning) | Over 2% of requests return 5xx | Server log `level=ERROR`/`WARN`; `/readyz`; disk free; then `VeritraWriterSaturated` |
 | `VeritraLatencyHigh` (warning) | Interactive p99 over 500 ms | Check CPU throttling and writer wait; compare with the tier rating; a long backup run overlapping the busy hour shows here |
@@ -1493,7 +1499,9 @@ a server with a lower cap a file within 5% of it may then be refused with
 **Write guard.** With less free space than the smaller of 5% and 2 GiB on
 the database or blob file system, the server answers new messages, MLS
 messages and uploads with 507 `server_storage_low`; reads continue.
-`VeritraDataDiskLow` pages at 10%.
+`VeritraDataDiskNearWriteGuard` warns at 4 GiB free and `VeritraDataDiskLow`
+pages at 10%. On a disk shared with other apps (k3s `local-path`), the
+other apps fill the same space, so alert on the host's disk as well.
 
 **Upgrading.** The instance storage limit used to be a fixed 10 GiB. On a
 small volume an instance already above the derived value keeps its data
@@ -1506,6 +1514,7 @@ set the same value on the server if you change it for the backup job.
 
 | Alert | Means | First thing to do |
 |---|---|---|
+| `VeritraDataDiskNearWriteGuard` (warning) | Under 4 GiB free, twice the write guard | Free space before writes stop: lower `PRIVATE_MESSENGER_BACKUP_KEEP`, delete old local backups, find what else fills a shared disk |
 | `VeritraWritesRefusedLowDisk` (critical) | Under 5% (or 2 GiB) free; new messages and uploads get 507 | Free space now (see `VeritraDataDiskLow`); writes resume within 30 s of the next sample above the threshold |
 | `VeritraWriteBudgetRefusals` (warning) | An account keeps exceeding its fan-out or byte budget | Usually a misbehaving client or abuse; the account's other requests still work. Raise the limit only for a known heavy use such as a large busy group |
 | `VeritraStorageQuotaRefusals` (warning) | Uploads are refused by a storage quota | `doctor` shows instance usage; raise the account or instance limit only after sizing the volume with the disk budget above |
