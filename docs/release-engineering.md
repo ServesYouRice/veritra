@@ -34,12 +34,17 @@ It prints three parts:
    status. That script stops at its first refusal, so the list in part 2 is
    what it would still ask for after it.
 
-Exit status: `1` when a check fails (also in `--dry-run`); `3` when the checks
-pass and the release is blocked; `0` only when `release-readiness.sh` itself
-exits 0 and nothing is `MISSING`. With `--dry-run` a blocked release also exits
-0, and the last line still says `RELEASE BLOCKED`. Nothing this script prints
-turns a refusal of the gate into a pass: `scripts/release-rc_test.py` fails if
-a refusing gate ever yields exit 0 or the word `PASSED`.
+Exit status, the same with or without `--dry-run`: `1` when a check fails;
+`3` when the checks pass and the release is blocked (the gate refuses, an owner
+item is `MISSING`, or `--quick` skipped checks); `0` only when
+`release-readiness.sh` itself exits 0, nothing is `MISSING` and nothing was
+skipped by `--quick`. A blocked dry run therefore exits 3, never 0, so no
+caller can read it as a release. Nothing this script prints turns a refusal of
+the gate into a pass: `scripts/release-rc_test.py` fails if a refusing gate
+ever yields exit 0 or the word `PASSED`. The G24 item is `DONE` only for a
+`testing/evidence/G24-matrix.json` of this candidate commit with every row of
+`scripts/g24-matrix.py` a recorded pass and two devices per platform (the rule
+of `g24-matrix.py status`).
 
 Full candidate order, once the owner items exist: pin the signing certificates
 in a reviewed pull request; run `scripts/gradle-lock.sh write` and commit its

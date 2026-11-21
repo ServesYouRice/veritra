@@ -17,12 +17,14 @@ Runs, in order:
    This script never decides that a release is ready: only that script's exit
    status does, and nothing printed here can turn its refusal into a pass.
 
-Exit status:
-  default     0 only when every check passed, nothing is missing and
-              release-readiness.sh passed; 1 when a check failed; 3 when the
-              checks passed but the release is blocked.
-  --dry-run   0 when every check passed, even though the release is blocked
-              (the last line still says RELEASE BLOCKED); 1 when a check failed.
+Exit status (the same with and without --dry-run):
+  0  only when every check passed, nothing is missing and
+     release-readiness.sh itself exited 0;
+  1  when a check failed;
+  3  when the checks passed but the release is blocked (a refusing gate, a
+     missing owner item, or --quick). A blocked release never exits 0, so no
+     caller can read a dry run's success as a release.
+  --dry-run   marks the run as one nobody tags from; it allows --quick.
   --quick     skips the slow and the network checks; only with --dry-run.
 
 Run it from the repository: python3 scripts/release-rc.py --dry-run
@@ -31,6 +33,7 @@ Run it from the repository: python3 scripts/release-rc.py --dry-run
 from __future__ import annotations
 
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -209,17 +212,58 @@ def feed_verifier_exists(root: Path) -> bool:
         return False
 
 
+G24_SCHEMA = "veritra-g24-matrix/1"
+
+
+def g24_row_ids() -> tuple[str, ...] | None:
+    """The matrix rows as scripts/g24-matrix.py defines them (this script's own
+    copy, not one under --root), or None when it cannot be read."""
+    path = Path(__file__).resolve().parent / "g24-matrix.py"
+    try:
+        spec = importlib.util.spec_from_file_location("veritra_g24_matrix_rows", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        ids = tuple(row["id"] for row in module.ROWS)
+    except Exception:  # unreadable or changed shape: fail closed
+        return None
+    return ids or None
+
+
 def g24_state(root: Path) -> tuple[str, str]:
+    """DONE only for a record of this candidate with every required row a
+    pass and two devices per platform, the same rule as g24-matrix.py status."""
     path = root / "testing" / "evidence" / "G24-matrix.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        rows = [row for platform in ("android", "ios") for row in data["platforms"][platform]["rows"]]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError):
         return MISSING, "no testing/evidence/G24-matrix.json; scripts/g24-matrix.py init, then docs/g24-device-matrix.md"
-    pending = [row for row in rows if not isinstance(row, dict) or row.get("result") != "pass"]
-    if pending:
-        return MISSING, f"{len(pending)} of {len(rows)} rows are not a recorded pass (scripts/g24-matrix.py status)"
-    return DONE, "every row recorded as pass"
+    expected = g24_row_ids()
+    if expected is None:
+        return MISSING, "scripts/g24-matrix.py cannot be read, so the required rows are unknown"
+    if not isinstance(data, dict) or data.get("schema") != G24_SCHEMA or not isinstance(data.get("platforms"), dict):
+        return MISSING, f"testing/evidence/G24-matrix.json is not a {G24_SCHEMA} record"
+    head = candidate(root)
+    if not head or data.get("candidate_commit") != head:
+        return MISSING, f"the G24 record is for {data.get('candidate_commit')!r}, not this candidate ({head or 'unknown'})"
+    problems = []
+    for platform in ("android", "ios"):
+        section = data["platforms"].get(platform)
+        rows = section.get("rows") if isinstance(section, dict) else None
+        devices = section.get("devices") if isinstance(section, dict) else None
+        if not isinstance(rows, list) or [r.get("id") if isinstance(r, dict) else None for r in rows] != list(expected):
+            problems.append(f"{platform}: the rows are not the matrix's rows")
+            continue
+        pending = sum(1 for row in rows if row.get("result") != "pass")
+        if pending:
+            problems.append(f"{platform}: {pending} of {len(rows)} rows are not a recorded pass")
+        labels = sorted(d.get("label") for d in devices if isinstance(d, dict)) if isinstance(devices, list) else []
+        if labels != ["D1", "D2"]:
+            problems.append(f"{platform}: two devices (D1, D2) are not recorded")
+    if problems:
+        return MISSING, "; ".join(problems) + " (scripts/g24-matrix.py status)"
+    return DONE, "every row recorded as pass on two devices per platform"
 
 
 def owner_items(root: Path) -> list[tuple[str, str, str]]:
@@ -357,8 +401,7 @@ def main(argv: list[str]) -> int:
         reasons.append("--quick skipped checks")
     print("RELEASE BLOCKED: " + "; ".join(reasons))
     if dry:
-        print("(dry run: all checks that need no secrets passed, so the exit status is 0; this is not a release)")
-        return 0
+        print("(dry run: every check that needs no secrets passed; exit status 3 because the release is blocked)")
     return 3
 
 

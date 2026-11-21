@@ -87,6 +87,10 @@ class G24Test(unittest.TestCase):
         return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True, check=True,
                               env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull}).stdout.strip()
 
+    def commit_file(self, name: str, text: str) -> None:
+        (self.root / name).write_text(text)
+        self.commit(f"add {name}")
+
     def commit(self, message: str) -> None:
         self.git("add", "-A")
         self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message)
@@ -273,10 +277,24 @@ class G24Test(unittest.TestCase):
             for row in data["platforms"][platform]["rows"]:
                 row["result"] = "pass"
         g24.RECORD.write_text(json.dumps(data))
-        self.assertEqual(rc.g24_state(self.root)[0], rc.DONE)
-        data["platforms"]["android"]["rows"][3]["result"] = "fail"
-        g24.RECORD.write_text(json.dumps(data))
+        # Every row passed, but no devices are recorded: not done, as in `status`.
         self.assertEqual(rc.g24_state(self.root)[0], rc.MISSING)
+        for platform in g24.PLATFORMS:
+            data["platforms"][platform]["devices"] = [{"label": "D1", "os": "14"}, {"label": "D2", "os": "14"}]
+        g24.RECORD.write_text(json.dumps(data))
+        self.assertEqual(rc.g24_state(self.root)[0], rc.DONE)
+        self.assertEqual(data["candidate_commit"], self.candidate)
+        # A record of another commit does not count for this candidate.
+        self.commit_file("later.txt", "after the record")
+        self.assertEqual(rc.g24_state(self.root)[0], rc.MISSING)
+        os.environ["RELEASE_COMMIT"] = self.candidate
+        try:
+            self.assertEqual(rc.g24_state(self.root)[0], rc.DONE)
+            data["platforms"]["android"]["rows"][3]["result"] = "fail"
+            g24.RECORD.write_text(json.dumps(data))
+            self.assertEqual(rc.g24_state(self.root)[0], rc.MISSING)
+        finally:
+            os.environ.pop("RELEASE_COMMIT", None)
 
     # --- checklist ------------------------------------------------------------
 

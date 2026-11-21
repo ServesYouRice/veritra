@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -33,7 +34,24 @@ PINNED = {
     "android": {"release_certificate_sha256": "a" * 64},
     "ios": {"team_id": "ABCDE12345", "bundle_id": "org.veritra.privateMessenger"},
 }
-G24_PASS = {"platforms": {p: {"rows": [{"id": "r1", "result": "pass"}]} for p in ("android", "ios")}}
+_spec = importlib.util.spec_from_file_location("g24_matrix_for_rc_test", ROOT / "scripts" / "g24-matrix.py")
+assert _spec and _spec.loader
+_g24 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_g24)
+ROW_IDS = [row["id"] for row in _g24.ROWS]
+
+
+def g24_record(candidate: str, result: str = "pass", devices: tuple[str, ...] = ("D1", "D2")) -> dict:
+    """A complete G24 record of ``candidate``, as g24-matrix.py writes it."""
+    return {
+        "schema": "veritra-g24-matrix/1",
+        "candidate_commit": candidate,
+        "artifacts": {},
+        "platforms": {
+            p: {"devices": [{"label": d, "os": "14"} for d in devices], "rows": [{"id": i, "name": i, "result": result, "note": ""} for i in ROW_IDS]}
+            for p in ("android", "ios")
+        },
+    }
 PROPER_ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/"), "GIT_CONFIG_GLOBAL": os.devnull}
 
 
@@ -83,14 +101,15 @@ class FakeRepo:
         (self.root / "mobile/lib/main.dart").write_text("// open\n")
         (self.root / "dist").mkdir()
         (self.root / "dist/release-evidence.json").write_text("{}")
-        (self.root / "testing/evidence").mkdir(parents=True)
-        (self.root / "testing/evidence/G24-matrix.json").write_text(json.dumps(G24_PASS))
         (self.root / "mobile/lib/desktop").mkdir(parents=True)
         (self.root / "mobile/lib/desktop/update_verifier.dart").write_text("class Ed25519UpdateSignatureVerifier {}\n")
         (self.root / "mobile/lib/desktop/update_trust.dart").write_text(f"const String updateFeedPublicKeyHex = '{'b' * 64}';\n")
         self.git("add", "-A")
         self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "owner items")
         candidate = self.git("rev-parse", "HEAD")
+        # The G24 record names the candidate, so it lands after it, like the approvals.
+        (self.root / "testing/evidence").mkdir(parents=True)
+        (self.root / "testing/evidence/G24-matrix.json").write_text(json.dumps(g24_record(candidate)))
         approvals = self.root / "release/approvals" / candidate
         approvals.mkdir(parents=True)
         for name in ("independent-review", "production-crypto"):
@@ -119,12 +138,13 @@ class ReleaseRcTest(unittest.TestCase):
         self.assertNotIn("PASSED", r.stdout)
         self.assertIn("gate says no", r.stdout)
 
-    def test_dry_run_exits_0_but_still_says_blocked(self) -> None:
-        r = self.rc(self.repo(), "--dry-run")
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("RELEASE BLOCKED", r.stdout)
-        self.assertIn("this is not a release", r.stdout)
-        self.assertNotIn("PASSED", r.stdout)
+    def test_a_blocked_dry_run_never_exits_0(self) -> None:
+        for args in (("--dry-run",), ("--dry-run", "--quick")):
+            r = self.rc(self.repo(), *args)
+            self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+            self.assertIn("RELEASE BLOCKED", r.stdout)
+            self.assertIn("exit status 3 because the release is blocked", r.stdout)
+            self.assertNotIn("PASSED", r.stdout)
 
     def test_missing_items_are_named(self) -> None:
         out = self.rc(self.repo(), "--dry-run").stdout
@@ -170,7 +190,7 @@ class ReleaseRcTest(unittest.TestCase):
             self.assertNotIn("MISSING", r.stdout.replace("MISSING items", ""), r.stdout)
             self.assertNotIn("PASSED", r.stdout)
             self.assertIn("RELEASE BLOCKED: release-readiness.sh refuses", r.stdout)
-            self.assertEqual(r.returncode, 3 if not args else 0)
+            self.assertEqual(r.returncode, 3)
 
     def test_passes_only_when_the_gate_passes_and_nothing_is_missing(self) -> None:
         repo = self.repo(gate_exit=0)
@@ -178,11 +198,40 @@ class ReleaseRcTest(unittest.TestCase):
         r = self.rc(repo, **env)
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("RELEASE GATES PASSED", r.stdout)
-        # one missing owner item is enough to block, even with a passing gate
-        (repo.root / "testing/evidence/G24-matrix.json").write_text(json.dumps({"platforms": {"android": {"rows": [{"id": "r", "result": "pending"}]}, "ios": {"rows": []}}}))
-        r = self.rc(repo, **env)
-        self.assertEqual(r.returncode, 3, r.stdout)
-        self.assertIn("MISSING G24", r.stdout)
+        # A passing gate with --dry-run passes too; with --quick it never does.
+        self.assertEqual(self.rc(repo, "--dry-run", **env).returncode, 0)
+        self.assertEqual(self.rc(repo, "--dry-run", "--quick", **env).returncode, 3)
+        # One missing owner item is enough to block, even with a passing gate:
+        # every way a G24 record can fall short of the matrix.
+        record = repo.root / "testing/evidence/G24-matrix.json"
+        candidate = env["RELEASE_COMMIT"]
+        empty = g24_record(candidate)
+        for platform in ("android", "ios"):
+            empty["platforms"][platform]["rows"] = []
+        one_device = g24_record(candidate, devices=("D1",))
+        dropped_row = g24_record(candidate)
+        dropped_row["platforms"]["ios"]["rows"].pop()
+        failed_row = g24_record(candidate)
+        failed_row["platforms"]["android"]["rows"][2]["result"] = "fail"
+        no_schema = g24_record(candidate)
+        no_schema.pop("schema")
+        for name, value in (
+            ("empty rows", empty),
+            ("one device", one_device),
+            ("a missing row", dropped_row),
+            ("a failed row", failed_row),
+            ("another candidate", g24_record("f" * 40)),
+            ("no schema", no_schema),
+            ("not an object", ["pass"]),
+        ):
+            record.write_text(json.dumps(value))
+            for args in ((), ("--dry-run",)):
+                r = self.rc(repo, *args, **env)
+                self.assertEqual(r.returncode, 3, (name, args, r.stdout))
+                self.assertIn("MISSING G24", r.stdout, name)
+                self.assertNotIn("PASSED", r.stdout, name)
+        record.write_text(json.dumps(g24_record(candidate)))
+        self.assertEqual(self.rc(repo, **env).returncode, 0)
 
     def test_quick_needs_dry_run_and_unknown_flags_are_refused(self) -> None:
         repo = self.repo()
