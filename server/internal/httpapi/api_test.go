@@ -1071,6 +1071,23 @@ func registerMemberWithID(t *testing.T, handler http.Handler, ownerToken, userna
 	return decoded.Token, decoded.Account.ID
 }
 
+// registerMemberWithCode registers username with an invite code already in
+// hand and returns the registration status.
+func registerMemberWithCode(t *testing.T, handler http.Handler, code, username string) int {
+	t.Helper()
+	enrollment := reserveEnrollment(t, handler, "/api/v1/register/enrollment", code)
+	body := map[string]interface{}{
+		"invite_code":        code,
+		"username":           username,
+		"password":           "member-password-123",
+		"device_name":        username + " phone",
+		"device_key_package": mlswiretest.KeyPackage(),
+	}
+	addEnrollmentProof(body, enrollment)
+	status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/register", "", body)
+	return status
+}
+
 func accountIDFromExport(t *testing.T, handler http.Handler, token string) string {
 	t.Helper()
 	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
@@ -1205,31 +1222,53 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("create invite status=%d body=%s", status, response)
 	}
+	var created struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response, &created); err != nil || created.Code == "" {
+		t.Fatalf("create returns the code once: %s (%v)", response, err)
+	}
 
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/invites", ownerToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("list invites status=%d body=%s", status, response)
 	}
 	var listed struct {
-		Invites []struct {
-			ID      string `json:"id"`
-			Code    string `json:"code"`
-			MaxUses int    `json:"max_uses"`
-		} `json:"invites"`
+		Invites []map[string]interface{} `json:"invites"`
 	}
 	if err := json.Unmarshal(response, &listed); err != nil {
 		t.Fatalf("decode invites: %v", err)
 	}
-	if len(listed.Invites) != 1 || listed.Invites[0].MaxUses != 5 ||
-		listed.Invites[0].Code == "" {
+	if len(listed.Invites) != 1 || listed.Invites[0]["id"] != created.ID ||
+		listed.Invites[0]["max_uses"] != float64(5) || listed.Invites[0]["uses"] != float64(0) {
 		t.Fatalf("unexpected invites: %#v", listed.Invites)
 	}
-	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+listed.Invites[0].ID, ownerToken, nil)
+	// The server keeps only a hash: the list carries no code, under any key.
+	if _, ok := listed.Invites[0]["code"]; ok || bytes.Contains(response, []byte(created.Code)) {
+		t.Fatalf("listed invite carries its code: %s", response)
+	}
+	// The code from the create answer registers.
+	if code := registerMemberWithCode(t, handler, created.Code, "listedmember"); code != http.StatusCreated {
+		t.Fatalf("register with the created code status=%d", code)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{"max_uses": 1})
+	if status != http.StatusCreated {
+		t.Fatalf("create invite status=%d body=%s", status, response)
+	}
+	var revocable struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response, &revocable); err != nil {
+		t.Fatal(err)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+revocable.ID, ownerToken, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("revoke invite status=%d body=%s", status, response)
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", map[string]interface{}{
-		"invite_code": listed.Invites[0].Code, "username": "revokedinvite",
+		"invite_code": revocable.Code, "username": "revokedinvite",
 		"password": "member-password-123", "device_name": "phone",
 		"device_key_package": base64.StdEncoding.EncodeToString([]byte("revoked-key-package")),
 	})

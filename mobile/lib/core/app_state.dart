@@ -2630,6 +2630,15 @@ class AppState extends ChangeNotifier
       return;
     }
     final generation = _sessionGeneration;
+    // The ids this device held a code for before asking: only those may be
+    // forgotten below, so an invite created while the list was on its way
+    // keeps its code.
+    Set<String> known = const <String>{};
+    try {
+      known = await _updateInviteCodes((codes) => codes.keys.toSet());
+    } catch (_) {
+      // Unreadable local copies: the list still loads, without codes.
+    }
     List<Invite>? list;
     try {
       list = await client.listInvites(current.token);
@@ -2639,7 +2648,24 @@ class AppState extends ChangeNotifier
     // A reply for a session that has since ended or been replaced is
     // dropped whole, success or failure.
     if (!_refreshOwned(current, generation)) return;
-    if (list != null) invites = list;
+    if (list != null) {
+      final listed = list;
+      List<Invite> merged;
+      try {
+        merged = await _updateInviteCodes((codes) {
+          // Gone from the server (turned off, used up or expired): its
+          // code can never register again, so this device forgets it.
+          final live = <String>{for (final invite in listed) invite.id};
+          codes
+              .removeWhere((id, _) => known.contains(id) && !live.contains(id));
+          return _withLocalInviteCodes(listed, codes);
+        });
+      } catch (_) {
+        merged = _withLocalInviteCodes(listed, const <String, String>{});
+      }
+      if (!_refreshOwned(current, generation)) return;
+      invites = merged;
+    }
     invitesLoadFailed = list == null;
     invitesLoaded = true;
     notifyListeners();
@@ -3073,12 +3099,23 @@ class AppState extends ChangeNotifier
       if (current == null || client == null) {
         return;
       }
-      created = await client.createInvite(
+      final invite = await client.createInvite(
         current.token,
         maxUses: maxUses,
         expiresAt: expiresAt,
       );
-      invites = <Invite>[created!, ...invites];
+      created = invite;
+      // The only time the server hands out the code: keep it on this device
+      // so the invite can be shared again after a restart.
+      if (invite.code.isNotEmpty) {
+        try {
+          await _updateInviteCodes((codes) => codes[invite.id] = invite.code);
+        } catch (_) {
+          // Shown for now all the same; after a restart it reads "Can't be
+          // shared again".
+        }
+      }
+      invites = <Invite>[invite, ...invites];
     });
     return error == null ? created : null;
   }
@@ -3092,8 +3129,66 @@ class AppState extends ChangeNotifier
       }
       await client.revokeInvite(current.token, inviteId);
       invites = invites.where((invite) => invite.id != inviteId).toList();
+      try {
+        await _updateInviteCodes((codes) => codes.remove(inviteId));
+      } catch (_) {
+        // Forgotten at the next refresh, which no longer lists it.
+      }
     });
   }
+
+  /// Local setting holding the codes of the registration invites this device
+  /// created, as a JSON object from invite id to code. The server keeps only
+  /// a hash of each code, so this encrypted local copy is the one way to
+  /// share an invite again. Codes are bearer credentials: never logged.
+  static const String inviteCodesSetting = 'invites.codes';
+
+  Future<void> _inviteCodesQueue = Future<void>.value();
+
+  /// Runs [change] on the stored invite codes, one change at a time, and
+  /// saves them when [change] altered them.
+  Future<T> _updateInviteCodes<T>(
+      T Function(Map<String, String> codes) change) {
+    final run = _inviteCodesQueue.then((_) async {
+      final codes = <String, String>{};
+      final raw = await localStore.loadSetting(inviteCodesSetting);
+      Object? decoded;
+      try {
+        decoded = raw == null ? null : jsonDecode(raw);
+      } on FormatException {
+        // Unreadable: start again, overwritten by the next change.
+      }
+      if (decoded is Map) {
+        for (final entry in decoded.entries) {
+          if (entry.key is String && entry.value is String) {
+            codes[entry.key as String] = entry.value as String;
+          }
+        }
+      }
+      final before = Map<String, String>.of(codes);
+      final result = change(codes);
+      if (!mapEquals(before, codes)) {
+        await localStore.saveSetting(inviteCodesSetting, jsonEncode(codes));
+      }
+      return result;
+    });
+    _inviteCodesQueue = run.then((_) {}, onError: (Object _) {});
+    return run;
+  }
+
+  /// [listed] with each invite's code from [codes] when this device has one,
+  /// else the code the server sent (older servers), else none.
+  static List<Invite> _withLocalInviteCodes(
+    List<Invite> listed,
+    Map<String, String> codes,
+  ) =>
+      <Invite>[
+        for (final invite in listed)
+          switch (codes[invite.id]) {
+            final code? when code.isNotEmpty => invite.withCode(code),
+            _ => invite,
+          },
+      ];
 
   Future<Community?> createCommunity(String name) async {
     Community? created;

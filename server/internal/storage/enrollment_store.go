@@ -45,9 +45,9 @@ func (s *Store) ReserveRegistrationEnrollment(ctx context.Context, inviteCode st
 	var inviteID string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id FROM invites
-		WHERE code = ? AND revoked_at IS NULL AND uses < max_uses
+		WHERE code_hash = ? AND revoked_at IS NULL AND uses < max_uses
 		  AND (expires_at IS NULL OR expires_at > ?)`,
-		strings.TrimSpace(inviteCode), nowString()).Scan(&inviteID)
+		inviteCodeHash(inviteCode), nowString()).Scan(&inviteID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnrollmentReservation{}, ErrInviteInvalid
 	}
