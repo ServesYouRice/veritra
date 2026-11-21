@@ -6,6 +6,46 @@ What is measured and what is only drafted is in
 The release gates (G24, G25, G27, `scripts/release-readiness.sh`) are untouched:
 these scripts make builds, they do not release anything.
 
+## Release candidate procedure
+
+One command, nothing secret, nothing published:
+
+```sh
+python3 scripts/release-rc.py --dry-run          # about 2 minutes (gate fixture tests included)
+python3 scripts/release-rc.py --dry-run --quick  # seconds: skips the slow and network checks
+python3 scripts/release-rc.py                    # the real check: exit 0 only if the gate passes
+```
+
+It prints three parts:
+
+1. **Checks that need no secrets**, each `PASS`, `FAIL` or `SKIP` with its
+   reason: toolchain alignment, the G27 advisory deadline, the demo boundary,
+   pinned Gradle inputs and lock wiring, third-party notices, the Dart
+   dependency policy, the Windows installer dry run (PowerShell only), and the
+   fixture tests of the release gates (they prove the gates still refuse).
+2. **What only the owner can supply**, each `MISSING`, `DONE` or `OWNER`
+   (cannot be checked from the repository): the three signing pins, the Gradle
+   lock files, the G24 matrix, the G25 and production-crypto approvals, the
+   production crypto switch, signed release records, the update key, and the
+   Apple, Android, Windows, push and TURN accounts. It also prints the days
+   left on the G27 exceptions.
+3. **`scripts/release-readiness.sh`**, unchanged, with its own output and exit
+   status. That script stops at its first refusal, so the list in part 2 is
+   what it would still ask for after it.
+
+Exit status: `1` when a check fails (also in `--dry-run`); `3` when the checks
+pass and the release is blocked; `0` only when `release-readiness.sh` itself
+exits 0 and nothing is `MISSING`. With `--dry-run` a blocked release also exits
+0, and the last line still says `RELEASE BLOCKED`. Nothing this script prints
+turns a refusal of the gate into a pass: `scripts/release-rc_test.py` fails if
+a refusing gate ever yields exit 0 or the word `PASSED`.
+
+Full candidate order, once the owner items exist: pin the signing certificates
+in a reviewed pull request; run `scripts/gradle-lock.sh write` and commit its
+output; freeze the candidate commit; run `repro.yml`; build and sign on the
+owner's machines; record the G24 matrix (`docs/g24-device-matrix.md`); write the
+approvals (`docs/security-review.md`); tag; `release.yml` runs the gate.
+
 ## Reproducible builds
 
 | Target | Build once | Build twice and compare | Runs on |

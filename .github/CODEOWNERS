@@ -45,6 +45,8 @@
 /scripts/gradle-lock.sh @ServesYouRice
 /scripts/repro/ @ServesYouRice
 /scripts/repro_test.py @ServesYouRice
+/scripts/release-rc.py @ServesYouRice
+/scripts/release-rc_test.py @ServesYouRice
 /mobile/android/gradle/ @ServesYouRice
 
 # The G27 advisory exceptions the gate checks for expiry.
