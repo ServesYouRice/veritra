@@ -23,16 +23,18 @@ const _origin = 'https://chat.example.org';
 /// bytes of SHA-256 of "veritra/membership-invite/v2/key-commit\0" and the
 /// key, base64url, computed independently with Python's hashlib.
 const _commitText = 'bnmamFclxirK8ha3-a1pTA';
-const _fragment = 'v2.$_secretText.$_commitText';
+const _fragment = 'v3.$_secretText.$_commitText';
 
-/// The binding of that link to a group `conv_1`, inviter `acct_alice` on
-/// `dev_alice` with signing key 40 41 .. 5f (D90). The key and the tag are
-/// HMAC-SHA256 values computed independently with Python's hmac and hashlib,
-/// and `TestInviteBindingTagVector` in the server pins the same tag.
+/// The binding of that link to a group `conv_1` (anchored to itself, v3),
+/// inviter `acct_alice` on `dev_alice` with signing key 40 41 .. 5f (D90). The
+/// key and the tag are values computed independently with Python's hmac and
+/// hashlib over the v3 layout (version field first, anchor after the
+/// target); the key is the same as v2's, which `TestInviteBindingTagVector`
+/// in the server pins.
 const _bindingKey =
     'ba25a5304afe2bcacf0f425dd3775734ffb9b40ddfdb7d4505b267b5e7c30349';
 const _bindingTag =
-    'fc9063055daea1729609a3cd9a4916b4fcb78e2477c6f16c9709c2ff1b108cf7';
+    'e464ec9e0c9ca074379ba42c88889552491d560a4845a3cab9fb7960cd076fa9';
 
 void main() {
   group('sha256', () {
@@ -152,26 +154,28 @@ void main() {
         'not a link',
         '$_origin/join',
         '$_origin/join#',
-        '$_origin/join#v2.',
+        '$_origin/join#v3.',
         // No key commitment, or a v1 link: nothing to anchor the key to.
-        '$_origin/join#v2.$_secretText',
-        '$_origin/join#v2.$_secretText.',
+        '$_origin/join#v3.$_secretText',
+        '$_origin/join#v3.$_secretText.',
         '$_origin/join#v1.$_secretText',
         '$_origin/join#v1.$_secretText.$_commitText',
-        '$_origin/join#v3.$_secretText.$_commitText',
+        // A v2 link: no anchor group; not read (no downgrade).
+        '$_origin/join#v2.$_secretText.$_commitText',
+        '$_origin/join#v4.$_secretText.$_commitText',
         '$_origin/join#$_secretText',
         '$_origin/join#$_secretText.$_commitText',
-        '$_origin/join#v2.$_secretText.${_commitText.substring(1)}',
-        '$_origin/join#v2.$_secretText.${_commitText}A',
-        '$_origin/join#v2.$_secretText.${_commitText.replaceFirst('b', '!')}',
-        '$_origin/join#v2.$_secretText.$_commitText.$_commitText',
+        '$_origin/join#v3.$_secretText.${_commitText.substring(1)}',
+        '$_origin/join#v3.$_secretText.${_commitText}A',
+        '$_origin/join#v3.$_secretText.${_commitText.replaceFirst('b', '!')}',
+        '$_origin/join#v3.$_secretText.$_commitText.$_commitText',
         '$_origin/join?x=1#$_fragment',
         '$_origin/join/#$_fragment',
         '$_origin/other#$_fragment',
         '$_origin#$_fragment',
-        '$_origin/join#v2.${_secretText}A.$_commitText',
-        '$_origin/join#v2.${_secretText.substring(1)}.$_commitText',
-        '$_origin/join#v2.${_secretText.replaceFirst('A', '!')}.$_commitText',
+        '$_origin/join#v3.${_secretText}A.$_commitText',
+        '$_origin/join#v3.${_secretText.substring(1)}.$_commitText',
+        '$_origin/join#v3.${_secretText.replaceFirst('A', '!')}.$_commitText',
         '/join#$_fragment',
         'join#$_fragment',
       ]) {
@@ -181,14 +185,14 @@ void main() {
       // carries only two bits) is refused, so one secret has one link.
       expect(
         parse(
-          '$_origin/join#v2.${_secretText.substring(0, 42)}9'
+          '$_origin/join#v3.${_secretText.substring(0, 42)}9'
           '.$_commitText',
         ),
         isNull,
       );
       expect(
         parse(
-          '$_origin/join#v2.$_secretText.'
+          '$_origin/join#v3.$_secretText.'
           '${_commitText.substring(0, 21)}B',
         ),
         isNull,
@@ -211,6 +215,7 @@ void main() {
     String tagOf({
       InviteTargetKind kind = InviteTargetKind.group,
       String targetId = 'conv_1',
+      String? anchor,
       String accountId = 'acct_alice',
       String deviceId = 'dev_alice',
       List<int>? key,
@@ -219,6 +224,7 @@ void main() {
         (of ?? link).bindingTag(
           kind: kind,
           targetId: targetId,
+          anchorGroupId: anchor ?? targetId,
           inviterAccountId: accountId,
           inviterDeviceId: deviceId,
           inviterSigningKey: key ?? signingKey,
@@ -227,6 +233,7 @@ void main() {
     Uint8List messageOf({
       InviteTargetKind kind = InviteTargetKind.group,
       String targetId = 'conv_1',
+      String? anchor,
       String accountId = 'acct_alice',
       String deviceId = 'dev_alice',
       List<int>? key,
@@ -235,6 +242,7 @@ void main() {
         (of ?? link).bindingMessage(
           kind: kind,
           targetId: targetId,
+          anchorGroupId: anchor ?? targetId,
           inviterAccountId: accountId,
           inviterDeviceId: deviceId,
           inviterSigningKey: key ?? signingKey,
@@ -244,10 +252,14 @@ void main() {
       String tag, {
       List<int>? signature,
       List<int>? key,
+      InviteTargetKind kind = InviteTargetKind.group,
+      String targetId = 'conv_1',
+      String anchor = 'conv_1',
     }) =>
         InviteBinding(
-          kind: InviteTargetKind.group,
-          targetId: 'conv_1',
+          kind: kind,
+          targetId: targetId,
+          anchorGroupId: anchor,
           inviterAccountId: 'acct_alice',
           inviterDeviceId: 'dev_alice',
           inviterSigningKey: Uint8List.fromList(key ?? signingKey),
@@ -300,6 +312,48 @@ void main() {
       expect(link.matches(bindingOf('')), isFalse);
       expect(link.matches(bindingOf(_bindingTag.substring(1))), isFalse);
       expect(link.matches(bindingOf('$_bindingTag$_bindingTag')), isFalse);
+      // v3: the anchor is the group a Welcome must come from. A group
+      // admits to itself; nothing admits to no group, even with a tag the
+      // secret holder recomputed for it.
+      expect(
+        link.matches(
+          bindingOf(tagOf(anchor: 'conv_2'), anchor: 'conv_2'),
+        ),
+        isFalse,
+      );
+      expect(link.matches(bindingOf(tagOf(anchor: ''), anchor: '')), isFalse);
+      expect(
+        link.matches(
+          bindingOf(
+            tagOf(
+              kind: InviteTargetKind.community,
+              targetId: 'comm_1',
+              anchor: '',
+            ),
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+            anchor: '',
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        link.matches(
+          bindingOf(
+            tagOf(
+              kind: InviteTargetKind.community,
+              targetId: 'comm_1',
+              anchor: 'conv_s1',
+            ),
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+            anchor: 'conv_s1',
+          ),
+        ),
+        isTrue,
+      );
+      // The tag covers the anchor: the right tag with another anchor fails.
+      expect(link.matches(bindingOf(_bindingTag, anchor: 'conv_2')), isFalse);
       // A missing or short signature (an invitation made before v2).
       expect(link.matches(bindingOf(_bindingTag, signature: <int>[])), isFalse);
       expect(
@@ -321,6 +375,7 @@ void main() {
         hexOf(messageOf()),
         hexOf(messageOf(kind: InviteTargetKind.community)),
         hexOf(messageOf(targetId: 'conv_2')),
+        hexOf(messageOf(anchor: 'conv_s1')),
         hexOf(messageOf(accountId: 'acct_bob')),
         hexOf(messageOf(deviceId: 'dev_bob')),
         hexOf(messageOf(key: List<int>.generate(32, (i) => 0x41 + i))),
@@ -335,7 +390,13 @@ void main() {
           ),
         ),
       };
-      expect(seen, hasLength(8));
+      expect(seen, hasLength(9));
+      // It starts with the version field, so no v2 message (which starts
+      // with the origin) is ever the same bytes.
+      expect(
+        utf8.decode(messageOf().sublist(2, 30)),
+        'veritra/membership-invite/v3',
+      );
       // The message ends with the locator as lp(64 ASCII hex characters).
       final message = messageOf();
       expect(utf8.decode(message.sublist(message.length - 64)), _locator);
@@ -355,6 +416,10 @@ void main() {
       expect(
         tagOf(targetId: 'a', accountId: 'bc'),
         isNot(tagOf(targetId: 'ab', accountId: 'c')),
+      );
+      expect(
+        tagOf(targetId: 'comm_1', anchor: 'xconv'),
+        isNot(tagOf(targetId: 'comm_1x', anchor: 'conv')),
       );
       expect(
         hexOf(messageOf(accountId: 'acct_alice', deviceId: 'dev_alice')),
@@ -384,7 +449,7 @@ void main() {
     test('is pinned by the shared vector file', () {
       final vector = jsonDecode(
         File(
-          '../testing/vectors/invite-binding-v2.json',
+          '../testing/vectors/invite-binding-v3.json',
         ).readAsStringSync(),
       ) as Map<String, Object?>;
       final inputs = vector['inputs']! as Map<String, Object?>;
@@ -411,14 +476,44 @@ void main() {
         ).url.split('.').last,
         (outputs['link_fragment']! as String).split('.').last,
       );
+      final kind = InviteTargetKind.fromWire(inputs['target_kind'])!;
+      expect(kind, InviteTargetKind.community);
       final message = fromFile.bindingMessage(
-        kind: InviteTargetKind.group,
+        kind: kind,
         targetId: inputs['target_id']! as String,
+        anchorGroupId: inputs['anchor_group_id']! as String,
         inviterAccountId: inputs['inviter_account_id']! as String,
         inviterDeviceId: inputs['inviter_device_id']! as String,
         inviterSigningKey: key,
       );
       expect(hexOf(message), outputs['signed_message_hex']);
+      expect(
+        fromFile.bindingTag(
+          kind: kind,
+          targetId: inputs['target_id']! as String,
+          anchorGroupId: inputs['anchor_group_id']! as String,
+          inviterAccountId: inputs['inviter_account_id']! as String,
+          inviterDeviceId: inputs['inviter_device_id']! as String,
+          inviterSigningKey: key,
+        ),
+        outputs['tag'],
+      );
+      // The link matches the vector's binding (commitment, tag, anchor).
+      expect(
+        fromFile.matches(
+          InviteBinding(
+            kind: kind,
+            targetId: inputs['target_id']! as String,
+            anchorGroupId: inputs['anchor_group_id']! as String,
+            inviterAccountId: inputs['inviter_account_id']! as String,
+            inviterDeviceId: inputs['inviter_device_id']! as String,
+            inviterSigningKey: Uint8List.fromList(key),
+            tag: outputs['tag']! as String,
+            signature: Uint8List.fromList(unhex(outputs['signature_hex'])),
+          ),
+        ),
+        isTrue,
+      );
       // The test engine's stand-in is not the real signature.
       expect(
         hexOf(fakeInviteSignature(key, message)),

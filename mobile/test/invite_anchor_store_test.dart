@@ -73,6 +73,67 @@ void main() {
     },
   );
 
+  test(
+    'community pins (v3) persist, and clear with the invite anchors on '
+    'identity replacement and full wipe',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('community-anchor-');
+      final file = File('${dir.path}/local.db');
+      var db = EncryptedLocalDatabase(NativeDatabase(file));
+      try {
+        expect(await db.readCommunityInviteAnchor('comm_1'), isNull);
+        expect(
+          () => db.writeCommunityInviteAnchor('comm_1', ''),
+          throwsArgumentError,
+        );
+        await db.writeCommunityInviteAnchor('comm_1', 'conv_s1');
+        // A setting of the same name is another row: pins are not settings.
+        await db.writeMetadata('setting:c1.community-anchor:comm_1', 'x');
+        await db.close();
+        db = EncryptedLocalDatabase(NativeDatabase(file));
+        expect(await db.readCommunityInviteAnchor('comm_1'), 'conv_s1');
+
+        await db.writeSessionJson('{}', clearIdentityState: true);
+        expect(await db.readCommunityInviteAnchor('comm_1'), isNull);
+        // Only pins go: an unrelated metadata row stays.
+        expect(
+          await db.readMetadata('setting:c1.community-anchor:comm_1'),
+          'x',
+        );
+
+        await db.writeCommunityInviteAnchor('comm_1', 'conv_s1');
+        await db.clearAll();
+        expect(await db.readCommunityInviteAnchor('comm_1'), isNull);
+      } finally {
+        await db.close();
+        await dir.delete(recursive: true);
+      }
+    },
+  );
+
+  test('memory community pins clear on identity replacement', () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(
+      Session(
+        baseUrl: 'https://localhost',
+        token: 't',
+        accountId: 'old',
+        deviceId: 'old',
+      ),
+    );
+    await store.saveCommunityInviteAnchor('comm_1', 'conv_s1');
+    expect(await store.loadCommunityInviteAnchor('comm_1'), 'conv_s1');
+    await store.saveSession(
+      Session(
+        baseUrl: 'https://localhost',
+        token: 't',
+        accountId: 'new',
+        deviceId: 'new',
+      ),
+    );
+    expect(await store.loadCommunityInviteAnchor('comm_1'), isNull);
+  });
+
   test('memory anchors clear on identity replacement', () async {
     final store = MemoryLocalStore();
     await store.saveSession(

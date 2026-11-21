@@ -29,10 +29,16 @@ enum InviteTargetKind {
 /// (`MembershipInviteLink.matches`) and the signature through the engine, and
 /// refuses the invitation unless all pass. An invitation made before v2 has
 /// an empty [signature] and is refused.
+///
+/// [anchorGroupId] (v3) is the MLS group the invitation admits to: the group
+/// itself, or a community's shared group. It is signed with the rest; the
+/// server only repeats it. Empty when the server sends none, which the joiner
+/// refuses.
 class InviteBinding {
   const InviteBinding({
     required this.kind,
     required this.targetId,
+    required this.anchorGroupId,
     required this.inviterAccountId,
     required this.inviterDeviceId,
     required this.inviterSigningKey,
@@ -42,6 +48,7 @@ class InviteBinding {
 
   final InviteTargetKind kind;
   final String targetId;
+  final String anchorGroupId;
   final String inviterAccountId;
   final String inviterDeviceId;
   final Uint8List inviterSigningKey;
@@ -57,6 +64,7 @@ class InviteBinding {
     if (json is! Map) throw const FormatException('no invitation binding');
     final kind = InviteTargetKind.fromWire(json['target_kind']);
     final targetId = json['target_id'];
+    final anchor = json['anchor_group_id'];
     final accountId = json['inviter_account_id'];
     final deviceId = json['inviter_device_id'];
     final key = json['inviter_signing_key'];
@@ -65,6 +73,7 @@ class InviteBinding {
     if (kind == null ||
         targetId is! String ||
         targetId.isEmpty ||
+        (anchor != null && anchor is! String) ||
         accountId is! String ||
         accountId.isEmpty ||
         deviceId is! String ||
@@ -77,6 +86,7 @@ class InviteBinding {
     return InviteBinding(
       kind: kind,
       targetId: targetId,
+      anchorGroupId: (anchor as String?) ?? '',
       inviterAccountId: accountId,
       inviterDeviceId: deviceId,
       inviterSigningKey: Uint8List.fromList(base64.decode(key)),

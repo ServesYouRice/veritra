@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -12,13 +13,23 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'invite_binding_fixtures.dart';
 import 'test_crypto_service.dart';
 
+/// An engine where this device (acct_owner on dev_owner) is in [groups] with
+/// its own key, as an inviter must be in the group it anchors (v3).
+TestOnlyCryptoService _inGroups(List<String> groups) {
+  final crypto = TestOnlyCryptoService();
+  for (final group in groups) {
+    crypto.memberKeys['$group|acct_owner|dev_owner'] = testDeviceSigningKey;
+  }
+  return crypto;
+}
+
 /// C1 actions of [AppState]: what reaches the server, and what stays local.
 void main() {
   test(
     'an invitation link is made locally and only its locator is sent',
     () async {
       final api = _Api();
-      final state = _state(api);
+      final state = _state(api, crypto: _inGroups(<String>['conv_1']));
       final url = await state.createInviteLink(
         InviteTargetKind.group,
         'conv_1',
@@ -32,6 +43,7 @@ void main() {
       expect(link, isNotNull);
       expect(api.createdLocators, <String>[link!.locator]);
       expect(api.createdTargets, <String>['group:conv_1']);
+      expect(api.createdAnchors, <String>['conv_1']);
       final secret = Uri.parse(url).fragment.split('.')[1];
       expect(api.createdLocators.single, isNot(contains(secret)));
       expect(state.errorFor(Ops.membership), isNull);
@@ -45,6 +57,7 @@ void main() {
       final binding = InviteBinding(
         kind: InviteTargetKind.group,
         targetId: 'conv_1',
+        anchorGroupId: 'conv_1',
         inviterAccountId: 'acct_owner',
         inviterDeviceId: 'dev_owner',
         inviterSigningKey: testDeviceSigningKey,
@@ -69,7 +82,7 @@ void main() {
     'a link whose own signature does not verify is never handed out',
     () async {
       final api = _Api();
-      final crypto = TestOnlyCryptoService()..forcedVerification = false;
+      final crypto = _inGroups(<String>['conv_1'])..forcedVerification = false;
       final state = _state(api, crypto: crypto);
 
       expect(
@@ -496,12 +509,7 @@ void main() {
   // Owner decision 2026-11-21: "Only accept community invites from people I
   // share a group with", off by default.
   group('community invites from strangers', () {
-    Future<
-        ({
-          AppState state,
-          _Api api,
-          MembershipInviteLink link,
-        })> setUp({
+    Future<({AppState state, _Api api, MembershipInviteLink link})> setUp({
       required bool sharedOnly,
       InviteTargetKind kind = InviteTargetKind.community,
       Map<String, Set<String>> rosters = const <String, Set<String>>{},
@@ -529,8 +537,7 @@ void main() {
       expect(t.api.requested, <String>[t.link.locator]);
     });
 
-    test(
-        'on, a stranger\'s community invitation is refused and nothing is '
+    test('on, a stranger\'s community invitation is refused and nothing is '
         'filed', () async {
       final t = await setUp(
         sharedOnly: true,
@@ -584,21 +591,14 @@ void main() {
       final t = await setUp(
         sharedOnly: true,
         conversations: <Conversation>[
-          Conversation(
-            id: 'conv_dm',
-            kind: 'dm',
-            peerAccountId: 'acct_alice',
-          ),
+          Conversation(id: 'conv_dm', kind: 'dm', peerAccountId: 'acct_alice'),
         ],
       );
       expect(await t.state.previewInviteLink(t.link.url), isNotNull);
     });
 
     test('a group invitation is not affected', () async {
-      final t = await setUp(
-        sharedOnly: true,
-        kind: InviteTargetKind.group,
-      );
+      final t = await setUp(sharedOnly: true, kind: InviteTargetKind.group);
       expect(await t.state.previewInviteLink(t.link.url), isNotNull);
       expect(await t.state.requestToJoin(t.link), isNotNull);
     });
@@ -623,6 +623,389 @@ void main() {
       expect(other.communityInvitesSharedOnly, isFalse);
     });
   });
+
+  group('v3: the shared-group anchor', () {
+    Community shared(String id, String? group) =>
+        Community(id: id, name: '', sharedConversationId: group);
+
+    test(
+      'a community invitation is anchored to its shared group, signed',
+      () async {
+        final api = _Api();
+        final state = _state(api, crypto: _inGroups(<String>['conv_s1']))
+          ..communities = <Community>[shared('comm_1', 'conv_s1')];
+
+        final url = await state.createInviteLink(
+          InviteTargetKind.community,
+          'comm_1',
+        );
+
+        expect(url, isNotNull);
+        expect(api.createdTargets, <String>['community:comm_1']);
+        expect(api.createdAnchors, <String>['conv_s1']);
+        final link = MembershipInviteLink.tryParse(
+          url!,
+          expectedOrigin: 'https://localhost:8080',
+        )!;
+        final binding = InviteBinding(
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+          anchorGroupId: 'conv_s1',
+          inviterAccountId: 'acct_owner',
+          inviterDeviceId: 'dev_owner',
+          inviterSigningKey: testDeviceSigningKey,
+          tag: api.createdTags.single,
+          signature: Uint8List.fromList(api.createdSignatures.single),
+        );
+        expect(link.matches(binding), isTrue);
+        expect(
+          api.createdSignatures.single,
+          fakeInviteSignature(
+            testDeviceSigningKey,
+            link.bindingMessageOf(binding),
+          ),
+        );
+      },
+    );
+
+    test('no invitation without a group this device is in', () async {
+      final cases = <String, AppState>{
+        'a legacy community (no shared group)': _state(
+          _Api(),
+          crypto: _inGroups(<String>['conv_s1']),
+        )..communities = <Community>[shared('comm_1', null)],
+        'a community this device does not know': _state(
+          _Api(),
+          crypto: _inGroups(<String>['conv_s1']),
+        ),
+        'a shared group this device is not in': _state(
+          _Api(),
+          crypto: _inGroups(<String>['conv_other']),
+        )..communities = <Community>[shared('comm_1', 'conv_s1')],
+        'its own leaf with another key': _state(
+          _Api(),
+          crypto: TestOnlyCryptoService()
+            ..memberKeys['conv_s1|acct_owner|dev_owner'] = Uint8List.fromList(
+              _otherKey,
+            ),
+        )..communities = <Community>[shared('comm_1', 'conv_s1')],
+        'a roster read that fails': _state(
+          _Api(),
+          crypto: _ThrowingRosterCrypto(),
+        )..communities = <Community>[shared('comm_1', 'conv_s1')],
+      };
+      for (final entry in cases.entries) {
+        final state = entry.value;
+        final api = state.api! as _Api;
+        expect(
+          await state.createInviteLink(InviteTargetKind.community, 'comm_1'),
+          isNull,
+          reason: entry.key,
+        );
+        expect(api.createdLocators, isEmpty, reason: entry.key);
+      }
+      // A group: the same rule, the group itself.
+      final api = _Api();
+      expect(
+        await _state(api).createInviteLink(InviteTargetKind.group, 'conv_1'),
+        isNull,
+      );
+      expect(api.createdLocators, isEmpty);
+    });
+
+    test('a wrong or missing anchor is refused', () async {
+      final link = _newLink();
+      final community = honestBinding(
+        link,
+        kind: InviteTargetKind.community,
+        targetId: 'comm_1',
+        anchorGroupId: 'conv_s1',
+      );
+      final group = honestBinding(link);
+      final cases = <String, InviteBinding>{
+        // Signed and tagged by the inviter, but a group admits to itself.
+        'a group anchored elsewhere, signed': honestBinding(
+          link,
+          anchorGroupId: 'conv_2',
+        ),
+        'a group with no anchor, signed': honestBinding(
+          link,
+          anchorGroupId: '',
+        ),
+        'a community with no anchor, signed': honestBinding(
+          link,
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+          anchorGroupId: '',
+        ),
+        // The server swaps the anchor: neither tag nor signature fits.
+        'a community anchor swapped': tampered(
+          community,
+          anchorGroupId: 'conv_s2',
+        ),
+        'a community anchor dropped': tampered(community, anchorGroupId: ''),
+        'a group anchor swapped': tampered(group, anchorGroupId: 'conv_2'),
+        // A tag recomputed for the swap (a server holding the link) still
+        // leaves the inviter's signature over the true anchor.
+        'a swapped anchor with a recomputed tag': tampered(
+          community,
+          anchorGroupId: 'conv_s2',
+          tag: link.bindingTag(
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+            anchorGroupId: 'conv_s2',
+            inviterAccountId: 'acct_alice',
+            inviterDeviceId: 'dev_alice',
+            inviterSigningKey: defaultInviterKey,
+          ),
+        ),
+      };
+      for (final entry in cases.entries) {
+        final api = _Api()
+          ..binding = entry.value
+          ..previewKind = entry.value.kind;
+        final state = _state(api);
+
+        expect(
+          await state.previewInviteLink(link.url),
+          isNull,
+          reason: entry.key,
+        );
+        expect(await state.requestToJoin(link), isNull, reason: entry.key);
+        expect(api.requested, isEmpty, reason: entry.key);
+        expect(
+          await state.localStore.loadCommunityInviteAnchor('comm_1'),
+          isNull,
+          reason: entry.key,
+        );
+      }
+      final api = _Api()
+        ..binding = community
+        ..previewKind = InviteTargetKind.community;
+      expect(await _state(api).previewInviteLink(link.url), isNotNull);
+    });
+
+    test('a community request pins the shared group before filing', () async {
+      final link = _newLink();
+      final api = _Api()
+        ..binding = honestBinding(
+          link,
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+          anchorGroupId: 'conv_s1',
+        )
+        ..previewKind = InviteTargetKind.community;
+      final state = _state(api);
+
+      expect(await state.requestToJoin(link), isNotNull);
+
+      expect(api.cancelled, isEmpty);
+      // The Welcome check (D99) reads this anchor by the group's id.
+      final anchor = await state.localStore.loadInviteAnchor('conv_s1');
+      expect(anchor, isNotNull);
+      expect(anchor!.accountId, 'acct_alice');
+      expect(anchor.deviceId, 'dev_alice');
+      expect(anchor.signingKey, defaultInviterKey);
+      expect(await state.localStore.loadInviteAnchor('comm_1'), isNull);
+      expect(
+        await state.localStore.loadCommunityInviteAnchor('comm_1'),
+        'conv_s1',
+      );
+    });
+
+    test('a request answered with another anchor is withdrawn (replay into '
+        'another group)', () async {
+      final link = _newLink();
+      final honest = honestBinding(
+        link,
+        kind: InviteTargetKind.community,
+        targetId: 'comm_1',
+        anchorGroupId: 'conv_s1',
+      );
+      // Even a binding the inviter really signed for this link, if it
+      // names another group than the preview showed.
+      final api = _Api()
+        ..binding = honest
+        ..previewKind = InviteTargetKind.community
+        ..requestBinding = honestBinding(
+          link,
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+          anchorGroupId: 'conv_s2',
+        );
+      final state = _state(api);
+
+      expect(await state.requestToJoin(link), isNull);
+      expect(api.cancelled, <String>['jreq_1']);
+    });
+
+    test(
+      'a pinned community refuses a link anchored to another group',
+      () async {
+        final link = _newLink();
+        final api = _Api()
+          ..binding = honestBinding(
+            link,
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+            anchorGroupId: 'conv_s2',
+          )
+          ..previewKind = InviteTargetKind.community;
+        final state = _state(api);
+        await state.localStore.saveCommunityInviteAnchor('comm_1', 'conv_s1');
+
+        expect(await state.previewInviteLink(link.url), isNull);
+        expect(await state.requestToJoin(link), isNull);
+        expect(api.requested, isEmpty);
+        expect(
+          await state.localStore.loadCommunityInviteAnchor('comm_1'),
+          'conv_s1',
+        );
+        expect(await state.localStore.loadInviteAnchor('conv_s2'), isNull);
+      },
+    );
+
+    test(
+      'a community is shown only while the server names its pinned group',
+      () async {
+        Channel channel(String id, String kind, String? conversation) =>
+            Channel(
+              id: id,
+              communityId: id.startsWith('a') ? 'comm_a' : 'comm_x',
+              name: '',
+              kind: kind,
+              conversationId: conversation,
+              layoutGeneration: conversation == null ? null : 1,
+            );
+        final cases = <String, (Community, List<Channel>, bool)>{
+          'the pinned group': (
+            shared('comm_1', 'conv_s1'),
+            <Channel>[
+              channel('a1', 'open', 'conv_s1'),
+              channel('a2', 'announcement', 'conv_s1'),
+              channel('a3', 'private', 'conv_p1'),
+            ],
+            true,
+          ),
+          'another shared group': (
+            shared('comm_1', 'conv_s2'),
+            <Channel>[channel('a1', 'open', 'conv_s2')],
+            false,
+          ),
+          'no shared group (legacy)': (
+            shared('comm_1', null),
+            <Channel>[],
+            false,
+          ),
+          'an open channel routed elsewhere': (
+            shared('comm_1', 'conv_s1'),
+            <Channel>[channel('a1', 'open', 'conv_s2')],
+            false,
+          ),
+          'an announcement channel routed elsewhere': (
+            shared('comm_1', 'conv_s1'),
+            <Channel>[channel('a2', 'announcement', null)],
+            false,
+          ),
+        };
+        for (final entry in cases.entries) {
+          final (community, channels, shown) = entry.value;
+          final api = _Api()
+            ..listedCommunities = <Community>[
+              community,
+              shared('comm_free', 'conv_f'),
+            ]
+            ..listedChannels = <String, List<Channel>>{'comm_1': channels};
+          final state = _state(api);
+          await state.localStore.saveCommunityInviteAnchor('comm_1', 'conv_s1');
+
+          await state.refreshCommunities();
+
+          expect(
+            state.communities.map((c) => c.id),
+            shown ? <String>['comm_1', 'comm_free'] : <String>['comm_free'],
+            reason: entry.key,
+          );
+          expect(
+            state.channelsByCommunity.containsKey('comm_1'),
+            shown,
+            reason: entry.key,
+          );
+          // Hidden is not gone: cleanup for a left community must not run.
+          expect(
+            state.inviteAnchorHiddenCommunities,
+            shown ? isEmpty : <String>{'comm_1'},
+            reason: entry.key,
+          );
+        }
+        // A store that cannot answer neither trusts the server's mapping
+        // nor drops anything: the list already shown stays.
+        final known = shared('comm_1', 'conv_s1');
+        final api = _Api()
+          ..listedCommunities = <Community>[
+            shared('comm_1', 'conv_s2'),
+            shared('comm_2', 'conv_f'),
+          ];
+        final state = _state(api, store: _FailingCommunityAnchorStore())
+          ..communities = <Community>[known];
+        await state.refreshCommunities();
+        expect(state.communities, <Community>[known]);
+        expect(state.inviteAnchorHiddenCommunities, isEmpty);
+      },
+    );
+
+    test('v1 and v2 links are not read (downgrade)', () async {
+      final link = _newLink();
+      final fragment = Uri.parse(link.url).fragment;
+      final parts = fragment.split('.');
+      expect(parts.first, 'v3');
+      final api = _Api()..binding = honestBinding(link);
+      final state = _state(api);
+      for (final old in <String>[
+        'v2.${parts[1]}.${parts[2]}',
+        'v1.${parts[1]}',
+      ]) {
+        expect(
+          await state.previewInviteLink('https://localhost:8080/join#$old'),
+          isNull,
+          reason: old,
+        );
+      }
+      expect(api.previewed, isEmpty);
+    });
+
+    test('a v2-layout signature does not stand for a v3 binding', () async {
+      final link = _newLink();
+      final honest = honestBinding(link);
+      // What the same inviter signed under v2 for the same link: no version
+      // field and no anchor.
+      List<int> lp(List<int> field) => <int>[
+        field.length >> 8,
+        field.length & 0xff,
+        ...field,
+      ];
+      final v2 = <int>[
+        for (final field in <List<int>>[
+          utf8.encode(link.origin),
+          utf8.encode('group'),
+          utf8.encode('conv_1'),
+          utf8.encode('acct_alice'),
+          utf8.encode('dev_alice'),
+          defaultInviterKey,
+          utf8.encode(link.locator),
+        ])
+          ...lp(field),
+      ];
+      final api = _Api()
+        ..binding = tampered(
+          honest,
+          signature: fakeInviteSignature(defaultInviterKey, v2),
+        );
+
+      expect(await _state(api).previewInviteLink(link.url), isNull);
+      expect(api.requested, isEmpty);
+    });
+  });
 }
 
 final List<int> _otherKey = List<int>.generate(32, (i) => 0x70 + i);
@@ -631,11 +1014,11 @@ MembershipInviteLink _newLink() => newInviteLink();
 
 AppState _state(ApiClient api, {CryptoService? crypto, LocalStore? store}) {
   return AppState(
-    apiClientFactory: (_) => api,
-    cryptoService: crypto ?? TestOnlyCryptoService(),
-    localStore: store ?? MemoryLocalStore(),
-    syncServiceFactory: (_, __) => _SyncService(),
-  )
+      apiClientFactory: (_) => api,
+      cryptoService: crypto ?? TestOnlyCryptoService(),
+      localStore: store ?? MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _SyncService(),
+    )
     ..api = api
     ..session = const Session(
       baseUrl: 'https://localhost:8080',
@@ -651,6 +1034,9 @@ class _Api extends ApiClient {
 
   final List<String> createdLocators = <String>[];
   final List<String> createdTargets = <String>[];
+  final List<String> createdAnchors = <String>[];
+  List<Community> listedCommunities = <Community>[];
+  Map<String, List<Channel>> listedChannels = <String, List<Channel>>{};
   final List<List<int>> createdKeys = <List<int>>[];
   final List<String> createdTags = <String>[];
   final List<List<int>> createdSignatures = <List<int>>[];
@@ -673,6 +1059,7 @@ class _Api extends ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required String anchorGroupId,
     required List<int> signingKey,
     required String bindingTag,
     required List<int> bindingSignature,
@@ -680,6 +1067,7 @@ class _Api extends ApiClient {
     Duration lifetime = const Duration(days: 7),
   }) async {
     createdLocators.add(locator);
+    createdAnchors.add(anchorGroupId);
     createdKeys.add(signingKey);
     createdTags.add(bindingTag);
     createdSignatures.add(bindingSignature);
@@ -720,6 +1108,20 @@ class _Api extends ApiClient {
       binding: requestAnswersWithoutBinding ? null : requestBinding ?? binding,
     );
   }
+
+  @override
+  Future<List<Community>> listCommunities(String token) async =>
+      listedCommunities;
+
+  @override
+  Future<List<Channel>> listChannels(String token, String communityId) async =>
+      listedChannels[communityId] ?? const <Channel>[];
+
+  @override
+  Future<List<ConversationMember>> communityMembers(
+    String token,
+    String communityId,
+  ) async => const <ConversationMember>[];
 
   @override
   Future<void> cancelJoinRequest(String token, String requestId) async {
@@ -779,8 +1181,7 @@ class _ThrowingRosterCrypto extends TestOnlyCryptoService {
     required String conversationId,
     required String accountId,
     required String deviceId,
-  }) async =>
-      throw StateError('no readable group');
+  }) async => throw StateError('no readable group');
 }
 
 class _SyncService implements SyncService {
@@ -795,6 +1196,13 @@ class _SyncService implements SyncService {
   @override
   Future<void> dispose() async {
     _controller.close();
+  }
+}
+
+class _FailingCommunityAnchorStore extends MemoryLocalStore {
+  @override
+  Future<String?> loadCommunityInviteAnchor(String communityId) async {
+    throw StateError('storage unavailable');
   }
 }
 

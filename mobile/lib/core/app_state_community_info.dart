@@ -945,5 +945,7 @@ class _AppInfoTopology implements InfoTopology {
   @override
   bool communityGone(String communityId) =>
       state.communitiesLoaded &&
-      !state.communities.any((c) => c.id == communityId);
+      !state.communities.any((c) => c.id == communityId) &&
+      // C1 v3: hidden for a mismatched invitation anchor is not gone.
+      !state.inviteAnchorHiddenCommunities.contains(communityId);
 }

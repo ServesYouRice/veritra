@@ -938,6 +938,11 @@ abstract class LocalStore {
   Future<void> saveInviteAnchor(InviteAnchor anchor);
   Future<InviteAnchor?> loadInviteAnchor(String conversationId);
 
+  /// C1 v3: the shared group a verified invitation pinned a community to.
+  /// Kept, cleared and excluded from backups with the invite anchors.
+  Future<void> saveCommunityInviteAnchor(String communityId, String groupId);
+  Future<String?> loadCommunityInviteAnchor(String communityId);
+
   /// Small local settings (the encrypted `local_metadata` key-value table).
   Future<String?> loadSetting(String name);
   Future<void> saveSetting(String name, String value);
@@ -1292,6 +1297,22 @@ class MemoryLocalStore implements LocalStore {
   Future<InviteAnchor?> loadInviteAnchor(String conversationId) async =>
       _inviteAnchors[conversationId];
 
+  final Map<String, String> _communityInviteAnchors = {};
+  @override
+  Future<void> saveCommunityInviteAnchor(
+    String communityId,
+    String groupId,
+  ) async {
+    if (communityId.isEmpty || groupId.isEmpty) {
+      throw ArgumentError('invalid community invitation anchor');
+    }
+    _communityInviteAnchors[communityId] = groupId;
+  }
+
+  @override
+  Future<String?> loadCommunityInviteAnchor(String communityId) async =>
+      _communityInviteAnchors[communityId];
+
   @override
   Future<String?> loadSetting(String name) async => _settings[name];
 
@@ -1487,6 +1508,7 @@ class MemoryLocalStore implements LocalStore {
     _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
+    _communityInviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _profileKeys.clear();
@@ -3072,6 +3094,7 @@ class MemoryLocalStore implements LocalStore {
     _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
+    _communityInviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _deviceListConflicts.clear();
@@ -3873,6 +3896,17 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<InviteAnchor?> loadInviteAnchor(String conversationId) async =>
       (await _database()).readInviteAnchor(conversationId);
+
+  @override
+  Future<void> saveCommunityInviteAnchor(
+    String communityId,
+    String groupId,
+  ) async =>
+      (await _database()).writeCommunityInviteAnchor(communityId, groupId);
+
+  @override
+  Future<String?> loadCommunityInviteAnchor(String communityId) async =>
+      (await _database()).readCommunityInviteAnchor(communityId);
 
   @override
   Future<String?> loadSetting(String name) async =>

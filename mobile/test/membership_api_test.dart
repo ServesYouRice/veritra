@@ -47,6 +47,7 @@ Map<String, Object?> _bodyOf(_Call call) =>
 final Map<String, Object?> _bindingJson = <String, Object?>{
   'target_kind': 'group',
   'target_id': 'conv_1',
+  'anchor_group_id': 'conv_1',
   'inviter_account_id': 'acct_alice',
   'inviter_device_id': 'dev_alice',
   'inviter_signing_key': base64.encode(List<int>.generate(32, (i) => i)),
@@ -79,6 +80,7 @@ void main() {
         InviteTargetKind.community,
         'comm_1',
         locator: link.locator,
+        anchorGroupId: 'conv_s1',
         signingKey: List<int>.generate(32, (i) => i),
         bindingTag: 'ab' * 32,
         bindingSignature: List<int>.filled(64, 9),
@@ -90,6 +92,7 @@ void main() {
       expect(call.path, '/api/v1/communities/comm_1/invites');
       expect(_bodyOf(call).keys.toSet(), <String>{
         'locator',
+        'anchor_group_id',
         'signing_key',
         'binding_tag',
         'binding_signature',
@@ -97,6 +100,7 @@ void main() {
         'expires_in_seconds',
       });
       expect(_bodyOf(call)['locator'], link.locator);
+      expect(_bodyOf(call)['anchor_group_id'], 'conv_s1');
       // The device key goes as standard base64, as the server's JSON bytes do.
       expect(
         base64.decode(_bodyOf(call)['signing_key']! as String),
@@ -165,6 +169,7 @@ void main() {
       expect(preview.targetName, 'Hikers');
       expect(preview.inviterUsername, 'alice');
       expect(preview.binding.targetId, 'conv_1');
+      expect(preview.binding.anchorGroupId, 'conv_1');
       expect(preview.binding.inviterAccountId, 'acct_alice');
       expect(preview.binding.inviterDeviceId, 'dev_alice');
       expect(
@@ -326,6 +331,32 @@ void main() {
     },
   );
 
+  test(
+    'a binding without an anchor (made before v3) reads as empty',
+    () async {
+      for (final absent in <Object?>[null, '']) {
+        final (client, _) = await _client(
+          (_) => <String, Object?>{
+            'target_kind': 'group',
+            'target_name': 'Hikers',
+            'inviter_username': 'alice',
+            'expires_at': '2026-11-14T10:00:00Z',
+            'already_member': false,
+            'binding': <String, Object?>{
+              ..._bindingJson,
+              'anchor_group_id': absent,
+            },
+          },
+        );
+        final preview = await client.previewMembershipInvite(
+          'tok',
+          link.locator,
+        );
+        expect(preview.binding.anchorGroupId, isEmpty);
+      }
+    },
+  );
+
   test('a preview without a usable binding is a bad response', () async {
     final broken = <Map<String, Object?>?>[
       null,
@@ -336,6 +367,7 @@ void main() {
       <String, Object?>{..._bindingJson, 'tag': null},
       <String, Object?>{..._bindingJson, 'signature': 7},
       <String, Object?>{..._bindingJson, 'signature': '!!not base64'},
+      <String, Object?>{..._bindingJson, 'anchor_group_id': 7},
     ];
     for (final binding in broken) {
       final (client, _) = await _client(

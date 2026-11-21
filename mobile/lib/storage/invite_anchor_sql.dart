@@ -35,6 +35,30 @@ extension InviteAnchorSql on EncryptedLocalDatabase {
     );
   }
 
-  Future<void> _clearInviteAnchors() =>
-      customStatement('DELETE FROM local_invite_anchors');
+  /// C1 v3: community -> shared group pins live in `local_metadata` under
+  /// [_communityInviteAnchorPrefix] (no schema change). They are not
+  /// settings, so no settings export carries them, and they are cleared with
+  /// the invite anchors.
+  static const String _communityInviteAnchorPrefix = 'c1.community-anchor:';
+
+  Future<void> writeCommunityInviteAnchor(String communityId, String groupId) {
+    if (communityId.isEmpty || groupId.isEmpty) {
+      throw ArgumentError('invalid community invitation anchor');
+    }
+    return writeMetadata('$_communityInviteAnchorPrefix$communityId', groupId);
+  }
+
+  Future<String?> readCommunityInviteAnchor(String communityId) =>
+      readMetadata('$_communityInviteAnchorPrefix$communityId');
+
+  Future<void> _clearInviteAnchors() async {
+    await customStatement('DELETE FROM local_invite_anchors');
+    await customStatement(
+      'DELETE FROM local_metadata WHERE substr(name, 1, ?) = ?',
+      <Object?>[
+        _communityInviteAnchorPrefix.length,
+        _communityInviteAnchorPrefix,
+      ],
+    );
+  }
 }

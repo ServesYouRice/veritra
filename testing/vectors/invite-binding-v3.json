@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "description": "C1 invitation binding v3, the shared-group anchor (docs/designs/C1-invite-format.md, 2026-11-21). Same secret, signing seed, locator and key commitment as invite-binding-v2.json; the fields add a version field first and anchor_group_id after target_id. Outputs are the HMAC tag (label veritra/membership-invite/v3/binding), the signed message and the Ed25519 signature under the unchanged domain veritra-invite-binding-v2, and the link fragment. Built with the Go standard library (TestInviteBindingV3Vector rebuilds it); Dart checks the message, tag and fragment, and the native engine verifies the signature.",
+  "inputs": {
+    "origin": "https://chat.example.org",
+    "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "signing_seed_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+    "version_field": "veritra/membership-invite/v3",
+    "target_kind": "community",
+    "target_id": "comm_1",
+    "anchor_group_id": "conv_shared_1",
+    "inviter_account_id": "acct_alice",
+    "inviter_device_id": "dev_alice"
+  },
+  "outputs": {
+    "signing_public_key_hex": "17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+    "locator": "4437d01b5bc6825b22a3de68051fee45b5809368049546cf0a8169cdb2ddcc52",
+    "key_commitment_hex": "4f479b5811fb4b3d669a8e231db922dc",
+    "tag": "93155438b442bd3558f9b17b73214f90efb0688ae7a0110f60d6299356638896",
+    "signed_message_hex": "001c766572697472612f6d656d626572736869702d696e766974652f7633001868747470733a2f2f636861742e6578616d706c652e6f72670009636f6d6d756e6974790006636f6d6d5f31000d636f6e765f7368617265645f31000a616363745f616c69636500096465765f616c696365002017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce004034343337643031623562633638323562323261336465363830353166656534356235383039333638303439353436636630613831363963646232646463633532",
+    "signature_hex": "ed02ed837bf15ba572fac4baeb02c5787c11ce830d6cc9bd8c588f7c2f3ea35d294bc083149ca7284679f773aa958f699ebbb7dfa5fbe279419769ad1aaedf09",
+    "link_fragment": "v3.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8.T0ebWBH7Sz1mmo4jHbki3A",
+    "link_fragment_note": "secret and key commitment, base64url without padding"
+  }
+}

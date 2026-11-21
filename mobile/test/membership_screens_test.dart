@@ -139,7 +139,14 @@ void main() {
     testWidgets('a created link is shown once and can be copied',
         (tester) async {
       final api = _Api();
-      final state = _state(api);
+      // v3: the community's shared group, which this device is in.
+      final state = _state(api)
+        ..communities = <Community>[
+          Community(
+              id: 'comm_1', name: 'Club', sharedConversationId: 'conv_s1'),
+        ];
+      (state.cryptoService as TestOnlyCryptoService)
+          .memberKeys['conv_s1|acct_owner|dev_owner'] = testDeviceSigningKey;
       String? copied;
       tester.binding.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -173,7 +180,7 @@ void main() {
           .widgetList<SelectableText>(find.byType(SelectableText))
           .single
           .data!;
-      expect(shown, startsWith('$_origin/join#v2.'));
+      expect(shown, startsWith('$_origin/join#v3.'));
       final made =
           MembershipInviteLink.tryParse(shown, expectedOrigin: _origin)!;
       expect(made.locator, url);
@@ -185,6 +192,7 @@ void main() {
           made.bindingTag(
             kind: InviteTargetKind.community,
             targetId: 'comm_1',
+            anchorGroupId: 'conv_s1',
             inviterAccountId: 'acct_owner',
             inviterDeviceId: 'dev_owner',
             inviterSigningKey: testDeviceSigningKey,
@@ -197,6 +205,7 @@ void main() {
             made.bindingMessage(
               kind: InviteTargetKind.community,
               targetId: 'comm_1',
+              anchorGroupId: 'conv_s1',
               inviterAccountId: 'acct_owner',
               inviterDeviceId: 'dev_owner',
               inviterSigningKey: testDeviceSigningKey,
@@ -869,6 +878,7 @@ class _Api extends ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required String anchorGroupId,
     required List<int> signingKey,
     required String bindingTag,
     required List<int> bindingSignature,

@@ -492,6 +492,12 @@ class AppState extends ChangeNotifier
   // locally when records are created from this device.
   List<Community> communities = <Community>[];
   Map<String, List<Channel>> channelsByCommunity = <String, List<Channel>>{};
+
+  /// C1 v3: communities the server lists but [refreshCommunities] hides
+  /// because their shared group is not the one a verified invitation pinned.
+  /// Hidden is not gone: nothing that cleans up after a left community runs
+  /// for them.
+  Set<String> inviteAnchorHiddenCommunities = <String>{};
   List<Invite> invites = <Invite>[];
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
@@ -2728,6 +2734,10 @@ class AppState extends ChangeNotifier
         _refreshOwned(current, generation);
     try {
       final list = await client.listCommunities(current.token);
+      // C1 v3: read before the channels, so the commit below stays as it was.
+      // A pin that cannot be read keeps the locally known list (the catch
+      // below), as a list the server cannot send does.
+      final pins = await _communityInviteAnchorsOf(list);
       final channels = <String, List<Channel>>{};
       final creationAccess = <String, bool>{};
       for (final community in list) {
@@ -2757,9 +2767,27 @@ class AppState extends ChangeNotifier
           // Unknown rights hide the entry; refresh can try again later.
         }
       }
+      // C1 v3: a community a verified invitation pinned to a shared group
+      // is shown only while the server names that same group.
+      final kept = <Community>[
+        for (final community in list)
+          if (MembershipActions._communityKeepsInviteAnchor(
+            community,
+            channels[community.id] ?? const <Channel>[],
+            pins[community.id],
+          ))
+            community,
+      ];
       if (!active()) return;
-      communities = list;
-      channelsByCommunity = channels;
+      inviteAnchorHiddenCommunities = <String>{
+        for (final community in list)
+          if (!kept.contains(community)) community.id,
+      };
+      communities = kept;
+      channelsByCommunity = <String, List<Channel>>{
+        for (final community in kept)
+          community.id: channels[community.id] ?? const <Channel>[],
+      };
       _channelCreationAccess.addAll(creationAccess);
       // C3: a private channel's group stays one here, whatever the server
       // labels it later.
@@ -10000,6 +10028,7 @@ class AppState extends ChangeNotifier
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
+    inviteAnchorHiddenCommunities = <String>{};
     invitesLoaded = false;
     invitesLoadFailed = false;
     devicesLoaded = false;
