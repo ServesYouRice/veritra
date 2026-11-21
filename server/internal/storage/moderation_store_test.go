@@ -364,3 +364,115 @@ func TestModerationStateHidesPrivateChannelsFromNonMembers(t *testing.T) {
 		t.Fatalf("outsider: %v", err)
 	}
 }
+
+// C5 known gap closed (migration 0094): leaving, or being kicked, and joining
+// again does not end a timeout early; lifting it ends it for good.
+func TestTimeoutSurvivesLeaveKickAndRejoin(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice := f.people[0]
+	join := func() {
+		t.Helper()
+		f.addMember(t, ctx, alice, domain.RoleMember)
+		if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); err != nil {
+			t.Fatalf("channel member: %v", err)
+		}
+	}
+	join()
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// Leave and come back: still timed out.
+	if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, alice.Account.ID, alice.Account.ID); err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+	join()
+	if err := f.post(t, ctx, alice, "after-rejoin"); !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("post after leaving and rejoining: %v", err)
+	}
+	// Kicked and added back: still timed out.
+	if _, err := f.store.KickCommunityMember(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID); err != nil {
+		t.Fatalf("kick: %v", err)
+	}
+	join()
+	if err := f.post(t, ctx, alice, "after-kick"); !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("post after kick and re-add: %v", err)
+	}
+	// Lifted: gone for good, also across a later rejoin.
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, alice.Account.ID, alice.Account.ID); err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+	join()
+	if err := f.post(t, ctx, alice, "after-lift"); err != nil {
+		t.Fatalf("post after the timeout was lifted: %v", err)
+	}
+	// Another community's member row is not touched by this one's timeout.
+	var other int
+	if err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE account_id = ? AND community_id IS NULL AND timeout_until IS NOT NULL`, alice.Account.ID).Scan(&other); err != nil || other != 0 {
+		t.Fatalf("conversation rows with a timeout: %d err=%v", other, err)
+	}
+}
+
+// C5 known gap closed: while invitations are paused no request can be
+// approved, so the admins' list is empty; the requests come back after.
+func TestPausedInvitesHidePendingRequests(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice := f.people[0]
+	f.invite(t, ctx, f.communityTarget(), f.admin, testLocator(5), 9)
+	if _, _, err := f.store.RequestToJoin(ctx, alice.Account.ID, testLocator(5)); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	list := func() []domain.JoinRequest {
+		t.Helper()
+		requests, err := f.store.ListJoinRequests(ctx, f.communityTarget(), f.admin.Account.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		return requests
+	}
+	if got := list(); len(got) != 1 {
+		t.Fatalf("before pause: %+v", got)
+	}
+	if _, err := f.store.SetInvitesPaused(ctx, f.comm.ID, f.admin.Account.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(); len(got) != 0 {
+		t.Fatalf("while paused: %+v", got)
+	}
+	if _, err := f.store.SetInvitesPaused(ctx, f.comm.ID, f.admin.Account.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(); len(got) != 1 || got[0].AccountID != alice.Account.ID {
+		t.Fatalf("after resume: %+v", got)
+	}
+}
+
+// C5: a banned account's devices cannot be claimed for an add to any of the
+// community's conversations. The ban removes the membership in the same
+// transaction and every later add refuses the account, and a claim needs the
+// target to be a member, so no separate ban check is needed in the claim.
+func TestBannedAccountDevicesCannotBeClaimed(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice := f.people[0]
+	f.addMember(t, ctx, alice, domain.RoleMember)
+	if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, f.owner.Account.ID, f.owner.Device.ID, []string{alice.Device.ID}); err != nil {
+		t.Fatalf("claim before the ban: %v", err)
+	}
+	if _, err := f.store.BanCommunityMember(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID); err != nil {
+		t.Fatalf("ban: %v", err)
+	}
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, f.owner.Account.ID, f.owner.Device.ID, []string{alice.Device.ID}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("claim after the ban: %v", err)
+	}
+	if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("re-add after the ban: %v", err)
+	}
+}

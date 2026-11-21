@@ -27,8 +27,14 @@ refuse them, and a claim needs a member to ask); escalation and instance ban
 (not part of this package). A ban removes via the same path as C1's removal
 (`removeCommunityMemberTx`; it covers an active layout's shared and private
 conversations). Admins and above lift bans; moderators ban members they
-outrank. Known gaps: the pending-request list does not hide requests an
-active pause makes unapprovable; (the C1 community remove route now writes a `kick` audit row;) leaving and rejoining clears a timeout; the instance owner's
+outrank. Closed 2026-11-21: the pending-request list is empty while a pause
+makes every request unapprovable (the requests stay pending and come back
+when it ends); a timeout survives leaving or a kick and a later rejoin
+(migration 0094: `member_timeouts` remembers its end and a trigger copies
+it onto a new community membership row; lifting it deletes the memory);
+a banned account's devices cannot be claimed (a claim needs membership,
+which the ban removes; tested, no separate check). The C1 community remove
+route writes a `kick` audit row. Known gaps: the instance owner's
 escalation action kinds need a table rebuild when added; MLS commits of
 legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
 (shared group, `channel_id`), C1 (membership), C4 (the signed built-in
