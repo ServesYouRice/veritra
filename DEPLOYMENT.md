@@ -21,11 +21,16 @@ else, for any self-hoster, is in [`docs/operations.md`](docs/operations.md).
   entry (the app entry applies the namespace too) and an ops entry that
   depends on it; the app timeout covers the Recreate stop (up to 40 s) and
   the startup probe (up to 300 s).
-- **Rollback** is reverting the release commit. The older binary's migrate
+- **Rollback.** Reverting the release commit is safe only when every
+  migration between the two releases is additive. The older binary's migrate
   step leaves newer migrations alone
-  (`TestOlderBinaryMigrateIsANoOpOnANewerSchema`); across a migration the old
-  code cannot use, restore the matching backup instead (operations.md,
-  "Upgrade and rollback").
+  (`TestOlderBinaryMigrateIsANoOpOnANewerSchema`) and it passes `/readyz`,
+  but it answers 500 where a table changed. Across a non-additive migration
+  (0092 and 0094 are such contract steps) roll forward, or restore the
+  pre-upgrade backup together with its binary (the `restore` admin run with
+  the older digest); never revert the release commit alone (operations.md,
+  "Upgrade and rollback", "The rollback rule"). Run `backup-now` before
+  promoting a release that adds a migration.
 
 ## Ports and health
 
@@ -67,6 +72,19 @@ less free space than the smaller of 5% and 2 GiB. On local-path that file
 system is the node's one disk, shared with every app, so the disk alert must
 fire well before that.
 
+**Disk**, for the handbook's budget of the node's one disk (infra
+`apps/veritra/base`): per environment, a 40Gi data volume (database,
+encrypted blobs and the seven local backups). local-path does not enforce
+it, so `PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB` 3686 keeps the server's
+stored content to about 90% of it at the peak of a backup run. On top, up to
+20Gi of scratch (`emptyDir` on the node's disk) only while the R2 restore
+drill (monthly), `restore-drill-now` or `restore` runs; it holds two copies
+of one backup, so it uses about twice the live data. Budget production at
+40 GiB standing plus 20 GiB during a drill or restore. Staging has the same
+claim but holds only what a test writes, is usually at 0 replicas, and its
+CronJobs are suspended; its `restore-drill-now` takes the same 20Gi of
+scratch while it runs.
+
 ## Secrets and accounts
 
 | Secret | Keys |
@@ -81,9 +99,13 @@ server. The certificate comes from infra's `letsencrypt-production` issuer.
 ## Ingress
 
 - DNS-only: no `cloudflare-only` middleware and no origin-pull TLS option.
-- Traefik's read timeout must exceed the server's 15-minute transfer
-  deadline, for example 20 minutes; 15 minutes is not enough. With infra's
-  60 s, every upload is cut at 60 s (handbook INF-14).
+- Traefik's read **and** write timeouts (`respondingTimeouts.readTimeout`
+  and `writeTimeout` on the websecure entrypoint) must exceed the server's
+  15-minute transfer deadline; 15 minutes is not enough. The read side
+  covers uploads, the write side attachment and backup downloads. The owner
+  set both to 20 minutes for the whole entrypoint (2026-11-21, handbook
+  INF-14 and CHK-INF-3). At 60 s (Traefik's read default, and infra's first
+  setting for both), every upload or slow download is cut at 60 s.
 - No Buffering middleware: bodies up to 100 MiB stream through, and the
   server enforces its own caps. Keep the `Host` header.
 
@@ -119,7 +141,8 @@ After a release lands, before promoting the same digest:
 1. `https://<host>/readyz` and `/healthz` answer 200.
 2. The pod's first log lines: `security_posture` names the released commit;
    `admission_limits` shows the expected `instance_storage_mib`.
-3. An upload that takes longer than 60 s finishes.
+3. An upload and an attachment download that each take longer than 60 s
+   finish.
 4. Two clients on different networks are rate-limited separately.
 5. The collector scrapes `veritra_*` metrics.
 6. A backup and a restore drill from R2 have passed (admin runs below).

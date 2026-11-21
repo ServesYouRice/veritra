@@ -1,0 +1,12 @@
+# What the owner's infra repository forwards and allows, copied from infra
+# (veritra-onboarding at 4d0e2a2, 2026-11-21). alert_rules_test.go checks
+# deploy/monitoring/veritra-alerts.cluster.rules.yml against it. When infra
+# changes either value, copy it here; the test then says which rule no
+# longer fits.
+#
+# platform/observability/collector-config.yaml, job veritra-metrics,
+# metric_relabel_configs: the regex of the `keep` action on __name__.
+keep_regex: veritra_(admission_.*|backup_.*|process_start_time_seconds|go_memory_bytes|storage_.*|sqlite_pool_wait_seconds_total|sqlite_writer_acquire_duration_seconds_(bucket|count|sum)|push_deliveries_total|push_backlog_oldest_job_timestamp_seconds|retention_.*|rate_limit_rejections_total|http_requests_total|http_responses_total)
+# apps/veritra/base/app/deployment.yaml, container veritra,
+# resources.limits.memory, in MiB.
+memory_limit_mib: 512
