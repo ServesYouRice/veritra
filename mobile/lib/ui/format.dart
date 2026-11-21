@@ -79,3 +79,27 @@ String accountInitials(String accountId, String? username) {
   }
   return letters.substring(0, letters.length >= 2 ? 2 : 1).toUpperCase();
 }
+
+/// A time left in at most two units, rounded up so it never reads zero while
+/// time remains: "40 minutes", "5 hours 10 minutes", "6 days 4 hours".
+String timeLeftInWords(AppLocalizations l10n, Duration left) {
+  var minutes = (left.inSeconds + 59) ~/ 60;
+  if (minutes < 1) minutes = 1;
+  if (minutes < 60) return l10n.durationMinutes(minutes);
+  if (minutes < 24 * 60) {
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    return rest == 0
+        ? l10n.durationHours(hours)
+        : '${l10n.durationHours(hours)} ${l10n.durationMinutes(rest)}';
+  }
+  var days = minutes ~/ (24 * 60);
+  var hours = ((minutes % (24 * 60)) + 59) ~/ 60;
+  if (hours == 24) {
+    days += 1;
+    hours = 0;
+  }
+  return hours == 0
+      ? l10n.durationDays(days)
+      : '${l10n.durationDays(days)} ${l10n.durationHours(hours)}';
+}

@@ -506,12 +506,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get backupReplaceConfirm => 'Replace backup';
 
   @override
-  String get inviteRevokeTitle => 'Revoke invite?';
+  String get inviteRevokeTitle => 'Turn off this invite?';
 
   @override
-  String inviteRevokeMessage(String code) {
-    return 'Code $code stops working immediately. People who already joined with it keep their accounts.';
-  }
+  String get inviteRevokeMessage =>
+      'It stops working immediately. People who already joined with it keep their accounts.';
+
+  @override
+  String get inviteTurnOff => 'Turn off';
+
+  @override
+  String get inviteCannotReshare => 'Can\'t be shared again';
 
   @override
   String get connectFreshInstanceTitle => 'This server is new';
@@ -1042,6 +1047,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String inviteExpiresAt(String time) {
     return 'Expires $time';
   }
+
+  @override
+  String inviteExpiresIn(String time) {
+    return 'Expires in $time';
+  }
+
+  @override
+  String get inviteExpired => 'Expired';
 
   @override
   String get inviteActions => 'Invite actions';
