@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/desktop/update_installer.dart';
 import 'package:private_messenger/desktop/update_service.dart';
 import 'update_test_support.dart';
 import 'package:private_messenger/features/settings/settings_screen.dart';
@@ -231,6 +232,50 @@ void main() {
 
       expect(service.status.kind, UpdateStatusKind.updateAvailable);
       expect(find.textContaining('Version 0.2.0 is available'), findsOneWidget);
+      // No installer (an all-users install): the update is only reported.
+      expect(service.canInstall, isFalse);
+      expect(find.text('Download update'), findsNothing);
+      expect(find.text('Check for updates'), findsOneWidget);
+
+      // A per-user install offers the download as the next tap.
+      final installable = UpdateService(
+        settings: settings,
+        verifier: const AcceptingUpdateVerifier(),
+        client: client,
+        installer: UpdateInstaller(
+          downloader: _NoInstallerParts(),
+          digester: _NoInstallerParts(),
+          launcher: _NoInstallerParts(),
+        ),
+        currentBuild: 1,
+        platform: 'windows',
+        arch: 'x64',
+        now: () => DateTime.utc(2026, 11, 10, 13),
+      );
+      await installable.checkForUpdates(force: true);
+      await tester.pumpWidget(
+        UpdateSettingsScope(
+          settings: settings,
+          service: installable,
+          child: MaterialApp(
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: SettingsScreen(state: _state()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        checkFinder,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Download update'), findsOneWidget);
     });
 
     testWidgets('manual check reports upToDate and displays localized string', (
@@ -396,4 +441,18 @@ class _FakeSyncService implements SyncService {
 
   @override
   Future<void> dispose() => _events.close();
+}
+
+/// Installer parts for a tile test: nothing is downloaded or started.
+class _NoInstallerParts
+    implements UpdateDownloader, FileDigester, InstallerLauncher {
+  @override
+  Future<void> download(Uri url, File destination, {required int maxBytes}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> sha256Hex(File file) => throw UnimplementedError();
+
+  @override
+  Future<void> launch(File installer) => throw UnimplementedError();
 }

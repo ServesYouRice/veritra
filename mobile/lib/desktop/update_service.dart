@@ -265,7 +265,9 @@ abstract interface class UpdateClient {
   );
 }
 
-/// Real HTTPS update client. Sends one clean HTTPS GET without credentials or cookies.
+/// Real HTTPS update client: one GET for the feed and one for its `.sig`,
+/// without credentials or cookies, redirects followed by hand and only to
+/// https ([openHttpsWithRedirects]), each body at most [maxBytes].
 class HttpUpdateClient implements UpdateClient {
   const HttpUpdateClient({
     this.client,
@@ -289,53 +291,46 @@ class HttpUpdateClient implements UpdateClient {
     final http = client ?? HttpClient();
     http.connectionTimeout = timeout;
     try {
-      final request = await http.getUrl(feedUri).timeout(timeout);
-      request.cookies.clear();
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close().timeout(timeout);
-      if (response.statusCode != HttpStatus.ok) {
-        throw HttpException(
-          'Update feed answered HTTP ${response.statusCode}',
-          uri: feedUri,
-        );
+      final jsonBytes = await _get(http, feedUri, accept: 'application/json');
+      if (jsonBytes == null) {
+        throw HttpException('Update feed is not available', uri: feedUri);
       }
-      final bytesBuilder = BytesBuilder(copy: false);
-      await for (final chunk in response.timeout(timeout)) {
-        bytesBuilder.add(chunk);
-        if (bytesBuilder.length > maxBytes) {
-          throw const FormatException(
-            'Update feed response exceeds size limit',
-          );
-        }
-      }
-      final jsonBytes = bytesBuilder.takeBytes();
-
+      // A missing or unreadable signature is null: the verifier rejects it.
       Uint8List? sigBytes;
       try {
-        final sigUri = feedUri.replace(path: '${feedUri.path}.sig');
-        final sigReq = await http.getUrl(sigUri).timeout(timeout);
-        sigReq.cookies.clear();
-        final sigResp = await sigReq.close().timeout(timeout);
-        if (sigResp.statusCode == HttpStatus.ok) {
-          final sigBuilder = BytesBuilder(copy: false);
-          await for (final chunk in sigResp.timeout(timeout)) {
-            sigBuilder.add(chunk);
-            if (sigBuilder.length > maxBytes) {
-              throw const FormatException(
-                'Update signature exceeds size limit',
-              );
-            }
-          }
-          sigBytes = sigBuilder.takeBytes();
-        }
+        sigBytes = await _get(
+          http,
+          feedUri.replace(path: '${feedUri.path}.sig'),
+        );
       } catch (_) {
-        // Detached signature file may not be present in placeholder mode.
+        sigBytes = null;
       }
-
       return (jsonBytes: jsonBytes, signatureBytes: sigBytes);
     } finally {
-      if (client == null) http.close();
+      if (client == null) http.close(force: true);
     }
+  }
+
+  /// The body of [uri] when it answers 200, null for another status.
+  Future<Uint8List?> _get(HttpClient http, Uri uri, {String? accept}) async {
+    final response = await openHttpsWithRedirects(
+      http,
+      uri,
+      timeout: timeout,
+      accept: accept,
+    );
+    if (response.statusCode != HttpStatus.ok) {
+      await response.drain<void>();
+      return null;
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in response.timeout(timeout)) {
+      builder.add(chunk);
+      if (builder.length > maxBytes) {
+        throw const FormatException('Update feed response exceeds size limit');
+      }
+    }
+    return builder.takeBytes();
   }
 }
 
@@ -506,6 +501,11 @@ class UpdateService extends ChangeNotifier {
   bool get _canCheck => _platform == 'windows' && _verifier.isConfigured;
 
   UpdateStatus get status => _status;
+
+  /// Whether this install can download and start an update itself (a
+  /// per-user Windows install: see [isPerUserWindowsInstall]). Otherwise an
+  /// available update is only reported.
+  bool get canInstall => _installer != null;
   DateTime? get lastCheckTime => _lastCheckTime;
   bool get isChecking => _status.kind == UpdateStatusKind.checking;
 
@@ -655,6 +655,9 @@ class UpdateService extends ChangeNotifier {
         installer == null) {
       return _status;
     }
+    // One start per verified download: a second tap before the app quits
+    // finds nothing to start.
+    _readyInstaller = null;
     try {
       await installer.launch(file, info);
     } catch (e) {

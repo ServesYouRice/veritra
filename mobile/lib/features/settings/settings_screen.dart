@@ -512,6 +512,11 @@ class SettingsScreen extends StatelessWidget {
     final IconData icon;
     final VoidCallback? onTap;
     switch (status.kind) {
+      case UpdateStatusKind.updateAvailable when !service.canInstall:
+        // An all-users install only reports it (isPerUserWindowsInstall).
+        title = l10n.settingsCheckForUpdates;
+        icon = Icons.refresh_outlined;
+        onTap = () => service.checkForUpdates(force: true);
       case UpdateStatusKind.updateAvailable:
       case UpdateStatusKind.downloadFailed:
         title = l10n.settingsUpdateDownload;

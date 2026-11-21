@@ -102,8 +102,72 @@ class UpdateInstaller {
   }
 }
 
+/// Most redirects one update request follows.
+const int maxUpdateRedirects = 5;
+
+/// Sends one GET for [url] without cookies or credentials and follows
+/// redirects by hand: at most [maxUpdateRedirects], and every hop, the first
+/// included, only to https with a host. Dart's own redirect handling would
+/// follow a redirect to plain http. Returns the first response that is not a
+/// redirect; the caller reads or drains it.
+Future<HttpClientResponse> openHttpsWithRedirects(
+  HttpClient http,
+  Uri url, {
+  required Duration timeout,
+  String? accept,
+}) async {
+  var target = url;
+  for (var hop = 0; hop <= maxUpdateRedirects; hop++) {
+    if (target.scheme != 'https' || target.host.isEmpty) {
+      throw const FormatException('Update requests must use https');
+    }
+    final request = await http.getUrl(target).timeout(timeout);
+    request.followRedirects = false;
+    request.cookies.clear();
+    if (accept != null) request.headers.set(HttpHeaders.acceptHeader, accept);
+    final response = await request.close().timeout(timeout);
+    if (!response.isRedirect) return response;
+    final location = response.headers.value(HttpHeaders.locationHeader);
+    await response.drain<void>();
+    if (location == null) {
+      throw const HttpException('Update redirect has no target');
+    }
+    target = target.resolve(location);
+  }
+  throw const HttpException('Update request redirected too often');
+}
+
+/// Whether [executable] is a per-user install (Inno Setup's per-user
+/// default, under `%LOCALAPPDATA%`). Only such an install updates itself: its
+/// installer runs without elevation. An all-users install would run the
+/// downloaded installer through a UAC prompt as administrator, and the file
+/// sits in the user's temporary folder between its last digest check and
+/// that start, so it is never offered there (the user installs the signed
+/// installer from the release page instead).
+bool isPerUserWindowsInstall({
+  required String executable,
+  required Map<String, String> environment,
+}) {
+  String normal(String path) {
+    var value = path.replaceAll('/', r'\').toLowerCase();
+    while (value.endsWith(r'\')) {
+      value = value.substring(0, value.length - 1);
+    }
+    return value;
+  }
+
+  final base = normal(environment['LOCALAPPDATA'] ?? '');
+  final exe = normal(executable);
+  if (base.length < 3 || !RegExp(r'^[a-z]:\\').hasMatch(base)) return false;
+  if (exe.split(r'\').any((part) => part == '..' || part == '.')) {
+    return false;
+  }
+  return exe.startsWith('$base\\');
+}
+
 /// HTTPS download with a size cap. Redirects (GitHub serves release assets
-/// from another host) are followed by hand, at most five, each only to https.
+/// from another host) are followed by hand, at most five, each only to https
+/// ([openHttpsWithRedirects]).
 class HttpUpdateDownloader implements UpdateDownloader {
   const HttpUpdateDownloader({
     this.timeout = const Duration(seconds: 30),
@@ -122,64 +186,72 @@ class HttpUpdateDownloader implements UpdateDownloader {
     final http = client ?? HttpClient();
     http.connectionTimeout = timeout;
     try {
-      var target = url;
-      for (var hop = 0; hop <= 5; hop++) {
-        if (target.scheme != 'https' || target.host.isEmpty) {
-          throw const FormatException('Update download must use https');
-        }
-        final request = await http.getUrl(target).timeout(timeout);
-        request.followRedirects = false;
-        request.cookies.clear();
-        final response = await request.close().timeout(timeout);
-        if (response.isRedirect) {
-          final location = response.headers.value(HttpHeaders.locationHeader);
-          await response.drain<void>();
-          if (location == null) {
-            throw const HttpException('Update download redirect has no target');
-          }
-          target = target.resolve(location);
-          continue;
-        }
-        if (response.statusCode != HttpStatus.ok) {
-          await response.drain<void>();
-          throw HttpException(
-            'Update download answered HTTP ${response.statusCode}',
-          );
-        }
-        if (response.contentLength > maxBytes) {
-          await response.drain<void>();
-          throw const FormatException('Update download exceeds size limit');
-        }
-        final sink = destination.openWrite();
-        var received = 0;
-        try {
-          await for (final chunk in response.timeout(timeout)) {
-            received += chunk.length;
-            if (received > maxBytes) {
-              throw const FormatException('Update download exceeds size limit');
-            }
-            sink.add(chunk);
-          }
-        } finally {
-          await sink.close();
-        }
-        return;
+      final response = await openHttpsWithRedirects(
+        http,
+        url,
+        timeout: timeout,
+      );
+      if (response.statusCode != HttpStatus.ok) {
+        await response.drain<void>();
+        throw HttpException(
+          'Update download answered HTTP ${response.statusCode}',
+        );
       }
-      throw const HttpException('Update download redirected too often');
+      if (response.contentLength > maxBytes) {
+        await response.drain<void>();
+        throw const FormatException('Update download exceeds size limit');
+      }
+      final sink = destination.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in response.timeout(timeout)) {
+          received += chunk.length;
+          if (received > maxBytes) {
+            throw const FormatException('Update download exceeds size limit');
+          }
+          sink.add(chunk);
+        }
+      } finally {
+        await sink.close();
+      }
     } finally {
       if (client == null) http.close(force: true);
     }
   }
 }
 
+/// Runs a program; [CertutilFileDigester] takes it so tests can see the call.
+typedef ProcessRunner = Future<ProcessResult> Function(
+  String executable,
+  List<String> arguments,
+);
+
 /// SHA-256 through Windows' own `certutil`, which streams the file (the plain
 /// Dart hash in lib/crypto/sha256.dart is for 43-byte tokens, not installers).
+/// Always `%SystemRoot%\System32\certutil.exe` by absolute path: a bare
+/// `certutil` is searched for in the app's and the current directory first,
+/// where a planted one could print any digest.
 class CertutilFileDigester implements FileDigester {
-  const CertutilFileDigester();
+  const CertutilFileDigester({this.environment, this.run = Process.run});
+
+  /// The environment to read `SystemRoot` from; the process's own if null.
+  final Map<String, String>? environment;
+  final ProcessRunner run;
+
+  /// The absolute path of Windows' certutil, or null without `SystemRoot`.
+  static String? certutilPath(Map<String, String> environment) {
+    final root = environment['SystemRoot'] ?? environment['SYSTEMROOT'] ?? '';
+    if (!RegExp(r'^[A-Za-z]:\\[^\\/:*?"<>|]+$').hasMatch(root)) return null;
+    return '$root\\System32\\certutil.exe';
+  }
 
   @override
   Future<String> sha256Hex(File file) async {
-    final result = await Process.run('certutil', <String>[
+    final certutil = certutilPath(environment ?? Platform.environment);
+    if (certutil == null) {
+      throw const ProcessException('certutil', <String>[], 'no SystemRoot');
+    }
+    final result = await run(certutil, <String>[
       '-hashfile',
       file.path,
       'SHA256',

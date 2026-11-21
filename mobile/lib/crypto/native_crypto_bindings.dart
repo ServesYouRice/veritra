@@ -635,6 +635,20 @@ typedef _L2FrankDvVerifyDart = int Function(
   Pointer<Uint8>,
 );
 
+/// ABI 27 (W12): `pm_crypto_update_feed_verify`.
+typedef _UpdateFeedVerifyNative = Int32 Function(
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+  Pointer<Uint8>,
+);
+typedef _UpdateFeedVerifyDart = int Function(
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+  Pointer<Uint8>,
+);
+
 typedef _VerifyNative = Int32 Function(
   _PmByteSlice,
   _PmByteSlice,
@@ -822,6 +836,10 @@ class NativeCryptoBindings {
         _c7Verify = library.lookupFunction<_VerifyNative, _VerifyDart>(
           'pm_crypto_c7_verify',
         ),
+        _updateFeedVerify = library
+            .lookupFunction<_UpdateFeedVerifyNative, _UpdateFeedVerifyDart>(
+          'pm_crypto_update_feed_verify',
+        ),
         _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
             _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
         _l1CheckStep = library
@@ -997,7 +1015,7 @@ class NativeCryptoBindings {
             .lookupFunction<_AttachmentChunkNative, _AttachmentChunkDart>(
           'pm_crypto_attachment_decrypt_chunk',
         ) {
-    if (_abiVersion() != 26) {
+    if (_abiVersion() != 27) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -1066,6 +1084,7 @@ class NativeCryptoBindings {
   final _ThreeSlicesOutputDart _c7Seal;
   final _ThreeSlicesOutputDart _c7Open;
   final _VerifyDart _c7Verify;
+  final _UpdateFeedVerifyDart _updateFeedVerify;
   final _HandleTwoSlicesOutputDart _c7Sign;
   final _L2TokenRequestDart _l2TokenRequest;
   final _TwoSlicesOutputDart _l2TokenFinalize;
@@ -1846,6 +1865,39 @@ class NativeCryptoBindings {
           signature,
         ], (s) => _c7Verify(d, s[0], s[1], s[2], ok)),
       );
+      _check(status);
+      return ok.value == 1;
+    } finally {
+      calloc.free(ok);
+    }
+  }
+
+  /// The largest update feed [updateFeedVerify] checks (64 KiB, the app's
+  /// `maxUpdateFeedBytes`).
+  static const updateFeedMaxBytes = 64 * 1024;
+
+  /// W12 (ABI 27): strict Ed25519 verification of the Windows update feed,
+  /// `"veritra-update-feed-v1" | message`, under the 32-byte update
+  /// [publicKey]. `false` for an invalid signature, a malformed key
+  /// included. A key that is not 32 bytes, a signature that is not 64
+  /// bytes, or a message that is empty or over [updateFeedMaxBytes] is an
+  /// [ArgumentError] here and [NativeCryptoError.invalidArgument] natively.
+  /// Verify only: the library signs nothing under this domain.
+  bool updateFeedVerify({
+    required List<int> publicKey,
+    required List<int> message,
+    required List<int> signature,
+  }) {
+    _bounded(publicKey, 32, exact: true);
+    _bounded(message, updateFeedMaxBytes);
+    _bounded(signature, 64, exact: true);
+    final ok = calloc<Uint8>();
+    try {
+      final status = _withByteLists(<List<int>>[
+        publicKey,
+        message,
+        signature,
+      ], (s) => _updateFeedVerify(s[0], s[1], s[2], ok));
       _check(status);
       return ok.value == 1;
     } finally {

@@ -53,6 +53,9 @@
 /scripts/g24-matrix_test.py @ServesYouRice
 /mobile/lib/desktop/update_trust.dart @ServesYouRice
 /mobile/lib/desktop/update_installer.dart @ServesYouRice
+/mobile/lib/desktop/update_verifier.dart @ServesYouRice
+/mobile/test/fixtures/update-feed/ @ServesYouRice
+/crypto/rust/src/update_feed.rs @ServesYouRice
 /mobile/android/gradle/ @ServesYouRice
 
 # The G27 advisory exceptions the gate checks for expiry.

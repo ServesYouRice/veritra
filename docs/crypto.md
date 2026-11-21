@@ -1299,11 +1299,52 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   MLS counter, so the server's monotonic check is unchanged. It is a
   number, not state.
 
+## Update feed signature (W12, ABI 27)
+
+The Windows update channel (`docs/release-engineering.md`, "Update channel")
+trusts a feed, `update.json`, only with a detached signature `update.json.sig`
+made offline by the owner's **update key** (an Ed25519 key of its own, never a
+device key, the code-signing certificate or the recovery key).
+
+- **Signed bytes:** `"veritra-update-feed-v1" || update.json` (the domain is
+  22 ASCII bytes, no separator, no length prefix), exactly as
+  `scripts/update-feed.py sign` signs them with `openssl pkeyutl -rawin`.
+- **Check:** `pm_crypto_update_feed_verify(public_key[32], message,
+  signature[64], out_valid)` in `crypto/rust/src/update_feed.rs`, strict
+  Ed25519 (`ed25519-dalek` `verify_strict`, already a direct dependency
+  since D78). `PM_CRYPTO_OK` with `out_valid` 1 or 0 (0 also for a malformed
+  or small-order key); `PM_CRYPTO_INVALID_ARGUMENT` for a key that is not 32
+  bytes, a signature that is not 64 bytes, or a message that is empty or over
+  64 KiB (the app's `maxUpdateFeedBytes`), with `out_valid` not written.
+- **Verify only.** No function signs under this domain, and the domain is in
+  neither `c7::SIGN_DOMAINS` nor the L1 list label, so `pm_crypto_c7_sign`
+  can never produce an update-feed signature, and a signature under any
+  library domain (or none) never verifies as one (tests in
+  `update_feed_tests.rs`).
+- **Known answer:** `mobile/test/fixtures/update-feed/` (feed, signature,
+  public key; the private key was discarded). Rust
+  (`update_feed_tests.rs`, `ffi/update_feed_tests.rs`) and Dart
+  (`mobile/test/update_feed_native_test.dart`) check it.
+- **App:** `Ed25519UpdateSignatureVerifier` (`mobile/lib/desktop/update_verifier.dart`)
+  is configured only when `updateFeedPublicKeyHex` is 64 lowercase hex
+  characters; while it is empty the build uses
+  `FailClosedUpdateSignatureVerifier` and makes no request.
+- **No messaging surface:** it reads no device, group or key state and never
+  touches `pm_crypto_available` or the release gate's markers.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **W12 update feed verification (2026-11-21, crypto ABI 27; no wire,
+  server, migration, local schema or dependency change):** one new FFI
+  function, `pm_crypto_update_feed_verify`, strict Ed25519 over
+  `"veritra-update-feed-v1" | feed` under the owner's update key, verify
+  only, messages up to 64 KiB. Described in "Update feed signature (W12,
+  ABI 27)" above. ABI 25 stays reserved by another package; 27 follows the
+  L2-3 ABI 26. Every client must run ABI 27 (the Dart bindings refuse any
+  other version).
 - **D134 stuck MLS update: Retry or Discard (2026-11-14, follows I34 and
   I51, bug-hunt c6ed/Q-006; no ABI, wire, server, migration or local
   schema change):** a control message that failed for good (I34: a

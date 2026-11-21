@@ -237,7 +237,9 @@ a vendor service and without telemetry. Android has no channel (F-Droid and Play
 update themselves); Linux and macOS have none yet.
 
 What is built (`mobile/lib/desktop/update_service.dart`, `update_installer.dart`,
-`update_trust.dart`; tests in `mobile/test/update_service_test.dart`):
+`update_verifier.dart`, `update_trust.dart`; tests in
+`mobile/test/update_service_test.dart`, `update_verifier_test.dart`,
+`update_feed_native_test.dart`):
 
 1. **Feed:** `update.json` plus a detached Ed25519 signature `update.json.sig`
    (64 raw bytes over `veritra-update-feed-v1` followed by the exact bytes), published as release assets at
@@ -247,57 +249,68 @@ What is built (`mobile/lib/desktop/update_service.dart`, `update_installer.dart`
    a non-https URL, a feed valid for more than 90 days and a signature that does
    not verify. `scripts/update-feed.py keygen` makes the update key.
 2. **Trust:** the **update key**, separate from the code-signing certificate;
-   its public half is `updateFeedPublicKeyHex` in `update_trust.dart`. The app
-   rejects a bad signature, a digest mismatch, another platform or arch, a lower
-   `build` (downgrade) and an expired feed (so a mirror cannot serve an old,
-   validly signed file for ever).
-3. **Check:** one HTTPS `GET` of the file (and its `.sig`) with no identifiers or
-   cookies. It still shows the user's IP address to the host (GitHub). On by
-   default (daily at launch) with an off switch in Settings. **Owner decision:**
-   keep it on by default, or off until the user opts in (the more private
-   choice).
+   its public half is `updateFeedPublicKeyHex` in `update_trust.dart`. The
+   signature is checked in the native library (`pm_crypto_update_feed_verify`,
+   crypto ABI 27, strict Ed25519 over `veritra-update-feed-v1` followed by the
+   feed bytes; `docs/crypto.md`, "Update feed signature") by
+   `Ed25519UpdateSignatureVerifier`, which is used only while the key is 64
+   lowercase hex characters; with the key empty the build keeps
+   `FailClosedUpdateSignatureVerifier` and requests nothing. The app rejects a
+   bad or missing signature, a digest mismatch, another platform or arch, a
+   lower `build` (downgrade) and an expired feed (so a mirror cannot serve an
+   old, validly signed file for ever).
+3. **Check:** one HTTPS `GET` of the file and one of its `.sig`, with no
+   cookies or credentials; redirects (GitHub serves assets from another host)
+   are followed by hand, at most five, only to https, so a redirect to plain
+   http is refused before it is requested. It still shows the user's IP
+   address to the host (GitHub). **Owner decision (2026-11-21):** on by
+   default, once at each launch, with an off switch in Settings; it starts
+   only once the update key is set (fail closed until then).
 4. **Install:** the Settings tile offers each step as a tap: check, then
    "Download update" (the installer, https only with redirects checked, at most
    512 MiB, a file name the app chooses, SHA-256 compared with the signed feed;
    a mismatch deletes it), then "Restart to update". Before it starts, the file
-   is hashed again, so one swapped in the temporary folder never runs. The
-   installer runs `/SILENT /NORESTART /CLOSEAPPLICATIONS`, detached, and the app
-   quits through the tray's Quit. Never silently, never without the user's tap.
+   is hashed again, so one swapped in the temporary folder before that check
+   never runs; a second tap starts nothing. The hash is Windows' `certutil` by
+   absolute path (`%SystemRoot%\System32\certutil.exe`), never one found on the
+   search path. The installer runs `/SILENT /NORESTART /CLOSEAPPLICATIONS`,
+   detached, and the app quits through the tray's Quit. Never silently, never
+   without the user's tap.
+
+   **Per-user installs only.** Between the second hash and the start there is
+   a short window in which a program running as the same user could replace
+   the file in that user's temporary folder. For a per-user install (Inno
+   Setup's default, under `%LOCALAPPDATA%`) such a program could already
+   change the installed app, so nothing is gained. An all-users install would
+   start the installer through a UAC prompt as administrator, which that
+   program could not otherwise reach, so there the app only reports the
+   update ("Version x is available") and the user installs the signed
+   installer from the release page (`isPerUserWindowsInstall`, tested).
 5. **Never:** server-pushed updates, forced updates, or an update that changes
    the crypto or the server address without showing it.
 6. **Messaging gate:** until G24/G25 pass there is no public release, so no
    channel is switched on. A channel never delivers a build that
    `scripts/release-readiness.sh` rejects.
 
-**What is missing, and it is more than the signing account.** The app cannot
-check the feed signature yet. Dart has no Ed25519 and no new dependency or
-hand-written primitive is acceptable (artifact trust is a second-opinion area),
-so the shipped verifier (`FailClosedUpdateSignatureVerifier`) accepts nothing and
-the channel stays off: no network request is made, in Settings the tile says
-"Update checks are not available in this build". (An earlier placeholder returned
-true for any non-empty signature once a key was set; it is gone, and
-`update_service_test.dart` fails if the guard is removed.) To finish it:
+**What is still missing before the channel can be switched on:**
 
-1. **Verification in the native library** (a Rust change and a crypto ABI bump,
-   which this session could not build or test): one verify-only function, for
-   example `pm_crypto_update_feed_verify(public_key[32], message, signature[64],
-   out_valid)`, strict Ed25519 over the raw message under a **separate domain**
-   `veritra-update-feed-v1` (prepend it like the C7 domains; never reuse the
-   invite-binding or C7 domains, never expose a sign function for it), message up
-   to 64 KiB, `PM_CRYPTO_INVALID_ARGUMENT` for a wrong length. Then an
-   `Ed25519UpdateSignatureVerifier` whose `isConfigured` is true only when
-   `updateFeedPublicKeyHex` is 64 hex characters. The signed vector in
-   `mobile/test/fixtures/update-feed/` (feed, signature, public key) is its
-   known-answer test: the signature is over `veritra-update-feed-v1` followed by
-   the feed bytes, which is what `scripts/update-feed.py` signs.
-   The alternative is a reviewed dependency such as a maintained Ed25519
-   package: an owner decision (AGENTS.md: new dependencies need license review).
-2. **The update key:** `scripts/update-feed.py keygen --out update-key.pem`, kept
+1. **The update key:** `scripts/update-feed.py keygen --out update-key.pem`, kept
    offline and backed up by the owner; its public half goes into
-   `update_trust.dart` in a reviewed pull request. Open: who holds it and how it
-   is backed up (a rotation would need a second key in the app).
-3. **The signing certificate** (above), and a first real run on Windows: none of
-   the installer, download or launch code has run on a Windows machine.
+   `updateFeedPublicKeyHex` in `update_trust.dart` in a reviewed pull request.
+   That one change turns the channel on (checks are on by default). Open: who
+   holds it and how it is backed up (a rotation would need a second key in the
+   app). The key file `keygen` writes is not passphrase-protected; keep it on
+   offline, encrypted storage.
+2. **The signing certificate** (above), and a first real run on Windows: none
+   of the installer, download, certutil or launch code has run on a Windows
+   machine.
+3. **The independent review (G25)** of `pm_crypto_update_feed_verify` with the
+   rest of the crypto ABI, as for every ABI change.
+
+Earlier, the app had no Ed25519 check and shipped a verifier that accepts
+nothing; it still does while the key is empty, and `update_service_test.dart`
+fails if that guard is removed. An earlier placeholder that returned true for
+any non-empty signature is gone.
 
 ## F-Droid
 
