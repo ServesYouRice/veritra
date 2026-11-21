@@ -322,13 +322,7 @@ func (a *API) syncWebSocket(w http.ResponseWriter, r *http.Request) {
 	// registration or this read sees the deleted session.
 	if err := a.recheckSession(r, principal); err != nil {
 		a.Hub.Unregister(client)
-		if errors.Is(err, storage.ErrUnauthorized) {
-			refuseUnauthenticated(w, r)
-			return
-		}
-		a.warn("websocket_session_recheck_failed", "err", err)
-		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, "session_check_unavailable")
+		a.refuseSessionLookup(w, r, err)
 		return
 	}
 	_ = realtime.ServeWebSocket(w, r, client, principal.ExpiresAt, func() { a.Hub.Unregister(client) })

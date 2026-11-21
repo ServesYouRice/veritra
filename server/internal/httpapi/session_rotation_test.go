@@ -296,3 +296,24 @@ func TestLoginMigratesALegacyBcryptHashOnlyAfterFullSuccess(t *testing.T) {
 		t.Fatal("a current hash was rewritten")
 	}
 }
+
+// A reauthentication whose recent-auth write fails in storage must not answer
+// 401: the app ends its session on a 401 `unauthorized`. A session that is
+// gone still does (TestReauthRotationIssuesANewTokenAndAGraceForTheOldOne).
+func TestReauthStorageFailureIsNotUnauthorized(t *testing.T) {
+	owner := newRotationOwner(t)
+	if _, err := owner.db.Exec(`CREATE TRIGGER fail_recent_auth BEFORE UPDATE OF recent_auth_at ON sessions
+		BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	status, response := owner.reauth(t, owner.token, "owner-password-123", false)
+	if status != http.StatusServiceUnavailable || !bytes.Contains(response, []byte("session_check_unavailable")) {
+		t.Fatalf("reauth with failing storage status=%d body=%s, want 503 session_check_unavailable", status, response)
+	}
+	if _, err := owner.db.Exec(`DROP TRIGGER fail_recent_auth`); err != nil {
+		t.Fatal(err)
+	}
+	if got := owner.status(t, http.MethodGet, "/api/v1/devices/me", owner.token); got != http.StatusOK {
+		t.Fatalf("session after a failed reauth write status=%d", got)
+	}
+}
