@@ -51,6 +51,29 @@ Known gaps (see the evidence file for what was measured):
 - The server container image is out of scope here; its determinism is not
   measured by these scripts.
 
+## Crypto build record (D134)
+
+The crypto build scripts write `build-info.txt` next to the library:
+`source_revision` (the commit), `cargo_lock_sha256`, `source_tree_dirty` and
+`rustc -Vv`. `source_tree_dirty=true` means `crypto/rust` had uncommitted or
+untracked files, so the library is not exactly that commit. Release packaging
+refuses such a library, and also a record that is missing or does not say
+`source_tree_dirty=false` exactly once.
+
+| Platform | Where it is refused | Checked here (Linux) |
+|---|---|---|
+| Android | `check-release-evidence.py`: the signed APK must carry `assets/veritra-crypto/build-info.txt` | yes, synthetic APKs |
+| iOS | The Runner's "Crypto Build Record" build phase (`scripts/ios-crypto-build-record.sh`) refuses every configuration except Debug and Profile, and copies the record into the app as `veritra-crypto/build-info.txt`. `check-release-evidence.py` then requires that record in the signed `.ipa` | the script and the `.ipa` check, yes; that Xcode runs the phase and the record lands in a real signed `.ipa`, only on a Mac (CI `mobile-ios`, G24) |
+| Windows | `build-windows-installer.ps1` (not with `-DryRun`) | only where PowerShell runs |
+| Linux, macOS | Not gated: there is no release packaging for them yet. The record is written; a future package step must refuse it the same way | n/a |
+
+Both the iOS phase and the evidence check use one function,
+`crypto_build_info_error` in `check-release-evidence.py` (the phase calls it
+with `--crypto-build-info`), so it needs `python3` on the Mac, as
+`build-mobile-crypto.sh` already does. Debug and Profile builds copy whatever
+record there is and never refuse; the signed `.ipa` check still catches one
+that ships. Not checked anywhere: that `source_revision` is the release commit.
+
 ## Windows installer
 
 `release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
