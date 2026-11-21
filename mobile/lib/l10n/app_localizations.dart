@@ -7083,6 +7083,30 @@ abstract class AppLocalizations {
   /// **'Lift ban for {username}'**
   String moderationUnban(String username);
 
+  /// No description provided for @moderationBanEnforced.
+  ///
+  /// In en, this message translates to:
+  /// **'Members\' apps also refuse to add this account back.'**
+  String get moderationBanEnforced;
+
+  /// No description provided for @moderationBanNotInRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the server enforces this ban. Members\' apps do not check it yet.'**
+  String get moderationBanNotInRecord;
+
+  /// No description provided for @moderationBanRecordOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Members\' apps refuse to add this account back. The server no longer bans it.'**
+  String get moderationBanRecordOnly;
+
+  /// No description provided for @moderationBanApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Make members\' apps enforce the ban on {username}'**
+  String moderationBanApply(String username);
+
   /// No description provided for @moderationSectionLog.
   ///
   /// In en, this message translates to:
@@ -8768,6 +8792,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins post'**
   String get rolesOnlyAdminsPost;
+
+  /// No description provided for @rolesRulesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Group rules'**
+  String get rolesRulesSection;
+
+  /// No description provided for @rolesPinsAdminsOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Only admins can pin messages'**
+  String get rolesPinsAdminsOnly;
+
+  /// No description provided for @rolesPinsAdminsOnlyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'When on, only the owner and admins can pin or unpin. Every member\'s app ignores pins from anyone else.'**
+  String get rolesPinsAdminsOnlyDetail;
+
+  /// No description provided for @rolesChannelInfoRestricted.
+  ///
+  /// In en, this message translates to:
+  /// **'Only moderators and admins can edit channel names'**
+  String get rolesChannelInfoRestricted;
+
+  /// No description provided for @rolesChannelInfoRestrictedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'When on, only the owner, admins and moderators can change channel names and topics. Every member\'s app ignores changes from anyone else.'**
+  String get rolesChannelInfoRestrictedDetail;
+
+  /// No description provided for @rolesRulesAdminsOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the owner and admins can change these rules.'**
+  String get rolesRulesAdminsOnly;
 
   /// No description provided for @channelHistoryTitle.
   ///

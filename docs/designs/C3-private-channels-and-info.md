@@ -3,8 +3,10 @@
 **Status (2026-11-21): steps 1-4, conversion (D127, behind
 `PRIVATE_MESSENGER_C7_HISTORY`) and private channel membership under the
 verified C4 record are built; see "Private channel membership" at the end.
-Left: the "admins restrict channel info" flag in the C4 record, and an
-end-to-end run against a real server before G25.** Earlier:
+The "admins restrict channel info" switch is in the C4 record (format 3,
+2026-11-21; when on, moderators and above edit channel info; `docs/crypto.md`,
+"C4 record format 3"). Left: an end-to-end run against a real server
+before G25.** Earlier:
 [local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
 Written 2026-11-01 against `main`
 at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
@@ -424,9 +426,10 @@ read as "moderator member":
 
 A moderator re-seals channel records under its new key. The server lets any
 channel reader write a channel record, and D80 lets any member edit channel
-info, so the re-sealed records verify; if admins later restrict channel
-info, a moderator's re-seal announcement would not verify, and this rule
-has to be revisited then.
+info, so the re-sealed records verify. When admins restrict channel info
+(C4 record format 3), moderators stay editors for this reason, so the
+re-seal still verifies (owner question in the C4 design, "Record format
+3").
 
 When the channel group has no owner, admin or moderator at all, no device
 may rotate and the obligation waits until one joins; every device keeps
@@ -550,10 +553,12 @@ cannot edit channel info. Rules from the first review that still bind:
 
 **Seams and residuals.**
 
-- The C4 role record (format 2) has no "admins restrict channel info" flag.
-  `GovernanceInfoEditPolicy.channelInfoRestricted` is the seam; until C4's
-  client wiring adds the flag, channel info follows D80's default (any
-  member). Without a verified role record nothing is shown.
+- The "admins restrict channel info" switch is the C4 record's
+  `channelInfoRestricted` (format 3, 2026-11-21), read by
+  `GovernanceInfoEditPolicy`: off, any member edits channel info (D80);
+  on, moderators and above. It is judged by the record as the device holds
+  it now, so an edit accepted before the switch stays shown. Without a
+  verified role record nothing is shown.
 - Which conversation is a community's shared group (`shared_conversation_id`)
   and which carries which channel come from the server. A hostile server
   with any account's help could pass off a group the attacker owns as a

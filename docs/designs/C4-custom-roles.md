@@ -8,8 +8,9 @@ succession is built (migration 0087, 2026-11-11, "Server succession" in
 leave notice, role-only interval, owner decision B); the leave proof in the
 commit is built (crypto ABI 24); 2026-11-21: the wiring is exercised end to
 end against a hostile member's modified client, the handover warning and
-the elector prompt are built (section "Round 4" below); the wiring still
-needs the human G25 review.** Rescoped
+the elector prompt are built (section "Round 4" below); record format 3
+(C3 channel-info switch, W8 admin-only pins, C5 bans) is built (section
+"Record format 3" below); the wiring still needs the human G25 review.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -55,10 +56,10 @@ The two posting fields are here because C2's drop has two inputs: the
 sender's role and whether posting is restricted. If the restriction came
 from the server, a lying server could switch it off and members' posts in
 an announcement channel would show. Apps restrict where **either** this
-state or the server says so (the server can only narrow). Nothing else is
-in the record: C3's "admins restrict info edits" flag and C5's ban list and
-timeouts join it only when those packages build them (see their designs);
-until then they are trusted to the server, and their designs say so.
+state or the server says so (the server can only narrow). C5's timeouts
+joined it in format 2 (flags bit 2); C3's channel-info switch, W8's
+admin-only pin switch and C5's ban list joined it in format 3 ("Record
+format 3" below).
 
 ## Where it lives: a GroupContext extension
 
@@ -385,7 +386,7 @@ proofs exist" is **not met**, and the receiver wiring cannot start under ABI
   no counter was available to this package.**
 
 Built in this slice instead (no ABI): the record codec v2
-(`governance_codec.dart`, vector `testing/vectors/c4-governance-record-v2.json`,
+(`governance_codec.dart`, vector `testing/vectors/c4-governance-record-v2.json`, now `-v3.json`,
 format in `docs/crypto.md`), and the server's half of "Server differences to
 close" (migration 0054: one owner per group and per community, ownership only by
 the owner's transfer to an admin, anyone may step down). Local schema 22 is **not used**:
@@ -585,3 +586,61 @@ rosters the rules use count unapproved leaves, so a leaf added under another
 account's id can keep that account in the roster; this can delay or block a
 role change but never grant one.
 
+## Record format 3 (2026-11-21)
+
+Three packages waited on record fields: C3 (admins restrict channel names
+and topics, D80), W8 (an admin-only pin switch for groups) and C5 (bans
+checked by members' apps). The wire format, the rules and each app's
+enforcement are in `docs/crypto.md`, "C4 record format 3"; vector
+`testing/vectors/c4-governance-record-v3.json`. What was decided here:
+
+- **A version byte, written only when needed.** Format 3 is format 2's body
+  plus a settings byte and a ban list, under version byte 3. A record that
+  uses none of the new fields stays format 2, byte for byte, so builds that
+  read only format 2 keep working in every group that never switches one
+  on, and lifting the last one goes back to format 2. Unlike C5's timeouts
+  (a flag bit inside format 2), the new fields get their own version: they
+  are settings, not sections of format 2, and a later format can add
+  settings bits without touching format 2's flags. Older builds refuse a
+  format 3 record either way (unknown version, as they refuse unknown flag
+  bits), and their sync of that group pauses until they update.
+- **Who writes.** Switches: admin or above, as the posting fields. Bans: as
+  the server's `BanCommunityMember` / `UnbanCommunityMember`: a moderator or
+  above who outranks the account, in the commit that removes it; admin or
+  above for an account already gone; only admin or above lifts.
+- **No banned account in any roster.** Checked before everything else in
+  `validateCommit`, so neither an add with the `joined` stamp nor an add
+  that leaves the record alone gets through, and a hostile member's leaf
+  under a banned account's id is refused too. Producers leave banned
+  accounts out of their adds.
+- **The ban rides in its removal commit.** That is where the record still
+  shows the rank the account had; a later role-only commit cannot see it,
+  so the server's own rule (a moderator cannot ban someone who already
+  left) would refuse a moderator. The banning device remembers its ban and
+  its reconcile carries it (`recordWithBans`); otherwise an admin's later
+  commit (sync pass, or "Apply" on the Moderation screen).
+- **`owner_rev` does not move** for switches or bans. D86 names the fields
+  an owner decision moves; adding these would widen the rogue-admin
+  residual for no gain. A change would be an owner decision.
+- **Channel info when restricted: moderators and above** (decision taken
+  here, owner question below). C3's seam said owners and admins, but D122
+  makes moderators rotate a private channel's key when no admin is in it
+  and re-seal its record; an admins-only rule would make every app ignore
+  that re-seal and show placeholders.
+
+Owner question: when admins restrict channel info, who edits it:
+moderators and above (built), or owners and admins only (C3's first seam;
+then a moderator's re-seal after a D122 rotation is not shown until an
+admin writes the channel again)? Changing it is one line
+(`GovernanceState.mayEditChannelInfo`) and its tests.
+
+Tests: `mobile/test/c4_record_v3_test.dart` (each forbidden action from a
+hostile member's record, pins, channel info, private channels, ban drop),
+`mobile/test/governance_codec_test.dart` (format 2 bytes pinned, format 3
+round trips and refusals), `mobile/test/c4_adversarial_native_test.dart`
+(real OpenMLS through the app's receive path: a moderator switching rules,
+lifting a ban, kicking and banning an admin; a ban carried in its removal
+commit; three ways to re-add a banned account refused; the honest producer
+refusing; the owner's lift letting the add through),
+`mobile/test/c4_roles_screen_test.dart` (the switches). Removing the
+`banned` check, the switch rank check or the producer filter fails them.

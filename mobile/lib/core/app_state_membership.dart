@@ -603,7 +603,11 @@ extension MembershipActions on AppState {
   }
 
   /// Bans an account (C5): removes it if it is a member, and refuses its
-  /// return until the ban is lifted.
+  /// return until the ban is lifted. The community's verified record gets
+  /// the ban too (record format 3): this device's removal commit carries it,
+  /// or a later sync pass writes it ([RecordFormat3Actions]), so every
+  /// member's app refuses to add the account back, whatever the server
+  /// later says.
   Future<bool> banCommunityMember(String communityId, String accountId) async {
     final done = await _membershipCall<bool>((current, client) async {
       final removal = await client.banCommunityMember(
@@ -611,18 +615,34 @@ extension MembershipActions on AppState {
         communityId,
         accountId,
       );
+      // Before the removal is reconciled, so its commit can carry the ban.
+      await _oweBanRecord(communityId, accountId);
       await _afterCommunityRemoval(removal, accountId);
       return true;
     });
     return done ?? false;
   }
 
+  /// Lifts a ban: the record's first (admins and above), then the
+  /// server's. It does not add the account back. A ban only the record
+  /// holds (the server's was lifted by a build older than this) is lifted
+  /// there alone.
   Future<bool> unbanCommunityMember(
     String communityId,
     String accountId,
   ) async {
+    if (!await _liftRecordBan(communityId, accountId)) return false;
     final done = await _membershipCall<bool>((current, client) async {
-      await client.unbanCommunityMember(current.token, communityId, accountId);
+      try {
+        await client.unbanCommunityMember(
+          current.token,
+          communityId,
+          accountId,
+        );
+      } on ApiException catch (err) {
+        // Nothing to lift on the server: the record held it alone.
+        if (err.statusCode != 404) rethrow;
+      }
       return true;
     });
     return done ?? false;

@@ -1,4 +1,4 @@
-// C4: canonical bytes of a group's role record (format version 2).
+// C4: canonical bytes of a group's role record (format versions 2 and 3).
 //
 // Pure Dart, no ABI. The bytes are what a GroupContext extension would carry
 // (docs/crypto.md, "Group role state (C4)"); Rust treats them as opaque and
@@ -10,9 +10,19 @@ import 'dart:typed_data';
 
 import 'governance.dart';
 
-/// The only version this app reads. Version 1 (admins, moderators and posting
-/// only) was documented but never written by any build, so it is withdrawn.
+/// Format 2: roles, posting, electors, the election, `joined` and C5
+/// timeouts. Version 1 (admins, moderators and posting only) was documented
+/// but never written by any build, so it is withdrawn and refused.
 const int governanceRecordVersion = 2;
+
+/// Format 3 (docs/crypto.md, "C4 record format 3"): format 2's body, then a
+/// settings byte (C3 channel-info restriction, W8 admin-only pins) and the C5
+/// ban list. A state is written as format 3 only when it uses one of these
+/// ([GovernanceState.usesFormat3]); otherwise as format 2, byte for byte as
+/// before, so builds that read only format 2 keep working in every group
+/// that sets none of them. One state has exactly one encoding: a format 3
+/// record that sets none of them is refused.
+const int governanceRecordVersion3 = 3;
 
 /// Longest accepted record. Counts are u16 and ids up to 255 bytes, so an
 /// unbounded record could be huge; no honest group comes near this.
@@ -39,12 +49,19 @@ const int _flagTimeouts = 4;
 const int _knownFlags = _flagAdminsOnlyPosting | _flagElection | _flagTimeouts;
 const int _adminFlagElector = 1;
 
+/// Format 3 settings byte.
+const int _settingChannelInfoRestricted = 1;
+const int _settingAdminsOnlyPins = 2;
+const int _knownSettings =
+    _settingChannelInfoRestricted | _settingAdminsOnlyPins;
+
 /// Encodes [state] canonically. Throws [GovernanceCodecException] when the
 /// state could not be decoded back (an invariant the format needs is broken).
 Uint8List encodeGovernance(GovernanceState state) {
   _checkShape(state);
   final w = _Writer();
-  w.u8(governanceRecordVersion);
+  final v3 = state.usesFormat3;
+  w.u8(v3 ? governanceRecordVersion3 : governanceRecordVersion);
   w.u64(state.rev);
   w.u64(state.ownerRev);
   final election = state.election;
@@ -102,6 +119,17 @@ Uint8List encodeGovernance(GovernanceState state) {
       w.u64(t.untilMs);
     }
   }
+  if (v3) {
+    w.u8(
+      (state.channelInfoRestricted ? _settingChannelInfoRestricted : 0) |
+          (state.adminsOnlyPins ? _settingAdminsOnlyPins : 0),
+    );
+    final bans = _sorted(state.bans);
+    w.u16(bans.length);
+    for (final b in bans) {
+      w.id(b);
+    }
+  }
   final out = w.bytes();
   if (out.length > maxGovernanceRecordBytes) {
     throw const GovernanceCodecException('record too large');
@@ -117,7 +145,8 @@ GovernanceState decodeGovernance(Uint8List bytes) {
   }
   final r = _Reader(bytes);
   final version = r.u8();
-  if (version != governanceRecordVersion) {
+  if (version != governanceRecordVersion &&
+      version != governanceRecordVersion3) {
     throw GovernanceCodecException('unknown version $version');
   }
   final rev = r.u64();
@@ -186,6 +215,22 @@ GovernanceState decodeGovernance(Uint8List bytes) {
       );
     }
   }
+  var settings = 0;
+  var bans = const <String>{};
+  if (version == governanceRecordVersion3) {
+    settings = r.u8();
+    if (settings & ~_knownSettings != 0) {
+      throw const GovernanceCodecException('unknown setting bits');
+    }
+    final banCount = r.u16();
+    if (banCount > maxBans)
+      throw const GovernanceCodecException('too many bans');
+    bans = _readIdList(r, banCount);
+    // Format 3 only when it carries something format 2 cannot.
+    if (settings == 0 && bans.isEmpty) {
+      throw const GovernanceCodecException('format 3 without its fields');
+    }
+  }
   r.end();
   final state = GovernanceState(
     rev: rev,
@@ -199,6 +244,9 @@ GovernanceState decodeGovernance(Uint8List bytes) {
     election: election,
     joined: joined,
     timeouts: timeouts,
+    channelInfoRestricted: settings & _settingChannelInfoRestricted != 0,
+    adminsOnlyPins: settings & _settingAdminsOnlyPins != 0,
+    bans: bans,
   );
   _checkShape(state);
   return state;
@@ -239,6 +287,17 @@ void _checkShape(GovernanceState s) {
     }
   }
   if (s.timeouts.length > 0xffff) bad('too many timeouts');
+  if (s.bans.length > maxBans) bad('too many bans');
+  if (owner != null && s.bans.contains(owner)) bad('owner is banned');
+  // A banned account is out of the roster, so it holds nothing else.
+  for (final b in s.bans) {
+    if (s.admins.containsKey(b) ||
+        s.moderators.contains(b) ||
+        s.joined.containsKey(b) ||
+        s.timeouts.containsKey(b)) {
+      bad('banned account holds a place');
+    }
+  }
   for (final t in s.timeouts.values) {
     if (!t.wellFormed) bad('timeout out of range');
   }
@@ -253,6 +312,7 @@ void _checkShape(GovernanceState s) {
     if (e != null) ...e.votes.keys,
     if (e != null) ...e.votes.values,
     ...s.timeouts.keys,
+    ...s.bans,
   ]) {
     _checkId(id);
   }

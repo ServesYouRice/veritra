@@ -36,12 +36,16 @@ abstract interface class InfoEditPolicy {
 /// [InfoEditPolicy] over the community shared group's C4 role state.
 ///
 /// - Community and category: the owner and admins.
-/// - Channel: any member (D80), unless admins restrict channel info; then
-///   the owner and admins.
+/// - Channel: any member (D80), unless admins restrict channel info (the
+///   record's `channelInfoRestricted`, record format 3); then moderators and
+///   above. Moderators stay editors because they rotate a private channel's
+///   key when no admin is in it (D122) and re-seal its record under the new
+///   key; an admins-only rule would hide that re-sealed record.
 ///
 /// With no verified role record the answer is no (D80: apps never take the
 /// server's word for a role), so nothing is shown until C4's role record is
-/// readable.
+/// readable. The switch is judged against the record as this device holds
+/// it now, like the C2 drop: an edit accepted before the switch stays shown.
 class GovernanceInfoEditPolicy implements InfoEditPolicy {
   const GovernanceInfoEditPolicy(
     this.roles, {
@@ -50,9 +54,8 @@ class GovernanceInfoEditPolicy implements InfoEditPolicy {
 
   final GovernanceState? roles;
 
-  /// D80's "unless admins restrict it". The C4 role record (format 2) has no
-  /// such flag yet; the C4 client wiring adds it and passes it here. Until
-  /// then channel info follows D80's default: open to every member.
+  /// Restricts channel info even where the record does not (tests). The
+  /// record's own switch always applies; this can only narrow.
   final bool channelInfoRestricted;
 
   @override
@@ -62,8 +65,10 @@ class GovernanceInfoEditPolicy implements InfoEditPolicy {
     final rank = state.rankOf(editorAccountId);
     return switch (subjectKind) {
       infoKindCommunity || infoKindCategory => rank >= BuiltInRole.admin.rank,
-      infoKindChannel =>
-        !channelInfoRestricted || rank >= BuiltInRole.admin.rank,
+      infoKindChannel => (channelInfoRestricted
+              ? state.copyWith(channelInfoRestricted: true)
+              : state)
+          .mayEditChannelInfo(editorAccountId),
       _ => false,
     };
   }

@@ -193,6 +193,52 @@ class GovernanceCommands {
     );
   }
 
+  /// C3 (record format 3): channel names and topics edited by moderators
+  /// and above only ([restricted]), or by anyone. Admins and above. Not an
+  /// owner role decision: it does not move `ownerRev` (D86's list).
+  GovernanceState setChannelInfoRestricted(bool restricted) {
+    if (state.channelInfoRestricted == restricted) _refuse('no_change');
+    return _finish(_base().copyWith(channelInfoRestricted: restricted));
+  }
+
+  /// W8 (record format 3): only owners and admins pin ([adminsOnly]), or
+  /// the default. Admins and above; does not move `ownerRev`.
+  GovernanceState setAdminsOnlyPins(bool adminsOnly) {
+    if (state.adminsOnlyPins == adminsOnly) _refuse('no_change');
+    return _finish(_base().copyWith(adminsOnlyPins: adminsOnly));
+  }
+
+  /// C5 (record format 3): records the ban of [account], which must already
+  /// be out of the MLS roster (a role-only commit cannot remove anyone), so
+  /// this is an admin's call, as the server's ban of someone who already
+  /// left. A moderator's ban goes into the removal commit itself
+  /// ([recordWithBans]).
+  GovernanceState ban(String account) => banAll({account});
+
+  /// [ban] for several accounts in one commit (the server allows one
+  /// role-only commit per device and conversation a minute).
+  GovernanceState banAll(Set<String> accounts) {
+    if (accounts.isEmpty) _refuse('no_change');
+    for (final account in accounts) {
+      if (members.contains(account)) _refuse('still_member');
+      if (account == state.owner) _refuse('hierarchy');
+      if (state.bans.contains(account)) _refuse('no_change');
+    }
+    if (state.rankOf(actor) < BuiltInRole.admin.rank) _refuse('notAllowed');
+    if (state.bans.length + accounts.length > maxBans) {
+      _refuse('too_many_bans');
+    }
+    return _finish(_base().copyWith(bans: {...state.bans, ...accounts}));
+  }
+
+  /// C5: lifts [account]'s ban. Admins and above. It does not add the
+  /// account back.
+  GovernanceState liftBan(String account) {
+    if (!state.bans.contains(account)) _refuse('no_change');
+    if (state.rankOf(actor) < BuiltInRole.admin.rank) _refuse('notAllowed');
+    return _finish(_base().copyWith(bans: {...state.bans}..remove(account)));
+  }
+
   GovernanceState transfer(String admin) {
     if (actor != state.owner) _refuse('not_owner');
     if (!members.contains(admin) || !state.admins.containsKey(admin)) {
