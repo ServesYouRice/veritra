@@ -144,7 +144,11 @@ class AudioPlayersPlayback implements VoicePlayback {
     ClipServerStarter startServer = LoopbackClipServer.start,
   })  : _player = player ?? AudioPlayer(),
         _nativeBytes = _hasNativeBytes(platform ?? defaultTargetPlatform),
-        _startServer = startServer;
+        _startServer = startServer {
+    // The plugin prints a failing source, and a loopback source URL holds
+    // the clip's secret path: keep the plugin silent.
+    AudioLogger.logLevel = AudioLogLevel.none;
+  }
 
   final AudioPlayer _player;
   final bool _nativeBytes;

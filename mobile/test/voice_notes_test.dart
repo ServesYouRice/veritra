@@ -694,4 +694,13 @@ void main() {
     await tester.pump();
     expect(find.text('The voice note could not be played.'), findsOneWidget);
   });
+
+  test('the audio plugin never prints sources (they hold the secret path)', () {
+    AudioLogger.logLevel = AudioLogLevel.info;
+    AudioPlayersPlayback(
+      player: _FakeAudioPlayer(),
+      platform: TargetPlatform.linux,
+    );
+    expect(AudioLogger.logLevel, AudioLogLevel.none);
+  });
 }

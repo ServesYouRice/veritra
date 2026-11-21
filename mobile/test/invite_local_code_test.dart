@@ -211,4 +211,17 @@ void main() {
     await state.refreshInvites();
     expect(state.invites.single.code, created.code);
   });
+
+  test('signing out forgets the saved codes', () async {
+    final server = _HashingServer();
+    final store = MemoryLocalStore();
+    final state = _state(server, store);
+    final created = await state.createInvite(maxUses: 2);
+    expect(await _stored(store), isNotEmpty);
+    expect(created, isNotNull);
+
+    await state.logout();
+
+    expect(await _stored(store), isEmpty);
+  });
 }

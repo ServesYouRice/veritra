@@ -9890,6 +9890,8 @@ class AppState extends ChangeNotifier
         preserveOutbox: preserveOutbox,
         keepDrafts: keepDrafts,
       );
+      // Invite codes are bearer credentials: they leave with the session.
+      await _updateInviteCodes((codes) => codes.clear());
     } else {
       await localStore.clear();
       // The MLS outbox went with the store; an item kept for a later
