@@ -422,6 +422,15 @@ String governanceLeaveSignedOutSetting(String conversationId) =>
 String governanceSuccessionSetting(String conversationId) =>
     'c4.succession.$conversationId';
 
+/// C4 (D81): the record revision of a won election or claim in the record
+/// group [conversationId] that this device's own clocks would have refused
+/// (the owner seen active in the last 30 days, or the election open here for
+/// less than 7). Receivers merge it anyway (they judge order and roles
+/// only); the roles screen warns while the record's `ownerRev` is still this
+/// revision. Written with the commit's transition.
+String governanceEarlyWinSetting(String conversationId) =>
+    'c4.early_win.$conversationId';
+
 /// `<rev>:<owner>`: the record revision that made [owner] owner, so an ask
 /// saved before this device merged its own deciding commit is not taken for
 /// a stale one.

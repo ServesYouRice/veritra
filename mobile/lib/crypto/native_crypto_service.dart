@@ -2650,6 +2650,13 @@ class NativeCryptoService
     // an honest leave.
     final voided =
         await _holdsLeaveProof(groupId, committer) && await committerApproved();
+    // D81: a won election or claim this device's own clock would not have
+    // allowed (the owner active in the last 30 days, or the election seen
+    // open for less than 7) is merged (receivers judge order and roles
+    // only, so every device agrees), but the roles screen says so.
+    final heir = next.owner;
+    final won = heir != null && heir != prev.owner && committer != prev.owner;
+    final early = won && await _winEarlyHere(groupId, prev);
     var senderApproved = true;
     if (committer == prev.owner || committer == next.owner) {
       final judged = verdict ?? await _judgeLeaf(review.committer);
@@ -2673,13 +2680,32 @@ class NativeCryptoService
         // C4 server succession: a won election or claim (the owner set by a
         // commit that is not the owner's). The app then asks the server to
         // move its owner row too; the record has already decided.
-        if (next.owner case final heir?
-            when heir != prev.owner && committer != prev.owner)
+        if (won)
           governanceSuccessionSetting(groupId): governanceSuccessionValue(
             next.rev,
             heir,
           ),
+        if (early) governanceEarlyWinSetting(groupId): '${next.rev}',
       },
+    );
+  }
+
+  /// Whether this device's own clocks would have refused the vote that just
+  /// handed [groupId] to a new owner: the observations saved before the
+  /// commit show owner activity in the last [ownerInactivityWait], or the
+  /// election open here for less than [electionWait] (or never seen open).
+  /// A device without saved clocks (none yet) cannot tell and says nothing.
+  Future<bool> _winEarlyHere(String groupId, GovernanceState prev) async {
+    final observed = await localStore.loadGovernanceObservations(groupId);
+    if (observed == null) return false;
+    final seen = observed.electionSeen;
+    if (seen == null || observed.electionOpened != prev.election?.opened) {
+      return true;
+    }
+    return !mayVoteNow(
+      now: _clock().toUtc(),
+      openedSeen: seen,
+      lastOwnerActivity: observed.lastOwnerActivity,
     );
   }
 
@@ -2806,17 +2832,32 @@ class NativeCryptoService
           throw const GovernanceCommandException('roster_not_text');
         }
         final prev = decodeGovernance(bytes);
+        final actor = _requiredAccount();
+        final epoch = device.groupEpoch(groupId).epoch + 1;
         final next = build(
           GovernanceCommands(
             state: prev,
-            actor: _requiredAccount(),
+            actor: actor,
             members: roster,
             // C5: a timeout names the epoch this commit produces.
-            epoch: device.groupEpoch(groupId).epoch + 1,
+            epoch: epoch,
           ),
           await localStore.loadGovernanceObservations(groupId),
           _clock().toUtc(),
         );
+        // The receivers' own check, on whatever the builder returned: a
+        // record every member's app would refuse is never staged (it would
+        // pause the group for everyone under I33). [GovernanceCommands]
+        // already checks its own results; this holds for any builder.
+        final check = validateCommit(
+          prev,
+          next,
+          actor,
+          before: roster,
+          after: roster,
+          epoch: epoch,
+        );
+        if (!check.ok) throw GovernanceCommandException(check.reject!.name);
         final previous = await _requiredState();
         try {
           final bundle = _stage(device, groupId, record: next);

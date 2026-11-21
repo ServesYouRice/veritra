@@ -1507,6 +1507,8 @@
   "rolesVoteFor": "Glasaj za: {name}",
   "rolesCloseElection": "Završi izbor",
   "rolesOwnerCancelNote": "Vi ste vlasnik: vaša aplikacija sama završava ovaj izbor.",
+  "rolesEarlyWin": "Ovaj uređaj je pre ove predaje video vlasnika pre manje od 30 dana ili izbor otvoren kraće od 7 dana. Pitajte ostale članove da li je to bilo očekivano.",
+  "rolesElectorHint": "Administratori bez oznake za glasanje ne mogu da izaberu novog vlasnika ako vas nema. Dajte je administratorima kojima verujete.",
   "rolesOnlyAdminsPost": "Samo administratori objavljuju",
   "channelHistoryTitle": "Istorija za nove članove",
   "channelHistoryFullLabel": "Ljudi koji se pridruže kasnije mogu da čitaju ranije objave",

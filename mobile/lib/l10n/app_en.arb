@@ -1934,6 +1934,8 @@
   "@rolesVoteFor": {"placeholders": {"name": {"type": "String"}}},
   "rolesCloseElection": "End the election",
   "rolesOwnerCancelNote": "You are the owner: your app ends this election by itself.",
+  "rolesEarlyWin": "This device saw the owner here less than 30 days ago, or the election open for less than 7 days, before this handover. Ask the other members if it was expected.",
+  "rolesElectorHint": "Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.",
   "rolesOnlyAdminsPost": "Only admins post",
   "channelHistoryTitle": "History for new members",
   "channelHistoryFullLabel": "People who join later can read earlier posts",

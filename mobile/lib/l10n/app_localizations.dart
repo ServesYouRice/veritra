@@ -8445,6 +8445,18 @@ abstract class AppLocalizations {
   /// **'You are the owner: your app ends this election by itself.'**
   String get rolesOwnerCancelNote;
 
+  /// No description provided for @rolesEarlyWin.
+  ///
+  /// In en, this message translates to:
+  /// **'This device saw the owner here less than 30 days ago, or the election open for less than 7 days, before this handover. Ask the other members if it was expected.'**
+  String get rolesEarlyWin;
+
+  /// No description provided for @rolesElectorHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.'**
+  String get rolesElectorHint;
+
   /// No description provided for @rolesOnlyAdminsPost.
   ///
   /// In en, this message translates to:
