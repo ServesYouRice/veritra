@@ -98,13 +98,29 @@ abstract class VoicePlayback {
   /// Whether [playBytes] works on this platform (D134).
   bool get supportsBytes;
 
-  /// Plays a note held in memory, with no file (D134). It throws if it
-  /// cannot, and the caller then plays from a temp file instead.
+  /// Plays a note held in memory, with no file (D134). It throws
+  /// [LoopbackPlaybackException] when the platform refuses the loopback
+  /// path, and only then does the caller play from a temp file instead.
   Future<void> playBytes(Uint8List bytes, {String? mimeType});
   Future<void> pause();
   Future<void> resume();
   Future<void> stop();
   Future<void> dispose();
+}
+
+/// Playing a note from memory over loopback failed in a way a temp file can
+/// fix: the server could not bind (a sandbox without the entitlement), or the
+/// player refused the loopback URL (no ATS exception, no GStreamer HTTP
+/// source). Any other failure is not retried from a file, so a note that
+/// cannot play from memory never writes its plaintext to disk for nothing.
+class LoopbackPlaybackException implements Exception {
+  const LoopbackPlaybackException(this.cause);
+
+  final Object cause;
+
+  // The cause can name the loopback URL, whose path is the token.
+  @override
+  String toString() => 'LoopbackPlaybackException';
 }
 
 /// Starts the loopback server that feeds a clip to a player that cannot play
@@ -119,7 +135,8 @@ typedef ClipServerStarter = Future<LoopbackClipServer> Function(
 /// A note in memory plays through `BytesSource` on Android and Windows. The
 /// plugin has no bytes source on iOS, macOS or Linux, so there the bytes are
 /// served to it by a [LoopbackClipServer] (127.0.0.1, one unguessable path,
-/// closed when playback stops). Nothing is written to disk either way.
+/// closed when playback stops or the app goes to the background). Nothing is
+/// written to disk either way.
 class AudioPlayersPlayback implements VoicePlayback {
   AudioPlayersPlayback({
     AudioPlayer? player,
@@ -133,6 +150,12 @@ class AudioPlayersPlayback implements VoicePlayback {
   final bool _nativeBytes;
   final ClipServerStarter _startServer;
   LoopbackClipServer? _server;
+  _PauseObserver? _pauseObserver;
+
+  /// Bumped by every start, stop and dispose, so a server that finishes
+  /// binding after its playback was stopped is closed instead of kept.
+  int _epoch = 0;
+  bool _disposed = false;
 
   static bool _hasNativeBytes(TargetPlatform platform) =>
       platform == TargetPlatform.android || platform == TargetPlatform.windows;
@@ -161,20 +184,53 @@ class AudioPlayersPlayback implements VoicePlayback {
 
   @override
   Future<void> playBytes(Uint8List bytes, {String? mimeType}) async {
+    if (_disposed) throw StateError('Voice playback was disposed');
     if (_nativeBytes) {
       await _player.play(BytesSource(bytes, mimeType: mimeType));
       return;
     }
+    final epoch = ++_epoch;
     await _closeServer();
-    final server = await _startServer(bytes, mimeType: mimeType);
+    final LoopbackClipServer server;
+    try {
+      server = await _startServer(bytes, mimeType: mimeType);
+    } catch (error) {
+      if (_disposed || epoch != _epoch) rethrow;
+      throw LoopbackPlaybackException(error);
+    }
+    if (_disposed || epoch != _epoch) {
+      await server.close();
+      throw StateError('Voice playback stopped while it was starting');
+    }
     _server = server;
-    await _player.play(UrlSource(server.url.toString(), mimeType: mimeType));
+    final observer = _PauseObserver(() => unawaited(_stopQuietly()));
+    _pauseObserver = observer;
+    WidgetsBinding.instance.addObserver(observer);
+    try {
+      await _player.play(UrlSource(server.url.toString(), mimeType: mimeType));
+    } catch (error) {
+      if (identical(_server, server)) await _closeServer();
+      if (_disposed || epoch != _epoch) rethrow;
+      throw LoopbackPlaybackException(error);
+    }
   }
 
   Future<void> _closeServer() async {
+    final observer = _pauseObserver;
+    _pauseObserver = null;
+    if (observer != null) WidgetsBinding.instance.removeObserver(observer);
     final server = _server;
     _server = null;
     if (server != null) await server.close();
+  }
+
+  /// The app went to the background with a loopback server open: stop, so
+  /// the server closes and the tile wipes the note when the player reports
+  /// it stopped. iOS would reclaim the listening socket anyway.
+  Future<void> _stopQuietly() async {
+    try {
+      await stop();
+    } catch (_) {}
   }
 
   @override
@@ -185,6 +241,7 @@ class AudioPlayersPlayback implements VoicePlayback {
 
   @override
   Future<void> stop() async {
+    _epoch++;
     try {
       await _player.stop();
     } finally {
@@ -194,11 +251,26 @@ class AudioPlayersPlayback implements VoicePlayback {
 
   @override
   Future<void> dispose() async {
+    _disposed = true;
+    _epoch++;
     try {
       await _closeServer();
     } finally {
       await _player.dispose();
     }
+  }
+}
+
+class _PauseObserver with WidgetsBindingObserver {
+  _PauseObserver(this.onPause);
+
+  final VoidCallback onPause;
+
+  // Only `paused` (the app is in the background on a phone): a minimised
+  // desktop window is `hidden` and keeps playing.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) onPause();
   }
 }
 
@@ -357,12 +429,12 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
       await _release();
       try {
         await _open(allowMemory: true);
-      } catch (_) {
-        // Playing from memory can fail where the platform refuses a loopback
-        // server. Then the note plays from a private temp copy, as before.
-        final wasMemory = _voice?.bytes != null;
+      } on LoopbackPlaybackException {
+        // The platform refused the loopback path (iOS, macOS, Linux). Then
+        // the note plays from a private temp copy, as before. Any other
+        // failure, or a tile that went away, is not retried from a file.
         await _release();
-        if (!wasMemory) rethrow;
+        if (!mounted) rethrow;
         await _open(allowMemory: false);
       }
     } catch (_) {

@@ -30,6 +30,24 @@ Future<(int, HttpHeaders, List<int>)> _fetch(
   }
 }
 
+/// Sends [head] as raw request bytes, for requests `HttpClient` will not
+/// make (two Host headers, none at all), and returns the status code.
+Future<int> _rawStatus(Uri url, String head) async {
+  final socket = await Socket.connect(url.host, url.port);
+  try {
+    socket.write(head);
+    await socket.flush();
+    final reply = await socket
+        .cast<List<int>>()
+        .transform(latin1.decoder)
+        .join()
+        .timeout(const Duration(seconds: 5));
+    return int.parse(reply.split(' ')[1]);
+  } finally {
+    socket.destroy();
+  }
+}
+
 void main() {
   late Uint8List audio;
   late LoopbackClipServer server;
@@ -115,8 +133,15 @@ void main() {
     expect(past.$3, audio.sublist(50));
   });
 
-  test('an unsatisfiable range is 416', () async {
-    for (final range in <String>['bytes=100-', 'bytes=5-2', 'bytes=-0', 'x']) {
+  test('a malformed or unsatisfiable bytes range is 416', () async {
+    for (final range in <String>[
+      'bytes=100-',
+      'bytes=5-2',
+      'bytes=-0',
+      'bytes=-',
+      'bytes=a-b',
+      'bytes=99999999999999999999-',
+    ]) {
       final (status, headers, _) = await _fetch(
         server.url,
         headers: <String, String>{'Range': range},
@@ -124,6 +149,35 @@ void main() {
       expect(status, 416, reason: range);
       expect(headers.value('content-range'), 'bytes */100');
     }
+  });
+
+  test('a range in another unit, or several ranges, is ignored: 200, whole',
+      () async {
+    for (final range in <String>['x', 'items=0-1', 'bytes=0-1,5-6']) {
+      final (status, headers, body) = await _fetch(
+        server.url,
+        headers: <String, String>{'Range': range},
+      );
+      expect(status, 200, reason: range);
+      expect(body, audio, reason: range);
+      expect(headers.value('content-range'), isNull, reason: range);
+    }
+  });
+
+  test('range positions too long for an int are clamped, not rejected', () {
+    const parse = LoopbackClipServer.parseRange;
+    expect(parse(<String>['bytes=0-99999999999999999999'], 100), (0, 99));
+    expect(parse(<String>['bytes=-99999999999999999999'], 100), (0, 99));
+    expect(parse(<String>['bytes=00000000000000000000010-11'], 100), (10, 11));
+    expect(parse(<String>['bytes=0-0'], 100), (0, 0));
+    expect(parse(<String>['bytes=99-'], 100), (99, 99));
+    expect(parse(<String>[' BYTES = 1-2 '], 100), (1, 2));
+    expect(parse(null, 100), isNull);
+    expect(parse(<String>['bytes=0-1', 'bytes=2-3'], 100), isNull);
+    expect(
+      parse(<String>['bytes=0-'], 0),
+      same(LoopbackClipServer.unsatisfiableRange),
+    );
   });
 
   test('any other path, a query or a guess is 404 and leaks nothing', () async {
@@ -142,9 +196,46 @@ void main() {
   });
 
   test('a request for another host name is refused (DNS rebinding)', () async {
-    final (status, _, body) = await _fetch(server.url, host: 'evil.example');
-    expect(status, 403);
-    expect(body, isEmpty);
+    for (final host in <String>[
+      'evil.example',
+      'localhost',
+      '127.0.0.2',
+    ]) {
+      final (status, _, body) = await _fetch(server.url, host: host);
+      expect(status, 403, reason: host);
+      expect(body, isEmpty, reason: host);
+    }
+  });
+
+  test('no Host, or two Host headers, is refused', () async {
+    final url = server.url;
+    final good = 'Host: 127.0.0.1:${url.port}\r\n';
+    expect(
+      await _rawStatus(
+          url, 'GET ${url.path} HTTP/1.1\r\n${good}Connection: close\r\n\r\n'),
+      200,
+    );
+    expect(
+      await _rawStatus(url, 'GET ${url.path} HTTP/1.0\r\n\r\n'),
+      403,
+    );
+    // The right address without the port is still not this server's origin.
+    expect(
+      await _rawStatus(
+        url,
+        'GET ${url.path} HTTP/1.1\r\nHost: 127.0.0.1\r\n'
+        'Connection: close\r\n\r\n',
+      ),
+      403,
+    );
+    expect(
+      await _rawStatus(
+        url,
+        'GET ${url.path} HTTP/1.1\r\n${good}Host: evil.example\r\n'
+        'Connection: close\r\n\r\n',
+      ),
+      anyOf(400, 403),
+    );
   });
 
   test('only GET and HEAD are served', () async {

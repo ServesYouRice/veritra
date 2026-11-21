@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 /// Serves one decrypted clip from memory to the platform audio player over
 /// loopback HTTP (D134), for platforms whose player plugin cannot play bytes
 /// directly (iOS, macOS, Linux).
@@ -13,11 +15,17 @@ import 'dart:typed_data';
 /// - serves exactly one path, `/<32 random bytes, base64url>.<ext>`, which
 ///   lives as long as this server (a player makes several range requests, so
 ///   "one time" means one clip, not one request); every other path is 404;
-/// - refuses a request whose `Host` is not that 127.0.0.1 port (DNS rebinding)
-///   or whose peer is not loopback;
-/// - sends `Cache-Control: no-store`, answers GET and HEAD, and supports byte
-///   ranges (AVPlayer requires them);
-/// - slices the bytes with views, so wiping them leaves no copy behind.
+/// - compares that path in constant time;
+/// - refuses a request whose `Host` is not exactly that 127.0.0.1 port (DNS
+///   rebinding) or whose peer is not loopback;
+/// - sends `Cache-Control: no-store`, answers GET and HEAD, and supports one
+///   byte range per request (AVPlayer requires ranges);
+/// - slices the caller's bytes with views and keeps no copy of its own, so
+///   wiping them wipes what it serves. What was already sent still sits in
+///   dart:io and kernel socket buffers and in the player's own buffers.
+///
+/// On Apple platforms this needs the iOS `NSAllowsLocalNetworking` ATS key
+/// and the macOS `com.apple.security.network.server` sandbox entitlement.
 ///
 /// Call [close] as soon as playback ends, before wiping the bytes.
 class LoopbackClipServer {
@@ -110,12 +118,16 @@ class LoopbackClipServer {
       ..set('X-Content-Type-Options', 'nosniff');
     final peer = request.connectionInfo?.remoteAddress;
     final expectedHost = '${_server.address.address}:${_server.port}';
-    final host = request.headers.value(HttpHeaders.hostHeader);
-    if (peer == null || !peer.isLoopback || host != expectedHost) {
+    final hosts = request.headers[HttpHeaders.hostHeader];
+    if (peer == null ||
+        !peer.isLoopback ||
+        hosts == null ||
+        hosts.length != 1 ||
+        hosts.single != expectedHost) {
       response.statusCode = HttpStatus.forbidden;
       return;
     }
-    if (request.uri.path != _path || request.uri.hasQuery) {
+    if (!_sameSecret(request.uri.path, _path) || request.uri.hasQuery) {
       response.statusCode = HttpStatus.notFound;
       return;
     }
@@ -134,16 +146,14 @@ class LoopbackClipServer {
       );
     var start = 0;
     var end = total - 1;
-    final range = request.headers.value(HttpHeaders.rangeHeader);
+    final range = parseRange(request.headers[HttpHeaders.rangeHeader], total);
+    if (identical(range, unsatisfiableRange)) {
+      response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+      response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
+      return;
+    }
     if (range != null) {
-      final parsed = _parseRange(range, total);
-      if (parsed == null) {
-        response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-        response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
-        return;
-      }
-      start = parsed.$1;
-      end = parsed.$2;
+      (start, end) = range;
       response.statusCode = HttpStatus.partialContent;
       response.headers.set(
         HttpHeaders.contentRangeHeader,
@@ -156,23 +166,67 @@ class LoopbackClipServer {
     response.add(Uint8List.sublistView(_bytes, start, end + 1));
   }
 
-  /// A single `bytes=a-b`, `bytes=a-` or `bytes=-n` range, or null when it
-  /// cannot be satisfied or is not understood.
-  static (int, int)? _parseRange(String header, int total) {
-    final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(header.trim());
-    if (match == null || total == 0) return null;
+  /// Compares the requested path with the secret one without stopping at the
+  /// first difference, so response timing does not reveal the token. The
+  /// length is not secret.
+  static bool _sameSecret(String given, String secret) {
+    if (given.length != secret.length) return false;
+    var diff = 0;
+    for (var i = 0; i < secret.length; i++) {
+      diff |= given.codeUnitAt(i) ^ secret.codeUnitAt(i);
+    }
+    return diff == 0;
+  }
+
+  /// What [parseRange] returns for a range that cannot be satisfied (416).
+  @visibleForTesting
+  static const (int, int) unsatisfiableRange = (-1, -1);
+
+  /// Larger than any clip; stands for a position too long to parse.
+  static const int _huge = 1 << 52;
+
+  /// The inclusive byte range to send for the `Range` header [values]
+  /// (RFC 9110 section 14.2), for a clip of [total] bytes:
+  /// - null to ignore the header and send the whole clip: no header, more
+  ///   than one, no unit or one other than `bytes` (which must be ignored),
+  ///   or a multi-range request;
+  /// - [unsatisfiableRange] for a malformed or unsatisfiable `bytes` range;
+  /// - otherwise `(start, end)`, with an end past the clip clamped to it and
+  ///   a suffix longer than the clip meaning all of it.
+  @visibleForTesting
+  static (int, int)? parseRange(List<String>? values, int total) {
+    if (values == null || values.length != 1) return null;
+    final header = values.single.trim();
+    final eq = header.indexOf('=');
+    if (eq < 0) return null;
+    if (header.substring(0, eq).trim().toLowerCase() != 'bytes') return null;
+    final spec = header.substring(eq + 1).trim();
+    if (spec.contains(',')) return null;
+    final match = RegExp(r'^(\d*)-(\d*)$').firstMatch(spec);
+    if (match == null || total <= 0) return unsatisfiableRange;
     final from = match.group(1)!;
     final to = match.group(2)!;
-    if (from.isEmpty && to.isEmpty) return null;
+    if (from.isEmpty && to.isEmpty) return unsatisfiableRange;
     if (from.isEmpty) {
-      final suffix = int.tryParse(to);
-      if (suffix == null || suffix == 0) return null;
+      final suffix = _number(to);
+      if (suffix == 0) return unsatisfiableRange;
       return (max(0, total - suffix), total - 1);
     }
-    final start = int.tryParse(from);
-    if (start == null || start >= total) return null;
-    final end = to.isEmpty ? total - 1 : int.tryParse(to);
-    if (end == null || end < start) return null;
+    final start = _number(from);
+    if (start >= total) return unsatisfiableRange;
+    final end = to.isEmpty ? total - 1 : _number(to);
+    if (end < start) return unsatisfiableRange;
     return (start, min(end, total - 1));
+  }
+
+  /// A run of ASCII digits as a number, or [_huge] when it is too long for
+  /// an exact int: such a position is past any clip either way.
+  static int _number(String digits) {
+    var i = 0;
+    while (i < digits.length - 1 && digits.codeUnitAt(i) == 0x30) {
+      i++;
+    }
+    final significant = digits.substring(i);
+    return significant.length > 15 ? _huge : int.parse(significant);
   }
 }
