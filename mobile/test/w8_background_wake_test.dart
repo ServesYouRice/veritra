@@ -380,7 +380,7 @@ void main() {
   });
 
   group('AppState background wake', () {
-    late MemoryLocalStore store;
+    late _SettingsWatchStore store;
     late _FakeApi api;
     late _FakeCrypto crypto;
     late _FakeBridge bridge;
@@ -390,7 +390,7 @@ void main() {
     var sockets = 0;
 
     setUp(() async {
-      store = MemoryLocalStore();
+      store = _SettingsWatchStore();
       await store.saveSession(_session);
       await store.saveCryptoState(
         StoredCryptoState(
@@ -559,6 +559,92 @@ void main() {
       },
     );
 
+    // C1, owner decision 2026-11-21: "New join request" reaches a closed
+    // app as one fixed phone notice, worded by native, keyed by an opaque
+    // local ID; the event carries nothing.
+    const joinHeld = 'c1.join_request_phone_notice';
+
+    test('a join request on a closed app shows one fixed phone notice',
+        () async {
+      api.events.add(api.joinRequest(1));
+      api.events.add(api.joinRequest(2));
+      expect(await runner.run(permit()), WakeOutcome.committed);
+      expect(await store.loadSyncCursor(), 2);
+      expect(bridge.joinRequests, hasLength(1));
+      expect(bridge.joinRequests.single, matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(bridge.presented, isEmpty, reason: 'not a message notice');
+      expect(await store.loadSetting(joinHeld), isEmpty);
+      expect(state.joinRequestNotice, isTrue, reason: 'the app shows it too');
+      expect(api.writes, isEmpty, reason: 'a background pass only receives');
+      // Nothing new: nothing is shown again.
+      expect(await runner.run(permit(2)), WakeOutcome.noChange);
+      expect(bridge.joinRequests, hasLength(1));
+    });
+
+    test(
+      'an unanswered join-request notice keeps the wake pending and retries '
+      'with the same opaque ID',
+      () async {
+        bridge.joinRequestResult = WakeNoticeResult.unavailable;
+        api.events.add(api.joinRequest(1));
+        expect(await runner.run(permit()), WakeOutcome.retry);
+        expect(await store.loadSyncCursor(), 1);
+        expect(await store.loadSetting(joinHeld), isNotEmpty);
+        bridge.joinRequestResult = WakeNoticeResult.suppressed;
+        expect(await runner.run(permit(2)), WakeOutcome.noChange);
+        expect(bridge.joinRequests, hasLength(2));
+        expect(bridge.joinRequests.toSet(), hasLength(1));
+        expect(await store.loadSetting(joinHeld), isEmpty);
+      },
+    );
+
+    test(
+      'opening the app drops a held join-request notice for the in-app one',
+      () async {
+        bridge.joinRequestResult = WakeNoticeResult.unavailable;
+        api.events.add(api.joinRequest(1));
+        expect(await runner.run(permit()), WakeOutcome.retry);
+        // As if the background process had died: only the held row is left.
+        state.dismissJoinRequestNotice();
+        state.handleAppLifecycleState(AppLifecycleState.resumed);
+        await _until(() async => await store.loadSetting(joinHeld) == '');
+        expect(state.joinRequestNotice, isTrue);
+        expect(bridge.joinRequests, hasLength(1), reason: 'never shown late');
+      },
+    );
+
+    test('without opt-in a join request is neither held nor shown', () async {
+      state.phoneNoticesAllowed = false;
+      api.events.add(api.joinRequest(1));
+      expect(await runner.run(permit()), WakeOutcome.committed);
+      expect(bridge.joinRequests, isEmpty);
+      expect(await store.loadSetting(joinHeld), isNull);
+    });
+
+    test('a day-old join-request notice is not shown on the phone', () async {
+      api.events.add(
+        api.joinRequest(
+          1,
+          at: DateTime.now().toUtc().subtract(const Duration(hours: 25)),
+        ),
+      );
+      expect(await runner.run(permit()), WakeOutcome.committed);
+      expect(bridge.joinRequests, isEmpty);
+      expect(await store.loadSetting(joinHeld), isNull);
+    });
+
+    test(
+      'a join-request notice is held before its cursor commits',
+      () async {
+        // A crash after the commit must not lose a notice the pass saw.
+        api.events.add(api.joinRequest(1));
+        expect(await runner.run(permit()), WakeOutcome.committed);
+        expect(store.cursorAtSave[joinHeld], [0, 1]);
+        expect(await store.loadSyncCursor(), 1);
+        expect(bridge.joinRequests, hasLength(1));
+      },
+    );
+
     test('a foreground UI refuses a background run', () async {
       state.handleAppLifecycleState(AppLifecycleState.resumed);
       expect(await runner.run(permit()), WakeOutcome.unavailable);
@@ -611,9 +697,30 @@ Future<void> _until(Future<bool> Function() condition) async {
   fail('condition not reached');
 }
 
+/// Records the sync cursor at each settings write, by setting name.
+class _SettingsWatchStore extends MemoryLocalStore {
+  final Map<String, List<int>> cursorAtSave = {};
+  @override
+  Future<void> saveSetting(String name, String value) async {
+    (cursorAtSave[name] ??= []).add(await loadSyncCursor());
+    await super.saveSetting(name, value);
+  }
+}
+
 class _FakeBridge extends PlatformWakeWorkerBridge {
   bool active = true;
   final List<String> presented = [];
+  final List<String> joinRequests = [];
+  WakeNoticeResult joinRequestResult = WakeNoticeResult.shown;
+  @override
+  Future<WakeNoticeResult> presentJoinRequestNotice(
+    WakePermit permit,
+    String noticeId,
+  ) async {
+    joinRequests.add(noticeId);
+    return joinRequestResult;
+  }
+
   @override
   Future<WakePermitStatus> validatePermit(WakePermit permit) async =>
       WakePermitStatus(active, active ? 20000 : 0);
@@ -638,6 +745,14 @@ class _FakeApi extends ApiClient with LegacySyncPageFake {
   /// When set, the next sync page waits here (after [reached] completes).
   Completer<void>? gate;
   Completer<void> reached = Completer<void>();
+
+  /// C1: the content-free notice an admin gets for a new join request.
+  SyncEvent joinRequest(int id, {DateTime? at}) => SyncEvent(
+        id: id,
+        type: 'account.join_request',
+        createdAt: at ?? DateTime.now().toUtc(),
+        payload: const <String, Object?>{},
+      );
 
   SyncEvent event(int id, String key, {String? mention}) => SyncEvent(
         id: id,

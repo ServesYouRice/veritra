@@ -11,6 +11,117 @@ const String _sharedOnlyInvitesSetting = 'c1.invites_shared_only';
 /// 2026-11-21); the app shows "New join request" and the list says the rest.
 const String joinRequestNoticeEventType = 'account.join_request';
 
+/// Where a background wake pass holds a "New join request" phone notice until
+/// native has shown it (or the app was opened). The value is the server,
+/// account and device scope followed by the server event ID; anything else,
+/// including another account's scope, holds nothing.
+const String _joinRequestPhoneNoticeSetting = 'c1.join_request_phone_notice';
+
+/// A notice event older than this, seen by a wake after a long time offline,
+/// is not turned into a phone notification; the list still shows the request.
+const Duration _joinRequestPhoneNoticeFreshness = Duration(hours: 24);
+
+/// C1, owner decision 2026-11-21: the "New join request" notice on the phone
+/// while the app is closed. The server wakes only this admin's
+/// local_decrypt_v1 devices, at most once per 10 minutes and not for a muted
+/// target; the event carries nothing. A background wake pass holds the notice
+/// durably before the event's cursor commits, then asks native, by an opaque
+/// local ID, to show its fixed sentence. Nothing about the request, the
+/// requester or the target reaches native or the push provider. It rides the
+/// same bounded, opt-in wake path as message notices (D52), so it exists only
+/// where phone notices are allowed.
+extension JoinRequestPhoneNotice on AppState {
+  static String _scope(Session owner) =>
+      '${owner.baseUrl}\u0000${owner.accountId}\u0000${owner.deviceId}\u0000';
+
+  int? _heldJoinRequestNotice(String? raw, Session owner) {
+    final scope = _scope(owner);
+    if (raw == null || !raw.startsWith(scope)) return null;
+    final id = int.tryParse(raw.substring(scope.length));
+    return id != null && id > 0 ? id : null;
+  }
+
+  /// Called by a background pass with a run of projection events, before
+  /// their cursor commits, so a notice the pass saw is never lost to a crash
+  /// between the commit and the presentation.
+  Future<void> _holdJoinRequestPhoneNotice(
+    List<SyncEvent> events,
+    Session owner,
+    WakeRunContext wake,
+  ) async {
+    if (!phoneNoticesAllowed) return;
+    final now = DateTime.now().toUtc();
+    var latest = 0;
+    for (final event in events) {
+      if (event.type != joinRequestNoticeEventType) continue;
+      if (now.difference(event.createdAt) > _joinRequestPhoneNoticeFreshness) {
+        continue;
+      }
+      if (event.id > latest) latest = event.id;
+    }
+    if (latest == 0) return;
+    final held = _heldJoinRequestNotice(
+      await localStore.loadSetting(_joinRequestPhoneNoticeSetting),
+      owner,
+    );
+    if (held != null && held >= latest) return;
+    wake.checkCanCommit();
+    await localStore.saveSetting(
+      _joinRequestPhoneNoticeSetting,
+      '${_scope(owner)}$latest',
+    );
+  }
+
+  /// After a background pass: shows the held notice, if any. Durable when
+  /// nothing is held any more; an unavailable native answer keeps it held so
+  /// the wake is retried, and the same opaque ID lets native drop a repeat.
+  Future<NoticePassResult> _presentJoinRequestPhoneNotice(
+    Session owner,
+    WakeRunContext wake,
+  ) async {
+    final raw = await localStore.loadSetting(_joinRequestPhoneNoticeSetting);
+    final held = _heldJoinRequestNotice(raw, owner);
+    if (held == null) return const NoticePassResult(durable: true, shown: 0);
+    var shown = 0;
+    if (phoneNoticesAllowed) {
+      final noticeId = sha256Hex(
+        utf8.encode('veritra-c1-join-request-notice-v1\u0000'
+            '${_scope(owner)}$held'),
+      ).substring(0, 32);
+      final outcome = await wake.presentJoinRequestNotice(noticeId);
+      if (outcome == WakeNoticeResult.unavailable) {
+        return const NoticePassResult(durable: false, shown: 0);
+      }
+      if (outcome == WakeNoticeResult.shown) shown = 1;
+    }
+    wake.checkCanCommit();
+    // Cleared only if nothing newer was held meanwhile.
+    if (await localStore.loadSetting(_joinRequestPhoneNoticeSetting) == raw) {
+      await localStore.saveSetting(_joinRequestPhoneNoticeSetting, '');
+    }
+    return NoticePassResult(durable: true, shown: shown);
+  }
+
+  /// The app is in front: a held phone notice is not shown any more; it
+  /// becomes the in-app notice instead (a background process that held it
+  /// may have died before showing it).
+  Future<void> _dropJoinRequestPhoneNotice(Session owner) async {
+    try {
+      final raw = await localStore.loadSetting(_joinRequestPhoneNoticeSetting);
+      if (raw == null || raw.isEmpty) return;
+      final held = _heldJoinRequestNotice(raw, owner);
+      await localStore.saveSetting(_joinRequestPhoneNoticeSetting, '');
+      if (held != null && identical(session, owner) && !joinRequestNotice) {
+        joinRequestNotice = true;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Held for the next foreground pass; a background pass cannot start
+      // while the app is in front.
+    }
+  }
+}
+
 /// C1: joining groups and communities through invitation links, deciding join
 /// requests, and leaving or removing members of a community.
 ///

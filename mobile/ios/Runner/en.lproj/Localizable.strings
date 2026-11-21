@@ -1,2 +1,4 @@
 /* The generic iOS notification (D53): fixed text, no sender, no content. The server sends only this key (APNs loc-key). Keep it in step with notificationNewMessage in lib/l10n. */
 "veritra.notification.new_message" = "New message";
+/* C1 (owner decision 2026-11-21): the phone notice for a join request, worded on the device. Fixed text: no requester, group or community. Keep it in step with joinRequestNoticeText in lib/l10n. */
+"veritra.notification.join_request" = "New join request";

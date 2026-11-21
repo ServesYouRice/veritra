@@ -283,11 +283,27 @@ class PlatformWakeWorkerBridge {
   Future<WakeNoticeResult> presentGenericNotice(
     WakePermit permit,
     String noticeId,
+  ) =>
+      _presentNotice('presentGenericNotice', permit, noticeId);
+
+  /// C1: the "New join request" phone notice (owner decision 2026-11-21).
+  /// Like [presentGenericNotice], only the opaque local notice ID crosses
+  /// the boundary; native words the fixed sentence in the device language.
+  Future<WakeNoticeResult> presentJoinRequestNotice(
+    WakePermit permit,
+    String noticeId,
+  ) =>
+      _presentNotice('presentJoinRequestNotice', permit, noticeId);
+
+  Future<WakeNoticeResult> _presentNotice(
+    String method,
+    WakePermit permit,
+    String noticeId,
   ) async {
     if (_disposed || permit.profile != _profile)
       return WakeNoticeResult.unavailable;
     if (!_matches(r'^[0-9a-f]{32}$', noticeId)) _invalid();
-    final value = await _channel.invokeMethod<Object?>('presentGenericNotice', {
+    final value = await _channel.invokeMethod<Object?>(method, {
       ...permit.identity,
       'notice_id': noticeId,
     });

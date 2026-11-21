@@ -182,3 +182,97 @@ func TestJoinRequestNoticeCannotBeRepeatedByRefiling(t *testing.T) {
 		t.Fatalf("after the window: %+v err=%v", later, err)
 	}
 }
+
+// An owner or admin who muted the target is not told of its join requests:
+// the notice names no target, so only the server can apply the mute. A
+// community's mute is its shared conversation's. The muted admin's quiet
+// window stays unused, and a mute that has ended no longer counts. Fails if
+// the mute filter is removed.
+func TestJoinRequestNoticeRespectsMute(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob, carol := f.people[0], f.people[1], f.people[2]
+	// A community with a shared conversation (C0 layout on).
+	f.store.communityLayout = true
+	comm, err := f.store.CreateCommunity(ctx, f.owner.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, comm.ID, f.owner.Account.ID, f.admin.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	community := MembershipTarget{Kind: domain.InviteTargetCommunity, ID: comm.ID}
+	shared, err := inviteAnchorGroupTx(ctx, f.store.db, community)
+	if err != nil || shared == "" {
+		t.Fatalf("shared conversation %q: %v", shared, err)
+	}
+	told := func(filed FiledJoinRequest) map[string]bool {
+		t.Helper()
+		out := map[string]bool{}
+		for _, n := range filed.Notices {
+			out[n.AccountID] = true
+		}
+		return out
+	}
+
+	// The admin muted the community (its shared conversation) for good.
+	if err := f.store.SetConversationNotificationMute(ctx, shared, f.admin.Account.ID, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	f.invite(t, ctx, community, f.owner, testLocator(21), 9)
+	filed, err := f.store.FileJoinRequest(ctx, alice.Account.ID, testLocator(21))
+	if err != nil || !filed.Created {
+		t.Fatalf("community: %+v err=%v", filed, err)
+	}
+	if got := told(filed); len(got) != 1 || !got[f.owner.Account.ID] {
+		t.Fatalf("community told %v", got)
+	}
+	for _, n := range joinRequestNoticeRows(t, ctx, f.store) {
+		if n.account == f.admin.Account.ID {
+			t.Fatal("a muted admin got a stored notice")
+		}
+	}
+
+	// A group the admin did not mute tells them at once: the community
+	// mute used none of their quiet window. The owner muted the group until
+	// tomorrow and is not told.
+	until := time.Now().Add(24 * time.Hour)
+	if err := f.store.SetConversationNotificationMute(ctx, f.group.ID, f.owner.Account.ID, true, &until); err != nil {
+		t.Fatal(err)
+	}
+	backdateJoinRequestNotices(t, ctx, f.store)
+	f.invite(t, ctx, f.groupTarget(), f.admin, testLocator(22), 9)
+	group, err := f.store.FileJoinRequest(ctx, alice.Account.ID, testLocator(22))
+	if err != nil || !group.Created {
+		t.Fatalf("group: %+v err=%v", group, err)
+	}
+	if got := told(group); len(got) != 1 || !got[f.admin.Account.ID] {
+		t.Fatalf("group told %v", got)
+	}
+
+	// Once the owner's timed mute has ended it no longer counts.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE conversation_notification_preferences SET muted_until = ? WHERE account_id = ? AND conversation_id = ?`, time.Now().Add(-time.Minute).Unix(), f.owner.Account.ID, f.group.ID); err != nil {
+		t.Fatal(err)
+	}
+	backdateJoinRequestNotices(t, ctx, f.store)
+	later, err := f.store.FileJoinRequest(ctx, bob.Account.ID, testLocator(22))
+	if err != nil || !later.Created {
+		t.Fatalf("after the mute: %+v err=%v", later, err)
+	}
+	if got := told(later); len(got) != 2 || !got[f.owner.Account.ID] || !got[f.admin.Account.ID] {
+		t.Fatalf("after the mute told %v", got)
+	}
+
+	// Unmuting the community tells the admin of its next request.
+	if err := f.store.SetConversationNotificationMute(ctx, shared, f.admin.Account.ID, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	backdateJoinRequestNotices(t, ctx, f.store)
+	unmuted, err := f.store.FileJoinRequest(ctx, carol.Account.ID, testLocator(21))
+	if err != nil || !unmuted.Created {
+		t.Fatalf("unmuted: %+v err=%v", unmuted, err)
+	}
+	if got := told(unmuted); len(got) != 2 || !got[f.admin.Account.ID] {
+		t.Fatalf("unmuted told %v", got)
+	}
+}

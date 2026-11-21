@@ -88,6 +88,25 @@ public final class WakeRulesTest {
         check(WakeRules.claimNotice(notices, 101, 102, "demo:new") == WakeRules.NoticeClaim.FULL);
         check(notices.containsKey("demo:first")); // Fresh decisions never evicted.
         check(WakeRules.claimNotice(notices, 102, WakeRules.NOTICE_RETENTION_MS + 1000, "demo:new") == WakeRules.NoticeClaim.NEW);
+        // C1: the join-request notice is its own method with the same exact
+        // arguments as the message notice; no kind, text or name crosses.
+        java.util.Set<String> present = new java.util.HashSet<>(java.util.Arrays.asList("protocol", "permit", "profile", "notice_id"));
+        check(present.equals(WakeRules.permitArguments("presentGenericNotice")));
+        check(present.equals(WakeRules.permitArguments("presentJoinRequestNotice")));
+        check(new java.util.HashSet<>(java.util.Arrays.asList("protocol", "permit", "profile")).equals(WakeRules.permitArguments("validatePermit")));
+        check(WakeRules.permitArguments("presentNotice") == null && WakeRules.permitArguments(null) == null);
+        check(WakeRules.notice("presentGenericNotice") == WakeRules.Notice.MESSAGE);
+        check(WakeRules.notice("presentJoinRequestNotice") == WakeRules.Notice.JOIN_REQUEST);
+        check(WakeRules.notice("validatePermit") == null);
+        String id = "0123456789abcdef0123456789abcdef";
+        check(WakeRules.noticeId(id) && !WakeRules.noticeId(id.toUpperCase()) && !WakeRules.noticeId(id + "0") && !WakeRules.noticeId(null));
+        check(WakeRules.notificationId(WakeRules.Notice.MESSAGE, id) == 0x01234567);
+        check(WakeRules.notificationId(WakeRules.Notice.MESSAGE, "ffffffff" + id.substring(8)) == -1);
+        check(WakeRules.notificationId(WakeRules.Notice.JOIN_REQUEST, id) == WakeRules.JOIN_REQUEST_NOTIFICATION_ID);
+        check(WakeRules.notificationId(WakeRules.Notice.JOIN_REQUEST, "ffffffff" + id.substring(8)) == WakeRules.JOIN_REQUEST_NOTIFICATION_ID);
+        check(WakeRules.JOIN_REQUEST_NOTIFICATION_ID != 4102 && WakeRules.JOIN_REQUEST_NOTIFICATION_ID != 4103);
+        try { WakeRules.notificationId(WakeRules.Notice.JOIN_REQUEST, "x"); throw new AssertionError(); }
+        catch (IllegalArgumentException expected) { checks++; }
         // Screen rules: FLAG_SECURE mask toggling and inspection.
         check(ScreenRules.FLAG_SECURE == 0x00002000);
         int baseFlags = 0x00000004; // e.g. some other window flag

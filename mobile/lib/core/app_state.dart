@@ -7196,10 +7196,11 @@ class AppState extends ChangeNotifier
       final after = await localStore.loadSyncCursor();
       await wake.check();
       final notices = await _processPendingNotices(current, client, wake);
+      final joinRequest = await _presentJoinRequestPhoneNotice(current, wake);
       return WakeCatchUpResult(
         caughtUp: true,
-        decisionsDurable: notices.durable,
-        changed: after != before || notices.shown > 0,
+        decisionsDurable: notices.durable && joinRequest.durable,
+        changed: after != before || notices.shown > 0 || joinRequest.shown > 0,
       );
     } catch (_) {
       return failed;
@@ -7328,6 +7329,7 @@ class AppState extends ChangeNotifier
     Session current, {
     bool always = false,
   }) async {
+    if (always || _isForeground) await _dropJoinRequestPhoneNotice(current);
     if (!always) {
       final capture = cryptoService;
       if (!_isForeground ||
@@ -7653,6 +7655,7 @@ class AppState extends ChangeNotifier
             // A background pass makes no list/device requests; the next
             // foreground resume refreshes instead.
             projections.forEach(_deferProjectionRefresh);
+            await _holdJoinRequestPhoneNotice(projections, current, wake);
           } else {
             await _refreshProjectionForSyncEvents(projections);
           }

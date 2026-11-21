@@ -477,7 +477,7 @@ final class IOSWakeCoordinator {
       case "uninstall":
         guard Set(args.keys) == Set(["protocol", "profile"]), self.profile == nil || self.profile == profile else { result(false); return }
         result(self.unregister())
-      case "validatePermit", "presentGenericNotice":
+      case "validatePermit", "presentGenericNotice", "presentJoinRequestNotice":
         let allowed = call.method == "validatePermit" ? Set(["protocol", "permit", "profile"]) : Set(["protocol", "permit", "profile", "notice_id"])
         let id = args["permit"] as? String
         let valid = Set(args.keys) == allowed && id != nil && self.matches(id!, profile)
@@ -487,7 +487,7 @@ final class IOSWakeCoordinator {
         } else {
           guard valid, let notice = args["notice_id"] as? String,
                 notice.range(of: "\\A[0-9a-f]{32}\\z", options: .regularExpression) != nil else { result("unavailable"); return }
-          self.present(id!, profile, notice, result)
+          self.present(id!, profile, notice, joinRequest: call.method == "presentJoinRequestNotice", result)
         }
       default: result(FlutterMethodNotImplemented)
       }
@@ -561,7 +561,12 @@ final class IOSWakeCoordinator {
     for item in waiting { item.finish(.failed) }; waiting.removeAll()
     do { try journal.bind(nil); return true } catch { return false }
   }
-  private func present(_ id: String, _ profile: String, _ notice: String, _ result: @escaping FlutterResult) {
+  /// Shows one fixed sentence for a durable local notice ID: the generic
+  /// message notice, or C1's "New join request" (owner decision 2026-11-21),
+  /// worded here in the device language. Join-request notices share one
+  /// identifier, so one already showing is not repeated.
+  private func present(_ id: String, _ profile: String, _ notice: String, joinRequest: Bool,
+                       _ result: @escaping FlutterResult) {
     guard !ui, UIApplication.shared.applicationState != .active else { result("suppressed"); return }
     UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
       DispatchQueue.main.async {
@@ -574,7 +579,7 @@ final class IOSWakeCoordinator {
             DispatchQueue.main.async {
               guard self.matches(id, profile), !self.ui,
                     UIApplication.shared.applicationState != .active else { result("unavailable"); return }
-              let identifier = "veritra-local-" + notice
+              let identifier = joinRequest ? "veritra-join-request" : "veritra-local-" + notice
               let already = delivered.contains { $0.request.identifier == identifier } || pending.contains { $0.identifier == identifier }
               do {
                 let fresh = try self.journal.claimNotice(profile, notice)
@@ -583,7 +588,11 @@ final class IOSWakeCoordinator {
               guard self.matches(id, profile), !self.ui,
                     UIApplication.shared.applicationState != .active else { result("unavailable"); return }
               let content = UNMutableNotificationContent()
-              content.title = "Veritra"; content.body = "New encrypted message"; content.sound = .default
+              content.title = "Veritra"; content.sound = .default
+              content.body = joinRequest
+                ? NSLocalizedString("veritra.notification.join_request", value: "New join request",
+                                    comment: "Join-request notice; no requester, group or community (C1)")
+                : "New encrypted message"
               center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { error in
                 DispatchQueue.main.async { result(error == nil ? "shown" : "unavailable") }
               }

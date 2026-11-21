@@ -44,6 +44,14 @@ func TestJoinRequestNoticesAdminsWithAContentFreeWake(t *testing.T) {
 		f.exec(`INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at, notification_mode)
 			VALUES(?, ?, NULL, 'fcm', ?, '', '', ?, 'local_decrypt_v1')`, fmt.Sprintf("push_jr_%d", i), id, endpoint, recoveryTestTime(time.Now()))
 	}
+	// A legacy-mode device would show its fixed "New encrypted message" for
+	// this wake, so it is not woken; its app shows the notice when opened.
+	for i, provider := range []string{"fcm", "unifiedpush", "apns"} {
+		endpoint := fmt.Sprintf("legacy-jr-%d-0123456789-0123456789", i)
+		endpoints[endpoint] = "legacy"
+		f.exec(`INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at, notification_mode)
+			VALUES(?, ?, NULL, ?, ?, '', '', ?, 'legacy_generic')`, fmt.Sprintf("push_jr_legacy_%d", i), adminID, provider, endpoint, recoveryTestTime(time.Now()))
+	}
 	if status, body := f.do(http.MethodPost, base+"/invites", f.ownerToken, inviteBody(t, f.handler, f.ownerToken, map[string]interface{}{"max_uses": 5}), nil); status != http.StatusCreated {
 		t.Fatalf("create invite: %d %s", status, body)
 	}
@@ -60,6 +68,9 @@ func TestJoinRequestNoticesAdminsWithAContentFreeWake(t *testing.T) {
 	woken := map[string]bool{}
 	for _, n := range sent {
 		woken[endpoints[n.Endpoint]] = true
+		if n.NotificationMode != "local_decrypt_v1" {
+			t.Fatalf("legacy-mode wake: %+v", n)
+		}
 		// Only the routing target is set: the fixed generic wake.
 		for _, leaked := range []string{request.ID, requesterID, "jrrequester", community.ID} {
 			if strings.Contains(fmt.Sprintf("%+v", n), leaked) {
@@ -67,7 +78,7 @@ func TestJoinRequestNoticesAdminsWithAContentFreeWake(t *testing.T) {
 			}
 		}
 	}
-	if !woken[f.ownerAccountID] || !woken[adminID] || len(woken) != 2 {
+	if !woken[f.ownerAccountID] || !woken[adminID] || woken["legacy"] || len(woken) != 2 {
 		t.Fatalf("woken = %v", woken)
 	}
 	if got := f.count(`SELECT COUNT(*) FROM sync_events WHERE event_type = 'account.join_request' AND payload_json = '{}'`); got != 2 {
