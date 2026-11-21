@@ -41,6 +41,12 @@ class WorkflowTest(unittest.TestCase):
         for word in ("gh release", "docker push", "attest-build-provenance", "signtool", "-SignToolCommand"):
             self.assertNotIn(word, self.text)
 
+    def test_checkout_never_leaves_the_token_for_the_build(self) -> None:
+        checkouts = re.findall(r"uses: actions/checkout@\S+[^\n]*\n((?:        .*\n)*)", self.text)
+        self.assertTrue(checkouts)
+        for options in checkouts:
+            self.assertIn("persist-credentials: false", options)
+
     def test_every_action_is_pinned_to_a_sha_already_used_by_ci(self) -> None:
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         used = re.findall(r"uses: (\S+@[0-9a-f]{40})\b", self.text)
