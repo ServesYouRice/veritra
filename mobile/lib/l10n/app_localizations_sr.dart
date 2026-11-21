@@ -2373,6 +2373,74 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String chatHoldChecking(String name) {
+    return 'Проверавају се уређаји корисника $name. Слање у овом ћаскању је паузирано док се не провере.';
+  }
+
+  @override
+  String chatHoldWaiting(String name) {
+    return 'Чека се да $name отвори апликацију и одобри своје уређаје. Слање у овом ћаскању је паузирано.';
+  }
+
+  @override
+  String chatHoldRemoved(String name) {
+    return 'Уређај уклоњен са налога корисника $name још је у овом ћаскању. Слање је паузирано док не изађе.';
+  }
+
+  @override
+  String get chatHoldOwnRemoved =>
+      'Уређај који сте уклонили још је у овом ћаскању. Слање је паузирано док не изађе.';
+
+  @override
+  String chatHoldUnapproved(String name) {
+    return 'У овом ћаскању је уређај који није на одобреној листи корисника $name. Слање је паузирано док не буде одобрен или не изађе.';
+  }
+
+  @override
+  String get chatHoldOwnUnapproved =>
+      'У ово ћаскање је додат уређај који нисте одобрили. Слање је паузирано. Проверите своје уређаје у Подешавањима.';
+
+  @override
+  String chatHoldConflict(String name) {
+    return 'Листа уређаја корисника $name промењена је на начин који не може да се провери. Слање у овом ћаскању је паузирано.';
+  }
+
+  @override
+  String get chatHoldOwnConflict =>
+      'Ваша листа уређаја промењена је на начин који не може да се провери. Слање у овом ћаскању је паузирано.';
+
+  @override
+  String get chatHoldCheckAgain => 'Провери поново';
+
+  @override
+  String get chatHoldCompare => 'Упореди безбедносне бројеве';
+
+  @override
+  String get chatHoldTrust => 'Веруј тренутној листи';
+
+  @override
+  String chatHoldTrustTitle(String name) {
+    return 'Желите ли да верујете тренутној листи уређаја корисника $name?';
+  }
+
+  @override
+  String chatHoldTrustBody(String name) {
+    return 'Један од уређаја корисника $name потписао је две различите верзије листе уређаја. Замолите корисника $name да провери своје уређаје и уклони оне које не препознаје. Исти безбедносни бројеви показују да обоје видите исте уређаје у овом ћаскању, али не и која је верзија права. Верујте листи тек када $name потврди уређаје у овом ћаскању.';
+  }
+
+  @override
+  String get chatHoldTrustConfirm => 'Веруј листи';
+
+  @override
+  String get chatHoldTrustRefused =>
+      'Листа коју сервер сада приказује није ниједна од две потписане верзије, па ништа није промењено. Покушајте поново касније.';
+
+  @override
+  String chatHoldTrusted(String name) {
+    return 'Тренутној листи уређаја корисника $name сада се верује.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.';
 
@@ -7818,6 +7886,74 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String chatDevicesNotJoined(String name) {
     return 'Neki uređaji korisnika $name se još nisu pridružili.';
+  }
+
+  @override
+  String chatHoldChecking(String name) {
+    return 'Proveravaju se uređaji korisnika $name. Slanje u ovom ćaskanju je pauzirano dok se ne provere.';
+  }
+
+  @override
+  String chatHoldWaiting(String name) {
+    return 'Čeka se da $name otvori aplikaciju i odobri svoje uređaje. Slanje u ovom ćaskanju je pauzirano.';
+  }
+
+  @override
+  String chatHoldRemoved(String name) {
+    return 'Uređaj uklonjen sa naloga korisnika $name još je u ovom ćaskanju. Slanje je pauzirano dok ne izađe.';
+  }
+
+  @override
+  String get chatHoldOwnRemoved =>
+      'Uređaj koji ste uklonili još je u ovom ćaskanju. Slanje je pauzirano dok ne izađe.';
+
+  @override
+  String chatHoldUnapproved(String name) {
+    return 'U ovom ćaskanju je uređaj koji nije na odobrenoj listi korisnika $name. Slanje je pauzirano dok ne bude odobren ili ne izađe.';
+  }
+
+  @override
+  String get chatHoldOwnUnapproved =>
+      'U ovo ćaskanje je dodat uređaj koji niste odobrili. Slanje je pauzirano. Proverite svoje uređaje u Podešavanjima.';
+
+  @override
+  String chatHoldConflict(String name) {
+    return 'Lista uređaja korisnika $name promenjena je na način koji ne može da se proveri. Slanje u ovom ćaskanju je pauzirano.';
+  }
+
+  @override
+  String get chatHoldOwnConflict =>
+      'Vaša lista uređaja promenjena je na način koji ne može da se proveri. Slanje u ovom ćaskanju je pauzirano.';
+
+  @override
+  String get chatHoldCheckAgain => 'Proveri ponovo';
+
+  @override
+  String get chatHoldCompare => 'Uporedi bezbednosne brojeve';
+
+  @override
+  String get chatHoldTrust => 'Veruj trenutnoj listi';
+
+  @override
+  String chatHoldTrustTitle(String name) {
+    return 'Želite li da verujete trenutnoj listi uređaja korisnika $name?';
+  }
+
+  @override
+  String chatHoldTrustBody(String name) {
+    return 'Jedan od uređaja korisnika $name potpisao je dve različite verzije liste uređaja. Zamolite korisnika $name da proveri svoje uređaje i ukloni one koje ne prepoznaje. Isti bezbednosni brojevi pokazuju da oboje vidite iste uređaje u ovom ćaskanju, ali ne i koja je verzija prava. Verujte listi tek kada $name potvrdi uređaje u ovom ćaskanju.';
+  }
+
+  @override
+  String get chatHoldTrustConfirm => 'Veruj listi';
+
+  @override
+  String get chatHoldTrustRefused =>
+      'Lista koju server sada prikazuje nije nijedna od dve potpisane verzije, pa ništa nije promenjeno. Pokušajte ponovo kasnije.';
+
+  @override
+  String chatHoldTrusted(String name) {
+    return 'Trenutnoj listi uređaja korisnika $name sada se veruje.';
   }
 
   @override

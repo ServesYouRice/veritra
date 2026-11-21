@@ -829,6 +829,17 @@ abstract class LocalStore {
     required List<int> otherStatement,
     required int recordedAt,
   });
+
+  /// The fork proofs kept for [accountId], oldest version first.
+  Future<List<DeviceListConflictProof>> loadDeviceListConflicts(
+    String accountId,
+  );
+
+  /// Replaces [pin.accountId]'s conflicted pin with [pin] in one step, only
+  /// while the stored pin is in conflict and has [pin]'s list identity (the
+  /// L1 conflict reset). The first-pin time restarts; the proofs stay.
+  /// Returns whether it was written.
+  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin);
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId);
   Future<void> saveApprovalLeaves(ApprovalLeafChange change);
   Future<List<String>> loadHeldConversations();
@@ -2130,7 +2141,8 @@ class MemoryLocalStore implements LocalStore {
       };
 
   final Map<String, DeviceListPin> _deviceListPins = <String, DeviceListPin>{};
-  final Map<String, List<int>> _deviceListConflicts = <String, List<int>>{};
+  final Map<String, DeviceListConflictProof> _deviceListConflicts =
+      <String, DeviceListConflictProof>{};
   final Map<String, List<ApprovalLeaf>> _approvalLeaves =
       <String, List<ApprovalLeaf>>{};
 
@@ -2179,8 +2191,45 @@ class MemoryLocalStore implements LocalStore {
     }
     _deviceListConflicts.putIfAbsent(
       '$accountId\u0000$version',
-      () => [...pinnedStatement, ...otherStatement],
+      () => DeviceListConflictProof(
+        version: version,
+        pinnedStatement: pinnedStatement,
+        otherStatement: otherStatement,
+        recordedAt: recordedAt,
+      ),
     );
+  }
+
+  @override
+  Future<List<DeviceListConflictProof>> loadDeviceListConflicts(
+    String accountId,
+  ) async =>
+      [
+        for (final entry in _deviceListConflicts.entries)
+          if (entry.key.startsWith('$accountId\u0000')) entry.value,
+      ]..sort((a, b) => a.version.compareTo(b.version));
+
+  @override
+  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) async {
+    final current = _deviceListPins[pin.accountId];
+    if (current == null ||
+        !current.conflict ||
+        pin.conflict ||
+        !_sameDeviceListBytes(current.listId, pin.listId)) {
+      return false;
+    }
+    _deviceListPins[pin.accountId] = pin.copyWith(
+      pinnedAt: pin.pinnedAt ?? pin.checkedAt,
+    );
+    return true;
+  }
+
+  static bool _sameDeviceListBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -4398,6 +4447,16 @@ class SecureLocalStore implements LocalStore {
         otherStatement: otherStatement,
         recordedAt: recordedAt,
       );
+
+  @override
+  Future<List<DeviceListConflictProof>> loadDeviceListConflicts(
+    String accountId,
+  ) async =>
+      (await _database()).readDeviceListConflicts(accountId);
+
+  @override
+  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) async =>
+      (await _database()).replaceConflictedDeviceListPin(pin);
 
   @override
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) async =>

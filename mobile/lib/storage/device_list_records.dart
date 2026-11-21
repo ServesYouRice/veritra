@@ -159,6 +159,28 @@ class DeviceListPin {
   }
 }
 
+/// The two validly signed statements that proved a fork of an account's
+/// pinned chain at [version]: the one pinned then and the other one the
+/// server showed. Kept after a reset, as the record of what was chosen from.
+class DeviceListConflictProof {
+  DeviceListConflictProof({
+    required this.version,
+    required List<int> pinnedStatement,
+    required List<int> otherStatement,
+    required this.recordedAt,
+  })  : pinnedStatement = Uint8List.fromList(pinnedStatement),
+        otherStatement = Uint8List.fromList(otherStatement);
+
+  final int version;
+  final Uint8List pinnedStatement;
+  final Uint8List otherStatement;
+  final int recordedAt;
+
+  /// Whether [statement] is one of the two proven statements.
+  bool names(List<int> statement) =>
+      _same(pinnedStatement, statement) || _same(otherStatement, statement);
+}
+
 enum PinStanding { approved, removed, mismatch, unknown }
 
 /// How this device judged a leaf of a group (D94).

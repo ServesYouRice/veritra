@@ -37,6 +37,7 @@ import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../calls/room_screen.dart';
 import '../search/search_screen.dart';
+import 'approval_hold_banners.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
 import 'formatted_message.dart';
@@ -134,6 +135,7 @@ class _ChatScreenState extends State<ChatScreen> {
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
     _scheduleJump();
+    unawaited(widget.state.refreshApprovalHoldSummary(widget.conversationId));
   }
 
   void _scheduleJump() {
@@ -238,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.addListener(_noticeTyping);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
     unawaited(_attachments.clear());
+    unawaited(widget.state.refreshApprovalHoldSummary(widget.conversationId));
   }
 
   @override
@@ -765,6 +768,12 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: const <Widget>[SizedBox.shrink()],
           )
         : null;
+    // L1 (D94): which account's devices hold this chat, and what to do.
+    final holdBanners = ApprovalHoldBanners(
+      state: widget.state,
+      conversationId: conversationId,
+      memberName: (accountId) => _memberName(conversationId, accountId),
+    );
     if (messages.isEmpty && pending.isEmpty) {
       final Widget empty;
       if (loading) {
@@ -784,13 +793,17 @@ class _ChatScreenState extends State<ChatScreen> {
               : context.l10n.chatEmptyMessageGroup,
         );
       }
-      if (renewalBanner == null) return empty;
-      return Column(children: <Widget>[renewalBanner, Expanded(child: empty)]);
+      return Column(children: <Widget>[
+        if (renewalBanner != null) renewalBanner,
+        holdBanners,
+        Expanded(child: empty),
+      ]);
     }
     final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
         if (renewalBanner != null) renewalBanner,
+        holdBanners,
         // L1: an approved device of a member has stayed out of the group
         // for an hour (the server gave no key package, or kept it out).
         for (final accountId in notJoined)
@@ -1377,6 +1390,9 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
     state.channelKeyRenewalStuck(conversationId),
+    ...state.approvalHoldAccounts(conversationId),
+    state.approvalHoldRechecking(conversationId),
+    ...state.incompleteJoinAccounts(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,

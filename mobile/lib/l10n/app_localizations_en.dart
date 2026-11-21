@@ -2355,6 +2355,74 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String chatHoldChecking(String name) {
+    return 'Checking $name\'s devices. Sending in this chat is paused until they\'re checked.';
+  }
+
+  @override
+  String chatHoldWaiting(String name) {
+    return 'Waiting for $name to open the app and approve their devices. Sending in this chat is paused.';
+  }
+
+  @override
+  String chatHoldRemoved(String name) {
+    return 'A device $name removed is still in this chat. Sending is paused until it leaves.';
+  }
+
+  @override
+  String get chatHoldOwnRemoved =>
+      'A device you removed is still in this chat. Sending is paused until it leaves.';
+
+  @override
+  String chatHoldUnapproved(String name) {
+    return 'A device that isn\'t on $name\'s approved list is in this chat. Sending is paused until it\'s approved or leaves.';
+  }
+
+  @override
+  String get chatHoldOwnUnapproved =>
+      'A device you didn\'t approve was added to this chat. Sending is paused. Check your devices in Settings.';
+
+  @override
+  String chatHoldConflict(String name) {
+    return '$name\'s device list changed in a way that can\'t be verified. Sending in this chat is paused.';
+  }
+
+  @override
+  String get chatHoldOwnConflict =>
+      'Your device list changed in a way that can\'t be verified. Sending in this chat is paused.';
+
+  @override
+  String get chatHoldCheckAgain => 'Check again';
+
+  @override
+  String get chatHoldCompare => 'Compare safety numbers';
+
+  @override
+  String get chatHoldTrust => 'Trust current list';
+
+  @override
+  String chatHoldTrustTitle(String name) {
+    return 'Trust $name\'s current device list?';
+  }
+
+  @override
+  String chatHoldTrustBody(String name) {
+    return 'One of $name\'s devices signed two different versions of their device list. Ask $name to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after $name confirms the devices in this chat are theirs.';
+  }
+
+  @override
+  String get chatHoldTrustConfirm => 'Trust list';
+
+  @override
+  String get chatHoldTrustRefused =>
+      'The list the server shows now isn\'t one of the two signed versions, so nothing changed. Try again later.';
+
+  @override
+  String chatHoldTrusted(String name) {
+    return '$name\'s current device list is trusted now.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Couldn\'t join this chat. Ask a member to add you again.';
 

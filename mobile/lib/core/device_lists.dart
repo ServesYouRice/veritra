@@ -99,6 +99,16 @@ enum DeviceListState {
   conflict,
 }
 
+/// Why a conflict reset ([DeviceListPins.trustServedBranch]) changed
+/// nothing. The conflict stays as it was.
+class DeviceListResetRefused implements Exception {
+  const DeviceListResetRefused(this.reason);
+  final String reason;
+
+  @override
+  String toString() => 'DeviceListResetRefused($reason)';
+}
+
 class DeviceListStatus {
   const DeviceListStatus(this.state, this.pin);
   final DeviceListState state;
@@ -542,6 +552,70 @@ class DeviceListPins {
     final stored = await store.loadDeviceListPin(accountId);
     return DeviceListStatus(DeviceListState.conflict, stored ?? pin);
   }
+
+  /// Clears [accountId]'s sticky conflict by pinning the branch the server
+  /// shows now, after the person chose to (design, "Pins, rollback and
+  /// forks": the app re-pins from that branch's version 1). Only another
+  /// account's list is reset this way; the caller refuses its own.
+  ///
+  /// The account is never left without a pin: the whole chain is fetched
+  /// and verified first (native chain and step checks, as at first sight),
+  /// and only then replaces the conflicted pin in one compare-and-swap.
+  /// The chain must grow from the pinned list identity and, at every
+  /// version a fork proof was kept for, carry one of that proof's two
+  /// statements. A statement fixes its whole prefix by `prev_hash`, so the
+  /// reset can only pick one of the two branches a listed key signed; a
+  /// server holding no listed key cannot use it to bring in a chain of its
+  /// own. The fork proofs are kept, and the first-pin time restarts (a
+  /// re-pin is a new first sight for report verdicts, review M2).
+  ///
+  /// Throws [DeviceListResetRefused] and changes nothing otherwise.
+  Future<DeviceListPin> trustServedBranch(String accountId) async {
+    final stored = await store.loadDeviceListPin(accountId);
+    if (stored == null || !stored.conflict) {
+      throw const DeviceListResetRefused('no conflict to reset');
+    }
+    final proofs = await store.loadDeviceListConflicts(accountId);
+    if (proofs.isEmpty) {
+      throw const DeviceListResetRefused('no fork proof is kept');
+    }
+    _lastFetch[accountId] = _clock();
+    final List<({int version, Uint8List statement})>? fetched;
+    try {
+      fetched = await _fetchFrom(accountId, 0);
+    } on Object {
+      throw const DeviceListResetRefused('the list could not be read');
+    }
+    if (fetched == null || fetched.isEmpty) {
+      throw const DeviceListResetRefused('the list could not be read');
+    }
+    final statements = [for (final item in fetched) item.statement];
+    final DeviceListPin chain;
+    try {
+      chain = _verifyChain(accountId, statements);
+    } on Object {
+      throw const DeviceListResetRefused('the list does not verify');
+    }
+    if (!_same(chain.listId, stored.listId)) {
+      throw const DeviceListResetRefused('another list identity');
+    }
+    for (final proof in proofs) {
+      if (statements.length < proof.version ||
+          !proof.names(statements[proof.version - 1])) {
+        throw const DeviceListResetRefused('not one of the proven branches');
+      }
+    }
+    if (!await store.replaceConflictedDeviceListPin(chain)) {
+      throw const DeviceListResetRefused('the pin changed meanwhile');
+    }
+    _lastState[accountId] = DeviceListState.ok;
+    return (await store.loadDeviceListPin(accountId)) ?? chain;
+  }
+
+  /// What the last refresh of [accountId] found, or null before any. Lets
+  /// a caller tell an account with no list yet ([DeviceListState.empty])
+  /// from one that could not be read.
+  DeviceListState? lastState(String accountId) => _lastState[accountId];
 
   Future<DeviceListStatus> _stored(String accountId) async {
     final pin = await store.loadDeviceListPin(accountId);

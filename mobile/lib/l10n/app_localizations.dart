@@ -3909,6 +3909,102 @@ abstract class AppLocalizations {
   /// **'Some of {name}\'s devices haven\'t joined yet.'**
   String chatDevicesNotJoined(String name);
 
+  /// No description provided for @chatHoldChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking {name}\'s devices. Sending in this chat is paused until they\'re checked.'**
+  String chatHoldChecking(String name);
+
+  /// No description provided for @chatHoldWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for {name} to open the app and approve their devices. Sending in this chat is paused.'**
+  String chatHoldWaiting(String name);
+
+  /// No description provided for @chatHoldRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device {name} removed is still in this chat. Sending is paused until it leaves.'**
+  String chatHoldRemoved(String name);
+
+  /// No description provided for @chatHoldOwnRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device you removed is still in this chat. Sending is paused until it leaves.'**
+  String get chatHoldOwnRemoved;
+
+  /// No description provided for @chatHoldUnapproved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device that isn\'t on {name}\'s approved list is in this chat. Sending is paused until it\'s approved or leaves.'**
+  String chatHoldUnapproved(String name);
+
+  /// No description provided for @chatHoldOwnUnapproved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device you didn\'t approve was added to this chat. Sending is paused. Check your devices in Settings.'**
+  String get chatHoldOwnUnapproved;
+
+  /// No description provided for @chatHoldConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s device list changed in a way that can\'t be verified. Sending in this chat is paused.'**
+  String chatHoldConflict(String name);
+
+  /// No description provided for @chatHoldOwnConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Your device list changed in a way that can\'t be verified. Sending in this chat is paused.'**
+  String get chatHoldOwnConflict;
+
+  /// No description provided for @chatHoldCheckAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get chatHoldCheckAgain;
+
+  /// No description provided for @chatHoldCompare.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare safety numbers'**
+  String get chatHoldCompare;
+
+  /// No description provided for @chatHoldTrust.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust current list'**
+  String get chatHoldTrust;
+
+  /// No description provided for @chatHoldTrustTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust {name}\'s current device list?'**
+  String chatHoldTrustTitle(String name);
+
+  /// No description provided for @chatHoldTrustBody.
+  ///
+  /// In en, this message translates to:
+  /// **'One of {name}\'s devices signed two different versions of their device list. Ask {name} to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after {name} confirms the devices in this chat are theirs.'**
+  String chatHoldTrustBody(String name);
+
+  /// No description provided for @chatHoldTrustConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust list'**
+  String get chatHoldTrustConfirm;
+
+  /// No description provided for @chatHoldTrustRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The list the server shows now isn\'t one of the two signed versions, so nothing changed. Try again later.'**
+  String get chatHoldTrustRefused;
+
+  /// No description provided for @chatHoldTrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s current device list is trusted now.'**
+  String chatHoldTrusted(String name);
+
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
   /// In en, this message translates to:

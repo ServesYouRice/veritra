@@ -123,6 +123,7 @@ part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_l1_joins.dart';
+part 'app_state_l1_holds.dart';
 part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
@@ -1317,6 +1318,9 @@ class AppState extends ChangeNotifier
 
   /// L1 complete-adds audit and incomplete-join clocks (app_state_l1_joins).
   final _L1JoinAudit _l1Joins = _L1JoinAudit();
+
+  /// L1 approval holds as shown in chats (app_state_l1_holds).
+  final _L1HoldState _l1Holds = _L1HoldState();
 
   /// How often one held group is audited for approved devices that are not
   /// leaves when the server reports no change for it (L1).
@@ -7684,6 +7688,13 @@ class AppState extends ChangeNotifier
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // L1: which accounts hold a chat, for its banner (local reads only).
+        try {
+          await _refreshApprovalHoldSummaries();
+        } catch (_) {
+          // Read again at the next pass or when the chat opens.
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // C7: history_sync duties, a newcomer's request and stale own
         // records are sent from the foreground only (outbound writes).
         if (wake == null) {
@@ -9887,6 +9898,7 @@ class AppState extends ChangeNotifier
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _l1Joins.clear();
+    _l1Holds.clear();
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;

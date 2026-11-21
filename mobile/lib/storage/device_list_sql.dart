@@ -211,6 +211,87 @@ extension DeviceListSql on EncryptedLocalDatabase {
         );
       });
 
+  /// The fork proofs kept for [accountId], oldest version first.
+  Future<List<DeviceListConflictProof>> readDeviceListConflicts(
+    String accountId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM local_device_list_conflicts WHERE account_id = ? '
+      'ORDER BY version',
+      variables: [Variable.withString(accountId)],
+    ).get();
+    return [
+      for (final row in rows)
+        DeviceListConflictProof(
+          version: row.read<int>('version'),
+          pinnedStatement: row.read<Uint8List>('pinned_statement'),
+          otherStatement: row.read<Uint8List>('other_statement'),
+          recordedAt: row.read<int>('recorded_at'),
+        ),
+    ];
+  }
+
+  /// Replaces a conflicted pin with [pin] (L1 conflict reset): only while
+  /// the stored head is in `conflict` and has [pin]'s list identity, in one
+  /// transaction, so a failure leaves the conflict exactly as it was. The
+  /// first-pin time restarts at [pin]'s (review M2: the re-pin is a new
+  /// first sight). The fork proofs are kept. Returns whether it was written.
+  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) =>
+      transaction(() async {
+        final current = await customSelect(
+          'SELECT state, list_id FROM local_device_list_heads '
+          'WHERE account_id = ?',
+          variables: [Variable.withString(pin.accountId)],
+        ).getSingleOrNull();
+        if (current == null ||
+            current.read<String>('state') != 'conflict' ||
+            pin.conflict ||
+            !_sameBytes(current.read<Uint8List>('list_id'), pin.listId)) {
+          return false;
+        }
+        await customStatement(
+          'DELETE FROM local_device_list_heads WHERE account_id = ?',
+          [pin.accountId],
+        );
+        await customStatement(
+          'INSERT INTO local_device_list_heads (account_id, version, '
+          'list_hash, list_id, head_statement, state, checked_at, '
+          "recovery_key, pinned_at) VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?)",
+          [
+            pin.accountId,
+            pin.version,
+            Uint8List.fromList(pin.listHash),
+            Uint8List.fromList(pin.listId),
+            Uint8List.fromList(pin.headStatement),
+            pin.checkedAt,
+            pin.recoveryKey == null
+                ? null
+                : Uint8List.fromList(pin.recoveryKey!),
+            pin.pinnedAt ?? pin.checkedAt,
+          ],
+        );
+        await customStatement(
+          'DELETE FROM local_device_list_keys WHERE account_id = ?',
+          [pin.accountId],
+        );
+        for (final key in pin.keys) {
+          await customStatement(
+            'INSERT INTO local_device_list_keys (account_id, device_id, '
+            'signing_key, added_version, removed_version, frank_key) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            [
+              pin.accountId,
+              Uint8List.fromList(key.deviceId),
+              Uint8List.fromList(key.signingKey),
+              key.addedVersion,
+              key.removedVersion,
+              key.frankKey == null ? null : Uint8List.fromList(key.frankKey!),
+            ],
+          );
+        }
+        return true;
+      });
+
   Future<List<ApprovalLeaf>> readApprovalLeaves(String conversationId) async {
     final rows = await customSelect(
       'SELECT * FROM local_approval_leaves WHERE conversation_id = ? '
