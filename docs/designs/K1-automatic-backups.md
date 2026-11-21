@@ -1,10 +1,23 @@
 # K1: automatic backups
 
-**Status: proposed (2026-11-07), not built.** Builds on
+**Status: built (K1-1 to K1-7), except what needs a phone (2026-11-21).**
+Proposed 2026-11-07; the owner answered the questions at the end (D91, and
+2026-11-11 for questions 3b and 5a). The "Build notes" below record where the
+build differs from the text above. Builds on
 [K0](K0-long-lived-key.md) and [K0 recovery enrollment](K0-recovery-enrollment.md),
-under D02/D27, D49, D55, D71, D73, D77, D78 and D79. It is a recovery and
-credential change, so it needs an independent review before code, and the
-owner's answers to the questions at the end.
+under D02/D27, D49, D55, D71, D73, D77, D78 and D79.
+
+Not built or not compiled:
+
+- The Kotlin and Swift second-copy code (`K1SecondCopy.kt`, `AppDelegate.swift`)
+  was never compiled (no Android SDK or Xcode here); CI or a device decides.
+- Phone background runs (the Android job, iOS `BGProcessingTask`) stay out by
+  owner decision: a phone backs up when the app opens, at most once a day.
+- Two warnings from the design were left out on purpose. "The list misses this
+  device's own copy" heals itself: the next daily run uploads a new copy, so a
+  deleted one is missing for at most a day. "Second copies saved before a key
+  swap still open with the old key" is advice text only. Both are small
+  (Dart and strings) if the owner wants them.
 
 ## Goal (STATE.md K1)
 
