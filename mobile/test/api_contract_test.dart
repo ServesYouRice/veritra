@@ -280,10 +280,11 @@ void main() {
         owner.token,
         maxUses: 2,
       );
-      expect(
-        (await client.listInvites(owner.token)).single.id,
-        registrationInvite.id,
-      );
+      expect(registrationInvite.code, isNotEmpty);
+      final listedInvite = (await client.listInvites(owner.token)).single;
+      expect(listedInvite.id, registrationInvite.id);
+      // The server keeps only a hash: a listed invite carries no code.
+      expect(listedInvite.code, isEmpty);
       final memberReservation = await client.reserveRegistrationEnrollment(
         registrationInvite.code,
       );
