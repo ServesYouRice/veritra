@@ -75,9 +75,9 @@ extension MembershipActions on AppState {
       final anchorGroupId = kind == InviteTargetKind.group
           ? targetId
           : communities
-                .where((community) => community.id == targetId)
-                .firstOrNull
-                ?.sharedConversationId;
+              .where((community) => community.id == targetId)
+              .firstOrNull
+              ?.sharedConversationId;
       if (anchorGroupId == null || anchorGroupId.isEmpty) {
         throw UserFacingException(l10n.errorActionUnavailable);
       }
@@ -281,10 +281,12 @@ extension MembershipActions on AppState {
   /// trust the server's mapping or drop a community.
   Future<Map<String, String?>> _communityInviteAnchorsOf(
     List<Community> communities,
-  ) async => <String, String?>{
-    for (final community in communities)
-      community.id: await localStore.loadCommunityInviteAnchor(community.id),
-  };
+  ) async =>
+      <String, String?>{
+        for (final community in communities)
+          community.id:
+              await localStore.loadCommunityInviteAnchor(community.id),
+      };
 
   /// C1 v3: whether the server's account of [community] agrees with the
   /// shared group in [pinned] (from [_communityInviteAnchorsOf]): its shared
@@ -335,10 +337,12 @@ extension MembershipActions on AppState {
   /// another server, a malformed one, and a revoked, expired or used up one
   /// each fail with a message that does not repeat the input.
   Future<({MembershipInviteLink link, InvitePreview preview})?>
-  previewInviteLink(String text) {
+      previewInviteLink(String text) {
     return _membershipCall<
-      ({MembershipInviteLink link, InvitePreview preview})
-    >((current, client) async {
+        ({
+          MembershipInviteLink link,
+          InvitePreview preview
+        })>((current, client) async {
       final link = MembershipInviteLink.tryParse(
         text,
         expectedOrigin: client.baseUrl,
@@ -494,9 +498,8 @@ extension MembershipActions on AppState {
     required bool approve,
   }) async {
     final done = await _membershipCall<bool>((current, client) async {
-      final conversationIds = approve
-          ? _joinTargetConversations(request)
-          : const <String>[];
+      final conversationIds =
+          approve ? _joinTargetConversations(request) : const <String>[];
       if (approve) {
         if (!membershipChangesAvailable) {
           throw StateError('adding members is not available in this build');
