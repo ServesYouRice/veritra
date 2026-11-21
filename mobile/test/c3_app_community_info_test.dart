@@ -681,7 +681,11 @@ void main() {
       // The control: the same marks for a community the server does not
       // list are dropped, so the pass above did run.
       final (_, goneStore) = await app(const <Community>[]);
-      final dropped = await goneStore.loadSetting('c3.rotation_due.alice');
+      var dropped = await goneStore.loadSetting('c3.rotation_due.alice');
+      for (var i = 0; i < 50 && (dropped ?? '').contains(id); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        dropped = await goneStore.loadSetting('c3.rotation_due.alice');
+      }
       expect(dropped ?? '', isNot(contains(id)));
     },
     skip: nativeCryptoSkip(),

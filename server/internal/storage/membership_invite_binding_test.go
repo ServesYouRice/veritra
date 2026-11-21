@@ -273,6 +273,24 @@ func TestCommunityInviteAnchorIsTheSharedGroup(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
+	// The role check runs before the anchor check, so the 400 never tells a
+	// plain member or an outsider whether a guessed id is the shared group.
+	for name, caller := range map[string]struct {
+		who  AccountDevice
+		want error
+	}{
+		"a plain member": {f.member, ErrForbidden},
+		"an outsider":    {f.outsider, ErrNotMember},
+	} {
+		for _, anchor := range []string{"conv_other", f.shared} {
+			input := base
+			input.CreatedBy, input.CreatedByDeviceID, input.SigningKey = caller.who.Account.ID, caller.who.Device.ID, caller.who.Device.SigningKey
+			input.AnchorGroupID = anchor
+			if _, err := f.store.CreateMembershipInvite(ctx, input); !errors.Is(err, caller.want) {
+				t.Fatalf("%s, anchor %q: %v", name, anchor, err)
+			}
+		}
+	}
 	if _, err := f.store.CreateMembershipInvite(ctx, base); err != nil {
 		t.Fatalf("the shared group: %v", err)
 	}
