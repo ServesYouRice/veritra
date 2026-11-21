@@ -460,9 +460,14 @@ and it is the only one that covers Android, iOS, macOS and Windows.
   current pin is Flutter 3.44 with Dart 3.12, so it fits. S3's first action
   is to resolve the lock in CI, because D88 is a precedent for a plugin
   that did not resolve under the pinned Flutter.
-- `passkeys_darwin` keeps the iOS 13 and macOS 10.15 targets and checks
-  for iOS 16 and macOS 13.5 at run time, so no deployment-target bump is
-  needed.
+- Corrected 2026-11-21: `passkeys_darwin` 0.4.8 marks its whole plugin
+  class `@available(macOS 13.5, iOS 16.0, *)`. iOS still builds at iOS 13,
+  because its generated plugin registrant is Objective-C, where that is a
+  warning, and the plugin checks for iOS 16 at run time. The macOS
+  registrant is Swift, where it is an error, so the owner raised the macOS
+  deployment target from 10.15 to 13.5 (Runner project and
+  `scripts/build-desktop-crypto.sh`). The macOS app now needs macOS 13.5 or
+  later.
 - **Never set `debugMode: true`.** The doctor then fetches the server's
   `.well-known` files. It reaches only the user's own server and never a
   Corbado host (checked in `passkeys_doctor` 1.7.0 source), but the app

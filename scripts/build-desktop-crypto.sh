@@ -99,7 +99,7 @@ case "$PLATFORM" in
       exit 2
     fi
     # Match the Runner's deployment target so the linker does not warn.
-    export MACOSX_DEPLOYMENT_TARGET=10.15
+    export MACOSX_DEPLOYMENT_TARGET=13.5
     capture_provenance
     for target in aarch64-apple-darwin x86_64-apple-darwin; do
       rm -f "$CRATE/target/$target/release/libprivate_messenger_crypto.a"
