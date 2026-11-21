@@ -55,13 +55,21 @@ var profiles = map[string]profile{
 		CiphertextBytes: 1024, AttachmentBytes: 256 << 10, AttachmentEvery: 20, LargeEvery: 25, LargeBytes: 25 << 20},
 	"m": {Name: "m", Accounts: 250, DMs: 125, Groups: 75, GroupSize: 5, History: 100_000, Attachments: 1_000,
 		CiphertextBytes: 1024, AttachmentBytes: 256 << 10, AttachmentEvery: 20, LargeEvery: 25, LargeBytes: 25 << 20},
+	// c8 is one community-sized group of every account (package C8): no DMs
+	// and no attachments, so the run measures the fan-out of one busy group.
+	// -group-size resizes it (it also raises the account count to fit).
+	"c8": {Name: "c8", Accounts: 500, DMs: 0, Groups: 1, GroupSize: 500, History: 2_000,
+		CiphertextBytes: 1024},
 }
 
 const (
 	cryptoProtocol     = "mls10-openmls-v1"
 	attachmentMetadata = `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`
 	seedWorkers        = 8
-	readEvery          = 2 * time.Minute
+	// maxCreateMembers is how many other accounts one create-conversation
+	// request may name (the server refuses more than 100).
+	maxCreateMembers = 100
+	readEvery        = 2 * time.Minute
 	// maxSendsInFlight caps one device's concurrent arrivals (upload plus
 	// send). Arrivals over it are recorded as dropped sends, so a stalled
 	// server shows as failures instead of lowering the offered load.
@@ -397,6 +405,12 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 		for _, member := range conv.members[1:] {
 			others = append(others, w.devices[member].accountID)
 		}
+		// Creating a conversation names at most maxCreateMembers others; the
+		// rest of a larger group (package C8) join through the member route.
+		later := []string(nil)
+		if len(others) > maxCreateMembers {
+			others, later = others[:maxCreateMembers], others[maxCreateMembers:]
+		}
 		var created struct {
 			ID string `json:"id"`
 		}
@@ -410,6 +424,14 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 			return err
 		}
 		conv.id = created.ID
+		for _, accountID := range later {
+			if err := retryRateLimited(ctx, func() error {
+				return expect(w.client.json(ctx, http.MethodPost, "/api/v1/conversations/"+created.ID+"/members", creator, "",
+					map[string]any{"account_id": accountID, "role": "member"}, nil, nil))
+			}); err != nil {
+				return fmt.Errorf("add member: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("conversations: %w", err)

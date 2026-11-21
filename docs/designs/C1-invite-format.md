@@ -248,8 +248,9 @@ strictly higher rank. Groups keep their existing routes.
 
 ## Not built
 
-- Rename: group and community names must be encrypted metadata (W11 and C3),
-  neither of which exists. No plaintext rename route was added.
+- Rename is built through encrypted metadata, not a rename route: the group
+  profile editor (W11) and the community and channel info editor (C3). No
+  plaintext rename route was added (2026-11-21).
 - Join-request notifications: admins read the list when they open it.
 - C0 shared groups, per-conversation sync bounds, client cursors.
 
@@ -274,5 +275,5 @@ This refuses the join rather than trusting a server roster.
 This is a group-only D99 slice. Community target ids differ from shared MLS
 group ids: the signed invitation does not carry that shared id. A durable
 community anchor and authenticated mapping still need implementation and
-review. Encrypted rename also needs the W11/C3 app wiring. C1 remains open.
+review. C1 remains open (encrypted rename is wired through W11 and C3).
 The owner requested solo work, so no independent review was performed.

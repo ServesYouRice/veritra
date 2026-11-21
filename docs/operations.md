@@ -1325,7 +1325,13 @@ router keep their own budgets.
 (also `m`, and the `backup` and `restart` scenarios) runs the server in a
 container with the tier's limits, seeds it through the public API with
 `server/cmd/veritra-load` and prints the report; add `-duration 2h` for a
-soak. `go test -run Scenario ./internal/app` replays a provider stall and a
+soak. `scripts/capacity.sh c8 load -rate 0.1,0.25,0.5` is the big-group
+run (C8): one group of 500 accounts, with the member limit at 500 and
+`DELIVERIES_PER_MINUTE` at 1,002 set for the container; `-group-size`
+resizes it, and `VERITRA_CAPACITY_SERVER_ENV` passes other server settings.
+Where Docker cannot run, `VERITRA_CAPACITY_HOST=1` runs the server as a host
+process (load scenario only, no CPU or memory limit; label those numbers as
+host-process numbers). `go test -run Scenario ./internal/app` replays a provider stall and a
 restart with wake work in flight. Run `promtool test rules
 veritra-alerts.test.yml` in `deploy/kubernetes/examples/monitoring` after
 changing a rule.
