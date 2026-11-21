@@ -13,7 +13,8 @@ const String updateFeedUrl =
 /// The update signing key's Ed25519 public key: 32 bytes as 64 lowercase hex
 /// characters (`scripts/update-feed.py keygen` prints it). Empty until the
 /// owner generates the key. It is a different key from the Windows
-/// code-signing certificate. While it is empty, or while the app has no
-/// Ed25519 verification for the feed, the update check does not contact the
-/// network at all (see [UpdateService]).
+/// code-signing certificate. While it is empty the update check does not
+/// contact the network at all; once it is set, the check is on by default
+/// (owner decision 2026-11-21) and the feed is verified natively
+/// (`Ed25519UpdateSignatureVerifier`, update_verifier.dart).
 const String updateFeedPublicKeyHex = '';

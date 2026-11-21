@@ -224,6 +224,45 @@ void main() {
       expect(status.errorMessage, contains('expired'));
     });
 
+    test('holds every feed to the 90-day validity the signing tool sets',
+        () async {
+      Future<UpdateStatus> check(String issued, String expires) async {
+        final decoded =
+            jsonDecode(utf8.decode(updatePayload)) as Map<String, Object?>;
+        decoded['issued_at'] = issued;
+        decoded['expires_at'] = expires;
+        final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
+        final service = UpdateService(
+          settings: settings,
+          verifier: const AcceptingUpdateVerifier(),
+          client: MemoryUpdateClient(
+            responseBytes: Uint8List.fromList(utf8.encode(jsonEncode(decoded))),
+          ),
+          currentBuild: 1,
+          now: () => DateTime.utc(2026, 11, 21, 12),
+        );
+        addTearDown(service.dispose);
+        return service.checkForUpdates();
+      }
+
+      // Exactly 90 days (what update-feed.py allows, and the vector): fine.
+      expect(
+        (await check('2026-11-21T00:00:00Z', '2027-02-19T00:00:00Z')).kind,
+        UpdateStatusKind.updateAvailable,
+      );
+      // 91 days, a far future expiry, and an issue date pushed ahead to
+      // stretch the window: all refused.
+      for (final (issued, expires) in [
+        ('2026-11-21T00:00:00Z', '2027-02-20T00:00:00Z'),
+        ('2026-11-21T00:00:00Z', '2099-01-01T00:00:00Z'),
+        ('2026-11-25T00:00:00Z', '2027-02-20T00:00:00Z'),
+      ]) {
+        final status = await check(issued, expires);
+        expect(status.kind, UpdateStatusKind.error, reason: '$issued $expires');
+        expect(status.errorMessage, 'Update metadata is valid for too long');
+      }
+    });
+
     test('rejects a feed for another platform', () async {
       final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
       final decoded =

@@ -7,6 +7,8 @@ A signed test vector for the Windows update feed (scripts/update-feed.py).
 
 The key pair was generated for this vector alone and its private half was
 thrown away. It is not the update key and nothing trusts it. The feed
-expires 2027-02-19; tests read it as data and do not depend on the clock. It is the known-answer
-vector for the Ed25519 verification the app still needs
-(docs/release-engineering.md, "Update channel").
+expires 2027-02-19 (exactly the 90-day maximum); tests read it as data and
+pass their own clock. It is the known-answer vector of
+`pm_crypto_update_feed_verify` (crypto ABI 27): Rust
+`crypto/rust/src/update_feed_tests.rs` and Dart
+`mobile/test/update_feed_native_test.dart` check it.

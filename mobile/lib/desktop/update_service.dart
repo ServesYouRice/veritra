@@ -15,6 +15,14 @@ import 'update_trust.dart';
 /// Maximum size for update feed or signature file (64 KiB).
 const int maxUpdateFeedBytes = 64 * 1024;
 
+/// The longest a signed feed may be valid (`scripts/update-feed.py` refuses
+/// more), so an old, validly signed feed cannot be replayed for long.
+const Duration maxUpdateFeedValidity = Duration(days: 90);
+
+/// How far in the future `issued_at` may lie (clock skew); further would let
+/// a feed slip past [maxUpdateFeedValidity].
+const Duration maxUpdateFeedClockSkew = Duration(days: 1);
+
 /// Network timeout for update checks.
 const Duration updateCheckTimeout = Duration(seconds: 15);
 
@@ -237,13 +245,12 @@ abstract interface class UpdateSignatureVerifier {
   Future<bool> verify({required List<int> data, required List<int>? signature});
 }
 
-/// The verifier this build has: it accepts nothing. A feed is only trusted
-/// after an Ed25519 check against [updateFeedPublicKeyHex], and the app has no
-/// such check yet (it needs one function in the native library, because the
-/// Dart side has no Ed25519 and must not hand-roll one: see
-/// docs/release-engineering.md, "Update channel"). Until then the channel
-/// stays off, whether or not the owner has already set a key; an earlier
-/// placeholder that returned true for any non-empty signature was removed.
+/// The verifier while no update key is set: it accepts nothing, and the
+/// service makes no request with it. Once [updateFeedPublicKeyHex] holds a
+/// key, the build uses `Ed25519UpdateSignatureVerifier` (update_verifier.dart,
+/// the native `pm_crypto_update_feed_verify`) instead; see
+/// docs/release-engineering.md, "Update channel". An earlier placeholder that
+/// returned true for any non-empty signature was removed.
 class FailClosedUpdateSignatureVerifier implements UpdateSignatureVerifier {
   const FailClosedUpdateSignatureVerifier();
 
@@ -593,6 +600,16 @@ class UpdateService extends ChangeNotifier {
       }
       if (info.isExpired(now: _now())) {
         _status = const UpdateStatus.error('Update metadata has expired');
+        notifyListeners();
+        return _status;
+      }
+      // The signing tool caps validity; the app holds to it too, so a feed
+      // signed some other way cannot stay valid for longer.
+      if (info.expiresAt.difference(info.issuedAt) > maxUpdateFeedValidity ||
+          info.issuedAt.isAfter(_now().toUtc().add(maxUpdateFeedClockSkew))) {
+        _status = const UpdateStatus.error(
+          'Update metadata is valid for too long',
+        );
         notifyListeners();
         return _status;
       }
