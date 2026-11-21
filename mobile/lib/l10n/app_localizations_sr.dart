@@ -5180,6 +5180,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ви сте власник: ваша апликација сама завршава овај избор.';
 
   @override
+  String get rolesEarlyWin =>
+      'Ова предаја је дошла раније него што овај уређај дозвољава: 30 дана без власника и 7 дана отвореног избора, оба по његовом сату. Питајте остале чланове да ли је то било очекивано.';
+
+  @override
+  String get rolesElectorHint =>
+      'Администратори без ознаке за гласање не могу да изаберу новог власника ако вас нема. Дајте је администраторима којима верујете.';
+
+  @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
 
   @override
@@ -10632,6 +10640,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get rolesOwnerCancelNote =>
       'Vi ste vlasnik: vaša aplikacija sama završava ovaj izbor.';
+
+  @override
+  String get rolesEarlyWin =>
+      'Ova predaja je došla ranije nego što ovaj uređaj dozvoljava: 30 dana bez vlasnika i 7 dana otvorenog izbora, oba po njegovom satu. Pitajte ostale članove da li je to bilo očekivano.';
+
+  @override
+  String get rolesElectorHint =>
+      'Administratori bez oznake za glasanje ne mogu da izaberu novog vlasnika ako vas nema. Dajte je administratorima kojima verujete.';
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
