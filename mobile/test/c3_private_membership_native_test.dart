@@ -16,8 +16,10 @@ import 'native_test_env.dart';
 // C3 private channel membership with real OpenMLS devices (docs/crypto.md,
 // "C3 private channel membership"): the server's member list of a private
 // channel only proposes. A new account joins the channel's group only by a
-// commit from an owner or admin under the community's verified C4 record,
-// and an honest device commits that only for an account its user picked.
+// commit from an owner, admin or moderator under the community's verified
+// C4 record (moderators too: owner, 2026-11-21), and an honest device
+// commits that only for an account its user picked. A plain member never
+// adds, and neither does a moderator once demoted.
 // A server that lists an outsider in a private channel, and even gets one
 // device to add them, cannot make the channel readable to them.
 
@@ -106,6 +108,24 @@ void main() {
       for (final r in readers) await r.keyPackage(),
     ]);
     await _deliver(alice, _private, joiners: readers);
+  }
+
+  /// Alice (the owner) gives [who] [role] in the shared group; each of
+  /// [seenBy] processes that commit.
+  Future<void> setRole(
+    _Client alice,
+    _Client who,
+    BuiltInRole role, {
+    required List<_Client> seenBy,
+  }) async {
+    await alice.service.stageRoleChange(
+      _shared,
+      (c, _, __) => c.setRole(who.account, role),
+    );
+    final change = await _complete(alice, _shared);
+    for (final member in seenBy) {
+      await member.applyCommit(alice, _shared, change.commit, change.key);
+    }
   }
 
   test(
@@ -282,43 +302,215 @@ void main() {
     skip: skip,
   );
 
+  for (final role in [BuiltInRole.admin, BuiltInRole.moderator]) {
+    test(
+      "a new ${role.name}'s add is held until its promotion arrives, then "
+      'merges',
+      () async {
+        final alice = await client('alice');
+        final bob = await client('bob');
+        final carol = await client('carol');
+        final dave = await client('dave');
+        await community(
+          alice,
+          members: [bob, carol, dave],
+          readers: [bob, carol],
+        );
+        // Alice promotes Bob in the shared group; Carol has not processed
+        // that commit yet (the two groups have no common order).
+        await alice.service.stageRoleChange(
+          _shared,
+          (c, _, __) => c.setRole(bob.account, role),
+        );
+        final promotion = await _complete(alice, _shared);
+        await bob.applyCommit(alice, _shared, promotion.commit, promotion.key);
+
+        await bob.pick(dave);
+        await bob.service.stageMembershipChange(
+          _private,
+          adds: [await dave.keyPackage()],
+        );
+        final add = await _complete(bob, _private);
+        await alice.applyCommit(bob, _private, add.commit, add.key);
+        await expectLater(
+          carol.applyCommit(bob, _private, add.commit, add.key),
+          throwsA(isA<GovernanceHeldException>()),
+        );
+
+        // Once the promotion arrives, the retry merges.
+        await carol.applyCommit(
+          alice,
+          _shared,
+          promotion.commit,
+          promotion.key,
+        );
+        await carol.applyCommit(bob, _private, add.commit, add.key);
+        expect(await carol.epoch(_private), await alice.epoch(_private));
+      },
+      skip: skip,
+    );
+  }
+
   test(
-    "an admin's add is held until its promotion arrives, then merges",
+    "a moderator's add is accepted; a plain member's is still held",
     () async {
       final alice = await client('alice');
       final bob = await client('bob');
       final carol = await client('carol');
+      // Erin is a plain member whose device was told the channel is not
+      // private (or runs a modified app): it commits what it is asked to.
+      final erin = await client('erin', privateLabel: false);
       final dave = await client('dave');
+      final mallory = await client('mallory');
       await community(
         alice,
-        members: [bob, carol, dave],
-        readers: [bob, carol],
+        members: [bob, carol, erin, dave, mallory],
+        readers: [bob, carol, erin],
       );
-      // Alice makes Bob an admin in the shared group; Carol has not
-      // processed that commit yet (the two groups have no common order).
-      await alice.service.stageRoleChange(
-        _shared,
-        (c, _, __) => c.setRole(bob.account, BuiltInRole.admin),
+      await setRole(
+        alice,
+        bob,
+        BuiltInRole.moderator,
+        seenBy: [bob, carol, erin],
       );
-      final promotion = await _complete(alice, _shared);
-      await bob.applyCommit(alice, _shared, promotion.commit, promotion.key);
 
+      // Moderator Bob adds only the account he picked, never one the
+      // server merely lists.
+      expect(
+        await bob.service.privateChannelAddable(_private, {
+          dave.account,
+          mallory.account,
+        }),
+        isEmpty,
+      );
       await bob.pick(dave);
+      expect(
+        await bob.service.privateChannelAddable(_private, {
+          dave.account,
+          mallory.account,
+        }),
+        {dave.account},
+      );
       await bob.service.stageMembershipChange(
         _private,
         adds: [await dave.keyPackage()],
       );
       final add = await _complete(bob, _private);
-      await alice.applyCommit(bob, _private, add.commit, add.key);
-      await expectLater(
-        carol.applyCommit(bob, _private, add.commit, add.key),
-        throwsA(isA<GovernanceHeldException>()),
+      for (final member in [alice, carol, erin]) {
+        await member.applyCommit(bob, _private, add.commit, add.key);
+        expect(await member.epoch(_private), await bob.epoch(_private));
+      }
+      await dave.welcome(bob, _private, add.welcome, add.key);
+      // Bob's pick is spent with his accepted add.
+      expect(
+        decodePrivateChannelPicks(
+          await bob.store.loadSetting(privateChannelPicksSetting(_private)),
+          DateTime.now(),
+        ),
+        isNot(contains(dave.account)),
       );
 
-      // Once the promotion arrives, the retry merges.
-      await carol.applyCommit(alice, _shared, promotion.commit, promotion.key);
-      await carol.applyCommit(bob, _private, add.commit, add.key);
-      expect(await carol.epoch(_private), await alice.epoch(_private));
+      // A plain member who picks an account still adds nothing.
+      await carol.pick(mallory);
+      expect(
+        await carol.service.privateChannelAddable(_private, {
+          mallory.account,
+        }),
+        isEmpty,
+      );
+      await expectLater(
+        carol.service.stageMembershipChange(
+          _private,
+          adds: [await mallory.keyPackage()],
+        ),
+        throwsA(isA<PrivateChannelAddRefusedException>()),
+      );
+      // And a plain member's commit that adds one is held by every reader,
+      // the moderator's device included.
+      final before = await alice.epoch(_private);
+      await erin.service.stageMembershipChange(
+        _private,
+        adds: [await mallory.keyPackage()],
+      );
+      final forged = await _complete(erin, _private);
+      for (final member in [alice, bob, carol, dave]) {
+        await expectLater(
+          member.applyCommit(erin, _private, forged.commit, forged.key),
+          throwsA(
+            isA<GovernanceHeldException>().having(
+              (e) => e.reason,
+              'reason',
+              'private_add_unauthorized',
+            ),
+          ),
+        );
+        expect(await member.epoch(_private), before);
+      }
+    },
+    skip: skip,
+  );
+
+  test(
+    'a moderator demoted to member can no longer add',
+    () async {
+      final alice = await client('alice');
+      final bob = await client('bob');
+      final carol = await client('carol');
+      final dave = await client('dave');
+      final erin = await client('erin');
+      await community(
+        alice,
+        members: [bob, carol, dave, erin],
+        readers: [bob, carol],
+      );
+      await setRole(alice, bob, BuiltInRole.moderator, seenBy: [bob, carol]);
+      // Bob picked Dave while he was a moderator; then Alice demotes him.
+      // Carol sees the demotion, Bob's device has not yet.
+      await bob.pick(dave);
+      await alice.service.stageRoleChange(
+        _shared,
+        (c, _, __) => c.setRole(bob.account, BuiltInRole.member),
+      );
+      final demotion = await _complete(alice, _shared);
+      await carol.applyCommit(alice, _shared, demotion.commit, demotion.key);
+
+      // Bob's stale device still commits the add: every reader that holds
+      // the demotion holds it.
+      final before = await alice.epoch(_private);
+      await bob.service.stageMembershipChange(
+        _private,
+        adds: [await dave.keyPackage()],
+      );
+      final add = await _complete(bob, _private);
+      for (final member in [alice, carol]) {
+        await expectLater(
+          member.applyCommit(bob, _private, add.commit, add.key),
+          throwsA(
+            isA<GovernanceHeldException>().having(
+              (e) => e.reason,
+              'reason',
+              'private_add_unauthorized',
+            ),
+          ),
+        );
+        expect(await member.epoch(_private), before);
+      }
+
+      // Once Bob's device holds the demotion, a pick made while he was a
+      // moderator no longer lets it add anyone.
+      await bob.applyCommit(alice, _shared, demotion.commit, demotion.key);
+      await bob.pick(erin);
+      expect(
+        await bob.service.privateChannelAddable(_private, {erin.account}),
+        isEmpty,
+      );
+      await expectLater(
+        bob.service.stageMembershipChange(
+          _private,
+          adds: [await erin.keyPackage()],
+        ),
+        throwsA(isA<PrivateChannelAddRefusedException>()),
+      );
     },
     skip: skip,
   );

@@ -14,8 +14,9 @@ at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 
 - **Private channel = its own MLS group** (C0). Who can see it is exactly
   who is in that group. C3 adds the rules for listing, naming and key
-  delivery. Admins pick the members; there are no per-channel role
-  overrides (C4 is built-in roles only, D80).
+  delivery. Owners, admins and moderators pick the members (moderators
+  since the owner's 2026-11-21 decision, below); there are no per-channel
+  role overrides (C4 is built-in roles only, D80).
 - **Names, topics and icons** of the community, each category and each
   channel live in **encrypted info records**, one per subject. This is
   W11's record mechanism with three more subject kinds. The server stores
@@ -585,22 +586,33 @@ reconcile made the channel readable: later posts, the channel's info key
 **Rule** (docs/crypto.md, change log "C3 private channel membership"):
 
 - A new account enters a private channel's group only by a commit from the
-  owner or an admin under the community's verified C4 record, from a leaf
-  its account's L1 list approves. Every member's app checks this on each
+  owner, an admin or a moderator under the community's verified C4 record,
+  from a leaf its account's L1 list approves. Every member's app checks this on each
   commit and holds (never refuses) one that fails: the promotion in the
   shared group may not have arrived yet. New devices of accounts already
   in the group need no role.
-- An owner's or admin's app commits a new account only when its own user
-  picked it (creating the channel, adding a member, or ticking readers in
-  an open-to-private conversion). An account the server proposes that
-  nobody here picked is left out before any key package is claimed.
+- An owner's, admin's or moderator's app commits a new account only when
+  its own user picked it (creating the channel, adding a member, or ticking
+  readers in an open-to-private conversion), and only while its account
+  still holds one of those roles when the add is staged (a moderator
+  demoted since the pick adds nobody). An account the server proposes that
+  nobody here picked is left out before any key package is claimed. Plain
+  members never add a new account.
 - A group the app has once seen as a private channel stays one for this
   rule (a local pin), whatever the server says later.
 
-Admins pick, moderators do not add: this follows "Admins pick the members"
-above (D115 only lets moderators remove). The server still lets moderators
-add members to a private channel; no honest device commits that add, so it
-stays pending (owner question in the report).
+Moderators add (owner decision, 2026-11-21): the first version let only
+owners and admins add, and a moderator's add, which the server allows
+(`CanManageMembers`), stayed pending for good. Moderators may now add as
+well as remove (D115's removal and rotation rules are unchanged: only
+owners and admins rotate the info key, except D122's no-admin channel).
+One threshold, `privateChannelAddMinRole` (moderator), serves both the
+receiver and the producer, so the two cannot drift apart. The newcomer
+gets the channel's info key as any newcomer does: the adding device's add
+delivery (a moderator's key counts for a newcomer that holds no fresh
+owner's or admin's key, the private-channel stand-in rule in "C3 key
+freshness"), and owners and admins answer its key request. No test yet
+covers a moderator's add delivery end to end.
 
 **Residuals.** The first label and the shared-group mapping come from the
 server (the topology residual above); the server learns picks as it already
@@ -611,6 +623,10 @@ OpenMLS devices): a member's app refuses an unpicked account and an admin's
 adds only its picks; a member's commit that adds an outsider is held by
 every reader, and the outsider who joined that fork cannot read what the
 readers post next; a server label switched off after the pin does not
-switch the rule off; an admin's add waits for the promotion and then
-merges; a reader's new device joins by a plain member's commit. Removing
-either guard fails them.
+switch the rule off; an admin's and a moderator's add waits for the
+promotion and then merges; a moderator's add of its pick is accepted by
+every reader while a plain member's is held; a moderator demoted to member
+is held by readers that hold the demotion and, once its own device holds
+it, adds nobody; a reader's new device joins by a plain member's commit.
+Removing either guard fails them, and so does setting the threshold to
+admin or to member in either function.
