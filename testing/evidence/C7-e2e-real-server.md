@@ -24,6 +24,8 @@ Flow, run twice (full history, then the control with members from join):
 5. The owner removes Carol; the group moves to a new epoch; the owner posts
    again. Bob receives it; Carol's device, which kept every earlier post,
    never has it.
+6. C5: the owner bans Carol; her request through a fresh community link is
+   refused and no request of hers reaches the owner's list.
 
 Result: both runs pass (about 9 s and 16 s), and passed again through the
 script. Not covered here: "Load earlier posts" paging past the first page,

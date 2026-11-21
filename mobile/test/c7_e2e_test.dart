@@ -15,7 +15,8 @@ import 'package:private_messenger/sync/sync_service.dart';
 /// C7 full mode end to end: real clients, real OpenMLS and a real server
 /// with `PRIVATE_MESSENGER_C7_HISTORY=1`. A channel made with full history
 /// gets posts; a newcomer who joins later reads them; a member removed
-/// afterwards never receives a post sent after the removal.
+/// afterwards never receives a post sent after the removal, and once banned
+/// cannot ask to join again (C5).
 ///
 /// Run with the server binary and the crypto library named in the
 /// environment (as `scripts/test-demo-e2e.sh` does for the demo test):
@@ -161,6 +162,28 @@ void main() {
     ];
     expect(carolBodies, contains('rule two'));
     expect(carolBodies, isNot(contains('after carol')));
+
+    // C5: banned, Carol cannot come back through a fresh link.
+    expect(
+      await owner.state.banCommunityMember(community.id, carol.accountId),
+      isTrue,
+    );
+    owner.expectOk();
+    final link = await owner.state.createInviteLink(
+      InviteTargetKind.community,
+      community.id,
+    );
+    owner.expectOk();
+    final parsed = MembershipInviteLink.tryParse(
+      link!,
+      expectedOrigin: baseUrl,
+    );
+    expect(await carol.state.requestToJoin(parsed!), isNull);
+    final pending = await owner.state.loadJoinRequests(
+      InviteTargetKind.community,
+      community.id,
+    );
+    expect(pending!.where((r) => r.accountId == carol.accountId), isEmpty);
   }
 
   test(
