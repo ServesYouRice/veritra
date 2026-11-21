@@ -55,23 +55,49 @@ CallMember _member(LeafPair pair) => CallMember(
 /// [NativeCryptoDevice.pruneKeyPackages]; a receiver of an Add checks the
 /// added device's identity and signing key against the parent group and the
 /// signed offer on the server, but only the committer checks the signature
-/// against the KeyPackage hash (the core does not yet return it); the
-/// call-group context extension binding `call_id` is not enforced.
+/// against the KeyPackage hash (the core does not yet return it).
+///
+/// The call group carries the core's call-group marker (ABI 28), binding
+/// `call_id` and the parent conversation id: it is made and joined only
+/// through `b6CreateCallGroup` and `b6JoinCallGroup`, and the core gives
+/// media keys for no other group and no other call id.
 class NativeCallGroupCrypto implements CallGroupCrypto {
   NativeCallGroupCrypto(this.device, this.bindings);
   final NativeCryptoDevice device;
   final NativeCryptoBindings bindings;
 
   @override
-  void createGroup(Uint8List groupId) =>
-      device.createGroup(_groupName(groupId));
+  void createGroup(
+    Uint8List groupId, {
+    required String callId,
+    required String conversationId,
+  }) =>
+      device.b6CreateCallGroup(
+        groupId: _groupName(groupId),
+        callId: callId,
+        conversationId: conversationId,
+      );
 
   @override
-  List<CallMember>? joinWithWelcome(Uint8List groupId, Uint8List welcome) {
+  List<CallMember>? joinWithWelcome(
+    Uint8List groupId,
+    Uint8List welcome, {
+    required String callId,
+    required String conversationId,
+  }) {
     try {
-      device.joinGroup(_groupName(groupId), welcome);
-    } on NativeCryptoException {
-      return null;
+      device.b6JoinCallGroup(
+        groupId: _groupName(groupId),
+        welcome: welcome,
+        callId: callId,
+        conversationId: conversationId,
+      );
+    } on NativeCryptoException catch (error) {
+      // Not ours (no key package of this device): someone else's Welcome.
+      if (error.kind == NativeCryptoError.welcomeKeyPackageUnavailable) {
+        return null;
+      }
+      throw const CallWelcomeRefused();
     }
     return members(groupId);
   }

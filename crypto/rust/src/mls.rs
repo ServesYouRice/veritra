@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 mod c4;
+mod call_group;
 pub mod leave_proof;
 #[allow(dead_code)]
 pub(crate) mod link_v3;
@@ -1046,7 +1047,10 @@ impl MlsDevice {
     /// B6 (ABI 22): the media key `K(s,t)` of the call group's current epoch
     /// for the sender device (found by identity, so the app never guesses a
     /// leaf index across blank leaves) and stream slot `stream`. The exporter
-    /// secret `E` stays here; only the derived key leaves.
+    /// secret `E` stays here; only the derived key leaves. Since ABI 28 the
+    /// group must be a call group (its context carries the marker) and
+    /// `call_id` must be the call its marker names; anything else is
+    /// `InvalidState`, so no conversation group's exporter is ever reached.
     pub fn b6_media_key(
         &self,
         group: &MlsGroup,
@@ -1057,6 +1061,9 @@ impl MlsDevice {
     ) -> Result<tls_codec::SecretVLBytes, MlsError> {
         let context = crate::b6::exporter_context(call_id, group.epoch().as_u64())
             .map_err(|_| MlsError::InvalidMessage)?;
+        if call_group::bound_call_id(group)? != call_id {
+            return Err(MlsError::InvalidState);
+        }
         let identity = encode_device_identity(sender_account_id, sender_device_id)?;
         let mut leaves = group
             .members()
@@ -1102,10 +1109,23 @@ impl MlsDevice {
         conversation_safety_number_v2(group.group_id().as_slice(), &members)
     }
 
+    /// Joins a group from a Welcome. A Welcome to a call group (B6 marker,
+    /// ABI 28) is refused here; [`MlsDevice::join_call_group`] takes it.
     pub fn join_group(
         &self,
         expected_group_id: &[u8],
         welcome_bytes: &[u8],
+    ) -> Result<MlsGroup, MlsError> {
+        self.join_group_checked(expected_group_id, welcome_bytes, None)
+    }
+
+    /// `expected_call` is `(call_id, conversation_id)` for the call join and
+    /// `None` for the plain join (`call_group::check_joined_context`).
+    fn join_group_checked(
+        &self,
+        expected_group_id: &[u8],
+        welcome_bytes: &[u8],
+        expected_call: Option<(&[u8], &[u8])>,
     ) -> Result<MlsGroup, MlsError> {
         if expected_group_id.is_empty() || expected_group_id.len() > MAX_ID_BYTES {
             return Err(MlsError::InvalidIdentity);
@@ -1120,7 +1140,7 @@ impl MlsDevice {
         // go; an active one is refused here, before the key package is used.
         self.held.forget(expected_group_id)?;
         self.in_group(expected_group_id, || {
-            self.join_group_in_scope(expected_group_id, welcome)
+            self.join_group_in_scope(expected_group_id, welcome, expected_call)
         })
     }
 
@@ -1128,6 +1148,7 @@ impl MlsDevice {
         &self,
         expected_group_id: &[u8],
         welcome: Welcome,
+        expected_call: Option<(&[u8], &[u8])>,
     ) -> Result<MlsGroup, MlsError> {
         let group_id = GroupId::from_slice(expected_group_id);
         let stored =
@@ -1161,7 +1182,7 @@ impl MlsDevice {
         if staged.group_context().group_id().as_slice() != expected_group_id {
             return Err(MlsError::InvalidMessage);
         }
-        self.inspect_welcome(&staged)?;
+        self.inspect_welcome(&staged, expected_call)?;
         if let Some(mut stored) = stored {
             // into_group only writes, so the old group's leftovers (own leaf
             // nodes, proposal queue, epoch key pairs) are deleted first.
@@ -1203,9 +1224,15 @@ impl MlsDevice {
     /// The structural checks a Welcome must pass before its group is stored:
     /// every leaf holds a well-formed, unique device identity; this device's
     /// leaf carries its own identity and signing key; the sender is another
-    /// leaf in the tree. Which members and inviters to expect needs a trust
-    /// anchor (L1) and is not decided here.
-    fn inspect_welcome(&self, staged: &StagedWelcome) -> Result<(), MlsError> {
+    /// leaf in the tree; the context carries a call-group marker exactly
+    /// when `expected_call` asks for one, for that call (B6, ABI 28). Which
+    /// members and inviters to expect needs a trust anchor (L1) and is not
+    /// decided here.
+    fn inspect_welcome(
+        &self,
+        staged: &StagedWelcome,
+        expected_call: Option<(&[u8], &[u8])>,
+    ) -> Result<(), MlsError> {
         let refused = MlsError::InvalidIdentity;
         let identities = staged
             .members()
@@ -1224,6 +1251,9 @@ impl MlsDevice {
         {
             return Err(refused);
         }
+        // B6 (ABI 28): a call group only through the call join, for the
+        // call asked for.
+        call_group::check_joined_context(staged.group_context().extensions(), expected_call)?;
         // C4: a record, when present, is well-formed in size and required.
         c4::check_joined_context(staged.group_context().extensions())
     }
@@ -2902,11 +2932,51 @@ mod tests {
 
     // ---- B6 (ABI 22): media keys of a call group ----
 
+    /// [`three_members`] in a call group (ABI 28) bound to `call`.
+    fn three_call_members(group_id: &[u8], call: &[u8]) -> ([MlsDevice; 3], [MlsGroup; 3]) {
+        let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+        let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+        let carol = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let mut alice_group = alice
+            .create_call_group(group_id, call, b"conv_parent")
+            .unwrap();
+        let (bob_kp, carol_kp) = (
+            bob.create_key_package().unwrap(),
+            carol.create_key_package().unwrap(),
+        );
+        let staged = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[
+                    MemberAdd {
+                        key_package: &bob_kp,
+                        account_id: b"acct_bob",
+                        device_id: b"dev_bob",
+                    },
+                    MemberAdd {
+                        key_package: &carol_kp,
+                        account_id: b"acct_carol",
+                        device_id: b"dev_carol",
+                    },
+                ],
+                &[],
+            )
+            .unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        let join = |device: &MlsDevice| {
+            device
+                .join_call_group(group_id, &staged.welcome, call, b"conv_parent")
+                .unwrap()
+        };
+        let (bob_group, carol_group) = (join(&bob), join(&carol));
+        ([alice, bob, carol], [alice_group, bob_group, carol_group])
+    }
+
     #[test]
     fn b6_media_keys_follow_the_epoch_and_leave_with_the_removed_member() {
-        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
-            three_members(b"call_group_b6");
         let call = b"call_b6";
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_call_members(b"call_group_b6", call);
         // Senders by identity; leaves are alice 0, bob 1, carol 2.
         let who = |leaf: u32| -> (&'static [u8], &'static [u8]) {
             match leaf {
@@ -2944,15 +3014,22 @@ mod tests {
             a0,
             crate::b6::sender_key(&exported, 0, 0).unwrap().as_slice()
         );
-        // Per sender, per stream, per call.
+        // Per sender and per stream; another call id is refused (ABI 28:
+        // the group is bound to one call), and so is a conversation group.
         assert_ne!(a0, key(&alice, &alice_group, 1, 0));
         assert_ne!(a0, key(&alice, &alice_group, 0, 2));
-        assert_ne!(
-            a0,
+        assert_eq!(
             alice
                 .b6_media_key(&alice_group, b"call_other", b"acct_alice", b"dev_alice", 0)
-                .unwrap()
-                .as_slice()
+                .err(),
+            Some(MlsError::InvalidState)
+        );
+        let ([plain_alice, ..], [plain_group, ..]) = three_members(b"conv_not_a_call");
+        assert_eq!(
+            plain_alice
+                .b6_media_key(&plain_group, call, b"acct_alice", b"dev_alice", 0)
+                .err(),
+            Some(MlsError::InvalidState)
         );
         // A device that is not in the group and a bad stream are refused.
         assert!(alice

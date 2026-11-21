@@ -160,14 +160,35 @@ class JoinOffer {
   final int expiresAt;
 }
 
+/// A Welcome meant for this device that the core refused: it is not the
+/// call group of the call and conversation this device asked to join (the
+/// ABI 28 call-group marker differs or is missing), or it is malformed.
+/// Nothing was joined; the device leaves and joins again.
+class CallWelcomeRefused implements Exception {
+  const CallWelcomeRefused();
+}
+
 /// The call group's MLS operations. One instance per device. The group lives
 /// in memory only: never in sealed state, a backup or a transfer (D70).
 abstract interface class CallGroupCrypto {
-  void createGroup(Uint8List groupId);
+  /// Creates the call group, bound by the core's call-group marker (ABI 28)
+  /// to [callId] and the parent [conversationId] for its whole life.
+  void createGroup(
+    Uint8List groupId, {
+    required String callId,
+    required String conversationId,
+  });
 
-  /// Joins from a Welcome. Returns every leaf of the new group, or null when
-  /// the Welcome is not for this device.
-  List<CallMember>? joinWithWelcome(Uint8List groupId, Uint8List welcome);
+  /// Joins from a Welcome, only to the call group of [callId] in
+  /// [conversationId]. Returns every leaf of the new group, or null when the
+  /// Welcome is not for this device; throws [CallWelcomeRefused] when it is
+  /// for this device but the core refuses it.
+  List<CallMember>? joinWithWelcome(
+    Uint8List groupId,
+    Uint8List welcome, {
+    required String callId,
+    required String conversationId,
+  });
 
   /// A fresh KeyPackage for this call, signed with the credential key over
   /// `veritra-b6-join-v1 | lp(group_id) | lp(nonce) | u64(expires) |
@@ -213,7 +234,8 @@ abstract interface class CallGroupCrypto {
     CallMember sender,
   );
 
-  /// `K(s,t)` of the current epoch for [sender]'s stream slot.
+  /// `K(s,t)` of the current epoch for [sender]'s stream slot. The core
+  /// refuses (throws) when [callId] is not the call the group is bound to.
   Uint8List mediaKey(
     Uint8List groupId,
     String callId,

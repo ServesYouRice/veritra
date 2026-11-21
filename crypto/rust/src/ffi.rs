@@ -16,6 +16,7 @@ use std::{
     },
 };
 
+mod b6_calls;
 mod c4_calls;
 mod k2;
 mod l1_calls;
@@ -2250,7 +2251,10 @@ pub unsafe extern "C" fn pm_crypto_update_feed_verify(
 /// lp(call_id) | u64(epoch), 32), info = u32(leaf) | u8(stream))`. `call_id`
 /// is 1 to 128 bytes. The exporter secret never leaves the core; this is the
 /// only B6 key output. Fails for a device that is not in the group (or sits
-/// in two leaves) or a stream above 3. Nothing is written on failure.
+/// in two leaves) or a stream above 3. Since ABI 28 it also fails
+/// (`PM_CRYPTO_ERROR`) unless the group is a call group
+/// ([`b6_calls::pm_crypto_group_b6_create`] or `_join`) whose marker names
+/// this `call_id`. Nothing is written on failure.
 ///
 /// # Safety
 /// `handle` must be live, slices readable and `out_key` writable.
@@ -2544,6 +2548,10 @@ mod l2_frank_tests;
 #[cfg(test)]
 #[path = "ffi/update_feed_tests.rs"]
 mod update_feed_tests;
+
+#[cfg(test)]
+#[path = "ffi/b6_tests.rs"]
+mod b6_tests;
 
 #[cfg(test)]
 mod tests {

@@ -793,7 +793,11 @@ void main() {
       );
 
       final handle = await alice.service.openCallGroup();
-      handle.crypto.createGroup(groupId);
+      handle.crypto.createGroup(
+        groupId,
+        callId: 'call_1',
+        conversationId: 'conv_1',
+      );
       final leaves = handle.crypto.members(groupId);
       expect(leaves.single.id, 'acct_alice/dev_alice');
       // The scratch leaf is the messaging device's own: it matches the parent.

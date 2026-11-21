@@ -151,12 +151,14 @@ fn key_packages_and_creators_advertise_the_role_extension() {
         .validate(alice.provider.crypto(), ProtocolVersion::Mls10)
         .unwrap();
     let capabilities = package.leaf_node().capabilities();
-    // ABI 23 (L2-1) adds the pad extension a padded key package carries.
+    // ABI 23 (L2-1) adds the pad extension a padded key package carries,
+    // ABI 28 (B6) the call-group marker.
     assert_eq!(
         capabilities.extensions(),
         &[
             role(),
-            ExtensionType::Unknown(crate::l2::PAD_EXTENSION_TYPE)
+            ExtensionType::Unknown(crate::l2::PAD_EXTENSION_TYPE),
+            ExtensionType::Unknown(crate::b6::CALL_EXTENSION_TYPE),
         ]
     );
     // Everything else stays OpenMLS's default.
