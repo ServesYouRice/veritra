@@ -32,16 +32,30 @@ void main() {
 
     test('only the debug manifest declares the service and its permissions',
         () {
-      final main = read('android/app/src/main/AndroidManifest.xml');
       final debug = read('android/app/src/debug/AndroidManifest.xml');
-      final profile = read('android/app/src/profile/AndroidManifest.xml');
-      for (final text in <String>[
-        'FOREGROUND_SERVICE',
-        'RoomCallService',
-        'mediaProjection',
-      ]) {
-        expect(main, isNot(contains(text)), reason: 'main: $text');
-        expect(profile, isNot(contains(text)), reason: 'profile: $text');
+      // Every other source set reaches a release or profile build: main,
+      // profile, and the play and fdroid flavors (merged into play-release
+      // and fdroid-release too), and any source set added later.
+      final others = Directory('android/app/src')
+          .listSync()
+          .whereType<Directory>()
+          .map((d) => File('${d.path}/AndroidManifest.xml'))
+          .where((f) => f.existsSync() && !f.path.contains('/debug/'))
+          .toList();
+      expect(
+        others.map((f) => f.path.split('/').reversed.elementAt(1)),
+        containsAll(<String>['main', 'profile', 'play']),
+      );
+      for (final manifest in others) {
+        final text = manifest.readAsStringSync();
+        for (final needle in <String>[
+          'FOREGROUND_SERVICE',
+          'RoomCallService',
+          'mediaProjection',
+        ]) {
+          expect(text, isNot(contains(needle)),
+              reason: '${manifest.path}: $needle');
+        }
       }
       expect(debug, contains('android.permission.FOREGROUND_SERVICE"'));
       expect(

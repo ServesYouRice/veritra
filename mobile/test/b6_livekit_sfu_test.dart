@@ -25,6 +25,16 @@ class FakeLocalMedia implements LiveKitLocalMedia {
   Stream<void> get ended => const Stream.empty();
   @override
   Object? get preview => null;
+  @override
+  String? codec;
+  @override
+  int extraSenders = 0;
+  bool cut = false;
+  bool stopped = false;
+  @override
+  void cutSenders() => cut = true;
+  @override
+  Future<void> stop() async => stopped = true;
 }
 
 class FakeRemoteMedia implements LiveKitRemoteMedia {
@@ -67,7 +77,17 @@ class FakeRoom implements LiveKitRoomDriver {
   final List<Uint8List> sent = [];
   final List<FakeTestCryptor> cryptors = [];
   bool disconnected = false;
+  final List<String> unpublished = [];
   int _sids = 0;
+
+  @override
+  bool dynacast = false;
+
+  /// The codec LiveKit ends up publishing video with (the SFU can move it).
+  String videoCodec = 'vp8';
+
+  /// Holds a video publish until completed (a publish still in flight).
+  Completer<void>? holdVideo;
 
   /// LiveKit delivers its events on an asynchronous stream: the adapter's
   /// callback runs in a later microtask, never inside the emitting call.
@@ -102,7 +122,9 @@ class FakeRoom implements LiveKitRoomDriver {
   ) async {
     videoRequests.add((slot, sourceId));
     if (denyVideo) throw const SfuCaptureDenied();
-    return publishVoiceDisabled();
+    if (holdVideo != null) await holdVideo!.future;
+    final media = await publishVoiceDisabled() as FakeLocalMedia;
+    return media..codec = videoCodec;
   }
 
   final List<(int, String?)> videoRequests = [];
@@ -129,7 +151,7 @@ class FakeRoom implements LiveKitRoomDriver {
   }
 
   @override
-  Future<void> unpublish(String sid) async {}
+  Future<void> unpublish(String sid) async => unpublished.add(sid);
 
   @override
   Future<void> publishData(Uint8List data) async => sent.add(data);
@@ -418,6 +440,106 @@ void main() {
         );
         expect(options.videoCodec, 'vp8');
       }
+    });
+
+    // Round 9 review: LiveKit takes the codec the SFU allows, turns dynacast
+    // on for an SVC codec, and then publishes any backup codec the SFU asks
+    // for on a second RTP sender, ignoring `backupVideoCodec.enabled`. That
+    // sender carries no cryptor. Remove the check and these fail.
+    for (final (label, setUpRoom) in <(String, void Function(FakeRoom))>[
+      ('the SFU moved the codec off VP8', (r) => r.videoCodec = 'vp9'),
+      ('dynacast is on', (r) => r.dynacast = true),
+    ]) {
+      test('a camera published where $label ends the call, capture stopped',
+          () async {
+        await publishVoice();
+        setUpRoom(room);
+        await expectLater(
+          sfu.publishDisabled(roomSlotCamera),
+          throwsStateError,
+        );
+        final camera = room.published.last;
+        expect(camera.enabled, isFalse);
+        expect(camera.cut, isTrue);
+        expect(camera.stopped, isTrue);
+        expect(room.unpublished, contains(camera.sid));
+        expect(sfu.poisoned, isTrue);
+        expect(events.whereType<SfuDisconnected>(), hasLength(1));
+        expect(room.published.first.enabled, isFalse, reason: 'voice too');
+      });
+    }
+
+    test('a backup codec sender that appears later is refused at enable',
+        () async {
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      await sfu.senderCryptor(camera, 'acct_a/dev_a:1');
+      final media = room.published.single;
+      media.extraSenders = 1;
+      await expectLater(camera.setEnabled(true), throwsStateError);
+      expect(media.enabled, isFalse);
+      expect(media.cut, isTrue);
+      expect(sfu.poisoned, isTrue);
+      expect(events.whereType<SfuDisconnected>(), hasLength(1));
+    });
+
+    // Round 9 review: LiveKit applies the SFU's remote mute to a local track
+    // and, on a later remote unmute, restarts or re-enables the capture
+    // (`LocalTrack.unmute`), also before its cryptor is attached. B6 never
+    // mutes through LiveKit, so the mute itself ends the call, and every
+    // local track is cut from its senders inside the callback. Remove the
+    // case and this fails.
+    test(
+        'a remote mute cuts every local sender in the callback and ends '
+        'the call', () async {
+      final voice = await publishVoice();
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      final voiceMedia = room.published.first;
+      final cameraMedia = room.published.last;
+      var cutInCallback = false;
+      scheduleMicrotask(() {
+        room._on!(LiveKitLocalMuteChanged(cameraMedia.sid, cameraMedia));
+        cutInCallback = cameraMedia.cut && voiceMedia.cut;
+      });
+      await Future<void>.value();
+      expect(cutInCallback, isTrue);
+      await microtasks();
+      expect(voiceMedia.enabled, isFalse);
+      expect(cameraMedia.enabled, isFalse);
+      expect(sfu.poisoned, isTrue);
+      expect(events.whereType<SfuDisconnected>(), hasLength(1));
+      await expectLater(voice.setEnabled(true), throwsStateError);
+      await expectLater(camera.setEnabled(true), throwsStateError);
+    });
+  });
+
+  group('captures are stopped', () {
+    test('unpublish stops the capture', () async {
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      await sfu.unpublish(camera);
+      expect(room.published.single.stopped, isTrue);
+      expect(room.unpublished, [camera.sid]);
+    });
+
+    test('disconnect stops every capture it published', () async {
+      await publishVoice();
+      await sfu.publishDisabled(roomSlotCamera);
+      await sfu.disconnect();
+      expect(room.disconnected, isTrue);
+      expect(room.published, hasLength(2));
+      expect(room.published.every((m) => m.stopped && !m.enabled), isTrue);
+    });
+
+    test('a publish that finishes after disconnect is stopped, not kept',
+        () async {
+      room.holdVideo = Completer<void>();
+      final pending = sfu.publishDisabled(roomSlotCamera);
+      await microtasks();
+      await sfu.disconnect();
+      room.holdVideo!.complete();
+      await expectLater(pending, throwsStateError);
+      final camera = room.published.single;
+      expect(camera.stopped, isTrue);
+      expect(camera.enabled, isFalse);
     });
   });
 }

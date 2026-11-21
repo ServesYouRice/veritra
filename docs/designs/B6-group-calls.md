@@ -561,13 +561,40 @@ Android SDK, Xcode or display session).
   share the system ends (`LocalTrackUnpublishedEvent`) unpublish and stop
   the capture, so the camera light goes out; a reconnect disables the video
   with the voice (`_local` holds every track).
-- **LiveKit cannot re-enable the track before the cryptor exists** (read in
-  `livekit_client` 2.13.2): the adapter starts the capture, disables it, then
-  publishes. `publishVideoTrack` calls `track.start()`, which returns early
-  for an active track, and `onPublish`, which only sets a flag; neither
-  touches `mediaStreamTrack.enabled`. Only `Track.enable()` does, called by
-  `unmute` and by a remote track's start, which B6 does not use for local
-  tracks. A new LiveKit version needs this read again.
+- **Publishing does not re-enable the track** (read in `livekit_client`
+  2.13.2): the adapter starts the capture, disables it, then publishes.
+  `publishVideoTrack` calls `track.start()`, which returns early for an
+  active track, and `onPublish`, which only sets a flag; neither touches
+  `mediaStreamTrack.enabled`. Only `Track.enable()` does, called by
+  `LocalTrack.unmute` and by a remote track's start. B6 never calls
+  `mute` or `unmute` on its own tracks, **but the SFU can**: LiveKit applies
+  a signalled remote mute (`SignalRemoteMuteTrackEvent`) to a local track,
+  and a remote unmute after it restarts the capture (`restartTrack`) or
+  enables it. Before the cryptor is attached that sends clear frames, and
+  later it turns on a microphone the person muted. So any local
+  `TrackMutedEvent` or `TrackUnmutedEvent` is the SFU's doing: inside the
+  event's callback every local track is cut from its RTP senders
+  (`transceiver` and backup senders dropped, each sender's track replaced by
+  none, so `restartTrack` refuses and a later `enable()` reaches no sender)
+  and the call ends (review, round 9). A new LiveKit version needs all of
+  this read again.
+- **One VP8 sender, dynacast off, or the call ends** (review, round 9). The
+  SFU can move the codec (`enabledPublishCodecs` in the join answer, or the
+  codec in its `AddTrack` answer). For an SVC codec LiveKit turns dynacast
+  on, and with dynacast on it publishes any backup codec the SFU asks for
+  (`SubscribedQualityUpdate`) on a second RTP sender with no cryptor,
+  without checking `backupVideoCodec.enabled`. The adapter checks right
+  after each video publish, while the capture is still disabled, that the
+  codec is VP8, that the track has no backup sender and that dynacast is
+  off, and checks the last two again before every enable; otherwise the
+  capture is cut, unpublished and stopped and the call ends. A deployment
+  whose SFU does not allow VP8 has no video.
+- **Captures always stop.** Unpublishing a track stops its capture, and
+  ending the connection stops every capture it published, also one whose
+  publish finished after the room was gone (the camera light goes out).
+  Taking a sender down runs disable, unpublish and cryptor removal as
+  separate steps, cryptor last, so one that fails does not leave a capture
+  running or a sender carrying a capture without its cryptor.
 - **Switching off while it starts** cancels the start: the capture is
   released and never enabled, and a second tap on "on" keeps it.
 - **Sealed announcements list every track** and are sent again after each
@@ -606,7 +633,8 @@ Android SDK, Xcode or display session).
   wake job starts it (D52). **Demo builds only:** the BuildConfig flag
   `VERITRA_ROOM_SERVICE` is decided at build time (demo define) and forced
   off for release and profile, and the permissions and `<service>` entry
-  sit in the debug manifest only. Moving them to the main manifest, and the
+  sit in the debug manifest only (a test reads every other source set's
+  manifest, the `play` flavor's included, and was mutation-tested). Moving them to the main manifest, and the
   Play foreground-service declaration, are platform-policy items for the
   owner and belong with the G25 release. The Kotlin was written but **not
   compiled here** (no Android SDK); CI on the PR compiles it.

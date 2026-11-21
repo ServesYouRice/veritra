@@ -695,7 +695,21 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   Future<void> _release(SfuLocalTrack track) async {
     try {
       await track.setEnabled(false);
+    } catch (_) {}
+    try {
       await sfu.unpublish(track);
+    } catch (_) {}
+  }
+
+  /// Takes a registered sender down, each step on its own so that one that
+  /// fails does not leave the capture running: disabled, unpublished (which
+  /// stops the capture), and only then is its cryptor removed, so the
+  /// sender never carries a live capture without it.
+  Future<void> _teardown(_Sender sender) async {
+    await sender.endedSub?.cancel();
+    await _release(sender.track);
+    try {
+      await sender.cryptor.dispose();
     } catch (_) {}
   }
 
@@ -704,12 +718,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   Future<void> _stopVideo(int slot) async {
     final sender = _senders.remove(slot);
     if (sender == null) return;
-    await sender.endedSub?.cancel();
-    try {
-      await sender.track.setEnabled(false);
-      await sender.cryptor.dispose();
-      await sfu.unpublish(sender.track);
-    } catch (_) {}
+    await _teardown(sender);
     if (slot == roomSlotScreen) await capture.endScreenShare();
     if (_connected && !_closed) await _announce(force: true);
     notifyListeners();
@@ -773,12 +782,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     final senders = _senders.values.toList();
     _senders.clear();
     for (final sender in senders) {
-      await sender.endedSub?.cancel();
-      try {
-        await sender.track.setEnabled(false);
-        await sender.cryptor.dispose();
-        await sfu.unpublish(sender.track);
-      } catch (_) {}
+      await _teardown(sender);
     }
     if (hadScreen) await capture.endScreenShare();
     for (final entry in _receivers.entries) {

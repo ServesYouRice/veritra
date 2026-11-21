@@ -57,8 +57,12 @@ class FakeLocalTrack implements SfuLocalTrack {
   Stream<void> get ended => endedController.stream;
   @override
   Object? get preview => slot == roomSlotCamera ? 'preview_$sid' : null;
+
+  /// A capture whose enabled flag will not turn off.
+  bool refusesDisable = false;
   @override
   Future<void> setEnabled(bool on) async {
+    if (!on && refusesDisable) throw StateError('did not disable');
     enabled = on;
     log.add('track $sid enabled=$on');
   }

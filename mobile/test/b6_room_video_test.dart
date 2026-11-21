@@ -225,9 +225,15 @@ void main() {
       await a.settle();
       await b.settle();
       expect(a.sfu.log, contains('unpublish TR_sfu_a_1'));
+      // Disabled, unpublished (the capture stops), and only then is the
+      // cryptor taken off: the sender never carries a capture without it.
       expect(
-        a.sfu.log.indexOf('cryptor acct_a/dev_a:1 disposed'),
+        a.sfu.log.indexOf('track TR_sfu_a_1 enabled=false'),
         lessThan(a.sfu.log.indexOf('unpublish TR_sfu_a_1')),
+      );
+      expect(
+        a.sfu.log.indexOf('unpublish TR_sfu_a_1'),
+        lessThan(a.sfu.log.indexOf('cryptor acct_a/dev_a:1 disposed')),
       );
       expect(a.media.cameraOn, isFalse);
       expect(a.media.videoTiles, isEmpty);
@@ -235,6 +241,21 @@ void main() {
       expect(b.media.boundTracks.keys, isNot(contains('TR_sfu_a_1')));
       // The announcement no longer lists the track (the voice stays).
       expect(a.engine.phase, RoomPhase.active);
+      await end([a, b]);
+    });
+
+    test('off still unpublishes and stops it when the disable fails', () async {
+      final (a, b) = await pair();
+      await a.media.setCameraOn(true);
+      await a.settle();
+      final camera = a.sfu.published.singleWhere((t) => t.slot == 1);
+      camera.refusesDisable = true;
+      await a.media.setCameraOn(false);
+      await a.settle();
+      expect(a.sfu.log, contains('unpublish ${camera.sid}'));
+      expect(a.sfu.published, isNot(contains(camera)));
+      expect(a.sfu.cryptors.where((c) => c.participantId.endsWith(':1')),
+          everyElement(predicate<FakeCryptor>((c) => c.disposed)));
       await end([a, b]);
     });
 
