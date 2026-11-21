@@ -1619,6 +1619,22 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   and members are added afterwards (owner question below). ABI 25 stays
   unused.
 
+### End-to-end run against a real server (2026-11-21)
+
+`scripts/test-c7-e2e.sh` runs `mobile/test/c7_e2e_test.dart`: real app
+states, real OpenMLS and the real server with `PRIVATE_MESSENGER_C7_HISTORY=1`.
+A newcomer imports a full channel's earlier posts (rows name their
+generation), a members-from-join control gets none, and a member removed
+afterwards never receives the next post. Evidence:
+`testing/evidence/C7-e2e-real-server.md`. Adversarial tests added to
+`c7_full_native_test.dart`: a removed member opens no post sent after its
+removal with any generation key it held; a newcomer's import drops a post
+whose signature is zeroed, lifted from another post, or another member's
+(each with a well-formed payload that opens under the generation key; the
+test fails with the signature check removed). Live members still take a
+post on MLS authentication alone (decision 8), so a member who sends a
+badly signed post is only a gap for later newcomers, never a leak.
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in
