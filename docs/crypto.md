@@ -1337,6 +1337,48 @@ device key, the code-signing certificate or the recovery key).
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **B6 call-group marker (2026-11-21, crypto ABI 28; no wire format the
+  server parses, no server, migration, local schema, vector or dependency
+  change):** closes the gap the ABI 22 entry below names. Design:
+  [`B6-group-calls.md`](designs/B6-group-calls.md), "Call-group marker
+  (ABI 28)"; code `crypto/rust/src/mls/call_group.rs`,
+  `crypto/rust/src/ffi/b6_calls.rs`.
+  - **Marker.** GroupContext extension `0xF0B6` with data
+    `u8(1) | lp(call_id) | lp(conversation_id)` (u16 big-endian lengths,
+    each id 1 to 128 bytes, strict decode). A call group's context is
+    exactly `[RequiredCapabilities{0xF0B6}, marker]` and never changes (a
+    GroupContextExtensions proposal is refused in any group without a C4
+    record, and a C4 proposal keeps every other extension byte for byte).
+  - **Capability.** Every key package and creator leaf now lists `0xF0B6`
+    beside `0xF0C4` and `0xF0A2` (`c4::leaf_capabilities`); key packages
+    grow by 2 bytes before L2 padding. An ABI 27 key package cannot be added
+    to a call group (refused at staging).
+  - **New symbols.** `pm_crypto_group_b6_create(handle, group_id, call_id,
+    conversation_id)` and `pm_crypto_group_b6_join(handle,
+    expected_group_id, welcome, call_id, conversation_id)`. The join stores
+    the group only when the Welcome's context is exactly the list above for
+    those ids (`PM_CRYPTO_ERROR` otherwise, nothing stored;
+    `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` for another device's
+    Welcome). `pm_crypto_group_join` now refuses a Welcome that carries the
+    marker.
+  - **Changed semantics.** `pm_crypto_group_b6_media_key` (same signature)
+    now refuses with `PM_CRYPTO_ERROR` any group that is not a call group
+    and any `call_id` other than the one its marker names. The key schedule
+    is unchanged, so `testing/vectors/b6-media-v1.json` stands. The C7
+    boundary exception is now what the ABI 22 entry meant it to be: call
+    groups only.
+  - **App.** `NativeCryptoDevice.b6CreateCallGroup` and `b6JoinCallGroup`;
+    `CallGroupCrypto.createGroup` and `joinWithWelcome` take the call and
+    conversation ids; a refused Welcome for this device is
+    `CallWelcomeRefused` (leave and rejoin).
+  - **Mixed ABI.** As for every earlier bump, every client must run ABI 28
+    (the Dart bindings refuse any other version). Between devices it fails
+    closed: an ABI 28 committer cannot add an ABI 27 key package to a call
+    group, and an ABI 28 device refuses an ABI 27 call group's Welcome and
+    derives no key from it. Nothing is released, so there is no mixed fleet.
+  - The header, the Rust constant, the Dart binding and
+    `scripts/verify-mobile-crypto.sh` pin ABI 28. Needs the independent
+    crypto review with the rest of B6.
 - **G27 libcrux placeholder (2026-11-21, owner decision D29; no ABI, wire,
   server, migration, local schema or build-graph change):** hpke-rs 0.7
   declares its libcrux backend `hpke-rs-libcrux` =0.7.0 as an optional
@@ -2153,7 +2195,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   (`server/internal/b6vector`); the Dart check and binding come with S5. The
   number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
   crypto review before release (design S2). Not built yet: the call-group
-  context extension check. **For the reviewer:** the core does not know
+  context extension check (built at ABI 28, see that entry: the call now
+  refuses every group but a call group). **For the reviewer:** the core does not know
   which groups are call groups, so the call accepts any stored group id,
   a persistent conversation group included. The label keeps the output
   separate from every other exporter value, but the exception is wider than

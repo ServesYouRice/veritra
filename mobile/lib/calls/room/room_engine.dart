@@ -163,7 +163,11 @@ class RoomEngine extends ChangeNotifier {
         throw StateError('call group id is not 32 bytes');
       }
       if (info.created) {
-        crypto.createGroup(info.groupId);
+        crypto.createGroup(
+          info.groupId,
+          callId: info.callId,
+          conversationId: conversation,
+        );
         _held = true;
         phase = RoomPhase.active;
         _installKeys();
@@ -254,7 +258,20 @@ class RoomEngine extends ChangeNotifier {
     for (final record in commits) {
       final welcome = record.welcome;
       if (welcome == null) continue;
-      final members = crypto.joinWithWelcome(group, welcome);
+      final List<CallMember>? members;
+      try {
+        members = crypto.joinWithWelcome(
+          group,
+          welcome,
+          callId: id,
+          conversationId: conversationId!,
+        );
+      } on CallWelcomeRefused {
+        // For this device, but not the call group of this call and
+        // conversation (ABI 28 marker): nothing was joined.
+        await _recover(RoomFailure.welcomeRefused);
+        return;
+      }
       if (members == null) continue; // for someone else
       _held = true;
       // The joiner checks every leaf of its Welcome against the parent.

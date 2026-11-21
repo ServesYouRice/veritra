@@ -319,6 +319,32 @@ typedef _C7MemberKeyDart = int Function(
   _PmByteSlice,
   Pointer<_PmOwnedBuffer>,
 );
+typedef _B6CreateNative = Int32 Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+);
+typedef _B6CreateDart = int Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+);
+typedef _B6JoinNative = Int32 Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+);
+typedef _B6JoinDart = int Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+  _PmByteSlice,
+);
 typedef _B6MediaKeyNative = Int32 Function(
   Pointer<_PmCryptoHandle>,
   _PmByteSlice,
@@ -1007,6 +1033,12 @@ class NativeCryptoBindings {
             library.lookupFunction<_B6MediaKeyNative, _B6MediaKeyDart>(
           'pm_crypto_group_b6_media_key',
         ),
+        _b6Create = library.lookupFunction<_B6CreateNative, _B6CreateDart>(
+          'pm_crypto_group_b6_create',
+        ),
+        _b6Join = library.lookupFunction<_B6JoinNative, _B6JoinDart>(
+          'pm_crypto_group_b6_join',
+        ),
         _attachmentEncrypt = library
             .lookupFunction<_AttachmentChunkNative, _AttachmentChunkDart>(
           'pm_crypto_attachment_encrypt_chunk',
@@ -1015,7 +1047,7 @@ class NativeCryptoBindings {
             .lookupFunction<_AttachmentChunkNative, _AttachmentChunkDart>(
           'pm_crypto_attachment_decrypt_chunk',
         ) {
-    if (_abiVersion() != 27) {
+    if (_abiVersion() != 28) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -1964,6 +1996,8 @@ class NativeCryptoBindings {
   final _C7DecryptDart _c7GroupDecrypt;
   final _C7MemberKeyDart _c7MemberKey;
   final _B6MediaKeyDart _b6MediaKey;
+  final _B6CreateDart _b6Create;
+  final _B6JoinDart _b6Join;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
@@ -3274,11 +3308,69 @@ class NativeCryptoDevice implements Finalizable {
     return Uint8List.fromList(key);
   }
 
+  /// B6 (ABI 28): creates the call group [groupId], bound to [callId] and
+  /// the parent conversation [conversationId] by the call-group marker
+  /// (GroupContext extension `0xF0B6`, required and never changed). Only a
+  /// group made here or joined by [b6JoinCallGroup] gives media keys.
+  void b6CreateCallGroup({
+    required String groupId,
+    required String callId,
+    required String conversationId,
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(callId.codeUnits, 128);
+    _bindings._bounded(conversationId.codeUnits, 128);
+    _bindings._withByteLists(
+      [groupId.codeUnits, callId.codeUnits, conversationId.codeUnits],
+      (slices) => _bindings._check(
+        _bindings._b6Create(_liveHandle, slices[0], slices[1], slices[2]),
+      ),
+    );
+  }
+
+  /// B6 (ABI 28): joins the call group a Welcome carries, only when its
+  /// marker names exactly [callId] and [conversationId] (the room this
+  /// device asked to join). Throws
+  /// [NativeCryptoError.welcomeKeyPackageUnavailable] for a Welcome meant
+  /// for another device, and [NativeCryptoError.operationFailed] for a refused one
+  /// (another call or conversation, or not a call group). Nothing is stored
+  /// on failure.
+  void b6JoinCallGroup({
+    required String groupId,
+    required List<int> welcome,
+    required String callId,
+    required String conversationId,
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(welcome, 4 * 1024 * 1024);
+    _bindings._bounded(callId.codeUnits, 128);
+    _bindings._bounded(conversationId.codeUnits, 128);
+    _bindings._withByteLists(
+      [
+        groupId.codeUnits,
+        welcome,
+        callId.codeUnits,
+        conversationId.codeUnits,
+      ],
+      (slices) => _bindings._check(
+        _bindings._b6Join(
+          _liveHandle,
+          slices[0],
+          slices[1],
+          slices[2],
+          slices[3],
+        ),
+      ),
+    );
+  }
+
   /// B6 (ABI 22): the 32-byte media key `K(s,t)` of the call group
   /// [groupId] at its current epoch, for the sender device and stream
   /// slot [stream] (0 voice, 1 camera, 2 screen, 3 screen audio). The
   /// exporter secret stays in the core. Hand the key to the frame cryptor
-  /// and drop it; never store or log it.
+  /// and drop it; never store or log it. Since ABI 28 the core refuses a
+  /// group that is not a call group and a [callId] its marker does not
+  /// name.
   Uint8List b6MediaKey({
     required String groupId,
     required String callId,

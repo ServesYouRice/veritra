@@ -246,6 +246,59 @@ void main() {
   });
 
   test(
+    'the call group is bound to the server call and the conversation '
+    '(ABI 28 marker): create, join and every media key name them',
+    () async {
+      final a = await start('a');
+      final b2 = await start('b');
+      await admit(a, b2);
+      expect(a.crypto.asked, ['room_1|conv_1']);
+      expect(b2.crypto.asked.toSet(), {'room_1|conv_1'});
+      expect(a.crypto.bound, 'room_1|conv_1');
+      expect(b2.crypto.bound, 'room_1|conv_1');
+      expect(b2.engine.phase, RoomPhase.active);
+      expect(b2.keys.keys, isNotEmpty);
+      a.engine.dispose();
+      b2.engine.dispose();
+    },
+  );
+
+  test(
+    'a Welcome for this device to another call group is refused: '
+    'nothing is joined and the device leaves and joins again',
+    () async {
+      final a = await start('a');
+      final b2 = await start('b');
+      // The server hands b a Welcome whose marker names another call.
+      server.epoch = 1;
+      server.log.add(
+        RoomCommitRecord(
+          epoch: 1,
+          committerDeviceId: 'dev_a',
+          commit: b('C;1;;'),
+          welcome: FakeCrypto.welcomeFor(
+            1,
+            [member('a'), member('b')],
+            ['acct_b/dev_b'],
+            binding: 'room_other|conv_1',
+          ),
+        ),
+      );
+      final joinsBefore = server.joins;
+      b2.engine.refresh();
+      await pump();
+      expect(b2.crypto.bound, isNull);
+      expect(b2.crypto.exists, isFalse);
+      expect(b2.crypto.drops, 0, reason: 'nothing was joined to drop');
+      expect(b2.keys.keys, isEmpty);
+      expect(b2.engine.phase, isNot(RoomPhase.active));
+      expect(server.joins, joinsBefore + 1, reason: 'leave and join again');
+      a.engine.dispose();
+      b2.engine.dispose();
+    },
+  );
+
+  test(
     'a Welcome with a leaf outside the parent group is refused by the joiner',
     () async {
       final a = await start('a');

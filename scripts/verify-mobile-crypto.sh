@@ -31,7 +31,8 @@ verify_symbols() {
     pm_crypto_group_stage_commit_proven pm_crypto_c4_sign_leave \
     pm_crypto_l2_token_request pm_crypto_l2_token_finalize \
     pm_crypto_l2_frank_public_key pm_crypto_l2_frank_designate \
-    pm_crypto_l2_frank_dv_verify pm_crypto_update_feed_verify; do
+    pm_crypto_l2_frank_dv_verify pm_crypto_update_feed_verify \
+    pm_crypto_group_b6_create pm_crypto_group_b6_join; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

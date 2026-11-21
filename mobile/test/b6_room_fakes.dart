@@ -212,6 +212,13 @@ class FakeCrypto implements CallGroupCrypto {
   bool failCreate = false;
   final List<String> keyRequests = [];
 
+  /// The call and conversation the group is bound to (ABI 28 marker),
+  /// as `call|conversation`; null while no group is held.
+  String? bound;
+
+  /// Every `call|conversation` this device asked to create or join.
+  final List<String> asked = [];
+
   static String _enc(CallMember m) =>
       '${m.accountId}|${m.deviceId}|${s(m.signingKey)}';
   static CallMember _dec(String t) {
@@ -219,12 +226,17 @@ class FakeCrypto implements CallGroupCrypto {
     return CallMember(p[0], p[1], b(p[2]));
   }
 
+  /// A Welcome; [binding] is the group's `call|conversation` marker
+  /// (the fake server's room by default).
   static Uint8List welcomeFor(
     int epoch,
     List<CallMember> members,
-    List<String> targets,
-  ) =>
-      b('W;$epoch;${members.map(_enc).join(',')};${targets.join(',')}');
+    List<String> targets, {
+    String binding = 'room_1|conv_1',
+  }) =>
+      b(
+        'W;$epoch;${members.map(_enc).join(',')};${targets.join(',')};$binding',
+      );
 
   static Uint8List commitOf(
     int newEpoch,
@@ -236,17 +248,32 @@ class FakeCrypto implements CallGroupCrypto {
       );
 
   @override
-  void createGroup(Uint8List groupId) {
+  void createGroup(
+    Uint8List groupId, {
+    required String callId,
+    required String conversationId,
+  }) {
+    asked.add('$callId|$conversationId');
     if (failCreate) throw StateError('group already exists');
     exists = true;
+    bound = '$callId|$conversationId';
     _members = [self];
     _epoch = 0;
   }
 
   @override
-  List<CallMember>? joinWithWelcome(Uint8List groupId, Uint8List welcome) {
+  List<CallMember>? joinWithWelcome(
+    Uint8List groupId,
+    Uint8List welcome, {
+    required String callId,
+    required String conversationId,
+  }) {
+    asked.add('$callId|$conversationId');
     final p = s(welcome).split(';');
     if (!p[3].split(',').contains(self.id)) return null;
+    // The core joins only the call group of the room asked for.
+    if (p[4] != '$callId|$conversationId') throw const CallWelcomeRefused();
+    bound = p[4];
     exists = true;
     _epoch = int.parse(p[1]);
     _members = [for (final e in p[2].split(',')) _dec(e)];
@@ -295,7 +322,12 @@ class FakeCrypto implements CallGroupCrypto {
       commit: b(staged!),
       welcome: addMembers.isEmpty
           ? null
-          : welcomeFor(_epoch + 1, after, [for (final a in addMembers) a.id]),
+          : welcomeFor(
+              _epoch + 1,
+              after,
+              [for (final a in addMembers) a.id],
+              binding: bound!,
+            ),
       epoch: _epoch,
     );
   }
@@ -365,6 +397,10 @@ class FakeCrypto implements CallGroupCrypto {
     CallMember sender,
     int stream,
   ) {
+    // The core derives keys only for the call the group is bound to.
+    if (bound == null || bound!.split('|').first != callId) {
+      throw StateError('not this call group');
+    }
     keyRequests.add('$_epoch/${sender.id}/$stream');
     return b('K($callId,$_epoch,${sender.id},$stream)');
   }
@@ -374,6 +410,7 @@ class FakeCrypto implements CallGroupCrypto {
     dropped = true;
     drops++;
     exists = false;
+    bound = null;
     _members = [];
   }
 }

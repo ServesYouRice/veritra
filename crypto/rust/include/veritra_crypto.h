@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (27u)
+#define PM_CRYPTO_ABI_VERSION (28u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -478,12 +478,30 @@ int32_t pm_crypto_group_member_signature_key(PmCryptoHandle *handle,
  * audio): HKDF-SHA256(salt "veritra-b6-sender-v1", ikm MLS-Exporter(
  * "veritra-b6-media-v1", lp(call_id) | u64(epoch), 32), info u32(leaf) |
  * u8(stream)). 32 bytes out. The exporter secret never leaves the core.
- * pm_crypto_c7_sign and _verify also accept the domain "veritra-b6-join-v1". */
+ * pm_crypto_c7_sign and _verify also accept the domain "veritra-b6-join-v1".
+ * ABI 28: PM_CRYPTO_ERROR unless group_id is a call group (made by
+ * pm_crypto_group_b6_create or joined by pm_crypto_group_b6_join) whose
+ * marker names this call_id. */
 int32_t pm_crypto_group_b6_media_key(PmCryptoHandle *handle,
                                      PmByteSlice group_id, PmByteSlice call_id,
                                      PmByteSlice account_id,
                                      PmByteSlice device_id, uint8_t stream,
                                      PmOwnedBuffer *out_key);
+/* ABI 28 (B6): a call group. Its context requires GroupContext extension
+ * 0xF0B6 and carries u8(1) | lp(call_id) | lp(conversation_id) (u16
+ * big-endian lengths, each id 1 to 128 bytes); it never changes. _create
+ * makes one; _join joins one only when the Welcome's context is exactly that
+ * list for call_id and conversation_id (PM_CRYPTO_ERROR otherwise,
+ * PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE when the Welcome is for another
+ * device). pm_crypto_group_join refuses a Welcome to a call group. Every key
+ * package and creator leaf lists 0xF0B6 in its capabilities. */
+int32_t pm_crypto_group_b6_create(PmCryptoHandle *handle,
+                                  PmByteSlice group_id, PmByteSlice call_id,
+                                  PmByteSlice conversation_id);
+int32_t pm_crypto_group_b6_join(PmCryptoHandle *handle,
+                                PmByteSlice expected_group_id,
+                                PmByteSlice welcome, PmByteSlice call_id,
+                                PmByteSlice conversation_id);
 /* c7_derive: HKDF-SHA256, salt = label, ikm = key (32 bytes), info 1 to 1024
  * bytes, 32 bytes out. label is one of "veritra-c7-post-v1",
  * "veritra-c7-rekey-chk-v1", "veritra-c7-slot-v1"; any other is

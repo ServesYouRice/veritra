@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 are not; camera and screen share were built in round 9 (see "Camera and screen share"). The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
+**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 are not; camera and screen share were built in round 9 (see "Camera and screen share"); the call-group marker binding `call_id` at crypto ABI 28 (see "Call-group marker (ABI 28)"). The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -11,7 +11,7 @@ before S2 lands.
   read them."
 - **Owner approval:** one new server-side component (the SFU, O1) and
   possibly one Flutter client package for it. Neither is covered by D89.
-- **Counters:** crypto ABI 22 (S2, used), server migration 0080 (S3, used), no local
+- **Counters:** crypto ABI 22 (S2, used), crypto ABI 28 (call-group marker, used), server migration 0080 (S3, used), no local
   schema change. No local schema change
   (call state lives in memory only). No W7 payload type.
 
@@ -69,7 +69,7 @@ A voice room you can drop into at any time does not fit `call_sessions`
   (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`). The group context binds
   `call_id` and the parent `conversation_id` (a required group context
   extension; participants refuse a Welcome where they differ from the room
-  they asked to join).
+  they asked to join). Built at ABI 28: "Call-group marker (ABI 28)".
 - Words: a **room** is lasting (a voice channel, or a group's call
   button); a **call** is one call group's life in it. `call_id` names the
   call, and the call group's `group_id` is what joins sign.
@@ -489,9 +489,9 @@ Media transport and demo factory (2026-11-11, branch `feat/b6-rest`):
   `added_device_ids` marks only seats with an unexpired offer; offers expire
   within 60 s; a session without a device cannot join a room.
 
-Not built: the call-group context extension binding
-`call_id` (core change); S1 spike and S7 evidence; the core keeping
-`pm_crypto_group_b6_media_key` to call groups (would need an ABI change).
+Not built: S1 spike and S7 evidence. (The call-group context extension
+binding `call_id`, and the core keeping `pm_crypto_group_b6_media_key` to
+call groups, were built at ABI 28: "Call-group marker (ABI 28)".)
 Known gaps to check in S1: a published track sends clear silence until its
 cryptor is attached (no content); a remote track is muted synchronously
 in LiveKit's subscribe event and dropped if it cannot be muted, but
@@ -544,6 +544,111 @@ Review fixes (round 7, 2026-11-11):
   commit in a normal race, and refusing it means leave and rejoin; the
   send-key hold and the committer's own Remove cover the member instead.
 - **Impersonation is documented** (Info): see the threat table.
+
+## Call-group marker (ABI 28)
+
+Built 2026-11-21 (branch `b6-abi28`). It closes the two core gaps "Build
+status" listed: nothing bound a call group to its `call_id`, and
+`pm_crypto_group_b6_media_key` derived keys from any stored group, a
+conversation group included (the boundary exception was wider than "call
+groups only").
+
+**The marker.** GroupContext extension `0xF0B6` (private-use range; C4 is
+`0xF0C4`, the L2 pad `0xF0A2`) with data
+
+```
+u8(1) | lp(call_id) | lp(conversation_id)     lp = u16 big-endian length
+```
+
+each id 1 to 128 bytes, the bytes the app passes (`call_id` as the server
+returns it on join, `conversation_id` the parent group's id). Decoding is
+strict: format 1, both ids in range, nothing after them.
+
+**Rules (Rust, `crypto/rust/src/mls/call_group.rs`).**
+
+1. **Capability.** Every key package and every creator leaf lists `0xF0B6`
+   in its capabilities (`c4::leaf_capabilities`, beside `0xF0C4` and
+   `0xF0A2`). OpenMLS refuses any leaf that does not support every context
+   extension, so this is required for a member to be in a call group.
+2. **Create.** `pm_crypto_group_b6_create(group_id, call_id,
+   conversation_id)` makes a group whose context is exactly
+   `[RequiredCapabilities{0xF0B6}, marker]`. `pm_crypto_group_create` never
+   makes one.
+3. **Never changed.** A GroupContextExtensions proposal is refused in any
+   group without a C4 record (`inspect_commit`), and a record group's
+   proposal must keep every other extension byte for byte, so no commit can
+   add, change or remove the marker. A group is a call group for its whole
+   life or never.
+4. **Join.** `pm_crypto_group_b6_join(group_id, welcome, call_id,
+   conversation_id)` stores the group only when the Welcome's context is
+   exactly the list in rule 2 for those two ids: another call, another
+   conversation, an extra extension, or no marker is refused before
+   anything is stored (`PM_CRYPTO_ERROR`). A Welcome for another device
+   still answers `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE`.
+   `pm_crypto_group_join` refuses any Welcome that carries a marker, so a
+   call group enters a device only through the call join.
+5. **Media key.** `pm_crypto_group_b6_media_key` refuses (`PM_CRYPTO_ERROR`)
+   a group whose context lacks a well-formed, required marker, and a
+   `call_id` other than the one its marker names. The key schedule itself is
+   unchanged (`E = MLS-Exporter("veritra-b6-media-v1", lp(call_id) |
+   u64(n), 32)`), so `testing/vectors/b6-media-v1.json` stands. The
+   binding is now twofold: the exporter context names `call_id`, and the
+   group context (which MLS feeds into every epoch's key schedule) carries
+   it too.
+
+**Choices.**
+
+- *Check the caller's `call_id` against the marker, or drop the argument and
+  read it from the marker.* Checked: the signature and the derivation stay
+  as they were (no new vector, Dart unchanged at that call), and a caller
+  holding the wrong call id fails loudly instead of deriving keys nobody
+  else has. Reading it from the marker would remove one argument but hide
+  that mistake.
+- *Exact context or only "marker present and matching".* Exact: a call group
+  has no reason to carry anything else (no C4 record, no other extension),
+  and an exact match leaves no room for a creator to smuggle extra context
+  state past the joiners.
+- *`conversation_id` in the marker.* It is checked at join only (the core
+  does not know the parent's roster); the app's parent checks stay as they
+  are. It stops a Welcome made for one conversation's room being taken as
+  another's.
+- *Required capabilities.* OpenMLS already demands support for every context
+  extension; listing `0xF0B6` as required as well states the rule in the
+  group itself and matches C4.
+
+**App.** `CallGroupCrypto.createGroup` and `joinWithWelcome` take `callId`
+and `conversationId`; `RoomEngine` passes the server's call id and the
+conversation it joins. `NativeCallGroupCrypto` maps a refused Welcome meant
+for this device to `CallWelcomeRefused` (the engine leaves and joins again,
+`RoomFailure.welcomeRefused`), and a Welcome for another device to null as
+before (it used to map every failure to null, so a refused Welcome waited
+for the Welcome timeout).
+
+**Mixed ABI.** As with every earlier bump, every client must run ABI 28: the
+Dart bindings refuse any other version. Across devices the failure is
+closed: an ABI 27 key package lacks `0xF0B6`, so an ABI 28 committer cannot
+stage its Add (OpenMLS refuses it), and an ABI 27 call group has no marker,
+so an ABI 28 joiner refuses its Welcome and derives no key from it. Nothing
+is released, so there is no mixed fleet; the call fails, it never runs
+weaker.
+
+**Not covered.** The core still does not keep a call group out of seals
+(the scratch handle, D70, does that); the marker would make it possible
+later. The server never sees the marker in clear (it is inside the
+Welcome's encrypted GroupInfo) and does not check it. Needs the
+independent crypto review with the rest of B6 (G25).
+
+**Tests.** Rust: `mls/call_group_tests.rs` (encoding, exact context, joins
+for another call or conversation refused with nothing stored, the plain
+join refused, an ABI 27 key package refused, a marker-changing commit
+refused, self-update keeps it, the media key refuses other calls and
+conversation groups), `ffi/b6_tests.rs` (the C entry points), the existing
+media-key test now on a call group. Mutation-checked: removing the media-key
+check, or letting either join through, fails tests. Dart:
+`b6_native_call_group_test.dart` (real library: binding, refusals, a
+conversation group gives no key), `b6_room_engine_test.dart` (the engine
+passes the server's call id and conversation; a Welcome to another call
+group makes it leave and rejoin with nothing joined).
 
 ## Camera and screen share (round 9)
 

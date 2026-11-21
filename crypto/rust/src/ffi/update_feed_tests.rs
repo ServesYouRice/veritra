@@ -64,5 +64,6 @@ fn wrong_lengths_and_null_output_are_invalid_arguments() {
 
 #[test]
 fn the_abi_version_names_this_function() {
-    assert_eq!(crate::pm_crypto_abi_version(), 27);
+    // The function arrived in ABI 27; later versions keep it.
+    assert!(crate::pm_crypto_abi_version() >= 27);
 }

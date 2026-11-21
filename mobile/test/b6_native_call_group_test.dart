@@ -212,7 +212,11 @@ void main() {
         final bobCall = NativeCallGroupCrypto(bob, bindings);
         final groupId = Uint8List.fromList(List.generate(32, (i) => i + 1));
 
-        aliceCall.createGroup(groupId);
+        aliceCall.createGroup(
+          groupId,
+          callId: 'call_1',
+          conversationId: 'conv_parent',
+        );
         final bobMember = parent
             .members('conv_parent')!
             .firstWhere((m) => m.deviceId == 'dev_bob');
@@ -250,7 +254,12 @@ void main() {
           adds: [(keyPackage: offer.keyPackage, member: bobMember)],
         );
         aliceCall.mergeStaged(groupId);
-        final joined = bobCall.joinWithWelcome(groupId, staged.welcome!)!;
+        final joined = bobCall.joinWithWelcome(
+          groupId,
+          staged.welcome!,
+          callId: 'call_1',
+          conversationId: 'conv_parent',
+        )!;
         expect(joined.map((m) => m.deviceId).toSet(), {'dev_alice', 'dev_bob'});
         expect(aliceCall.currentEpoch(groupId), 1);
         expect(bobCall.currentEpoch(groupId), 1);
@@ -270,9 +279,9 @@ void main() {
         expect(key(aliceCall, bobMember, 1), isNot(k1), reason: 'per stream');
         expect(key(aliceCall, aliceMember, 0), isNot(k1), reason: 'per sender');
         expect(
-          aliceCall.mediaKey(groupId, 'call_2', bobMember, 0),
-          isNot(k1),
-          reason: 'per call',
+          () => aliceCall.mediaKey(groupId, 'call_2', bobMember, 0),
+          throwsA(isA<NativeCryptoException>()),
+          reason: 'the group is bound to call_1 (ABI 28 marker)',
         );
         expect(() => key(aliceCall, bobMember, 4), throwsArgumentError);
 
@@ -286,7 +295,12 @@ void main() {
           removes: [bobMember],
         );
         aliceCall.mergeStaged(groupId);
-        final rejoined = bobCall.joinWithWelcome(groupId, rejoin.welcome!)!;
+        final rejoined = bobCall.joinWithWelcome(
+          groupId,
+          rejoin.welcome!,
+          callId: 'call_1',
+          conversationId: 'conv_parent',
+        )!;
         expect(rejoined.map((m) => m.id).toList()..sort(), [
           'acct_alice/dev_alice',
           'acct_bob/dev_bob',
@@ -330,6 +344,121 @@ void main() {
         bobCall.drop(groupId);
         alice.close();
         bob.close();
+      },
+    );
+
+    // ABI 28: the call-group marker binds the call and the conversation.
+    test(
+      'a Welcome is joined only for the call and conversation asked for, '
+      'and only a call group gives media keys',
+      () {
+        final alice = bindings.createDevice('acct_alice', 'dev_alice');
+        final names = ['bob', 'carol', 'dave', 'erin'];
+        final devices = {
+          for (final name in names)
+            name: bindings.createDevice('acct_$name', 'dev_$name'),
+        };
+        final aliceCall = NativeCallGroupCrypto(alice, bindings);
+        final calls = {
+          for (final name in names)
+            name: NativeCallGroupCrypto(devices[name]!, bindings),
+        };
+        final groupId = Uint8List.fromList(List.generate(32, (i) => 90 + i));
+        aliceCall.createGroup(
+          groupId,
+          callId: 'call_1',
+          conversationId: 'conv_parent',
+        );
+        final adds = [
+          for (final name in names)
+            (
+              keyPackage: Uint8List.fromList(devices[name]!.createKeyPackage()),
+              member: CallMember(
+                'acct_$name',
+                'dev_$name',
+                Uint8List.fromList(devices[name]!.signingPublicKey()),
+              ),
+            ),
+        ];
+        final staged = aliceCall.stageCommit(groupId, adds: adds);
+        aliceCall.mergeStaged(groupId);
+        final welcome = staged.welcome!;
+
+        expect(
+          calls['bob']!.joinWithWelcome(
+            groupId,
+            welcome,
+            callId: 'call_1',
+            conversationId: 'conv_parent',
+          ),
+          hasLength(5),
+        );
+        expect(
+          () => calls['carol']!.joinWithWelcome(
+            groupId,
+            welcome,
+            callId: 'call_2',
+            conversationId: 'conv_parent',
+          ),
+          throwsA(isA<CallWelcomeRefused>()),
+        );
+        expect(
+          () => calls['dave']!.joinWithWelcome(
+            groupId,
+            welcome,
+            callId: 'call_1',
+            conversationId: 'conv_other',
+          ),
+          throwsA(isA<CallWelcomeRefused>()),
+        );
+        // The plain join never takes a call group.
+        final hex =
+            groupId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+        expect(
+          () => devices['erin']!.joinGroup(hex, welcome),
+          throwsA(isA<NativeCryptoException>()),
+        );
+        for (final name in ['carol', 'dave', 'erin']) {
+          expect(
+            () => devices[name]!.groupMembers(hex),
+            throwsA(anything),
+            reason: '$name stored nothing',
+          );
+        }
+        // A Welcome for other devices is not this device's: null.
+        final zed = bindings.createDevice('acct_zed', 'dev_zed');
+        zed.createKeyPackage();
+        expect(
+          NativeCallGroupCrypto(zed, bindings).joinWithWelcome(
+            groupId,
+            welcome,
+            callId: 'call_1',
+            conversationId: 'conv_parent',
+          ),
+          isNull,
+        );
+
+        // A conversation group gives no media key.
+        alice.createGroup('conv_plain');
+        expect(
+          () => alice.b6MediaKey(
+            groupId: 'conv_plain',
+            callId: 'call_1',
+            senderAccountId: 'acct_alice',
+            senderDeviceId: 'dev_alice',
+            stream: 0,
+          ),
+          throwsA(isA<NativeCryptoException>()),
+        );
+        final bobMember = adds.first.member;
+        expect(
+          calls['bob']!.mediaKey(groupId, 'call_1', bobMember, 0),
+          aliceCall.mediaKey(groupId, 'call_1', bobMember, 0),
+        );
+
+        for (final device in [alice, zed, ...devices.values]) {
+          device.close();
+        }
       },
     );
   }, skip: nativeCryptoSkip());
