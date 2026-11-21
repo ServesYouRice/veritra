@@ -106,7 +106,12 @@ class Scratch:
         path.write_text(f"set -e\ncd '{self.work}'\n{body}\n", encoding="utf-8")
         return path
 
-    def run(self, hook: str | None = None, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run(
+        self,
+        hook: str | None = None,
+        extra_env: dict[str, str] | None = None,
+        extra_args: tuple[str, ...] = (),
+    ) -> subprocess.CompletedProcess[str]:
         self.log.write_text("", encoding="utf-8")
         if self.context.exists():
             self.context.unlink()
@@ -123,7 +128,7 @@ class Scratch:
             env["RELEASE_TEST_HOOK"] = str(self.hook(hook))
         env.update(extra_env or {})
         return subprocess.run(
-            [posix_shell.find("bash"), str(self.work / "scripts" / SCRIPT.name), "--no-push", "--skip-smoke"],
+            [posix_shell.find("bash"), str(self.work / "scripts" / SCRIPT.name), "--no-push", "--skip-smoke", *extra_args],
             cwd=self.temp,
             env=env,
             capture_output=True,
@@ -271,6 +276,24 @@ def test_replaced_history_cannot_publish_a_local_commit(scratch: Scratch) -> Non
     assert_refused_before_checks(scratch, result, "GIT_GRAFT_FILE")
 
 
+@with_scratch
+def test_release_never_writes_into_infra(scratch: Scratch) -> None:
+    # Handbook OWN-03: the command prints the digest and a person commits it
+    # to infra. The old --infra-dir option is refused before anything runs,
+    # and the script names no infra file to write.
+    infra = scratch.temp / "infra"
+    infra.mkdir()
+    (infra / "kustomization.yaml").write_text("images: []\n", encoding="utf-8")
+    result = scratch.run(extra_args=("--infra-dir", str(infra)))
+    assert result.returncode != 0, result.stdout
+    assert "unknown argument: --infra-dir" in result.stderr, result.stderr
+    assert_refused_before_checks(scratch, result, "--infra-dir")
+    assert (infra / "kustomization.yaml").read_text(encoding="utf-8") == "images: []\n"
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "kustomization.yaml" not in text, "the release script names an infra file"
+    assert 'echo "revision: $COMMIT"' in text and 'echo "digest:   $DIGEST"' in text
+
+
 TESTS = (
     test_clean_release_builds_the_checked_commit,
     test_head_moving_during_checks_aborts,
@@ -282,6 +305,7 @@ TESTS = (
     test_stale_remote_tracking_ref_is_not_trusted,
     test_unreachable_origin_fails_closed,
     test_replaced_history_cannot_publish_a_local_commit,
+    test_release_never_writes_into_infra,
 )
 
 

@@ -532,10 +532,10 @@ build, and it stops if HEAD moved meanwhile); scans the image with Trivy and
 stops on any HIGH or CRITICAL finding or embedded secret; runs
 `scripts/smoke-deploy.sh` on that exact image (`--skip-smoke` skips it, and
 the release record should say so); pushes
-`ghcr.io/servesyourice/veritra:<commit>`; and prints the digest. With
-`--infra-dir <folder>` it also writes that digest into the folder's
-`kustomization.yaml` and commits it there; push the infra repository to
-deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
+`ghcr.io/servesyourice/veritra:<commit>`; and prints the revision (the full
+commit) and the digest. It never writes into the infra repository (handbook
+decision OWN-03): put the digest into the environment's release file there,
+commit and push to deploy. Log in first with `docker login ghcr.io`. It needs bash, git, Go,
 cargo-audit, Docker with buildx and Trivy; on Windows run it from WSL (or Git
 Bash with Docker Desktop). `--no-push` builds and scans only.
 
@@ -592,9 +592,9 @@ are limited separately.
 needs. In infra, keep a copy of `deploy/kubernetes/base` taken at the release
 commit (`apps/veritra/base`) and the overlay next to it
 (`apps/veritra/production`, with `resources: [../base]`), so infra holds
-exactly what is applied. `scripts/release-image.sh --infra-dir
-apps/veritra/production` writes the tested digest there and commits; pushing
-infra deploys. Rolling back is reverting that commit. Secrets
+exactly what is applied. Put the tested digest that `scripts/release-image.sh`
+prints there and commit; pushing infra deploys. Rolling back is reverting
+that commit. Secrets
 (`veritra-secrets`, `veritra-r2`) are SOPS-encrypted with age in the same
 folder; Flux decrypts them with the `sops-age` Secret.
 
@@ -981,8 +981,8 @@ accounts or decisions only the owner has.
 - [ ] Host: firewall open only for 80, 443 (and TURN, if coturn runs on the
   same VPS); 6443 and 10250 closed, `kubectl` over an SSH tunnel or
   WireGuard; k3s started with `--secrets-encryption`.
-- [ ] `scripts/smoke-deploy.sh` passed on the release commit, and
-  `scripts/release-image.sh --infra-dir ...` produced the digest in infra.
+- [ ] `scripts/smoke-deploy.sh` passed on the release commit, and the digest
+  `scripts/release-image.sh` printed is committed in infra.
 - [ ] `examples/traefik-helmchartconfig.yaml` applied: the Traefik pod's
   arguments show `readTimeout=16m` and the `web` redirect.
 - [ ] Traefik is v3.5 or later, and a handshake with only X25519MLKEM768

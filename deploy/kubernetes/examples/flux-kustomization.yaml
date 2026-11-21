@@ -6,7 +6,8 @@
 #   apps/veritra/base/        copy of deploy/kubernetes/base at the release
 #                             commit (infra holds exactly what is applied)
 #   apps/veritra/production/  copy of examples/overlay; resources: [../base];
-#                             scripts/release-image.sh --infra-dir points here
+#                             the digest scripts/release-image.sh prints goes
+#                             here, committed by hand (it never writes infra)
 #   apps/veritra/production/secrets.sops.yaml
 #                             veritra-secrets and veritra-r2, SOPS/age encrypted
 #
