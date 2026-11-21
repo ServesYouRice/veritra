@@ -657,6 +657,7 @@ void main() {
     'cached copy as it was, and the retry sends exactly that copy once',
     () => _withWorld((w) async {
       final b1 = await w.link('link_1', 'dev_b1', 11);
+      // Cut after the first chunk the client streams.
       w.server.cutUploadAfter = 1;
       await expectLater(w.send(b1), throwsA(isA<SocketException>()));
       var row = (await w.sourceStore.loadHistoryTransfer(_origin, 'link_1'))!;
@@ -667,8 +668,10 @@ void main() {
       expect(w.server.copies, isEmpty);
       expect(w.server.cutUploads, 1);
 
-      // A second cut, halfway through: still nothing stored, cache intact.
-      w.server.cutUploadAfter = cached.length ~/ 2;
+      // A second cut after the last byte, before the server finished: still
+      // nothing stored, cache intact.
+      expect(cached.length, greaterThan(64 * 1024));
+      w.server.cutUploadAfter = cached.length;
       await expectLater(w.send(b1), throwsA(isA<SocketException>()));
       row = (await w.sourceStore.loadHistoryTransfer(_origin, 'link_1'))!;
       expect(row.stage, HistoryTransferStage.snapshotReady);

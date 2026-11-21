@@ -455,8 +455,8 @@ change. Added tests for the cases a hostile or unreliable server can cause:
   not (native digest check, file deleted); a handoff changed at six places
   or lengths (native refuses, nothing kept); ciphertext altered or cut under
   a rewritten digest and size (refused at the handoff); an upload cut after
-  1 byte and halfway (nothing stored, cache unchanged, the retry stores
-  exactly the cached copy once); a finished copy offered again after the ACK
+  the first streamed chunk and after the last byte (nothing stored, cache
+  unchanged, the retry stores exactly the cached copy once); a finished copy offered again after the ACK
   (no transfer, nothing more imported). The genuine copy arrives after each.
 - `mobile/test/device_link_v3_flow_test.dart` (+3, two real AppStates): a
   forged handoff, then altered ciphertext, import nothing and send no ACK
