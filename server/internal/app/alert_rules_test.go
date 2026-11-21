@@ -16,7 +16,7 @@ import (
 	"private-messenger/server/internal/storage/storagetest"
 )
 
-const monitoringDir = "../../../deploy/kubernetes/examples/monitoring"
+const monitoringDir = "../../../deploy/monitoring"
 
 func readRepoFile(t *testing.T, path string) string {
 	t.Helper()
@@ -25,21 +25,6 @@ func readRepoFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
-}
-
-// The plain rule file and the PrometheusRule must hold the same groups.
-func TestAlertRuleFilesMatch(t *testing.T) {
-	plain := readRepoFile(t, filepath.Join(monitoringDir, "veritra-alerts.rules.yml"))
-	operator := readRepoFile(t, filepath.Join(monitoringDir, "prometheus-rules.yaml"))
-	plainGroups := plain[strings.Index(plain, "\ngroups:\n")+1:]
-	spec := operator[strings.Index(operator, "\nspec:\n")+len("\nspec:\n"):]
-	var dedented []string
-	for _, line := range strings.Split(spec, "\n") {
-		dedented = append(dedented, strings.TrimPrefix(line, "  "))
-	}
-	if strings.TrimSpace(strings.Join(dedented, "\n")) != strings.TrimSpace(plainGroups) {
-		t.Fatal("prometheus-rules.yaml and veritra-alerts.rules.yml hold different rules")
-	}
 }
 
 // Every veritra_* series an alert reads must be one the server exports, and
@@ -67,6 +52,18 @@ func TestAlertRulesReferenceExportedMetricsAndRunbooks(t *testing.T) {
 		}
 	}
 	rules := readRepoFile(t, filepath.Join(monitoringDir, "veritra-alerts.rules.yml"))
+	// The shipped rules must fire wherever the server's metrics are scraped,
+	// so they read only its own series and `up`: no kube-state-metrics,
+	// node-exporter, kubelet or cert-manager series, which many collectors
+	// (the owner's cluster among them) do not have.
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if foreign := regexp.MustCompile(`\b(kube|node|kubelet|certmanager|container)_[a-z_]+`).FindString(line); foreign != "" {
+			t.Errorf("alert rules read %s, which is not one of the server's own series", foreign)
+		}
+	}
 	for _, name := range regexp.MustCompile(`veritra_[a-z_]+`).FindAllString(rules, -1) {
 		if !exported[name] {
 			t.Errorf("alert rules read %s, which the server does not export", name)
