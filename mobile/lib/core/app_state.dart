@@ -129,6 +129,7 @@ part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
 part 'app_state_previews.dart';
 part 'app_state_private_channels.dart';
+part 'app_state_posting.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -3235,8 +3236,13 @@ class AppState extends ChangeNotifier
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
         if (routed.shared) await publishCommunityInfo(communityId);
-        // C4: an announcement channel is restricted in the record too.
+        // C4: an announcement channel is restricted in the record too,
+        // retried on later sync passes until it lands (C2).
         if (routed.shared && routed.channel.kind == 'announcement') {
+          await _rememberAnnouncementRecord(
+            routed.channel.conversationId!,
+            routed.channel.id,
+          );
           await _recordAnnouncementChannel(
             routed.channel.conversationId!,
             routed.channel.id,
@@ -4113,6 +4119,8 @@ class AppState extends ChangeNotifier
         conversationId,
         policy,
       );
+      // C2: owed to the record until a sync pass finds it written.
+      await _rememberPostingRecord(conversationId, policy == 'admins');
       conversations = [
         for (final c in conversations)
           if (c.id == updated.id)
@@ -7689,6 +7697,8 @@ class AppState extends ChangeNotifier
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();
+          // C2: posting settings this device still owes the record.
+          await _retryPostingRecords();
           // C6: announce this moderator's report key where it is due. Not
           // awaited, like the C3 refresh: sending never holds up sync.
           unawaited(_announceReportKeys());

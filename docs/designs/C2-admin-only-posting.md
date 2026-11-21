@@ -57,9 +57,20 @@ member's post to an open channel is shown.
 
 Residuals: a post is judged by the record this device holds when it arrives,
 not the one at the post's epoch (a post racing a demotion can be judged
-differently on two devices; C4 accepted this). The record write after the
-server switch is not retried if it fails (offline, another commit pending):
-the setting then holds only on the server until the admin switches it again.
+differently on two devices; C4 accepted this).
+
+Record write retry (2026-11-21, `mobile/lib/core/app_state_posting.dart`):
+the record commit after the server switch (or after creating an
+announcement channel) can fail (offline, another commit pending). The
+device keeps what it meant to write in a local setting
+(`c2.posting_record.<conv>`, `c2.announce_record.<shared conv>`) and tries
+again on each sync pass until the record says so. The server's word only
+stops a retry (another admin changed the setting since, or the channel is no
+longer listed as an announcement channel); it never writes the record. The
+entry is also dropped when the group has no record or this account is no
+longer an admin under it. Pinned in `test/c2_posting_record_retry_test.dart`
+(each guard fails a test when removed). Until the retry lands, the setting
+holds only on the server, which can narrow but can later report it open.
 
 The text below is the original design and what remains.
 Rule: a receiver drops a post (text, reply, attachment) when posting is
