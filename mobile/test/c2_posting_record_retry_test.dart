@@ -19,6 +19,9 @@ import 'native_test_env.dart';
 // server's word only stops a retry; it never writes the record.
 
 const _group = 'conv_c2_retry';
+const _shared = 'conv_c2_shared';
+const _community = 'comm_c2';
+const _news = 'chan_news';
 
 class _QuietSync implements SyncService {
   @override
@@ -117,6 +120,38 @@ void main() {
   }
 
   String setting() => PostingRecordRetry.postingSetting(_group);
+  String announced() => PostingRecordRetry.announceSetting(_shared);
+
+  Channel channel(String kind) => Channel(
+        id: _news,
+        communityId: _community,
+        name: '',
+        kind: kind,
+        conversationId: _shared,
+        layoutGeneration: 1,
+      );
+
+  /// A shared group that owes [_news] to its record; the community's
+  /// channel list is loaded when [listed] is given.
+  Future<(AppState, _Roles, MemoryLocalStore)> community({
+    Channel? listed,
+  }) async {
+    final (state, crypto, store) = await app();
+    state
+      ..conversations = [Conversation(id: _shared, kind: 'community_shared')]
+      ..communities = [
+        Community(id: _community, name: '', sharedConversationId: _shared),
+      ];
+    if (listed != null) {
+      state
+        ..channelsByCommunity = {
+          _community: [listed],
+        }
+        ..communitiesLoaded = true;
+    }
+    await store.saveSetting(announced(), '["$_news"]');
+    return (state, crypto, store);
+  }
 
   test(
     'a failed record write is kept and lands on a later sync pass',
@@ -170,6 +205,56 @@ void main() {
       await state.retryPostingRecordsForTesting();
       expect(crypto.staged, 1);
       expect(await store.loadSetting(setting()), isEmpty);
+    },
+    skip: nativeCryptoSkip(),
+  );
+
+  test(
+    'an owed announcement channel lands on a later sync pass',
+    () async {
+      final (state, crypto, store) = await community(
+        listed: channel('announcement'),
+      );
+      crypto.failures = 1;
+      await state.retryPostingRecordsForTesting();
+      expect(crypto.record.announcementChannels, isEmpty);
+      expect(await store.loadSetting(announced()), '["$_news"]');
+      await state.retryPostingRecordsForTesting();
+      expect(crypto.record.announcementChannels, {_news});
+      await state.retryPostingRecordsForTesting();
+      expect(await store.loadSetting(announced()), isEmpty);
+      expect(crypto.staged, 2);
+    },
+    skip: nativeCryptoSkip(),
+  );
+
+  test(
+    'a channel the server no longer lists as announcement is not written',
+    () async {
+      final (state, crypto, store) = await community(listed: channel('open'));
+      await state.retryPostingRecordsForTesting();
+      expect(crypto.record.announcementChannels, isEmpty);
+      expect(crypto.staged, 0);
+      expect(await store.loadSetting(announced()), isEmpty);
+    },
+    skip: nativeCryptoSkip(),
+  );
+
+  test(
+    'an owed announcement channel is kept while the channel list is unloaded',
+    () async {
+      final (state, crypto, store) = await community();
+      await state.retryPostingRecordsForTesting();
+      expect(crypto.staged, 0);
+      expect(await store.loadSetting(announced()), '["$_news"]');
+      // Loaded later: written then.
+      state
+        ..channelsByCommunity = {
+          _community: [channel('announcement')],
+        }
+        ..communitiesLoaded = true;
+      await state.retryPostingRecordsForTesting();
+      expect(crypto.record.announcementChannels, {_news});
     },
     skip: nativeCryptoSkip(),
   );

@@ -66,7 +66,8 @@ device keeps what it meant to write in a local setting
 (`c2.posting_record.<conv>`, `c2.announce_record.<shared conv>`) and tries
 again on each sync pass until the record says so. The server's word only
 stops a retry (another admin changed the setting since, or the channel is no
-longer listed as an announcement channel); it never writes the record. The
+longer listed as an announcement channel, judged only once that
+community's channel list has loaded); it never writes the record. The
 entry is also dropped when the group has no record or this account is no
 longer an admin under it. Pinned in `test/c2_posting_record_retry_test.dart`
 (each guard fails a test when removed). Until the retry lands, the setting

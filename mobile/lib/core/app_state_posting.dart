@@ -84,13 +84,19 @@ extension PostingRecordRetry on AppState {
         final key = announceSetting(id);
         final owed = _announcementsOwed(await localStore.loadSetting(key));
         if (owed.isEmpty) continue;
-        // Only channels the server still lists as announcement channels here.
+        // Only channels the server still lists as announcement channels
+        // here, judged once this community's channel list has loaded (an
+        // unloaded list is no answer, so the entry is kept).
+        final community = communities
+            .where((item) => item.sharedConversationId == id)
+            .firstOrNull;
+        final loaded =
+            community == null ? null : channelsByCommunity[community.id];
+        if (!communitiesLoaded || loaded == null) continue;
         final listed = {
-          for (final channels in channelsByCommunity.values)
-            for (final channel in channels)
-              if (channel.kind == 'announcement' &&
-                  channel.conversationId == id)
-                channel.id,
+          for (final channel in loaded)
+            if (channel.kind == 'announcement' && channel.conversationId == id)
+              channel.id,
         };
         final channels = owed.intersection(listed);
         await _owedRecordWrite(
