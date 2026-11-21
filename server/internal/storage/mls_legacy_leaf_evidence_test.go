@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,8 +148,11 @@ func TestLegacyEvidenceIsNotKeptForRosteredGroups(t *testing.T) {
 }
 
 // Upgrade: migration 0096 seeds the evidence from the messages still
-// retained, by the three old rules; a device created after the group's first
-// message and named by neither a send nor a Welcome gets none.
+// retained: the devices no newer than the oldest retained message, then the
+// recipients of Welcomes whose sender has evidence, transitively. A device's
+// own messages give it nothing, a Welcome from a device with no evidence
+// gives nothing, and a device a completed recovery created is taken out of
+// the first grant.
 func TestMigration0096SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openBareStoreAt(t)
@@ -175,6 +179,18 @@ func TestMigration0096SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
 		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, kind, payload, idempotency_key, created_at) VALUES('mls1', 'conv_legacy', 'a_o', 'dev_o', 'commit', X'01', 'k1', '` + at(2, 1) + `')`,
 		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, recipient_device_id, kind, payload, idempotency_key, created_at) VALUES('mls2', 'conv_legacy', 'a_o', 'dev_o', 'dev_w', 'welcome', X'01', 'k2', '` + at(3, 2) + `')`,
 		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, kind, payload, idempotency_key, created_at) VALUES('mls3', 'conv_rostered', 'a_o', 'dev_o', 'commit', X'01', 'k3', '` + at(2, 1) + `')`,
+		// A device recovered before the oldest retained message: the old
+		// grant would admit it, the recovery record takes it out.
+		`INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_rec', 'a_b', 'r', X'01', '` + at(1, 4) + `')`,
+		`INSERT INTO account_recovery_requests(id, account_id, device_id, device_name, key_package, signing_key, device_auth_hash, claim_token_hash, verified_password_hash, verified_auth_key, state, created_at, ready_at, expires_at, completed_at)
+		 VALUES('rec1', 'a_b', 'dev_rec', 'r', X'01', zeroblob(32), '` + strings.Repeat("a", 64) + `', '` + strings.Repeat("b", 64) + `', 'h', zeroblob(32), 'completed', '` + at(1, 3) + `', '` + at(1, 4) + `', '` + at(9, 1) + `', '` + at(1, 4) + `')`,
+		// dev_new forges: its own commit, a Welcome to dev_x. Neither counts.
+		`INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_x', 'a_b', 'x', X'01', '` + at(3, 1) + `')`,
+		`INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_y', 'a_b', 'y', X'01', '` + at(3, 1) + `')`,
+		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, kind, payload, idempotency_key, created_at) VALUES('mls4', 'conv_legacy', 'a_b', 'dev_new', 'commit', X'01', 'k4', '` + at(3, 3) + `')`,
+		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, recipient_device_id, kind, payload, idempotency_key, created_at) VALUES('mls5', 'conv_legacy', 'a_b', 'dev_new', 'dev_x', 'welcome', X'01', 'k5', '` + at(3, 4) + `')`,
+		// dev_w, welcomed by a device with evidence, welcomes dev_y: counts.
+		`INSERT INTO conversation_mls_messages(id, conversation_id, sender_account_id, sender_device_id, recipient_device_id, kind, payload, idempotency_key, created_at) VALUES('mls6', 'conv_legacy', 'a_b', 'dev_w', 'dev_y', 'welcome', X'01', 'k6', '` + at(3, 5) + `')`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("seed %q: %v", statement[:40], err)
@@ -186,13 +202,19 @@ func TestMigration0096SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
 	has := func(conversation, device string) bool {
 		return legacyEvidence(t, ctx, store, conversation, device)
 	}
-	for _, device := range []string{"dev_o", "dev_old", "dev_w"} {
+	for _, device := range []string{"dev_o", "dev_old", "dev_w", "dev_y"} {
 		if !has("conv_legacy", device) {
 			t.Errorf("%s has no seeded evidence in the legacy group", device)
 		}
 	}
-	if has("conv_legacy", "dev_new") {
-		t.Error("a device created after the first message, with no send or Welcome, was seeded")
+	for device, why := range map[string]string{
+		"dev_new": "a device created after the first message whose only messages are its own",
+		"dev_x":   "a device welcomed only by a device with no evidence",
+		"dev_rec": "a device a completed recovery created",
+	} {
+		if has("conv_legacy", device) {
+			t.Errorf("%s (%s) was seeded", device, why)
+		}
 	}
 	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM mls_legacy_leaf_evidence WHERE conversation_id = 'conv_rostered'`); n != 0 {
 		t.Errorf("the rostered group was seeded with %d rows", n)
@@ -205,4 +227,59 @@ func TestMigration0096SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
 
 func fmtDay(layout string, month, day int) string {
 	return fmt.Sprintf(layout, month, day)
+}
+
+// Evidence comes only from a device that already has it. The legacy route
+// accepts any message from any member device, so a device with no leaf (one
+// recovered through K0, say) could otherwise post a junk commit, or have a
+// sibling post a junk Welcome naming it, and hold evidence for good. MLS has
+// the same shape: only a leaf holder can add someone.
+func TestLeaflessDeviceCannotForgeLegacyEvidence(t *testing.T) {
+	ctx := context.Background()
+	const tablet = "dev-z-owner-tablet"
+	const sibling = "dev-1-bob-sibling"
+	f := newLegacyRecoveryFixture(t, ctx, []string{tablet}, false)
+	addTestDevice(t, ctx, f.store, f.bob.Account.ID, sibling)
+	post := func(sender, recipient, kind, key string) {
+		t.Helper()
+		time.Sleep(2 * time.Millisecond)
+		if _, _, err := f.store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+			ConversationID: f.conversation, SenderAccountID: f.bob.Account.ID, SenderDeviceID: sender,
+			RecipientDeviceID: recipient, Kind: kind, Payload: []byte("junk-" + key), IdempotencyKey: key,
+		}); err != nil {
+			t.Fatalf("post %s: %v", key, err)
+		}
+	}
+	// The recovered device's own junk commit, and junk Welcomes between it
+	// and its leafless sibling, in both directions.
+	post(legacyRecovered, "", "commit", "forged-commit")
+	post(legacyRecovered, sibling, "welcome", "forged-welcome-1")
+	post(sibling, legacyRecovered, "welcome", "forged-welcome-2")
+	for _, device := range []string{legacyRecovered, sibling} {
+		if legacyEvidence(t, ctx, f.store, f.conversation, device) {
+			t.Fatalf("%s forged evidence of a leaf through the legacy route", device)
+		}
+	}
+	f.revoke(t, ctx, tablet)
+	if got := f.coordinator(t, ctx, tablet); got == legacyRecovered || got == sibling || got == "" {
+		t.Fatalf("coordinator after the forged messages = %q", got)
+	}
+	if n := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM mls_revocation_required_devices WHERE conversation_id = ? AND revoked_device_id = ? AND device_id IN (?, ?)`,
+		f.conversation, tablet, legacyRecovered, sibling); n != 0 {
+		t.Fatalf("%d leafless devices must confirm the revocation", n)
+	}
+	// A Welcome from a device with evidence still counts: a real add.
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := f.store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+		ConversationID: f.conversation, SenderAccountID: f.owner.Account.ID, SenderDeviceID: f.owner.Device.ID,
+		RecipientDeviceID: legacyRecovered, Kind: "welcome", Payload: []byte("welcome-recovered"), IdempotencyKey: "real-welcome",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyEvidence(t, ctx, f.store, f.conversation, legacyRecovered) {
+		t.Fatal("a Welcome from a leaf holder gave the recovered device no evidence")
+	}
+	if legacyEvidence(t, ctx, f.store, f.conversation, sibling) {
+		t.Fatal("the sibling gained evidence it was never welcomed to")
+	}
 }

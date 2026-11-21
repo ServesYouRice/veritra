@@ -10,12 +10,13 @@ import (
 
 // mlsLegacyLeafEvidence is true when device (SQL text: its id) shows
 // evidence of a leaf in the legacy group (no roster) of conversation (SQL
-// text): it sent an MLS message there, it was the recipient of a Welcome
-// there, or it existed when the group's first message was written. The
-// evidence is the durable table mls_legacy_leaf_evidence (migration 0096),
-// filled by trigger, so retention pruning the old messages does not change
-// it: a device with no leaf (one recovered through K0, say) passes none of
-// the three, then or later, and later commits do not change that.
+// text): it existed when the group's first message was written, or it was
+// the recipient of a Welcome there from a device that had evidence. Its own
+// messages give it none, so a device with no leaf cannot make some through
+// the legacy route. The evidence is the durable table
+// mls_legacy_leaf_evidence (migration 0096), filled by trigger, so retention
+// pruning the old messages does not change it: a device with no leaf (one
+// recovered through K0, say) passes neither rule, then or later.
 func mlsLegacyLeafEvidence(conversation, device string) string {
 	return `EXISTS (SELECT 1 FROM mls_legacy_leaf_evidence xe
 		         WHERE xe.conversation_id = ` + conversation + ` AND xe.device_id = ` + device + `)`

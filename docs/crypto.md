@@ -2792,9 +2792,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
   the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
-  skips devices with no evidence of a leaf. Evidence means the device sent
-  an MLS message in the conversation, received a Welcome there, or is no
-  newer than the group's first MLS message. Revocations queued in a legacy
+  skips devices with no evidence of a leaf. Evidence means the device
+  received a Welcome there from a device with evidence, or is no newer than
+  the group's first MLS message. Revocations queued in a legacy
   group store such a coordinator and require confirmations only from such
   devices. A device recovered through K0 has no leaf, so it is skipped.
   **Closed (migration 0096, no ABI or payload change).** The first version
@@ -2802,26 +2802,48 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   as retention pruned the oldest messages until it admitted the recovered
   device again. The evidence is now durable: `mls_legacy_leaf_evidence` holds
   one row per (conversation, device) and `mls_legacy_marks` the time of the
-  group's first message, both filled by trigger from every MLS message a
-  conversation without a roster receives (sender, Welcome recipient, and
-  once, at the first message, the devices that already exist), and seeded at
-  upgrade from the messages still retained. Pruning does not touch them. A
-  recovered device, or any device created later with no send or Welcome, has
-  no row, so it stays ineligible however old the group's messages get. What
-  retention pruned before the upgrade is not recoverable, so a device that
-  only those pruned messages named has no evidence. Tests:
+  group's first message, both filled by trigger from the MLS messages a
+  conversation without a roster receives, and seeded at upgrade from the
+  messages still retained. Pruning does not touch them. Evidence comes only
+  from a device that already has it, as in MLS, where only a leaf holder can
+  add someone: the devices that existed at the group's first message, and
+  the recipient of a Welcome whose sender had evidence when it was sent. A
+  device's own messages give it none. (The first draft of 0096 counted every
+  sender and every Welcome recipient. The legacy route
+  `POST /conversations/{id}/mls/messages` takes any message from any member
+  device, so a recovered device could post a junk commit, or have a leafless
+  sibling post a junk Welcome naming it, and hold evidence for good. Second
+  review, 2026-11-21.) Veritra has no external commits, so no leaf comes
+  from a device's own commit. A recovered device, or any device created
+  later with no Welcome from a device with evidence, has no row, so it stays
+  ineligible however old the group's messages get. A device that already
+  holds a leaf can still post a junk Welcome for a leafless one; that is no
+  more than it could do by adding it for real, or by never confirming.
+  Upgrade limits: what retention pruned before the upgrade is not
+  recoverable, so a device that only those pruned messages named has no
+  evidence (it is then not a coordinator or required confirmer; a
+  revocation only stops waiting for it). The seed's mark is the oldest
+  RETAINED message, so it can admit a device the moved rule had already
+  admitted; devices that a completed recovery still on record
+  (`account_recovery_requests`) created are taken out of that grant, but
+  recovery records older than their retention are gone. Tests:
   `server/internal/storage/mls_legacy_leaf_evidence_test.go` (a recovered
   device stays ineligible after the older messages are pruned: fails with the
   moving rule; a welcomed device keeps its evidence after its Welcome is
-  pruned; the 0096 seed). Sender evidence was always forgeable: any member
-  device can post a junk commit through the legacy route
-  `POST /conversations/{id}/mls/messages` (a recovered device included), and
-  that evidence used to age out with retention and now does not. The app never
-  uses that route and no legacy group is created any more (D55), so the
-  exposure is a hand-made request against a pre-I51 group; closing it means
-  retiring the route. Not changed: a legacy group whose every message was
-  pruned still queues no revocation (`queueMLSRevocations` and
-  `mlsRevocationTargetInGroup` look for a retained message).
+  pruned; a leafless device's own commit and junk Welcomes between leafless
+  devices give no evidence, coordinator or confirmer role, while a Welcome
+  from a leaf holder does; the 0096 seed, including the forged and recovered
+  cases). Still open, for the owner: the legacy route itself. The current
+  app builds only commit bundles and uses it only to drain non-bundle outbox
+  items an older app queued, but the server still accepts it from any member
+  device, including a first message in a conversation whose group does not
+  exist yet. That makes the conversation legacy, so the creator's first
+  bundle is refused (`ErrMLSGroupLegacy`) until retention prunes the junk
+  message. Retiring the route, or limiting it to conversations that are
+  already legacy, closes that; it is a separate change. Not changed: a
+  legacy group whose every message was pruned still queues no revocation
+  (`queueMLSRevocations` and `mlsRevocationTargetInGroup` look for a
+  retained message).
 
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes

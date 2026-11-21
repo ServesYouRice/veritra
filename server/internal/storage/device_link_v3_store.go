@@ -728,6 +728,20 @@ func cancelExpiredApprovedDeviceLinksV3(ctx context.Context, tx *sql.Tx, now tim
 	rows.Close()
 	at := formatTime(now.UTC())
 	for _, e := range found {
+		// Claim the link first, guarded by its state, as the legacy route
+		// does: a link completed or revoked meanwhile is left alone and its
+		// device is not touched. revokeDeviceTx below deletes the link row,
+		// so the claim must come before it.
+		result, err := tx.ExecContext(ctx, `UPDATE device_links_v3 SET state = 'revoked', revoked_at = ?
+			WHERE id = ? AND state = ? AND completed_at IS NULL AND revoked_at IS NULL`, at, e.linkID, domain.DeviceLinkApproved)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
 		var alreadyRevoked int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NOT NULL`, e.deviceID, e.accountID).Scan(&alreadyRevoked); err != nil {
 			return err
@@ -739,10 +753,6 @@ func cancelExpiredApprovedDeviceLinksV3(ctx context.Context, tx *sql.Tx, now tim
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, e.deviceID); err != nil {
-			return err
-		}
-		// A link whose device was already revoked is still ended.
-		if _, err := tx.ExecContext(ctx, `UPDATE device_links_v3 SET state = 'revoked', revoked_at = ? WHERE id = ? AND state = ?`, at, e.linkID, domain.DeviceLinkApproved); err != nil {
 			return err
 		}
 	}
