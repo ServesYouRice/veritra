@@ -387,6 +387,62 @@ void main() {
     skip: nativeSkip,
   );
 
+  test(
+    'replacing the seed from one inbox moves every inbox that listed the old '
+    'key, and leaves a key another device holds alone',
+    () async {
+      const otherCommunity = 'comm_other';
+      const thirdCommunity = 'comm_third';
+      final deviceSeeds = MemoryReportSeedStore();
+      ReportsService inbox([String? community]) {
+        final base = ReportsService(
+          api: server,
+          token: _ownerAccount,
+          accountId: _ownerAccount,
+          crypto: crypto,
+          store: store,
+          seeds: deviceSeeds,
+          otherInboxes: () => <String?>[
+            null,
+            _community,
+            otherCommunity,
+            thirdCommunity,
+          ],
+        );
+        return community == null ? base : base.forCommunity(community);
+      }
+
+      // One seed on this device, published as the owner inbox and as the
+      // moderator inbox of two communities.
+      final (oldKey, _) = await inbox().createKey();
+      await inbox(_community).publishKey();
+      await inbox(otherCommunity).publishKey();
+      // A third community lists a key another device of this account holds.
+      final elsewhere = await crypto.reportPublicKey(
+        await crypto.generateReportKeySeed(),
+      );
+      await server.putModeratorReportKey(
+        _ownerAccount,
+        thirdCommunity,
+        elsewhere,
+      );
+
+      final (newKey, _) = await inbox(_community).createKey(replace: true);
+      expect(newKey, isNot(oldKey));
+      for (final community in <String?>[null, _community, otherCommunity]) {
+        final status = await inbox(community).keyStatus();
+        expect(status.state, OwnerReportKeyState.active, reason: community);
+        expect(status.listedKey, newKey, reason: community);
+      }
+      expect(
+        (await server.getOwnModeratorReportKey(_ownerAccount, thirdCommunity))!
+            .publicKey,
+        elsewhere,
+      );
+    },
+    skip: nativeSkip,
+  );
+
   test('report round trip: pin, file, open, verify, dismiss', () async {
     await ownerSetsUpKey();
     final reporter = serviceFor(_reporterAccount);

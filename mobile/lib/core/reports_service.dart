@@ -250,6 +250,7 @@ class ReportsService {
     this.communityId,
     this.onSeedChanged,
     this.senderFrankKey,
+    this.otherInboxes,
     Random? random,
     DateTime Function()? clock,
   })  : pins = ReportKeyPins(store, api.baseUrl),
@@ -288,6 +289,13 @@ class ReportsService {
   /// instance owner's.
   final String? communityId;
 
+  /// Every inbox this account may have published this device's key to on
+  /// this server: null names the instance owners' inbox, any other value a
+  /// community's moderator inbox. When a key is replaced, each of them that
+  /// still lists the old seed's key moves to the new one, so one seed serves
+  /// every inbox again (C6, "Community moderator inbox", left item).
+  final Iterable<String?> Function()? otherInboxes;
+
   /// The same service for this account's moderator inbox in [id].
   ReportsService forCommunity(String id) => ReportsService(
         api: api,
@@ -300,6 +308,7 @@ class ReportsService {
         communityId: id,
         onSeedChanged: onSeedChanged,
         senderFrankKey: senderFrankKey,
+        otherInboxes: otherInboxes,
         random: _random,
         clock: _clock,
       );
@@ -525,12 +534,15 @@ class ReportsService {
       throw StateError('a report key already exists on this device');
     }
     final previous = await seeds.load(api.baseUrl, accountId);
+    final previousKey =
+        previous == null ? null : await crypto.reportPublicKey(previous);
     final seed = await crypto.generateReportKeySeed();
     try {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
       try {
         final rev = await _putKey(key);
+        if (previousKey != null) await _moveOtherInboxes(previousKey, key);
         _seedChanged();
         return (key, rev);
       } catch (_) {
@@ -560,6 +572,36 @@ class ReportsService {
       return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
+    }
+  }
+
+  /// After this device replaced its seed: publishes [key] to every other
+  /// inbox (see [otherInboxes]) that still lists [previousKey], the key of
+  /// the seed this device just dropped. An inbox listing any other key (one
+  /// another device holds) is left alone. Best effort per inbox: one that
+  /// fails reads as replaced elsewhere on its screen, which offers to
+  /// publish this device's key.
+  Future<void> _moveOtherInboxes(List<int> previousKey, List<int> key) async {
+    final others = otherInboxes?.call();
+    if (others == null) return;
+    final own = communityId;
+    for (final inbox in others.toSet()) {
+      if (inbox == own) continue;
+      try {
+        final listed = inbox == null
+            ? await api.getOwnReportKey(token)
+            : await api.getOwnModeratorReportKey(token, inbox);
+        if (listed == null || !_sameBytes(listed.publicKey, previousKey)) {
+          continue;
+        }
+        if (inbox == null) {
+          await api.putInstanceReportKey(token, key);
+        } else {
+          await api.putModeratorReportKey(token, inbox, key);
+        }
+      } catch (_) {
+        // Left for that inbox's own screen (replaced elsewhere).
+      }
     }
   }
 

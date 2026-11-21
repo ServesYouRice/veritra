@@ -11,10 +11,13 @@ the app, 90-day or dismissed retention, unfranked payloads accepted behind a
 switch. The community moderator inbox is built (2026-11-11, "Community
 moderator inbox" below), and moderator keys are trusted through MLS with no
 tap ("Moderator keys over MLS"). A private channel's reports go only to
-its own moderator members ("Private channels"). Not done: the owner's way to
-verify without the server learning the envelope id, and the app's report
-screens (step 4). The report form offers reasons, sealed in body v3 ("Report
-reasons").** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
+its own moderator members ("Private channels"). The report screens (step
+4) are built, with the recipient's check against the server record
+(`GET /reports/{id}/envelope`, which tells the server the envelope id at
+review time only, to that recipient). The report form offers reasons, sealed
+in body v3 ("Report reasons"). Replacing the seed from one inbox moves every
+inbox that listed the old key (2026-11-21, "Seed replacement"). Left: the
+independent review of the whole C6 wiring (G25).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
 
 ## Goal
@@ -317,9 +320,9 @@ Costs, for the owner to weigh (also in `testing/evidence/C6-wiring.md`):
   body and comparing it with the commitment the server recorded for the
   envelope. Fetching that envelope's metadata means telling the server the
   envelope id at review time (not at filing, and only to an owner, for one
-  envelope of a conversation that has a report). That route is not built;
-  until it is, and once the envelope is gone, a report cannot show
-  "verified against what the server recorded" (G1). Owner question.
+  envelope of a conversation that has a report). That route was built in
+  step 4 (`GET /reports/{id}/envelope`, below); once the envelope is gone, a
+  report cannot show "verified against what the server recorded" (G1).
 
 ## Step 4 outcome (report screens)
 
@@ -406,10 +409,16 @@ owners ("one key and one sealed copy per owner") is applied to moderators.
   their inbox from the community screen (flag icon), the same screen as the
   owner's inbox with the community's routes.
 
-Left (after "Moderator keys over MLS" below): replacing the seed from one
-inbox screen does not republish the account's other inboxes (a moderator
-inbox then shows "replaced elsewhere" and offers to publish this device's
-key; the owner inbox needs a replace); the independent review.
+Left (after "Moderator keys over MLS" below): the independent review.
+
+**Seed replacement (2026-11-21).** Replacing the seed from one inbox screen
+now moves every other inbox of the account (the instance owners' inbox for
+an owner, and each community's moderator inbox) that still lists the old
+seed's key to the new key, in the same step. An inbox listing a key another
+device holds is left alone. Per inbox it is best effort: one that fails
+reads "replaced elsewhere" on its screen, which offers to publish this
+device's key. Test: `c6_reports_service_test.dart` ("replacing the seed from
+one inbox moves every inbox ..."), which fails with the move removed.
 
 ## Moderator keys over MLS (2026-11-11)
 
