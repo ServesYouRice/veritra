@@ -125,3 +125,46 @@ func TestMigrateKeepsRefusingARowWithoutChecksumWhenTheColumnExists(t *testing.T
 		t.Fatalf("migrate err = %v, want the missing-checksum refusal", err)
 	}
 }
+
+// Rollback across a schema change (docs/operations.md, "Upgrade and
+// rollback"): an older binary knows fewer migrations than the database has
+// applied. Migrate leaves the newer ones alone and starts; it neither
+// re-applies, drops nor rewrites them. This pins that behaviour (a decision
+// for the release owner, not an accident: a refusal would break the Flux
+// revert path) and that an edited migration the old binary does know is still
+// refused. Whether the old code works on the newer schema is a rehearsal,
+// scripts/rehearse-schema-rollback.sh.
+func TestMigrateOnANewerDatabaseLeavesUnknownMigrationsAloneAndStillRefusesEdits(t *testing.T) {
+	ctx := context.Background()
+	store := openBareStore(t)
+	a := `CREATE TABLE a_thing (id TEXT PRIMARY KEY);`
+	b := `CREATE TABLE b_thing (id TEXT PRIMARY KEY, extra TEXT NOT NULL DEFAULT '');`
+	newer := fstest.MapFS{"0001_a.sql": {Data: []byte(a)}, "0002_b.sql": {Data: []byte(b)}}
+	if err := store.Migrate(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO b_thing(id, extra) VALUES('row', 'kept')`); err != nil {
+		t.Fatal(err)
+	}
+	older := fstest.MapFS{"0001_a.sql": {Data: []byte(a)}}
+	for i := 0; i < 2; i++ {
+		if err := store.Migrate(ctx, older); err != nil {
+			t.Fatalf("older binary on a newer database, run %d: %v", i, err)
+		}
+	}
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM schema_migrations`); n != 2 {
+		t.Fatalf("schema_migrations rows = %d, want both kept", n)
+	}
+	var extra string
+	if err := store.db.QueryRowContext(ctx, `SELECT extra FROM b_thing WHERE id = 'row'`).Scan(&extra); err != nil || extra != "kept" {
+		t.Fatalf("the newer migration's data = %q, err = %v", extra, err)
+	}
+	// The newer binary comes back: nothing to apply, nothing lost.
+	if err := store.Migrate(ctx, newer); err != nil {
+		t.Fatalf("rolling forward again: %v", err)
+	}
+	edited := fstest.MapFS{"0001_a.sql": {Data: []byte(a + " -- edited")}}
+	if err := store.Migrate(ctx, edited); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("edited known migration err = %v, want checksum mismatch", err)
+	}
+}

@@ -62,8 +62,9 @@ Format-3 migration: 7 ms (1 group fixture), 23 ms and 10 ms in the later runs
   and is below 25 ms up to 100 groups. A user with 1,000 two-member groups
   would wait about two seconds at launch on a loaded desktop; a phone is
   slower and was not measured.
-- **Memory**: RSS grows from 146 MiB (100 groups) to 301 MiB (1,000); the
-  Dart test process itself accounts for most of the 146 to 173 MiB base.
+- **Memory**: the whole test process held 146 to 173 MiB at 1 and 100 groups
+  (mostly the Flutter test runtime itself) and 301 MiB at 1,000, about
+  150 MiB more, at the end of the run (alice and bob both live).
 - **The format-3 one-time migration is cheap** (about 10 to 25 ms for the
   fixture); what it scales with is the old blob's size, and an old blob at
   1,000 groups was over the 32 MiB cap anyway (refused, see the Rust
