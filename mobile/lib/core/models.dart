@@ -391,16 +391,32 @@ class Invite {
   });
 
   final String id;
+
+  /// The registration code, or empty when this device has none. The server
+  /// keeps only a hash and returns the code once, when the invite is
+  /// created; a listed invite gets its code from this device's local copy
+  /// (see `AppState.refreshInvites`). A bearer credential: never logged.
   final String code;
   final int maxUses;
   final int uses;
   final DateTime? expiresAt;
   final DateTime? createdAt;
 
+  /// This invite with [code] in place of its own.
+  Invite withCode(String code) => Invite(
+        id: id,
+        code: code,
+        maxUses: maxUses,
+        uses: uses,
+        expiresAt: expiresAt,
+        createdAt: createdAt,
+      );
+
   factory Invite.fromJson(Map<String, Object?> json) {
     return Invite(
       id: json['id'] as String,
-      code: json['code'] as String,
+      // Listed invites carry no code (the server keeps only its hash).
+      code: json['code'] as String? ?? '',
       maxUses: (json['max_uses'] as num?)?.toInt() ?? 0,
       uses: (json['uses'] as num?)?.toInt() ?? 0,
       expiresAt: _parseOptionalTime(json['expires_at']),

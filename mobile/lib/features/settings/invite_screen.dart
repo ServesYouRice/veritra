@@ -17,8 +17,10 @@ import '../../ui/widgets/tile_group.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Mint invite codes for the invite-only registration flow. Invites the
-/// account has created are listed from the server (`GET /invites`), so codes
-/// survive restarts.
+/// account has created are listed from the server (`GET /invites`). The
+/// server keeps only a hash of each code, so a code shows only where this
+/// device kept it when it created the invite; others can be turned off but
+/// not shared again.
 class InviteScreen extends StatefulWidget {
   const InviteScreen({required this.state, this.now, super.key});
 
@@ -281,9 +283,10 @@ class _InviteRow extends StatelessWidget {
     final theme = Theme.of(context);
     final expires = invite.expiresAt;
     final exhausted = invite.maxUses > 0 && invite.uses >= invite.maxUses;
-    // The server hands back the code for the creator's own invites. Should
-    // one ever arrive without it, the row cannot be shared again and offers
-    // only "Turn off"; it never shows a made-up code.
+    // The server keeps only a hash of the code, so the code is here only
+    // when this device created the invite and kept it. Without it the row
+    // cannot be shared again and offers only "Turn off"; it never shows a
+    // made-up code.
     final hasCode = invite.code.isNotEmpty;
     return ListTile(
       // U34: the row's main action shares the invitation as one link.

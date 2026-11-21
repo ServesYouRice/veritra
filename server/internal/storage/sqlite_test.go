@@ -204,6 +204,10 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	if bytes.Contains(onDisk, []byte(sentinel)) {
 		t.Fatal("the member's raw password reached the database files")
 	}
+	// The invite code went to the creator once; storage holds only its hash.
+	if bytes.Contains(onDisk, []byte(invite.Code)) {
+		t.Fatal("the raw invite code reached the database files")
+	}
 }
 
 // onDiskBytes is the main database file with its write-ahead log and
