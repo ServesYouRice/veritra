@@ -443,6 +443,61 @@ void main() {
     skip: nativeSkip,
   );
 
+  test(
+    'once the new key is published, a failure listing the other inboxes '
+    'does not put the old seed back',
+    () async {
+      final deviceSeeds = MemoryReportSeedStore();
+      ReportsService inbox({bool failListing = false}) => ReportsService(
+            api: server,
+            token: _ownerAccount,
+            accountId: _ownerAccount,
+            crypto: crypto,
+            store: store,
+            seeds: deviceSeeds,
+            otherInboxes: () => failListing
+                ? throw StateError('communities not loaded')
+                : const <String?>[],
+          ).forCommunity(_community);
+
+      await inbox().createKey();
+      final (newKey, _) = await inbox(failListing: true).createKey(
+        replace: true,
+      );
+      final status = await inbox().keyStatus();
+      expect(status.state, OwnerReportKeyState.active);
+      expect(status.listedKey, newKey);
+      expect(status.localKey, newKey);
+    },
+    skip: nativeSkip,
+  );
+
+  test(
+    'a seed that no longer yields a key can still be replaced',
+    () async {
+      final deviceSeeds = MemoryReportSeedStore();
+      final inbox = ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: deviceSeeds,
+        otherInboxes: () => const <String?>[null],
+      ).forCommunity(_community);
+      await deviceSeeds.save(
+        server.baseUrl,
+        _ownerAccount,
+        Uint8List.fromList(<int>[1, 2, 3]),
+      );
+      final (key, _) = await inbox.createKey(replace: true);
+      final status = await inbox.keyStatus();
+      expect(status.state, OwnerReportKeyState.active);
+      expect(status.listedKey, key);
+    },
+    skip: nativeSkip,
+  );
+
   test('report round trip: pin, file, open, verify, dismiss', () async {
     await ownerSetsUpKey();
     final reporter = serviceFor(_reporterAccount);

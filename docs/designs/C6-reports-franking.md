@@ -418,7 +418,13 @@ seed's key to the new key, in the same step. An inbox listing a key another
 device holds is left alone. Per inbox it is best effort: one that fails
 reads "replaced elsewhere" on its screen, which offers to publish this
 device's key. Test: `c6_reports_service_test.dart` ("replacing the seed from
-one inbox moves every inbox ..."), which fails with the move removed.
+one inbox moves every inbox ..."), which fails with the move removed. The
+move runs only after the new key is published and never throws, so a
+failure there cannot put the old seed back while the server lists the new
+key; a seed that no longer yields a key can still be replaced (nothing is
+moved then). The server's PUT has no compare-and-swap: another device of
+the account publishing to an inbox between this device's check and its PUT
+is overwritten, as a later replace on this device would.
 
 ## Moderator keys over MLS (2026-11-11)
 

@@ -534,17 +534,23 @@ class ReportsService {
       throw StateError('a report key already exists on this device');
     }
     final previous = await seeds.load(api.baseUrl, accountId);
-    final previousKey =
-        previous == null ? null : await crypto.reportPublicKey(previous);
+    // A seed that no longer yields a key must not block its replacement:
+    // then nothing is moved and each inbox's screen offers the publish.
+    List<int>? previousKey;
+    if (previous != null) {
+      try {
+        previousKey = await crypto.reportPublicKey(previous);
+      } catch (_) {
+        previousKey = null;
+      }
+    }
     final seed = await crypto.generateReportKeySeed();
     try {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
+      final int rev;
       try {
-        final rev = await _putKey(key);
-        if (previousKey != null) await _moveOtherInboxes(previousKey, key);
-        _seedChanged();
-        return (key, rev);
+        rev = await _putKey(key);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
         // opens stay readable.
@@ -555,6 +561,11 @@ class ReportsService {
         }
         rethrow;
       }
+      // Published: from here on the new seed is the one the server lists,
+      // so nothing below may put the old seed back.
+      if (previousKey != null) await _moveOtherInboxes(previousKey, key);
+      _seedChanged();
+      return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
       previous?.fillRange(0, previous.length, 0);
@@ -581,11 +592,16 @@ class ReportsService {
   /// another device holds) is left alone. Best effort per inbox: one that
   /// fails reads as replaced elsewhere on its screen, which offers to
   /// publish this device's key.
+  /// Never throws: it runs after the publish, when the old seed is gone.
   Future<void> _moveOtherInboxes(List<int> previousKey, List<int> key) async {
-    final others = otherInboxes?.call();
-    if (others == null) return;
+    final Set<String?> others;
+    try {
+      others = otherInboxes?.call().toSet() ?? const <String?>{};
+    } catch (_) {
+      return; // Each inbox's own screen offers the move instead.
+    }
     final own = communityId;
-    for (final inbox in others.toSet()) {
+    for (final inbox in others) {
       if (inbox == own) continue;
       try {
         final listed = inbox == null
