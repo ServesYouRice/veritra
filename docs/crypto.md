@@ -5194,8 +5194,12 @@ by a sender that had not merged the timeout commit is judged by time only
 by time only (their group carries no record). A removal prunes the
 leaver's entry, but since migration 0095 the server keeps the timeout and
 restores it on rejoin, so a rejoined member is refused by the server with no
-record entry until an admin re-applies it (open; proposed fix in
-`docs/designs/C5-moderation.md`, Known gaps). Builds older than this refuse
+record entry until an owner or admin writes it back with the explicit
+"Apply to the record" action (built 2026-11-21: an ordinary `setTimeout`
+commit from the staging device's clock to the server's end, only for an
+account in the roster that the record lets the actor act on, and refused
+when the record already holds a running entry; no format change;
+`docs/designs/C5-moderation.md`, "Timeouts after a rejoin"). Builds older than this refuse
 a record with timeouts (unknown flag bit) and their sync of that group
 stops until they update.
 

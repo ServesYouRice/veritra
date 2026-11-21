@@ -296,26 +296,33 @@ class JoinRequestList extends UnmodifiableListView<JoinRequest> {
       requests is JoinRequestList ? requests.invitesPausedUntil : null;
 }
 
-/// A running timeout of someone who is no longer a member of the community
-/// (they left or were kicked). It comes back if they rejoin, so admins can
-/// lift it (owner decision 2026-11-21).
-class DepartedTimeout {
-  const DepartedTimeout({
+/// A running timeout the server remembers in a community (C5), for admins
+/// and above. [member] is false for someone who left or was kicked (it comes
+/// back if they rejoin, so admins can lift it: owner decision 2026-11-21)
+/// and true for a current member, whose timeout the C4 record may lack after
+/// a rejoin (the server restores it, the record does not). A server that
+/// predates the flag lists departed accounts only, so a missing flag is
+/// false.
+class CommunityTimeout {
+  const CommunityTimeout({
     required this.accountId,
     required this.username,
     required this.timeoutUntil,
+    this.member = false,
   });
 
   final String accountId;
   final String? username;
   final DateTime timeoutUntil;
+  final bool member;
 
-  factory DepartedTimeout.fromJson(Map<String, Object?> json) {
+  factory CommunityTimeout.fromJson(Map<String, Object?> json) {
     final username = json['username'];
-    return DepartedTimeout(
+    return CommunityTimeout(
       accountId: json['account_id']! as String,
       username: username is String && username.isNotEmpty ? username : null,
       timeoutUntil: DateTime.parse(json['timeout_until']! as String),
+      member: json['member'] == true,
     );
   }
 }

@@ -38,37 +38,18 @@ admins and above lift the remembered timeout of someone who left
 (owner decision 2026-11-21): `PUT .../members/{account}/timeout` with 0
 for a non-member deletes the running `member_timeouts` row and writes a
 `timeout_cleared` audit row (moderators are refused, a new timeout on a
-non-member is 404), and `GET .../timeouts` lists the running timeouts of
-accounts that left, with usernames, for moderators and above; the
-Moderation screen shows them to admins under "Timed out after leaving"
-with a lift button;
+non-member is 404), and `GET .../timeouts` lists every running timeout
+with usernames and a `member` flag, for admins and above only (owner
+decision 2026-11-21; moderators get 403, as for the lift); the
+Moderation screen shows those with `member` false to admins under "Timed
+out after leaving" with a lift button; a rejoined member's timeout that
+the server restored but the C4 record lacks shows on the member screen,
+with Lift and "Apply to the record" (built 2026-11-21, "Timeouts after a
+rejoin" below);
 a banned account's devices cannot be claimed (a claim needs membership,
 which the ban removes; tested, no separate check). The C1 community remove
 route writes a `kick` audit row. Known gaps: the instance owner's
-escalation action kinds need a table rebuild when added; a rejoin restores
-the server's timeout but not the record's (review 2026-11-21, open): a
-removal prunes the leaver's entry from the C4 record (`removeAccount`,
-`requiredRecord`; its comment still says leaving clears the server's too,
-which migration 0095 ended), and on rejoin the trigger copies
-`member_timeouts` back onto the new membership row, so the server refuses
-the member's posts (`timed_out`) while the record has no entry. On an
-honest server no post gets through, so apps showing them is only a hostile
-server's opening (as before C5 timeouts were in the record). The larger
-effect is that admins lose sight of it: the member screen reads timeouts
-only from the record (`_timedOutUntil`), so neither "Timed out until" nor
-"Lift timeout" shows, and `GET .../timeouts` leaves out current members, so
-no screen shows the running server timeout; it can only be cleared by
-setting a new timeout and lifting that. Proposed fix (not built: it spans
-the server, the app's record commits, the UI and strings): (1) `GET
-.../timeouts` lists every running timeout with a `member` flag, and "Timed
-out after leaving" filters on it; (2) the member screen shows a server
-timeout the record lacks, with Lift (server only, as now when the record
-has no entry) and "Apply to the record", an explicit action that runs the
-existing `setTimeout` role command with `fromMs` now and the server's
-`untilMs`, only when the rejoiner is in the shared group's MLS roster,
-`until` is more than a margin ahead, and the record lets this account act
-on them (`mayActOn`); no automatic commit, so admins' devices do not race;
-(3) tests that the flag, the screen and the command each hold; MLS commits of
+escalation action kinds need a table rebuild when added; MLS commits of
 legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
 (shared group, `channel_id`), C1 (membership), C4 (the signed built-in
 role state, `docs/designs/C4-custom-roles.md`) and C6 (sealed reports, design on `agent/C6`). Needs Opus review
@@ -323,3 +304,70 @@ Still not built: app-side checks of bans and timeouts (they need record
 fields, a C4 record change), key-package claim refusal for banned accounts
 (adds already refuse them), escalation and the instance ban. Server slow
 mode stays the only slow-mode check (owner decision, round 2).
+
+## Timeouts after a rejoin (built 2026-11-21, owner decision 2026-11-21)
+
+**Gap.** A removal prunes the leaver's entry from the C4 record
+(`GovernanceState.removeAccount`, `requiredRecord`), but the server keeps
+the timeout in `member_timeouts` and migration 0095's trigger copies it onto
+the new membership row on a rejoin. The server then refuses the member's
+posts (`timed_out`) while the record has no entry. On an honest server no
+post gets through, so apps showing them is only a hostile server's opening
+(as before timeouts were in the record). The larger effect was that admins
+lost sight of it: the member screen read timeouts only from the record.
+
+**Server.** `GET .../timeouts` (`ListCommunityTimeouts`) lists every
+running `member_timeouts` row with `member` (true while the account has a
+membership row in the community), for owners and admins only: moderators
+get 403, as for lifting a departed account's timeout. At most 500 rows,
+soonest end first. An older server sends no `member` key and lists departed
+accounts only, so the app reads a missing key as false. An older app on a
+newer server lists current members under "Timed out after leaving" too; its
+lift there is the ordinary lift of a member's timeout.
+
+**App.** The Moderation screen keeps only `member` false rows. The member
+screen reads the list after the roster shows this account as owner or
+admin (never for a moderator, whose read would be refused), and a failed
+read hides only these rows, never the member list. For a member whose
+record has no running entry while the server lists a running timeout, the
+row says "Timed out until {time} (server only)" and its menu offers:
+
+- **Lift timeout**: the existing `timeoutCommunityMember(0)`; with no record
+  entry it is a server call only.
+- **Apply to the record**: offered only when `mayApplyServerTimeout` holds
+  for the shared group's verified record and MLS roster (`governanceView`):
+  the record lacks a running entry, the account is in the MLS roster (a
+  rejoiner the server lists before its devices joined is not), the record
+  lets this account act on them (`mayActOn`), and the end is more than
+  `recordTimeoutMargin` (5 minutes) ahead and within 28 days. It stages the
+  existing `setTimeout` command through `applyServerTimeout`, which checks
+  again against the record at staging time: an entry another admin wrote
+  meanwhile refuses with `no_change` (the first start is kept), an end
+  within the margin of the staging clock refuses with `timeout_ending`, and
+  `setTimeout` refuses an account outside the roster (`not_member`) or one
+  the actor does not outrank (`hierarchy`). The server is not called; it
+  already holds the timeout.
+
+Nothing commits on its own: an automatic write would have every admin
+device race to commit the same entry. `fromMs` is this device's clock at
+staging, not the server's: the server's start is not known after a rejoin,
+and the record only needs a start before the end. A post the server stamps
+before that start is hidden only if its authenticated epoch is at or after
+the commit's (the receiver rule in `docs/crypto.md`, "C5 timeouts in the
+record"), so a member's posts between the rejoin and the commit are judged
+by the server's refusal alone, as before. No record format, ABI, schema or
+migration change.
+
+**Tests.** Server: `TestCommunityTimeoutsListMembersWithFlag`,
+`TestAdminLiftsDepartedMembersTimeout` (moderator refused),
+`TestDepartedTimeoutRoutesAPI` (moderator 403, `member` false for a departed
+account, true after a rejoin). App: `test/c5_timeouts_test.dart` ("rejoin
+gap": each eligibility clause and each command refusal),
+`test/c5_rejoin_timeout_test.dart` (AppState and member screen over a fake
+record on the native service), `test/c5_rejoin_timeout_native_test.dart`
+(real OpenMLS: timeout, removal prunes it, the builder refuses before the
+rejoin, rejoin, apply, both other devices accept the commit and hold the
+entry), `test/membership_screens_test.dart` (the Moderation screen leaves
+out `member` true rows), `test/membership_api_test.dart` (the flag, missing
+means false).
+

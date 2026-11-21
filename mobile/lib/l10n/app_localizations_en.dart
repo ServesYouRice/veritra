@@ -4260,6 +4260,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String memberServerTimeoutUntil(String time) {
+    return 'Timed out until $time (server only)';
+  }
+
+  @override
+  String get memberTimeoutApplyToRecord => 'Apply to the record';
+
+  @override
+  String get memberTimeoutAppliedToRecord => 'Timeout added to the record.';
+
+  @override
   String banTitle(String username) {
     return 'Ban $username?';
   }

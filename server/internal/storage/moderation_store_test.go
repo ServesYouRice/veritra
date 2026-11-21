@@ -497,12 +497,16 @@ func TestAdminLiftsDepartedMembersTimeout(t *testing.T) {
 	if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, alice.Account.ID, alice.Account.ID); err != nil {
 		t.Fatalf("leave: %v", err)
 	}
-	departed, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, f.admin.Account.ID)
-	if err != nil || len(departed) != 1 || departed[0].AccountID != alice.Account.ID || departed[0].Username != alice.Account.Username {
+	departed, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.admin.Account.ID)
+	if err != nil || len(departed) != 1 || departed[0].AccountID != alice.Account.ID || departed[0].Username != alice.Account.Username || departed[0].Member {
 		t.Fatalf("departed = %+v err=%v", departed, err)
 	}
-	if _, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, f.member.Account.ID); !errors.Is(err, ErrForbidden) {
+	if _, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.member.Account.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("member lists: %v", err)
+	}
+	// Owner decision 2026-11-21: admins and above only, as for the lift.
+	if _, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, mod.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("moderator lists: %v", err)
 	}
 	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, mod.Account.ID, alice.Account.ID, 0); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("moderator lifts: %v", err)
@@ -516,7 +520,7 @@ func TestAdminLiftsDepartedMembersTimeout(t *testing.T) {
 	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); err != nil {
 		t.Fatalf("admin lifts: %v", err)
 	}
-	if departed, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(departed) != 0 {
+	if departed, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(departed) != 0 {
 		t.Fatalf("departed after lift = %+v err=%v", departed, err)
 	}
 	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); !errors.Is(err, ErrNotFound) {
@@ -544,13 +548,13 @@ func TestAdminLiftsDepartedMembersTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, carol.Account.ID); !errors.Is(err, ErrNotMember) {
+	if _, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, carol.Account.ID); !errors.Is(err, ErrNotMember) {
 		t.Fatalf("outside admin lists: %v", err)
 	}
 	if _, err := f.store.SetMemberTimeout(ctx, other.ID, carol.Account.ID, alice.Account.ID, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("lift through another community: %v", err)
 	}
-	if departed, err := f.store.ListDepartedTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(departed) != 1 {
+	if departed, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(departed) != 1 {
 		t.Fatalf("departed after outside attempts = %+v err=%v", departed, err)
 	}
 	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); err != nil {
@@ -691,5 +695,52 @@ func TestDeletingAnAccountForgetsItsTimeouts(t *testing.T) {
 	}
 	if n := count(); n != 0 {
 		t.Fatalf("remembered timeouts after deleting the account: %d", n)
+	}
+}
+
+// C5 rejoin gap (docs/designs/C5-moderation.md): a rejoin restores the
+// server's timeout (migration 0095) but not the C4 record's, so the list
+// admins read carries every running timeout with a member flag: true for
+// the rejoined member the server still refuses, false for one who left.
+func TestCommunityTimeoutsListMembersWithFlag(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob := f.people[0], f.people[1]
+	f.addMember(t, ctx, alice, domain.RoleMember)
+	f.addMember(t, ctx, bob, domain.RoleMember)
+	for _, who := range []string{alice.Account.ID, bob.Account.ID} {
+		if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, who, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, who := range []string{alice.Account.ID, bob.Account.ID} {
+		if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, who, who); err != nil {
+			t.Fatalf("leave: %v", err)
+		}
+	}
+	f.addMember(t, ctx, alice, domain.RoleMember)
+	if err := f.post(t, ctx, alice, "after-rejoin"); err == nil {
+		t.Fatal("the rejoined member's timeout did not come back")
+	}
+	got, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.admin.Account.ID)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("timeouts = %+v err=%v", got, err)
+	}
+	flags := map[string]bool{}
+	for _, item := range got {
+		flags[item.AccountID] = item.Member
+		if item.TimeoutUntil.Before(time.Now()) {
+			t.Fatalf("not running: %+v", item)
+		}
+	}
+	if !flags[alice.Account.ID] || flags[bob.Account.ID] {
+		t.Fatalf("member flags = %+v", flags)
+	}
+	// An expired timeout of a member is not listed.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE member_timeouts SET timeout_until = ? WHERE community_id = ? AND account_id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), f.comm.ID, alice.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.store.ListCommunityTimeouts(ctx, f.comm.ID, f.admin.Account.ID); err != nil || len(got) != 1 || got[0].AccountID != bob.Account.ID {
+		t.Fatalf("after expiry = %+v err=%v", got, err)
 	}
 }

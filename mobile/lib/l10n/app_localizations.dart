@@ -6963,6 +6963,24 @@ abstract class AppLocalizations {
   /// **'Timed out until {time}'**
   String memberTimedOutUntil(String time);
 
+  /// Under a community member's name, for owners and admins, while the server holds a running timeout that the verified role record lacks (it came back when they rejoined).
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out until {time} (server only)'**
+  String memberServerTimeoutUntil(String time);
+
+  /// Member menu action: writes the server-only timeout into the group's verified role record, so every member's app sees it.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply to the record'**
+  String get memberTimeoutApplyToRecord;
+
+  /// No description provided for @memberTimeoutAppliedToRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Timeout added to the record.'**
+  String get memberTimeoutAppliedToRecord;
+
   /// No description provided for @banTitle.
   ///
   /// In en, this message translates to:

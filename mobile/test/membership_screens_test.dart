@@ -352,11 +352,19 @@ void main() {
     testWidgets('an admin lifts the timeout of someone who left',
         (tester) async {
       final api = _Api()
-        ..departed = <DepartedTimeout>[
-          DepartedTimeout(
+        ..departed = <CommunityTimeout>[
+          CommunityTimeout(
             accountId: 'acct_carol',
             username: 'carol',
             timeoutUntil: DateTime.utc(2030),
+          ),
+          // A current member's timeout (C5 rejoin gap) is the member
+          // screen's, never listed as "after leaving".
+          CommunityTimeout(
+            accountId: 'acct_dave',
+            username: 'dave',
+            timeoutUntil: DateTime.utc(2030),
+            member: true,
           ),
         ];
       final state = _state(api);
@@ -371,10 +379,12 @@ void main() {
         200,
       );
       expect(find.text('@carol'), findsOneWidget);
+      expect(find.text('@dave'), findsNothing);
       await tester.tap(find.byTooltip('Lift timeout for @carol'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['timeout:comm_1:acct_carol:0']);
       expect(find.text('@carol'), findsNothing);
+      expect(find.text('@dave'), findsNothing);
       expect(find.text('No one who left is timed out.'), findsOneWidget);
     });
 
@@ -936,7 +946,7 @@ class _Api extends ApiClient {
       List<JoinRequest>.of(own);
 
   DateTime? pausedUntil;
-  List<DepartedTimeout> departed = <DepartedTimeout>[];
+  List<CommunityTimeout> departed = <CommunityTimeout>[];
   bool failDeparted = false;
 
   @override
@@ -951,12 +961,12 @@ class _Api extends ApiClient {
       );
 
   @override
-  Future<List<DepartedTimeout>> departedTimeouts(
+  Future<List<CommunityTimeout>> communityTimeouts(
     String token,
     String communityId,
   ) async {
     if (failDeparted) throw ApiException(500, '{"error":"internal"}');
-    return List<DepartedTimeout>.of(departed);
+    return List<CommunityTimeout>.of(departed);
   }
 
   @override
