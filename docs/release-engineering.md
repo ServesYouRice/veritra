@@ -3,8 +3,9 @@
 Everything here needs no account and no key. Nothing is signed or published.
 What is measured and what is only drafted is in
 [`testing/evidence/W12-release-engineering.md`](../testing/evidence/W12-release-engineering.md).
-The release gates (G24, G25, G27, `scripts/release-readiness.sh`) are untouched:
-these scripts make builds, they do not release anything.
+These scripts make builds; they do not release anything. The release gates
+(G24, G25, G27, `scripts/release-readiness.sh`) stay in force; the one rule
+here that is part of them is the crypto build record check below (D134).
 
 ## Reproducible builds
 
