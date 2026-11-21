@@ -495,9 +495,8 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 	// to the lowest eligible device; in a legacy group the new device is not
 	// eligible while it shows no evidence of a leaf (mlsLegacyLeafEvidence),
 	// and it is not made a required confirmer of later legacy revocations.
-	// Known limit: once retention prunes every MLS message older than the
-	// new device, the "no newer than the oldest retained message" evidence
-	// admits it again (docs/crypto.md change log, K0 R2 review).
+	// The evidence is durable (migration 0094), so retention pruning the
+	// older messages never admits the new device later.
 	if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL`, nowText, record.AccountID); err != nil {
 		return RecoveryCompletion{}, err
 	}

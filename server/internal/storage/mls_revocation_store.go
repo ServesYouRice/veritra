@@ -8,24 +8,17 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
-// mlsLegacyLeafEvidence is true when device (SQL text: its id), created at
-// createdAt (SQL text), shows evidence of a leaf in the legacy group (no
-// roster) of conversation (SQL text): it sent an MLS message there, it is
-// the recipient of a Welcome there, or it is no newer than the oldest
-// retained MLS message of the conversation. Pruning removes the oldest
-// messages first, and a device with a leaf created after the oldest
-// retained message got it from a Welcome (or its own commit) newer than
-// that message, which is still retained. A device with no leaf (a
-// recovered device, say) passes none of the three, and later commits do
-// not change that. A conversation with no retained MLS message has no
-// evidence for any device.
-func mlsLegacyLeafEvidence(conversation, device, createdAt string) string {
-	return `(EXISTS (SELECT 1 FROM conversation_mls_messages xs
-		         WHERE xs.conversation_id = ` + conversation + ` AND xs.sender_device_id = ` + device + `)
-		 OR EXISTS (SELECT 1 FROM conversation_mls_messages xw
-		         WHERE xw.conversation_id = ` + conversation + ` AND xw.kind = 'welcome' AND xw.recipient_device_id = ` + device + `)
-		 OR ` + createdAt + ` <= (SELECT MIN(xm.created_at) FROM conversation_mls_messages xm
-		         WHERE xm.conversation_id = ` + conversation + `))`
+// mlsLegacyLeafEvidence is true when device (SQL text: its id) shows
+// evidence of a leaf in the legacy group (no roster) of conversation (SQL
+// text): it sent an MLS message there, it was the recipient of a Welcome
+// there, or it existed when the group's first message was written. The
+// evidence is the durable table mls_legacy_leaf_evidence (migration 0094),
+// filled by trigger, so retention pruning the old messages does not change
+// it: a device with no leaf (one recovered through K0, say) passes none of
+// the three, then or later, and later commits do not change that.
+func mlsLegacyLeafEvidence(conversation, device string) string {
+	return `EXISTS (SELECT 1 FROM mls_legacy_leaf_evidence xe
+		         WHERE xe.conversation_id = ` + conversation + ` AND xe.device_id = ` + device + `)`
 }
 
 // mlsRevocationEligibleDevice is true when device (SQL text: a column) may
@@ -42,7 +35,7 @@ func mlsRevocationEligibleDevice(r, device string) string {
 		  AND (EXISTS (SELECT 1 FROM conversation_mls_devices er WHERE er.conversation_id = ` + r + `.conversation_id
 		                  AND er.device_id = ed.id AND er.removed_after_event_id IS NULL)
 		       OR (NOT EXISTS (SELECT 1 FROM conversation_mls_groups eg WHERE eg.conversation_id = ` + r + `.conversation_id)
-		           AND ` + mlsLegacyLeafEvidence(r+`.conversation_id`, `ed.id`, `ed.created_at`) + `)))`
+		           AND ` + mlsLegacyLeafEvidence(r+`.conversation_id`, `ed.id`) + `)))`
 }
 
 // mlsRevocationTargetInGroup is true when revocation r (SQL text: a table

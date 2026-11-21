@@ -2773,14 +2773,28 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
   skips devices with no evidence of a leaf. Evidence means the device sent
   an MLS message in the conversation, received a Welcome there, or is no
-  newer than the oldest retained MLS message. Revocations queued in a legacy
+  newer than the group's first MLS message. Revocations queued in a legacy
   group store such a coordinator and require confirmations only from such
-  devices. A device recovered through K0 has no leaf, so it is skipped while
-  the group keeps an MLS message older than the device. Known limit
-  (accepted; legacy groups come only from pre-I51 data and there are no real
-  users, D55): once sync retention prunes every older message, the third
-  rule admits it again and a revocation can wait on it. A durable per-group
-  low-water mark would close this and needs a schema change.
+  devices. A device recovered through K0 has no leaf, so it is skipped.
+  **Closed (migration 0094, no ABI or payload change).** The first version
+  measured "no newer than the oldest retained message", which moved forward
+  as retention pruned the oldest messages until it admitted the recovered
+  device again. The evidence is now durable: `mls_legacy_leaf_evidence` holds
+  one row per (conversation, device) and `mls_legacy_marks` the time of the
+  group's first message, both filled by trigger from every MLS message a
+  conversation without a roster receives (sender, Welcome recipient, and
+  once, at the first message, the devices that already exist), and seeded at
+  upgrade from the messages still retained. Pruning does not touch them. A
+  recovered device, or any device created later with no send or Welcome, has
+  no row, so it stays ineligible however old the group's messages get. What
+  retention pruned before the upgrade is not recoverable, so a device that
+  only those pruned messages named has no evidence. Tests:
+  `server/internal/storage/mls_legacy_leaf_evidence_test.go` (a recovered
+  device stays ineligible after the older messages are pruned: fails with the
+  moving rule; a welcomed device keeps its evidence after its Welcome is
+  pruned; the 0094 seed). Not changed: a legacy group whose every message was
+  pruned still queues no revocation (`queueMLSRevocations` and
+  `mlsRevocationTargetInGroup` look for a retained message).
 
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes
