@@ -524,12 +524,28 @@ class ReportsService {
     }
   }
 
+  /// Whether [error] is the server's compare-and-swap refusal of a key
+  /// publish: another device of this account published or replaced the key
+  /// since this device read it. Nothing was published; the caller reloads
+  /// [keyStatus] and lets the person decide again.
+  static bool isKeyConflict(Object error) =>
+      error is ApiException && error.serverCode == 'report_key_changed';
+
   /// Makes a new report key on this device and publishes it. The seed is
   /// stored first, so a failed publish leaves a seed that [publishKey] can
   /// publish again; the call never replaces a seed this device already holds
   /// unless [replace] is true (the second-device and rotation case, after a
   /// person confirmed). Returns the public key and revision.
-  Future<(List<int>, int)> createKey({bool replace = false}) async {
+  ///
+  /// [expectedKey] is the key [keyStatus] listed when the person decided
+  /// ([OwnerReportKeyStatus.listedKey], null when none). The server refuses
+  /// the publish if another device changed the key since ([isKeyConflict]);
+  /// this device's previous seed is then put back, as for any failed
+  /// publish, and nothing is overwritten.
+  Future<(List<int>, int)> createKey({
+    bool replace = false,
+    required List<int>? expectedKey,
+  }) async {
     if (!replace && await seeds.load(api.baseUrl, accountId) != null) {
       throw StateError('a report key already exists on this device');
     }
@@ -550,7 +566,7 @@ class ReportsService {
       await seeds.save(api.baseUrl, accountId, seed);
       final int rev;
       try {
-        rev = await _putKey(key);
+        rev = await _putKey(key, expectedKey);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
         // opens stay readable.
@@ -572,13 +588,14 @@ class ReportsService {
     }
   }
 
-  /// Publishes the key of the seed this device already holds.
-  Future<(List<int>, int)> publishKey() async {
+  /// Publishes the key of the seed this device already holds. [expectedKey]
+  /// as for [createKey].
+  Future<(List<int>, int)> publishKey({required List<int>? expectedKey}) async {
     final seed = await seeds.load(api.baseUrl, accountId);
     if (seed == null) throw StateError('no report key on this device');
     try {
       final key = await crypto.reportPublicKey(seed);
-      final rev = await _putKey(key);
+      final rev = await _putKey(key, expectedKey);
       _seedChanged();
       return (key, rev);
     } finally {
@@ -591,7 +608,9 @@ class ReportsService {
   /// the seed this device just dropped. An inbox listing any other key (one
   /// another device holds) is left alone. Best effort per inbox: one that
   /// fails reads as replaced elsewhere on its screen, which offers to
-  /// publish this device's key.
+  /// publish this device's key. Each publish expects [previousKey], so an
+  /// inbox another device changed between the check and the publish is
+  /// refused by the server and left alone too.
   /// Never throws: it runs after the publish, when the old seed is gone.
   Future<void> _moveOtherInboxes(List<int> previousKey, List<int> key) async {
     final Set<String?> others;
@@ -611,9 +630,14 @@ class ReportsService {
           continue;
         }
         if (inbox == null) {
-          await api.putInstanceReportKey(token, key);
+          await api.putInstanceReportKey(token, key, expected: previousKey);
         } else {
-          await api.putModeratorReportKey(token, inbox, key);
+          await api.putModeratorReportKey(
+            token,
+            inbox,
+            key,
+            expected: previousKey,
+          );
         }
       } catch (_) {
         // Left for that inbox's own screen (replaced elsewhere).
@@ -632,11 +656,12 @@ class ReportsService {
   /// Publishes [key] to this service's inbox: the instance owner's, or this
   /// account's moderator inbox in [communityId]. The seed is the account's
   /// one report seed on this device, so every inbox lists the same key.
-  Future<int> _putKey(List<int> key) {
+  /// [expected] is the key the person saw listed (compare-and-swap).
+  Future<int> _putKey(List<int> key, List<int>? expected) {
     final community = communityId;
     return community == null
-        ? api.putInstanceReportKey(token, key)
-        : api.putModeratorReportKey(token, community, key);
+        ? api.putInstanceReportKey(token, key, expected: expected)
+        : api.putModeratorReportKey(token, community, key, expected: expected);
   }
 
   /// This owner's report copies, oldest first.

@@ -2833,17 +2833,50 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   pruned; a leafless device's own commit and junk Welcomes between leafless
   devices give no evidence, coordinator or confirmer role, while a Welcome
   from a leaf holder does; the 0096 seed, including the forged and recovered
-  cases). Still open, for the owner: the legacy route itself. The current
-  app builds only commit bundles and uses it only to drain non-bundle outbox
-  items an older app queued, but the server still accepts it from any member
-  device, including a first message in a conversation whose group does not
-  exist yet. That makes the conversation legacy, so the creator's first
-  bundle is refused (`ErrMLSGroupLegacy`) until retention prunes the junk
-  message. Retiring the route, or limiting it to conversations that are
-  already legacy, closes that; it is a separate change. Not changed: a
+  cases). The legacy route itself: see the next paragraph. Not changed: a
   legacy group whose every message was pruned still queues no revocation
   (`queueMLSRevocations` and `mlsRevocationTargetInGroup` look for a
   retained message).
+
+  **Legacy route limited to legacy groups (owner decision, 2026-11-21; no
+  ABI, payload, schema or migration change).** `POST
+  /conversations/{id}/mls/messages` used to take a first message in a
+  conversation whose group did not exist yet, which made the conversation
+  legacy and refused the creator's first bundle (`ErrMLSGroupLegacy`) while
+  the junk message was retained: any member could block a group's creation.
+  Now the route accepts a message only for a conversation that is already
+  legacy: no `conversation_mls_groups` row and at least one retained MLS
+  message. Anything else is refused with 409 `mls_commit_bundle_required`
+  (`ErrMLSBundleRequired`), the answer a rostered group already gave, so no
+  new error code: apps treat it as terminal for that outbox item. Both
+  routes read one predicate (`mlsHasLegacyHistory`), so they cannot
+  disagree: the bundle route refuses a genesis exactly when the legacy
+  route accepts a message. The check runs after the idempotency lookup, so
+  a retried message still gets its first answer. Consequences:
+  - An older app draining its queued non-bundle items (commits, Welcomes,
+    revocation commits) into a legacy group keeps working.
+  - A legacy group whose every message retention pruned reads as not
+    legacy to both routes: the legacy route refuses it (an older app's
+    queued item for it is refused as terminal), its creator may record a
+    new rostered group, and no member can make it legacy again.
+    `mls_legacy_marks` is deliberately not the predicate: a mark outlives
+    the pruned messages, so the legacy route would admit a junk commit
+    that re-legacies a conversation the bundle route had freed.
+  - The 0096 evidence triggers are unchanged. The route can no longer
+    write a conversation's first MLS message, so from now on a mark is
+    only written for groups that were already legacy (the trigger's mark
+    insert is a no-op for them); the evidence rules for later messages
+    hold as before. Test fixtures seed a legacy group's first message
+    directly (`seedLegacyMLSMessage`, the rows the route used to write)
+    and send every later one through the route.
+  Tests: `server/internal/storage/mls_legacy_route_test.go` (a commit and
+  a Welcome as a conversation's first message are refused and leave no
+  message, mark, evidence or sync event, and the creator's genesis then
+  succeeds; queued commits and Welcomes into a legacy group still land
+  and the Welcome still grants evidence; after a full prune the legacy
+  route refuses and the genesis succeeds) and
+  `server/internal/httpapi/mls_legacy_route_test.go` (409, then 201). Each
+  fails with the check removed.
 
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes
@@ -4459,7 +4492,21 @@ with `frank_commit`, the recorded sender device and the conversation
 `GET /api/v1/reports/inbox-keys/instance` (step 4) returns the calling owner's
 own current report key `{inbox_id, public_key, key_rev, updated_at}` (404 when
 none is published, 403 for a non-owner), so a device that lost a race to
-another device shows the key reporters actually see. Local schema 27 (C6)
+another device shows the key reporters actually see.
+
+Key publishes are compare-and-swap (owner decision, 2026-11-21; no ABI,
+schema or migration change). Both `PUT /api/v1/reports/inbox-keys/instance`
+and `PUT /api/v1/reports/inbox-keys/community/{community_id}` take
+`{public_key, expected_public_key}`: `expected_public_key` is the key the
+device saw listed when the person decided, or null (or omitted) when it saw
+none. The server compares it with the current key in the same write
+transaction (the single writer connection) and answers 409
+`report_key_changed` when they differ; the same key published again is a
+no-op whatever was expected, so a retry after a lost response succeeds. An
+app from before the field sends none, which the server reads as "expects
+none": it can publish a first key or republish its own, never replace one.
+Details and the app's handling: the C6 design, "Seed replacement". Local
+schema 27 (C6)
 adds `local_filed_reports (origin, account_id, message_key, filed_at)`, ids
 only, so a message is reported once per account and server; it is cleared
 with the pinned report keys on a full wipe. No ABI or payload change.

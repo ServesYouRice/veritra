@@ -7221,6 +7221,12 @@ abstract class AppLocalizations {
   /// **'Report key published.'**
   String get c6ReportsKeyReady;
 
+  /// C6 reports: the server refused a key publish because another device of the account published or replaced the key since this screen loaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device changed your report key while you were deciding. Nothing was changed here. Check the key below and choose again.'**
+  String get c6ReportsKeyChangedMeanwhile;
+
   /// C6 reports.
   ///
   /// In en, this message translates to:

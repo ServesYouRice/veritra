@@ -616,6 +616,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "report_inbox_unavailable")
 	case errors.Is(err, storage.ErrReportInboxChanged):
 		writeError(w, http.StatusConflict, "report_inbox_changed")
+	case errors.Is(err, storage.ErrReportKeyChanged):
+		writeError(w, http.StatusConflict, "report_key_changed")
 	case errors.Is(err, storage.ErrReportDuplicate):
 		writeError(w, http.StatusConflict, "already_reported")
 	case errors.Is(err, storage.ErrReportLimit):

@@ -30,7 +30,8 @@ var (
 	// ErrMLSNotInGroup means the sender device is not an active group member.
 	ErrMLSNotInGroup = errors.New("device is not in the mls group")
 	// ErrMLSBundleRequired means a commit or Welcome was sent outside a
-	// commit bundle for a group with a recorded roster.
+	// commit bundle for a group that is not legacy: one with a recorded
+	// roster, or a conversation with no MLS history yet.
 	ErrMLSBundleRequired = errors.New("mls group changes must use a commit bundle")
 	// ErrMLSChangePending means an update-only commit was refused because
 	// the group still has to remove a device: a pending revocation or a
@@ -227,9 +228,8 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	if !exists {
 		// A new group. Groups created before rosters were tracked are left
 		// alone rather than guessed.
-		var legacy bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_mls_messages WHERE conversation_id = ?)`,
-			input.ConversationID).Scan(&legacy); err != nil {
+		legacy, err := mlsHasLegacyHistory(ctx, tx, input.ConversationID)
+		if err != nil {
 			return MLSCommitBundleResult{}, err
 		}
 		if legacy {
@@ -614,6 +614,22 @@ func mlsGroupEpoch(ctx context.Context, q rowQuerier, conversationID string) (in
 		return 0, false, nil
 	}
 	return epoch, err == nil, err
+}
+
+// mlsHasLegacyHistory reports whether a conversation with no recorded group
+// holds a retained MLS message: a legacy group (pre-I51, no roster). It is
+// the one rule both routes use, so that they never disagree: the commit
+// bundle route refuses a genesis exactly when it is true
+// (ErrMLSGroupLegacy), and the single-message route accepts a message
+// exactly when it is true (otherwise ErrMLSBundleRequired). Callers check
+// for a group row first. A legacy group whose every message was pruned
+// reads false, as in queueMLSRevocations: its creator may then record a new
+// group, and no member can make it legacy again.
+func mlsHasLegacyHistory(ctx context.Context, q rowQuerier, conversationID string) (bool, error) {
+	var legacy bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_mls_messages WHERE conversation_id = ?)`,
+		conversationID).Scan(&legacy)
+	return legacy, err
 }
 
 func activeMLSDevice(ctx context.Context, q rowQuerier, conversationID, deviceID string) (bool, error) {

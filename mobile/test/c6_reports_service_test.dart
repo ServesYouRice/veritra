@@ -67,9 +67,32 @@ class _Server extends ApiClient {
   Future<ReportInboxRecipient?> getOwnReportKey(String token) async =>
       keys[token];
 
+  /// The expectation each publish carried, in order.
+  final List<List<int>?> expectations = [];
+
+  /// The server's compare-and-swap: the same key again is a no-op;
+  /// otherwise the listed key must be [expected] (none when null).
+  void _checkExpected(
+    ReportInboxRecipient? old,
+    List<int> publicKey,
+    List<int>? expected,
+  ) {
+    expectations.add(expected);
+    if (old != null && _eq(old.publicKey, publicKey)) return;
+    final matches = expected == null
+        ? old == null
+        : old != null && _eq(old.publicKey, expected);
+    if (!matches) throw ApiException(409, '{"error":"report_key_changed"}');
+  }
+
   @override
-  Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
+  Future<int> putInstanceReportKey(
+    String token,
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async {
     final old = keys[token];
+    _checkExpected(old, publicKey, expected);
     final same = old != null && _eq(old.publicKey, publicKey);
     final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
     // The token doubles as the owner's account id in this fake.
@@ -85,10 +108,12 @@ class _Server extends ApiClient {
   Future<int> putModeratorReportKey(
     String token,
     String communityId,
-    List<int> publicKey,
-  ) async {
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async {
     final inbox = communityModeratorInboxId(communityId, token);
     final old = keys[inbox];
+    _checkExpected(old, publicKey, expected);
     final same = old != null && _eq(old.publicKey, publicKey);
     final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
     keys[inbox] = ReportInboxRecipient(
@@ -234,7 +259,7 @@ void main() {
 
   /// [account]'s app publishes its moderator inbox key in the community.
   Future<List<int>> moderatorPublishes(String account) async {
-    final (key, _) = await moderatorInbox(account).createKey();
+    final (key, _) = await moderatorInbox(account).createKey(expectedKey: null);
     return key;
   }
 
@@ -325,7 +350,8 @@ void main() {
   });
 
   Future<void> ownerSetsUpKey() async {
-    await serviceFor(_ownerAccount).createKey();
+    final owner = serviceFor(_ownerAccount);
+    await owner.createKey(expectedKey: await _listedKey(owner));
   }
 
   Future<void> reporterTrustsAndFiles() async {
@@ -346,15 +372,15 @@ void main() {
     () async {
       final owner = serviceFor(_ownerAccount);
       expect((await owner.keyStatus()).state, OwnerReportKeyState.none);
-      final (key, rev) = await owner.createKey();
+      final (key, rev) = await owner.createKey(expectedKey: null);
       expect(rev, 1);
       final status = await owner.keyStatus();
       expect(status.state, OwnerReportKeyState.active);
       expect(status.localKey, key);
       expect(status.listedKey, key);
       // Creating again would silently lose the seed: refused unless replacing.
-      await expectLater(owner.createKey(), throwsStateError);
-      final (again, sameRev) = await owner.publishKey();
+      await expectLater(owner.createKey(expectedKey: null), throwsStateError);
+      final (again, sameRev) = await owner.publishListed();
       expect(again, key);
       expect(sameRev, 1);
       // A second device holds no seed: the key is held elsewhere, and making a
@@ -371,7 +397,7 @@ void main() {
         (await other.keyStatus()).state,
         OwnerReportKeyState.heldElsewhere,
       );
-      final (replacement, newRev) = await other.createKey(replace: true);
+      final (replacement, newRev) = await other.replaceListed();
       expect(replacement, isNot(key));
       expect(newRev, 2);
       // The first device now sees the key reporters see, and that it is not its
@@ -383,6 +409,54 @@ void main() {
       // A seed whose key was never published reads as unpublished.
       server.keys.clear();
       expect((await owner.keyStatus()).state, OwnerReportKeyState.unpublished);
+    },
+    skip: nativeSkip,
+  );
+
+  test(
+    'a replace that lost the race to another device is refused: the other '
+    'key stays listed and this device keeps its seed',
+    () async {
+      final deviceA = serviceFor(_ownerAccount);
+      final deviceB = ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: MemoryReportSeedStore(),
+      );
+      final (keyA, _) = await deviceA.createKey(expectedKey: null);
+      // Both devices show keyA; B replaces it first.
+      final seenByA = (await deviceA.keyStatus()).listedKey;
+      expect(seenByA, keyA);
+      final (keyB, revB) = await deviceB.replaceListed();
+      expect(revB, 2);
+
+      Object? refusal;
+      try {
+        await deviceA.createKey(replace: true, expectedKey: seenByA);
+      } catch (err) {
+        refusal = err;
+      }
+      expect(refusal, isNotNull);
+      expect(ReportsService.isKeyConflict(refusal!), isTrue);
+      expect(server.keys[_ownerAccount]!.publicKey, keyB);
+      expect(server.keys[_ownerAccount]!.keyRev, 2);
+      // A's old seed was put back: it still opens what was sealed to keyA,
+      // and its screen now reads "replaced elsewhere" to decide again.
+      final status = await deviceA.keyStatus();
+      expect(status.state, OwnerReportKeyState.replacedElsewhere);
+      expect(status.localKey, keyA);
+      expect(status.listedKey, keyB);
+      // Publishing A's existing seed over B's key also needs B's key named.
+      await expectLater(
+        deviceA.publishKey(expectedKey: keyA),
+        throwsA(predicate(ReportsService.isKeyConflict)),
+      );
+      expect(server.keys[_ownerAccount]!.publicKey, keyB);
+      final (again, _) = await deviceA.publishKey(expectedKey: keyB);
+      expect(again, keyA);
     },
     skip: nativeSkip,
   );
@@ -414,9 +488,9 @@ void main() {
 
       // One seed on this device, published as the owner inbox and as the
       // moderator inbox of two communities.
-      final (oldKey, _) = await inbox().createKey();
-      await inbox(_community).publishKey();
-      await inbox(otherCommunity).publishKey();
+      final (oldKey, _) = await inbox().createKey(expectedKey: null);
+      await inbox(_community).publishListed();
+      await inbox(otherCommunity).publishListed();
       // A third community lists a key another device of this account holds.
       final elsewhere = await crypto.reportPublicKey(
         await crypto.generateReportKeySeed(),
@@ -425,10 +499,19 @@ void main() {
         _ownerAccount,
         thirdCommunity,
         elsewhere,
+        expected: null,
       );
 
-      final (newKey, _) = await inbox(_community).createKey(replace: true);
+      server.expectations.clear();
+      final (newKey, _) = await inbox(_community).replaceListed();
       expect(newKey, isNot(oldKey));
+      // Every move named the old key it replaced (compare-and-swap), so an
+      // inbox another device changed meanwhile would be refused, not
+      // overwritten.
+      expect(server.expectations, hasLength(3));
+      for (final expected in server.expectations) {
+        expect(expected, oldKey);
+      }
       for (final community in <String?>[null, _community, otherCommunity]) {
         final status = await inbox(community).keyStatus();
         expect(status.state, OwnerReportKeyState.active, reason: community);
@@ -460,10 +543,8 @@ void main() {
                 : const <String?>[],
           ).forCommunity(_community);
 
-      await inbox().createKey();
-      final (newKey, _) = await inbox(failListing: true).createKey(
-        replace: true,
-      );
+      await inbox().createKey(expectedKey: null);
+      final (newKey, _) = await inbox(failListing: true).replaceListed();
       final status = await inbox().keyStatus();
       expect(status.state, OwnerReportKeyState.active);
       expect(status.listedKey, newKey);
@@ -490,7 +571,7 @@ void main() {
         _ownerAccount,
         Uint8List.fromList(<int>[1, 2, 3]),
       );
-      final (key, _) = await inbox.createKey(replace: true);
+      final (key, _) = await inbox.replaceListed();
       final status = await inbox.keyStatus();
       expect(status.state, OwnerReportKeyState.active);
       expect(status.listedKey, key);
@@ -648,7 +729,7 @@ void main() {
       crypto: crypto,
       store: store,
       seeds: MemoryReportSeedStore(),
-    ).createKey(replace: true);
+    ).replaceListed();
     final plan = await reporter.prepare(_conversation);
     expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
     expect(plan.canSend, isFalse);
@@ -784,7 +865,7 @@ void main() {
         crypto: crypto,
         store: store,
         seeds: MemoryReportSeedStore(),
-      ).createKey(replace: true);
+      ).replaceListed();
       final replaced = server.keys[_ownerAccount]!.publicKey;
       await observe();
       expect(await watch.accept((await watch.review()).single), isTrue);
@@ -836,7 +917,7 @@ void main() {
       );
       expect((await blank.open(row)).failure, ReportOpenFailure.noSeed);
       // A different seed: sealed to an older key.
-      await blank.createKey(replace: true);
+      await blank.replaceListed();
       expect((await blank.open(row)).failure, ReportOpenFailure.otherKey);
       // A copy opened under another reporter or conversation does not open.
       final owner = serviceFor(_ownerAccount);
@@ -1122,7 +1203,7 @@ void main() {
 
   test('a failed replace puts the old seed back', () async {
     final owner = serviceFor(_ownerAccount);
-    final (key, _) = await owner.createKey();
+    final (key, _) = await owner.createKey(expectedKey: null);
     server.keys.clear();
     final failing = _FailingPut(server);
     final broken = ReportsService(
@@ -1133,7 +1214,7 @@ void main() {
       store: store,
       seeds: seeds,
     );
-    await expectLater(broken.createKey(replace: true), throwsA(anything));
+    await expectLater(broken.replaceListed(), throwsA(anything));
     expect((await owner.keyStatus()).localKey, key);
   }, skip: nativeSkip);
 
@@ -1186,6 +1267,30 @@ class _FailingPut extends _Server {
   }
 
   @override
-  Future<int> putInstanceReportKey(String token, List<int> publicKey) async =>
+  Future<int> putInstanceReportKey(
+    String token,
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async =>
       throw ApiException(500, '{"error":"x"}');
+}
+
+/// The key the server lists for [service]'s inbox now: what the owner
+/// screen passes as a publish's expectation (the key the person saw).
+Future<List<int>?> _listedKey(ReportsService service) async {
+  final community = service.communityId;
+  final listed = community == null
+      ? await service.api.getOwnReportKey(service.token)
+      : await service.api.getOwnModeratorReportKey(service.token, community);
+  return listed?.publicKey;
+}
+
+extension on ReportsService {
+  /// The screen's replace: a new key, expecting the key listed now.
+  Future<(List<int>, int)> replaceListed() async =>
+      createKey(replace: true, expectedKey: await _listedKey(this));
+
+  /// The screen's publish of this device's key, expecting the listed one.
+  Future<(List<int>, int)> publishListed() async =>
+      publishKey(expectedKey: await _listedKey(this));
 }

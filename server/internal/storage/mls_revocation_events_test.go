@@ -10,15 +10,15 @@ import (
 
 // makeLegacyMLSGroup gives the conversation the MLS history of a group
 // created before rosters were tracked (card I51): an MLS message and no
-// conversation_mls_groups row.
+// conversation_mls_groups row. The single-message route no longer writes a
+// conversation's first MLS message, so it is seeded as an older server
+// stored it (seedLegacyMLSMessage).
 func makeLegacyMLSGroup(t *testing.T, ctx context.Context, store *Store, conversationID string, sender AccountDevice) {
 	t.Helper()
-	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+	seedLegacyMLSMessage(t, store, CreateMLSMessageInput{
 		ConversationID: conversationID, SenderAccountID: sender.Account.ID, SenderDeviceID: sender.Device.ID,
 		Kind: "commit", Payload: []byte("legacy-commit"), IdempotencyKey: "legacy-" + conversationID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 }
 
 func completedRevocationEvents(t *testing.T, ctx context.Context, store *Store, conversationID, deviceID string) int {

@@ -99,10 +99,34 @@ class _Api extends ApiClient {
               keyRev: 1,
             );
 
+  /// The expectation each publish carried (compare-and-swap).
+  final List<List<int>?> expectations = [];
+
   @override
-  Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
+  Future<int> putInstanceReportKey(
+    String token,
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async {
+    expectations.add(expected);
+    // The server's rule: the same key again is a no-op; otherwise the
+    // listed key must be the expected one (none when null).
+    final current = published.isEmpty ? null : published.last;
+    if (current != null && _eq(current, publicKey)) return 1;
+    final matches = expected == null
+        ? current == null
+        : current != null && _eq(current, expected);
+    if (!matches) throw ApiException(409, '{"error":"report_key_changed"}');
     published.add(publicKey);
     return 1;
+  }
+
+  static bool _eq(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -233,6 +257,67 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Code: 0101-0101'), findsOneWidget);
+  });
+
+  testWidgets(
+      'owner screen: a key another device published meanwhile is not '
+      'overwritten; the screen reloads it', (tester) async {
+    final h = _harness(role: 'owner');
+    await tester.pumpWidget(
+      _app(
+        OwnerReportsScreen(state: h.state, reauthenticate: (_) async => true),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('This device has no report key'),
+      findsOneWidget,
+    );
+    // Another device of the account publishes its key after this screen
+    // loaded, while the person is deciding.
+    final other = List<int>.filled(32, 9);
+    h.api.published.add(other);
+
+    await tester.tap(find.text('Create report key'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create report key'));
+    await tester.pumpAndSettle();
+
+    // The publish expected "no key" (what the person saw) and was refused:
+    // the other device's key stays, this device keeps no seed for a key the
+    // server never listed, and the screen shows the key listed now.
+    expect(h.api.expectations, [null]);
+    expect(h.api.published, [other]);
+    expect(
+      await h.state.reportSeedStore.load('https://example.test', 'acct_me'),
+      isNull,
+    );
+    expect(
+      find.text(
+        'Another device changed your report key while you were deciding. '
+        'Nothing was changed here. Check the key below and choose again.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Your report key is held on another device'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Code: 0909-0909'), findsOneWidget);
+
+    // Deciding again from what is listed now replaces it, expecting it.
+    await tester.pump(const Duration(seconds: 5)); // The notice goes away.
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create report key'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Replace key'));
+    await tester.pumpAndSettle();
+    expect(h.api.expectations.last, other);
+    expect(h.api.published, hasLength(2));
+    expect(
+      find.textContaining('This device holds your report key'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('owner screen: a refused reauthentication publishes nothing', (

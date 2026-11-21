@@ -25,6 +25,13 @@ func TestMLSMessagesAreScopedIdempotentAndAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A legacy group (pre-I51): the route only takes messages for one.
+	seedLegacyMLSMessage(t, store, CreateMLSMessageInput{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID,
+		SenderDeviceID: owner.Device.ID, Kind: "commit",
+		Payload: []byte("synthetic-legacy-commit"), IdempotencyKey: "legacy-0",
+	})
+
 	input := CreateMLSMessageInput{
 		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID,
 		SenderDeviceID: owner.Device.ID, RecipientDeviceID: member.Device.ID,

@@ -122,12 +122,16 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
       if (!ok || !mounted) return;
     }
     if (!await widget.reauthenticate(context) || !mounted) return;
+    // The key the person saw when deciding: the server publishes only while
+    // it is still the listed one, so another device's key is never
+    // overwritten unseen.
+    final expectedKey = _key?.listedKey;
     setState(() => _busy = true);
     try {
       if (create) {
-        await service.createKey(replace: replace);
+        await service.createKey(replace: replace, expectedKey: expectedKey);
       } else {
-        await service.publishKey();
+        await service.publishKey(expectedKey: expectedKey);
       }
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -135,11 +139,19 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
       ).showSnackBar(SnackBar(content: Text(l10n.c6ReportsKeyReady)));
       await _load();
     } catch (err) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(describeError(err, l10n))));
+      if (!mounted) return;
+      if (ReportsService.isKeyConflict(err)) {
+        // Another device published or replaced the key since this screen
+        // loaded: show what is listed now and let the person decide again.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.c6ReportsKeyChangedMeanwhile)),
+        );
+        await _load();
+        return;
       }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(describeError(err, l10n))));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -4407,6 +4407,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get c6ReportsKeyReady => 'Report key published.';
 
   @override
+  String get c6ReportsKeyChangedMeanwhile =>
+      'Another device changed your report key while you were deciding. Nothing was changed here. Check the key below and choose again.';
+
+  @override
   String get c6ReportsEmpty => 'No reports';
 
   @override
