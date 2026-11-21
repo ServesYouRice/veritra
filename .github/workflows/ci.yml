@@ -130,6 +130,10 @@ jobs:
         run: sh scripts/test-api-contracts.sh
       - name: Test the demo message flow with real clients
         run: sh scripts/test-demo-e2e.sh
+      - name: Test C7 channel history with real clients and server
+        run: sh scripts/test-c7-e2e.sh
+        env:
+          VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
