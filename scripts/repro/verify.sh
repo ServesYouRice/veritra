@@ -6,6 +6,9 @@
 # Each build starts from a fresh, clean copy of HEAD in its own directory (two
 # different paths), so uncommitted files and build paths cannot leak in. Exit 0
 # only when every file is byte-identical. Commit before running.
+#
+# REPRO_KEEP=DIR (optional) keeps build A's SHA256SUMS and TOOLCHAIN.txt in DIR,
+# so the digests can be compared with another host's (scripts/repro/compare.sh).
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -24,6 +27,12 @@ for run in a b; do
   sh "$WORK/$run/src/scripts/repro/build.sh" "$TARGET" "$WORK/$run/out" > "$WORK/$run/log.txt" 2>&1 ||
     { cat "$WORK/$run/log.txt" >&2; echo "build $run failed" >&2; exit 1; }
 done
+
+if [ -n "${REPRO_KEEP:-}" ]; then
+  mkdir -p "$REPRO_KEEP"
+  cp "$WORK/a/out/SHA256SUMS" "$REPRO_KEEP/SHA256SUMS"
+  cp "$WORK/a/out/TOOLCHAIN.txt" "$REPRO_KEEP/TOOLCHAIN.txt"
+fi
 
 status=identical
 cmp -s "$WORK/a/out/SHA256SUMS" "$WORK/b/out/SHA256SUMS" || status=DIFFERENT
