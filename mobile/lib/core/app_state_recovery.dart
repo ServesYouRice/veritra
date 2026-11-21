@@ -46,6 +46,24 @@ enum RecoveryFollowUpStep { restore, recoveryKey, password }
 /// [Ops.accountRecovery]).
 enum RecoveryActionResult { done, needsRecentAuth, alreadyEnded, failed }
 
+/// U37: what "Check my key" found for a key the person saved earlier.
+enum SavedRecoveryKeyCheck {
+  /// The typed key is the account's current recovery key. It says nothing
+  /// about the password or the server address a recovery also needs.
+  current,
+
+  /// A valid recovery key, but not the account's current one: most likely
+  /// an older key that was replaced since.
+  notCurrent,
+
+  /// Not a recovery key at all: a typo, or a character missing or extra.
+  notAKey,
+
+  /// No answer: the server could not be reached just now, recovery is off,
+  /// the account has no key, or this build cannot check.
+  unknown,
+}
+
 /// A newly generated recovery key while it is shown and confirmed. [dispose]
 /// wipes the entropy; the display string cannot be wiped and is dropped
 /// with the screen.
@@ -89,15 +107,18 @@ extension AccountRecoveryActions on AppState {
   // ---------------------------------------------------------------- R3 ---
 
   /// Reads the account's recovery key status. It never throws: a failure
-  /// keeps the last status.
-  Future<void> refreshRecoveryKeyStatus() async {
+  /// keeps the last status. Returns whether [recoveryKeyStatus] now holds a
+  /// status read just now for the signed-in session.
+  Future<bool> refreshRecoveryKeyStatus() async {
     final current = session;
     final client = api;
-    if (current == null || client == null || current.token.isEmpty) return;
+    if (current == null || client == null || current.token.isEmpty) {
+      return false;
+    }
     final generation = _sessionGeneration;
     try {
       final status = await client.recoveryKeyStatus(current.token);
-      if (!_refreshOwned(current, generation)) return;
+      if (!_refreshOwned(current, generation)) return false;
       recoveryKeyStatus = status;
       notifyListeners();
       // A server with recovery off cannot take a new key; the password
@@ -106,8 +127,10 @@ extension AccountRecoveryActions on AppState {
           recoveryFollowUp == RecoveryFollowUpStep.recoveryKey) {
         await _saveRecoveryFollowUp(RecoveryFollowUpStep.password);
       }
+      return true;
     } catch (_) {
       // Offline or an older server: the settings tile says it is unknown.
+      return false;
     }
   }
 
@@ -191,6 +214,59 @@ extension AccountRecoveryActions on AppState {
     } finally {
       decoded.fillRange(0, decoded.length, 0);
     }
+  }
+
+  /// U37: "Check my key" for a key saved earlier. [typed] is decoded and
+  /// its key id derived on this device, then compared in constant time with
+  /// the id of the account's current key from a status read made now. The
+  /// key and anything derived from it never leave the device, so the server
+  /// gains no way to test guesses; and the id was already the device's to
+  /// read. A status kept from earlier is never used: the key may have been
+  /// replaced from another device since, and a wrong "this is your key"
+  /// could make someone throw away the paper that works. The device's K1
+  /// copy of the key id goes stale the same way, so it is not used either.
+  Future<SavedRecoveryKeyCheck> checkSavedRecoveryKey(String typed) async {
+    final current = session;
+    if (current == null || !recoveryAvailable) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final crypto = _recoveryCrypto;
+    if (!await refreshRecoveryKeyStatus() || !identical(session, current)) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final status = recoveryKeyStatus;
+    final accountRkId = status?.rkId;
+    if (status == null ||
+        !status.available ||
+        !status.configured ||
+        accountRkId == null) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final Uint8List entropy;
+    try {
+      entropy = await crypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typed),
+      );
+    } catch (_) {
+      return SavedRecoveryKeyCheck.notAKey;
+    }
+    final bool same;
+    try {
+      final values = await crypto.deriveRecoveryKey(entropy);
+      try {
+        same = _constantTimeBytesEqual(values.rkId, accountRkId);
+      } finally {
+        values.rkPub.fillRange(0, values.rkPub.length, 0);
+      }
+    } catch (_) {
+      return SavedRecoveryKeyCheck.unknown;
+    } finally {
+      entropy.fillRange(0, entropy.length, 0);
+    }
+    if (!identical(session, current)) return SavedRecoveryKeyCheck.unknown;
+    return same
+        ? SavedRecoveryKeyCheck.current
+        : SavedRecoveryKeyCheck.notCurrent;
   }
 
   /// Sets [draft] as the account's recovery key, replacing any earlier one
