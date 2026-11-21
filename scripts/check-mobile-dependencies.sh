@@ -46,6 +46,14 @@ if ! python3 "$ROOT/scripts/check-gradle-inputs.py" "$ANDROID"; then
   echo "mobile dependency check failed: Gradle wrapper or Gradle versions are not pinned" >&2
   exit 1
 fi
+# Dependency locking must stay wired into the Android build, and any lockfile
+# or checksum file that is committed must be well formed. The files themselves
+# are written on a host with the Android SDK (scripts/gradle-lock.sh), so this
+# check does not require them; the release candidate check does.
+if ! python3 "$ROOT/scripts/check-gradle-locks.py" "$ANDROID"; then
+  echo "mobile dependency check failed: Gradle dependency locking is not intact" >&2
+  exit 1
+fi
 # Repository declarations are what matter here; a URL inside a comment is not
 # one. Strip the file:line prefix and skip lines that are entirely a comment.
 gradle_repo_hits="$(

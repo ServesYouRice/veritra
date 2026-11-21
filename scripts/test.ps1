@@ -24,6 +24,8 @@ if ($PythonCmd) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-gradle-inputs_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-gradle-locks_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/build-windows-installer_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
