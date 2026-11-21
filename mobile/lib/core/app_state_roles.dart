@@ -29,6 +29,35 @@ extension RoleActions on AppState {
     return null;
   }
 
+  /// C4's read API for other packages (C2 posting, C3 private channels, C5,
+  /// C6): [accountId]'s role in [conversationId] by the verified record of
+  /// its record group (a community channel's is its shared group's), or null
+  /// when there is no verified record (a DM, a group made before C4, a
+  /// record not readable yet). Unlike [AppState.roleOf] it never falls back
+  /// to the server's role, so a non-null answer is one every member's app
+  /// agrees on at this device's epoch. Owner decision B (D120): a device its
+  /// own account's list removed never acts with this role; judge the leaf
+  /// separately where the actor is a device.
+  BuiltInRole? verifiedRoleOf(String conversationId, String accountId) =>
+      governanceOf(conversationId)?.roleOf(accountId);
+
+  /// D81: whether the current owner of [conversationId] won an election (or
+  /// claim) this device's own clocks would have refused: the record merged
+  /// it (every app judges order and roles only), but the roles screen warns.
+  /// Ends with the new owner's next role decision (its `ownerRev`).
+  Future<bool> ownerChangedEarly(String conversationId) async {
+    final group = recordGroupFor(conversationId);
+    if (group == null) return false;
+    final record = governanceOf(group);
+    if (record == null) return false;
+    final saved = await localStore.loadSetting(
+      governanceEarlyWinSetting(group),
+    );
+    return saved != null &&
+        saved.isNotEmpty &&
+        int.tryParse(saved) == record.ownerRev;
+  }
+
   /// C5: whether this account may delete [sender]'s messages in
   /// [conversationId] for everyone: the verified record makes it a
   /// moderator or above that outranks [sender]. Without a record, no.

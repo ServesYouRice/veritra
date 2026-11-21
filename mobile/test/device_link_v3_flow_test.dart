@@ -11,6 +11,7 @@ import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/history_transfer_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
+import 'package:private_messenger/crypto/device_link_code.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/sha256.dart';
@@ -381,14 +382,33 @@ class _Transfer implements HistoryTransferTransport {
   int uploads = 0;
   int cancels = 0;
 
+  /// A hostile server: serves the handoff with one byte changed.
+  bool forgeHandoff = false;
+
+  /// A hostile server: serves the ciphertext with one byte changed, under
+  /// the digest the source uploaded.
+  bool tamperDownload = false;
+
+  /// A hostile server: names another recipient device in the receipt.
+  String? recipientOverride;
+  int forgedHandoffsServed = 0;
+  int rejectedDownloads = 0;
+  int acks = 0;
+
   HistoryTransferReceipt _receipt() {
     final base = stored!;
+    var served = handoff;
+    if (forgeHandoff && served != null) {
+      served = Uint8List.fromList(served);
+      served[served.length ~/ 2] ^= 1;
+      forgedHandoffsServed++;
+    }
     return HistoryTransferReceipt(
       transferId: base.transferId,
       linkId: base.linkId,
       accountId: base.accountId,
       sourceDeviceId: base.sourceDeviceId,
-      recipientDeviceId: base.recipientDeviceId,
+      recipientDeviceId: recipientOverride ?? base.recipientDeviceId,
       claimRequestHash: base.claimRequestHash,
       transcriptHash: base.transcriptHash,
       ciphertextSha256: base.ciphertextSha256,
@@ -396,7 +416,7 @@ class _Transfer implements HistoryTransferTransport {
       state: state,
       createdAt: base.createdAt,
       expiresAt: base.expiresAt,
-      handoff: state == 'active' ? handoff : null,
+      handoff: state == 'active' ? served : null,
     );
   }
 
@@ -451,12 +471,15 @@ class _Transfer implements HistoryTransferTransport {
     required File target,
     required Future<bool> Function(File complete) verifyDigest,
   }) async {
-    target.writeAsBytesSync(ciphertext!);
+    final bytes = Uint8List.fromList(ciphertext!);
+    if (tamperDownload) bytes[bytes.length ~/ 3] ^= 0x80;
+    target.writeAsBytesSync(bytes);
     if (!await verifyDigest(target)) {
+      rejectedDownloads++;
       target.deleteSync();
       throw const HistoryTransferMismatch();
     }
-    return ciphertext!.length;
+    return bytes.length;
   }
 
   @override
@@ -467,6 +490,7 @@ class _Transfer implements HistoryTransferTransport {
     required String ciphertextSha256,
   }) async {
     if (state == 'cancelled') throw ApiException(409, '');
+    acks++;
     state = 'acknowledged';
     return _receipt();
   }
@@ -1359,4 +1383,169 @@ void main() {
     }),
     skip: skip,
   );
+
+  test(
+    'a server that forges the handoff or alters the copy gets nothing '
+    'imported and no ACK, and the genuine copy still arrives',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      w.transfer
+        ..forgeHandoff = true
+        ..tamperDownload = true;
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.sourceUploads();
+
+      Future<HistoryTransferProgress> row() async =>
+          (await w.newStore.loadHistoryTransfers()).single;
+
+      // A forged handoff: native refuses its signature, so nothing of it is
+      // stored and the copy waits (fails closed) rather than ending.
+      await w.until(
+        () async => w.transfer.forgedHandoffsServed >= 2,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      await w.until(
+        () async =>
+            w.fresh.historyTransferStatus?.phase == HistoryTransferPhase.failed,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      expect((await row()).stage, HistoryTransferStage.awaitingHandoff);
+      expect((await row()).handoff, isNull);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.transfer.state, 'active');
+
+      // The genuine handoff, but ciphertext with one byte changed under the
+      // uploaded digest: the native check rejects it, the file is deleted
+      // and nothing is imported.
+      w.transfer.forgeHandoff = false;
+      await w.until(
+        () async => w.transfer.rejectedDownloads >= 2,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      final downloading = await row();
+      expect(downloading.stage, HistoryTransferStage.downloading);
+      expect(File(downloading.filePath!).existsSync(), isFalse);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.fresh.historyOnlyConversations, isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.fresh.historyTransferStatus?.phase, HistoryTransferPhase.failed);
+
+      // The honest bytes: imported once, acknowledged once.
+      w.transfer.tamperDownload = false;
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+      expect(w.transfer.state, 'acknowledged');
+      expect(w.transfer.acks, 1);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a receipt that names another device ends the copy on the new device '
+    'without importing anything',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      w.transfer.recipientOverride = 'dev_someone_else';
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.sourceUploads();
+      await w.until(
+        () async => (await w.newStore.loadHistoryTransfers()).isEmpty,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      expect(w.fresh.historyTransferStatus?.phase, HistoryTransferPhase.ended);
+      expect(w.fresh.historyTransferStatus?.incoming, isTrue);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.transfer.cancels, greaterThanOrEqualTo(1));
+      // The link itself stays: the new device is linked, only the copy ended.
+      expect(w.fresh.session?.deviceId, _newDevice);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'nothing the server receives carries the link secret or the history '
+    'in readable form',
+    () => _withWorld((w) async {
+      await w.source.createDeviceLink();
+      final code = w.source.activeDeviceLinkCode!;
+      final secret = decodeDeviceLinkSecret(code);
+      expect(secret, hasLength(16));
+      await w.fresh.claimDeviceLink(_origin, code);
+      await w.source.refreshActiveDeviceLink();
+      await w.fresh.completeDeviceLinkClaim();
+      final sas = w.fresh.pendingDeviceLinkClaim!.verificationCode;
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+
+      // Everything the in-memory server was given: the link and claim
+      // records (approval tag included), the signed device lists, the
+      // reservation, the transfer metadata, the handoff and the ciphertext.
+      final stored = w.transfer.stored!;
+      final seen = <List<int>>[
+        utf8.encode(jsonEncode(w.server.link)),
+        utf8.encode(jsonEncode(w.server.claim)),
+        utf8.encode(w.server.reservationRequestId ?? ''),
+        for (final statement in w.server.chain) statement,
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'transfer_id': stored.transferId,
+            'claim_request_hash': stored.claimRequestHash,
+            'transcript_hash': base64Encode(stored.transcriptHash),
+            'ciphertext_sha256': stored.ciphertextSha256,
+          }),
+        ),
+        w.transfer.handoff!,
+        w.transfer.ciphertext!,
+      ];
+      final needles = <String, List<int>>{
+        'raw secret': secret,
+        'base64 secret': utf8.encode(base64Encode(secret)),
+        'base64url secret': utf8.encode(
+          base64Url.encode(secret).replaceAll('=', ''),
+        ),
+        'hex secret': utf8.encode(hexOf(secret)),
+        'typed code': utf8.encode(code),
+        'history text': utf8.encode('first'),
+        'history text 2': utf8.encode('second'),
+        'conversation title': utf8.encode('historical'),
+      };
+      for (final haystack in seen) {
+        for (final entry in needles.entries) {
+          expect(
+            _contains(haystack, entry.value),
+            isFalse,
+            reason: 'the server was given the ${entry.key}',
+          );
+        }
+      }
+    }),
+    skip: skip,
+  );
+}
+
+bool _contains(List<int> haystack, List<int> needle) {
+  if (needle.isEmpty || needle.length > haystack.length) return false;
+  outer:
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
 }

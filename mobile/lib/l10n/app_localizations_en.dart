@@ -5159,6 +5159,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'You are the owner: your app ends this election by itself.';
 
   @override
+  String get rolesEarlyWin =>
+      'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.';
+
+  @override
+  String get rolesElectorHint =>
+      'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.';
+
+  @override
   String get rolesOnlyAdminsPost => 'Only admins post';
 
   @override

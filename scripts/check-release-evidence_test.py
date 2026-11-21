@@ -155,6 +155,7 @@ def build_app_zip(
     bundle_id: str | None = BUNDLE_ID,
     before: tuple[tuple[str, bytes], ...] = (),
     comment: bytes = b"",
+    build_info: bytes | None = None,
 ) -> str:
     """``before`` members are written first (duplicate names allowed)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +173,8 @@ def build_app_zip(
                 archive.writestr(prefix + "_CodeSignature/CodeResources", b"synthetic placeholder")
             if provisioning is not None:
                 archive.writestr(prefix + "embedded.mobileprovision", provisioning)
+            if build_info is not None:
+                archive.writestr(prefix + "veritra-crypto/build-info.txt", build_info)
             archive.writestr(prefix + "Frameworks/App.framework/App", b"synthetic")
             for app in extra_apps:
                 archive.writestr(f"Payload/{app}/Info.plist", b"")
@@ -179,8 +182,12 @@ def build_app_zip(
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+CLEAN_BUILD_INFO = b"source_revision=" + b"0" * 40 + b"\ncargo_lock_sha256=" + b"0" * 64 + b"\nsource_tree_dirty=false\nrustc 1\n"
+
+
 def build_signed_ipa(path: Path, **overrides: object) -> str:
-    options: dict[str, object] = {"provisioning": profile(False)}
+    # The Runner's Crypto Build Record phase copies the record into the bundle.
+    options: dict[str, object] = {"provisioning": profile(False), "build_info": CLEAN_BUILD_INFO}
     options.update(overrides)
     return build_app_zip(path, **options)  # type: ignore[arg-type]
 
@@ -1374,6 +1381,27 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         no_signed,
     )
     expect_blocked(root, with_record(signed_bytes("no-lc-sig.ipa", executable=macho(code_signature=False))), "signed ios executable has no code signature")
+    # D134: a crypto library built from uncommitted sources never ships.
+    dirty = b"source_revision=" + b"0" * 40 + b"\nsource_tree_dirty=true\n"
+    expect_blocked(root, with_record(signed_bytes("dirty-crypto.ipa", build_info=dirty)),
+                   "signed ios artifact crypto library was built from uncommitted crypto sources", no_signed)
+    expect_blocked(root, with_record(signed_bytes("no-build-info.ipa", build_info=None)), "signed ios artifact has no crypto build record", no_signed)
+    for name, text in (("empty", b""), ("odd", b"source_tree_dirty=maybe\n"), ("twice", b"source_tree_dirty=false\nsource_tree_dirty=true\n")):
+        expect_blocked(root, with_record(signed_bytes(f"bad-info-{name}.ipa", build_info=text)),
+                       "signed ios artifact crypto library has no single, valid source_tree_dirty record", no_signed)
+    # Only the app's own record counts, not one elsewhere in the archive.
+    expect_blocked(root, with_record(signed_bytes("misplaced-info.ipa", build_info=None, before=(("Frameworks/veritra-crypto/build-info.txt", CLEAN_BUILD_INFO),))),
+                   "signed ios artifact has no crypto build record", no_signed)
+    # A bad record is reported even when the bundle is missing its executable.
+    build_signed_ipa(dist / "no-exe.ipa", build_info=dirty)
+    with zipfile.ZipFile(dist / "no-exe.ipa") as archive:
+        members = [(i.filename, archive.read(i)) for i in archive.infolist() if not i.filename.endswith("/Runner")]
+    with zipfile.ZipFile(dist / "no-exe.ipa", "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in members:
+            archive.writestr(name, content)
+    no_exe = "sha256:" + hashlib.sha256((dist / "no-exe.ipa").read_bytes()).hexdigest()
+    expect_blocked(root, with_record(record(file="no-exe.ipa", digest=no_exe)),
+                   "signed ios app bundle is missing its executable", "signed ios artifact crypto library was built from uncommitted crypto sources")
     # Development-signed or unverified signatures are not release evidence.
     expect_blocked(root, with_record(signed_bytes("development.ipa", provisioning=profile(True))), "signed ios provisioning profile is not a distribution profile")
     expect_blocked(root, with_record(signed_bytes("bad-profile.ipa", provisioning=b"not a profile")), "provisioning profile has no readable property list")

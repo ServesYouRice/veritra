@@ -13,6 +13,9 @@ recorded digest:
   provisioning profile, for the team and bundle ID pinned in the policy
   (``ios.team_id``, ``ios.bundle_id``). While either pin is null, no iOS
   signed-release record counts.
+- iOS and Android: the crypto build record inside the app says, exactly once,
+  ``source_tree_dirty=false`` (D134: no library built from uncommitted crypto
+  sources ships).
 - Both: an unambiguous zip (no comment, one end record, no ZIP64, no
   duplicate entry names).
 - Android: an APK of the Veritra app, not debuggable, minSdkVersion 24 or
@@ -141,6 +144,10 @@ SIGNING_PINS = {
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_CRYPTO_BUILD_INFO = "assets/veritra-crypto/build-info.txt"  # written by scripts/build-mobile-crypto.sh
+# Inside Payload/<name>.app/: build-mobile-crypto.sh ios writes the record and
+# the Runner's "Crypto Build Record" phase (scripts/ios-crypto-build-record.sh)
+# copies it into the bundle, where the code signature seals it.
+IOS_CRYPTO_BUILD_INFO = "veritra-crypto/build-info.txt"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
 ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
@@ -636,6 +643,13 @@ def ipa_errors(path: Path, pins: dict[str, str] | None) -> list[str]:
             executable = info.get("CFBundleExecutable")
             if not isinstance(executable, str) or not FILE_RE.fullmatch(executable):
                 return errors + ["signed ios Info.plist has no valid executable name"]
+            # D134: a crypto library built from uncommitted sources never ships.
+            if app + IOS_CRYPTO_BUILD_INFO not in names:
+                errors.append("signed ios artifact has no crypto build record")
+            else:
+                problem = crypto_build_info_error(read_member(archive, app + IOS_CRYPTO_BUILD_INFO).decode("utf-8", "replace"))
+                if problem:
+                    errors.append(f"signed ios artifact crypto library {problem}")
             if app + "_CodeSignature/CodeResources" not in names:
                 errors.append("signed ios app bundle has no code signature resources")
             if app + "embedded.mobileprovision" not in names:
@@ -1221,6 +1235,20 @@ def crypto_build_info_error(text: str) -> str | None:
     return "has no single, valid source_tree_dirty record"
 
 
+def crypto_build_info_main(path: Path) -> int:
+    """Exit status for ``--crypto-build-info``: 0 only for a committed-source record."""
+    try:
+        text = path.read_bytes().decode("utf-8", "replace")
+    except OSError:
+        print(f"crypto build record not found or unreadable: {path}", file=sys.stderr)
+        return 1
+    problem = crypto_build_info_error(text)
+    if problem:
+        print(f"the crypto library {problem} ({path})", file=sys.stderr)
+        return 1
+    return 0
+
+
 def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
     """Release-signing checks: structure, pinned signer, and the v2/v3 signatures
     and content digests themselves (``apk_scheme_error``).
@@ -1524,7 +1552,14 @@ def main() -> int:
         help="signed mobile artifact directory (default: $MOBILE_ARTIFACTS_DIR, else the evidence file's directory)",
     )
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument(
+        "--crypto-build-info",
+        type=Path,
+        help="only check one crypto build record (D134) and exit; the iOS release build runs this",
+    )
     args = parser.parse_args()
+    if args.crypto_build_info is not None:
+        return crypto_build_info_main(args.crypto_build_info)
 
     root = args.root.resolve()
     policy_path = (args.policy or root / "release/release-policy.json").resolve()
