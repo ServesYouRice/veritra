@@ -266,6 +266,19 @@ On success, in one transaction:
      (K0 step 8).
 8. **Setup.** Settings → "Set up a recovery key" (recent auth). K1 moves it
    into onboarding (D49).
+9. **"Check my key" (U37).** Settings checks a key saved earlier on the
+   device: decode (the checksum tells a typo apart), derive `rk_id`, and
+   compare it in constant time with the `rk_id` of a `GET
+   /account/recovery-key` made at that moment. Nothing derived from the
+   typed key is sent, so the server gains no guessing oracle; `rk_id` was
+   already the signed-in device's to read. A status kept from before, or
+   the device's K1 copy, never answers "this is your key": the key may have
+   been replaced elsewhere, and a false yes could make someone throw away
+   the paper that works. Offline, recovery off, or no key: no answer. A
+   match says only that this is the account's current key, nothing about
+   the password or the origin. **Passphrase RK (after K1):** any local
+   check, like `rk_id` itself, lets the device holder test guesses offline;
+   that package must weigh this with D63.
 
 ## Abuse cases
 

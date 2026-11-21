@@ -3449,6 +3449,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get recoveryKeyCheckOk => 'This is your key. Nothing was saved yet.';
 
   @override
+  String get recoveryKeyCheckSavedTitle => 'Check a saved key';
+
+  @override
+  String get recoveryKeyCheckSavedDetail =>
+      'Type the recovery key you saved, from your paper or password manager. It is checked on this device and is never sent. Dashes and spaces do not matter.';
+
+  @override
+  String get recoveryKeyCheckSavedCurrent =>
+      'This is your account\'s current recovery key. Keep it safe, with your server address.';
+
+  @override
+  String get recoveryKeyCheckSavedNotCurrent =>
+      'This is a recovery key, but not your account\'s current one. It may be an older key that was replaced. If you cannot find the current one, create a new key.';
+
+  @override
+  String get recoveryKeyCheckSavedUnknown =>
+      'The key could not be checked right now. Check your connection and try again.';
+
+  @override
   String get recoveryKeyTooLong =>
       'This is longer than the key. Check for extra characters.';
 

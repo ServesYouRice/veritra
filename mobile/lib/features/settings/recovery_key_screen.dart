@@ -27,6 +27,7 @@ class RecoveryKeyScreen extends StatelessWidget {
       body: SafeArea(
         child: RecoveryKeySetup(
           state: state,
+          offerSavedKeyCheck: true,
           onSaved: () {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(context.l10n.recoveryKeySaved)),
@@ -39,7 +40,7 @@ class RecoveryKeyScreen extends StatelessWidget {
   }
 }
 
-enum _SetupStep { overview, show, confirm }
+enum _SetupStep { overview, show, confirm, checkSaved }
 
 /// The setup flow, also used by the forced follow-up after a recovery.
 class RecoveryKeySetup extends StatefulWidget {
@@ -48,11 +49,16 @@ class RecoveryKeySetup extends StatefulWidget {
     required this.onSaved,
     this.intro,
     this.onBack,
+    this.offerSavedKeyCheck = false,
     super.key,
   });
 
   final AppState state;
   final VoidCallback onSaved;
+
+  /// U37: offers "Check my key" for the key saved earlier, when the account
+  /// has one. Settings only: the forced follow-up replaces the key.
+  final bool offerSavedKeyCheck;
 
   /// U23: the forced follow-up's way back to its previous step, or null
   /// (Settings, or a step with nothing to go back to). Offered only on the
@@ -77,6 +83,12 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
   /// U37: the last "Check my key" answered that the typed text is the key.
   bool _checkedOk = false;
 
+  /// U37: the key saved earlier, typed to check it. Never the draft's field.
+  final _savedTyped = TextEditingController();
+
+  /// U37: what the last check of a saved key found, until the text changes.
+  SavedRecoveryKeyCheck? _savedResult;
+
   /// U24: this screen put the key on the clipboard and has not cleared it.
   bool _onClipboard = false;
 
@@ -96,6 +108,8 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     _draft?.dispose();
     _typed.clear();
     _typed.dispose();
+    _savedTyped.clear();
+    _savedTyped.dispose();
     super.dispose();
   }
 
@@ -190,6 +204,33 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
     }
   }
 
+  /// U37: "Check my key" for the key saved earlier. Checked on this device
+  /// against the account's current key; nothing is saved or sent.
+  Future<void> _checkSavedKey() async {
+    setState(() {
+      _working = true;
+      _savedResult = null;
+    });
+    try {
+      final result = await widget.state.checkSavedRecoveryKey(
+        _savedTyped.text,
+      );
+      if (!mounted) return;
+      setState(() => _savedResult = result);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  /// Leaves the saved-key check and forgets what was typed there.
+  void _leaveSavedCheck() {
+    _savedTyped.clear();
+    setState(() {
+      _savedResult = null;
+      _step = _SetupStep.overview;
+    });
+  }
+
   /// U24: the key goes to a password manager through the clipboard.
   Future<void> _copyForPasswordManager(String display) async {
     await Clipboard.setData(ClipboardData(text: groupRecoveryKey(display)));
@@ -230,6 +271,7 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
           _SetupStep.overview => _overview(context),
           _SetupStep.show => _show(context),
           _SetupStep.confirm => _confirm(context),
+          _SetupStep.checkSaved => _checkSaved(context),
         },
       ),
     );
@@ -350,6 +392,23 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
             configured ? l10n.recoveryKeyReplace : l10n.recoveryKeyCreate,
           ),
         ),
+      if (widget.offerSavedKeyCheck &&
+          configured &&
+          (status?.available ?? false)) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        OutlinedButton.icon(
+          key: const ValueKey<String>('recovery-key-check-saved'),
+          onPressed: _working
+              ? null
+              : () => setState(() {
+                    _savedTyped.clear();
+                    _savedResult = null;
+                    _step = _SetupStep.checkSaved;
+                  }),
+          icon: const Icon(Icons.fact_check_outlined),
+          label: Text(l10n.recoveryKeyCheck),
+        ),
+      ],
       if (widget.onBack != null && _draft == null) ...<Widget>[
         const SizedBox(height: BoneSpacing.md),
         TextButton.icon(
@@ -512,7 +571,101 @@ class _RecoveryKeySetupState extends State<RecoveryKeySetup> {
       ),
     ];
   }
+
+  List<Widget> _checkSaved(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final result = _savedResult;
+    final message = savedRecoveryKeyCheckMessage(l10n, result);
+    final good = result == SavedRecoveryKeyCheck.current;
+    final states = theme.extension<VeritraStateColors>() ??
+        (theme.brightness == Brightness.dark
+            ? VeritraStateColors.dark
+            : VeritraStateColors.light);
+    return <Widget>[
+      Text(l10n.recoveryKeyCheckSavedTitle, style: theme.textTheme.titleLarge),
+      const SizedBox(height: BoneSpacing.sm),
+      Text(l10n.recoveryKeyCheckSavedDetail, style: theme.textTheme.bodyMedium),
+      const SizedBox(height: BoneSpacing.lg),
+      TextField(
+        key: const ValueKey<String>('recovery-key-check-saved-field'),
+        controller: _savedTyped,
+        autocorrect: false,
+        enableSuggestions: false,
+        enableIMEPersonalizedLearning: false,
+        keyboardType: TextInputType.visiblePassword,
+        textCapitalization: TextCapitalization.characters,
+        minLines: 2,
+        maxLines: 4,
+        style: BoneType.mono,
+        decoration: InputDecoration(labelText: l10n.recoveryKeyField),
+        onChanged: (_) {
+          if (_savedResult != null) setState(() => _savedResult = null);
+        },
+      ),
+      if (message != null) ...<Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        Semantics(
+          liveRegion: true,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(
+                good ? Icons.check_circle : Icons.error_outline,
+                size: 20,
+                color: good ? states.verified : theme.colorScheme.error,
+              ),
+              const SizedBox(width: BoneSpacing.md),
+              Expanded(
+                child: Text(
+                  message,
+                  key: const ValueKey<String>(
+                    'recovery-key-check-saved-result',
+                  ),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: good
+                        ? theme.colorScheme.onSurface
+                        : theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+      const SizedBox(height: BoneSpacing.lg),
+      FilledButton.icon(
+        key: const ValueKey<String>('recovery-key-check-saved-button'),
+        onPressed: _working ? null : _checkSavedKey,
+        icon: _working
+            ? const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.fact_check_outlined),
+        label: Text(l10n.recoveryKeyCheck),
+      ),
+      TextButton(
+        key: const ValueKey<String>('recovery-key-check-saved-back'),
+        onPressed: _working ? null : _leaveSavedCheck,
+        child: Text(MaterialLocalizations.of(context).backButtonTooltip),
+      ),
+    ];
+  }
 }
+
+/// U37: the answer to a check of a saved key, or null while there is none.
+String? savedRecoveryKeyCheckMessage(
+  AppLocalizations l10n,
+  SavedRecoveryKeyCheck? result,
+) =>
+    switch (result) {
+      null => null,
+      SavedRecoveryKeyCheck.current => l10n.recoveryKeyCheckSavedCurrent,
+      SavedRecoveryKeyCheck.notCurrent => l10n.recoveryKeyCheckSavedNotCurrent,
+      SavedRecoveryKeyCheck.notAKey => l10n.recoveryKeyUnreadable,
+      SavedRecoveryKeyCheck.unknown => l10n.recoveryKeyCheckSavedUnknown,
+    };
 
 /// The 13 groups of [display], or fewer for a shorter text.
 List<String> recoveryKeyGroups(String display) =>

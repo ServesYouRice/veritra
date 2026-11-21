@@ -5619,6 +5619,36 @@ abstract class AppLocalizations {
   /// **'This is your key. Nothing was saved yet.'**
   String get recoveryKeyCheckOk;
 
+  /// No description provided for @recoveryKeyCheckSavedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check a saved key'**
+  String get recoveryKeyCheckSavedTitle;
+
+  /// No description provided for @recoveryKeyCheckSavedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the recovery key you saved, from your paper or password manager. It is checked on this device and is never sent. Dashes and spaces do not matter.'**
+  String get recoveryKeyCheckSavedDetail;
+
+  /// No description provided for @recoveryKeyCheckSavedCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'This is your account\'s current recovery key. Keep it safe, with your server address.'**
+  String get recoveryKeyCheckSavedCurrent;
+
+  /// No description provided for @recoveryKeyCheckSavedNotCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a recovery key, but not your account\'s current one. It may be an older key that was replaced. If you cannot find the current one, create a new key.'**
+  String get recoveryKeyCheckSavedNotCurrent;
+
+  /// No description provided for @recoveryKeyCheckSavedUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'The key could not be checked right now. Check your connection and try again.'**
+  String get recoveryKeyCheckSavedUnknown;
+
   /// No description provided for @recoveryKeyTooLong.
   ///
   /// In en, this message translates to:

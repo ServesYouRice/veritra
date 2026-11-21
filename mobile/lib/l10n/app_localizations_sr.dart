@@ -3470,6 +3470,25 @@ class AppLocalizationsSr extends AppLocalizations {
   String get recoveryKeyCheckOk => 'Ово је ваш кључ. Ништа још није сачувано.';
 
   @override
+  String get recoveryKeyCheckSavedTitle => 'Провери сачувани кључ';
+
+  @override
+  String get recoveryKeyCheckSavedDetail =>
+      'Унесите кључ за опоравак који сте сачували, са папира или из менаџера лозинки. Проверава се на овом уређају и никад се не шаље. Цртице и размаци нису битни.';
+
+  @override
+  String get recoveryKeyCheckSavedCurrent =>
+      'Ово је тренутни кључ за опоравак вашег налога. Чувајте га на сигурном, заједно са адресом сервера.';
+
+  @override
+  String get recoveryKeyCheckSavedNotCurrent =>
+      'Ово јесте кључ за опоравак, али није тренутни кључ вашег налога. Можда је то старији кључ који је замењен. Ако не можете да нађете тренутни, направите нови кључ.';
+
+  @override
+  String get recoveryKeyCheckSavedUnknown =>
+      'Кључ тренутно не може да се провери. Проверите везу и покушајте поново.';
+
+  @override
   String get recoveryKeyTooLong =>
       'Ово је дуже од кључа. Проверите да ли има вишка знакова.';
 
@@ -8889,6 +8908,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryKeyCheckOk => 'Ovo je vaš ključ. Ništa još nije sačuvano.';
+
+  @override
+  String get recoveryKeyCheckSavedTitle => 'Proveri sačuvani ključ';
+
+  @override
+  String get recoveryKeyCheckSavedDetail =>
+      'Unesite ključ za oporavak koji ste sačuvali, sa papira ili iz menadžera lozinki. Proverava se na ovom uređaju i nikad se ne šalje. Crtice i razmaci nisu bitni.';
+
+  @override
+  String get recoveryKeyCheckSavedCurrent =>
+      'Ovo je trenutni ključ za oporavak vašeg naloga. Čuvajte ga na sigurnom, zajedno sa adresom servera.';
+
+  @override
+  String get recoveryKeyCheckSavedNotCurrent =>
+      'Ovo jeste ključ za oporavak, ali nije trenutni ključ vašeg naloga. Možda je to stariji ključ koji je zamenjen. Ako ne možete da nađete trenutni, napravite novi ključ.';
+
+  @override
+  String get recoveryKeyCheckSavedUnknown =>
+      'Ključ trenutno ne može da se proveri. Proverite vezu i pokušajte ponovo.';
 
   @override
   String get recoveryKeyTooLong =>

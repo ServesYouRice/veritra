@@ -22,6 +22,14 @@ const k0Origin = 'https://chat.example.org';
 /// The recovery key the fake crypto knows, in its canonical display.
 const k0Display = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCDEFGHJKMNPQRSTVWX';
 
+/// U37: a second valid key the fake crypto knows, with its own key id: an
+/// older key that was replaced.
+const k0OtherDisplay = 'ZYXWVTSRQPNMKJHGFEDCBA9876543210ZYXWVTSRQPNMKJHGFEDC';
+
+/// The key id the fake derives for [k0Display] and for [k0OtherDisplay].
+final Uint8List k0RkId = Uint8List.fromList(List<int>.filled(16, 0xB2));
+final Uint8List k0OtherRkId = Uint8List.fromList(List<int>.filled(16, 0xD4));
+
 ApiException k0Error(int status, String code) =>
     ApiException(status, '{"error":"$code"}');
 
@@ -42,6 +50,9 @@ class K0Crypto extends TestOnlyCryptoService
   static Uint8List entropy() =>
       Uint8List.fromList(List<int>.generate(30, (i) => i + 1));
 
+  static Uint8List otherEntropy() =>
+      Uint8List.fromList(List<int>.generate(30, (i) => i + 101));
+
   Uint8List _hand(Uint8List value) {
     handedOut.add(value);
     return value;
@@ -56,19 +67,35 @@ class K0Crypto extends TestOnlyCryptoService
   @override
   Future<Uint8List> decodeRecoveryKey(String text) async {
     decodedTexts.add(text);
+    if (text.toUpperCase() == k0OtherDisplay) return _hand(otherEntropy());
     if (text.toUpperCase() != k0Display) {
       throw const FormatException('invalid key');
     }
     return _hand(entropy());
   }
 
+  /// Every rk_pub handed out, to check that it was wiped.
+  final List<Uint8List> derivedPubs = <Uint8List>[];
+
   @override
-  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async =>
-      RecoveryKeyValues(
-        rkPub: Uint8List.fromList(List<int>.filled(32, 0xC3)),
-        rkId: Uint8List.fromList(List<int>.filled(16, 0xB2)),
-        rkAuthPub: Uint8List.fromList(List<int>.filled(32, 0xA1)),
-      );
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async {
+    final other = _sameBytes(value, otherEntropy());
+    final rkPub = Uint8List.fromList(List<int>.filled(32, other ? 0xE5 : 0xC3));
+    derivedPubs.add(rkPub);
+    return RecoveryKeyValues(
+      rkPub: rkPub,
+      rkId: Uint8List.fromList(other ? k0OtherRkId : k0RkId),
+      rkAuthPub: Uint8List.fromList(List<int>.filled(32, other ? 0xF6 : 0xA1)),
+    );
+  }
+
+  static bool _sameBytes(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) return false;
+    }
+    return true;
+  }
 
   @override
   Future<Uint8List> signRecoveryProof({
@@ -231,6 +258,9 @@ class K0Server {
   /// When set, a status read waits for it (a poll in flight).
   Completer<void>? statusGate;
 
+  /// When set, a recovery key status read throws it (offline).
+  Object? statusFailure;
+
   /// When set, a cancel throws it after the recent-auth check.
   Object? cancelFailure;
 
@@ -266,6 +296,8 @@ class K0Api extends ApiClient with LegacySyncPageFake {
   @override
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async {
     server.statusReads++;
+    final failure = server.statusFailure;
+    if (failure != null) throw failure;
     return server.status;
   }
 
