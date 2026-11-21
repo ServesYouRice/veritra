@@ -165,8 +165,15 @@ func TestDepartedTimeoutRoutesAPI(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(body), bobID) || !strings.Contains(string(body), `"username":"dtbob"`) {
 		t.Fatalf("list: %d %s", status, body)
 	}
+	if !strings.Contains(string(body), `"member":false`) {
+		t.Fatalf("departed row without member=false: %s", body)
+	}
 	if status, _ := doJSON(t, handler, http.MethodGet, base+"/timeouts", bobToken, nil); status != http.StatusForbidden {
 		t.Fatalf("non-member lists: %d", status)
+	}
+	// Owner decision 2026-11-21: admins and above, as for the lift.
+	if status, _ := doJSON(t, handler, http.MethodGet, base+"/timeouts", modToken, nil); status != http.StatusForbidden {
+		t.Fatalf("moderator lists: %d", status)
 	}
 	if status, _ := doJSON(t, handler, http.MethodPut, base+"/members/"+bobID+"/timeout", modToken, map[string]int{"seconds": 0}); status != http.StatusForbidden {
 		t.Fatalf("moderator lifts: %d", status)
@@ -180,5 +187,32 @@ func TestDepartedTimeoutRoutesAPI(t *testing.T) {
 	}
 	if status, _ := doJSON(t, handler, http.MethodPut, base+"/members/"+bobID+"/timeout", ownerToken, map[string]int{"seconds": 0}); status != http.StatusNotFound {
 		t.Fatalf("lift again: %d", status)
+	}
+	// C5 rejoin gap: a current member's running timeout is listed too, with
+	// member=true, so an admin sees one the C4 record lacks after a rejoin.
+	rejoin := func() {
+		t.Helper()
+		if status, body := doJSON(t, handler, http.MethodPost, base+"/members", ownerToken, map[string]string{"account_id": bobID, "role": "member"}); status != http.StatusOK {
+			t.Fatalf("rejoin: %d %s", status, body)
+		}
+	}
+	rejoin()
+	if status, body := doJSON(t, handler, http.MethodPut, base+"/members/"+bobID+"/timeout", ownerToken, map[string]int{"seconds": 600}); status != http.StatusOK {
+		t.Fatalf("timeout again: %d %s", status, body)
+	}
+	if status, body := doJSON(t, handler, http.MethodDelete, base+"/members/me", bobToken, nil); status != http.StatusOK {
+		t.Fatalf("leave again: %d %s", status, body)
+	}
+	rejoin()
+	status, body = doJSON(t, handler, http.MethodGet, base+"/timeouts", ownerToken, nil)
+	var listed struct {
+		Timeouts []struct {
+			AccountID string `json:"account_id"`
+			Member    bool   `json:"member"`
+		} `json:"timeouts"`
+	}
+	decodeBody(t, body, &listed)
+	if status != http.StatusOK || len(listed.Timeouts) != 1 || listed.Timeouts[0].AccountID != bobID || !listed.Timeouts[0].Member {
+		t.Fatalf("list after rejoin: %d %s", status, body)
 	}
 }

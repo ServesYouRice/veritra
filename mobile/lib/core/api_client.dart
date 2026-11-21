@@ -1796,9 +1796,9 @@ class ApiClient {
     return until is String ? DateTime.tryParse(until)?.toUtc() : null;
   }
 
-  /// Running timeouts of accounts that left the community (C5). Lifting one
-  /// is [setMemberTimeout] with 0, for admins and above.
-  Future<List<DepartedTimeout>> departedTimeouts(
+  /// Every running timeout of the community (C5), members and accounts that
+  /// left, for admins and above. Lifting one is [setMemberTimeout] with 0.
+  Future<List<CommunityTimeout>> communityTimeouts(
     String token,
     String communityId,
   ) async {
@@ -1807,7 +1807,7 @@ class ApiClient {
       _moderationPath(communityId, 'timeouts'),
       token: token,
     );
-    return _rows(json, 'timeouts', DepartedTimeout.fromJson);
+    return _rows(json, 'timeouts', CommunityTimeout.fromJson);
   }
 
   /// Sets a channel's gap between a member's posts; 0 turns it off.

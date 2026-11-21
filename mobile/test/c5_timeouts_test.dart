@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/governance_codec.dart';
 import 'package:private_messenger/core/roles/governance_commands.dart';
+import 'package:private_messenger/core/roles/record_timeout_gap.dart';
 import 'package:private_messenger/core/roles/timeout_verdict.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 
@@ -215,6 +216,160 @@ void main() {
             'no_change',
           ),
         ),
+      );
+    });
+  });
+
+  // C5 rejoin gap (docs/designs/C5-moderation.md, "Timeouts after a
+  // rejoin"): the server restores a timeout the record pruned; an admin may
+  // write it back, only under these conditions.
+  group('rejoin gap', () {
+    final now = DateTime.fromMillisecondsSinceEpoch(t0, isUtc: true);
+    final hourLater = now.add(const Duration(hours: 1));
+    bool may({
+      GovernanceState? record,
+      Set<String>? members,
+      String actor = admin,
+      String account = bob,
+      DateTime? until,
+    }) =>
+        mayApplyServerTimeout(
+          record: record ?? base(),
+          roster: members ?? roster,
+          actor: actor,
+          account: account,
+          serverUntil: until ?? hourLater,
+          now: now,
+        );
+
+    test('offered when the record lacks it, for a roster member below', () {
+      expect(may(), isTrue);
+      expect(may(actor: mod), isTrue);
+    });
+
+    test('not offered while the record holds a running entry', () {
+      final running = withTimeout(
+        base(),
+        bob,
+        MemberTimeout(epoch: 12, fromMs: t0, untilMs: t0 + tenMinutes),
+      );
+      expect(may(record: running), isFalse);
+      // An entry that has ended is the same as none.
+      final ended = withTimeout(
+        base(),
+        bob,
+        MemberTimeout(epoch: 12, fromMs: t0 - tenMinutes, untilMs: t0),
+      );
+      expect(may(record: ended), isTrue);
+    });
+
+    test('not offered before the rejoiner is in the MLS roster', () {
+      expect(may(members: roster.difference({bob})), isFalse);
+    });
+
+    test('not offered when the record does not let the actor act on them', () {
+      expect(may(actor: mod, account: admin), isFalse);
+      expect(may(actor: carol), isFalse);
+      expect(may(actor: bob, account: bob), isFalse);
+    });
+
+    test('not offered for a timeout about to end, or beyond 28 days', () {
+      expect(may(until: now.add(recordTimeoutMargin)), isFalse);
+      expect(
+        may(until: now.add(recordTimeoutMargin + const Duration(seconds: 1))),
+        isTrue,
+      );
+      expect(
+        may(
+          until: now.add(
+            const Duration(milliseconds: maxTimeoutMillis + 1),
+          ),
+        ),
+        isFalse,
+      );
+    });
+
+    GovernanceCommands commands({
+      GovernanceState? state,
+      String actor = admin,
+      Set<String>? members,
+    }) =>
+        GovernanceCommands(
+          state: state ?? base(),
+          actor: actor,
+          members: members ?? roster,
+          epoch: 12,
+        );
+
+    Matcher refused(String reason) => throwsA(
+          isA<GovernanceCommandException>().having(
+            (e) => e.reason,
+            'reason',
+            reason,
+          ),
+        );
+
+    test('the command records from now to the server end, at the epoch', () {
+      final next = applyServerTimeout(
+        commands(),
+        bob,
+        serverUntil: hourLater,
+        now: now,
+      );
+      expect(
+        next.timeouts[bob],
+        MemberTimeout(
+          epoch: 12,
+          fromMs: t0,
+          untilMs: hourLater.millisecondsSinceEpoch,
+        ),
+      );
+      expect(check(base(), next, admin).ok, isTrue);
+    });
+
+    test('the command keeps an entry another admin wrote meanwhile', () {
+      final first = withTimeout(base(), bob, timeout);
+      expect(
+        () => applyServerTimeout(
+          commands(state: first),
+          bob,
+          serverUntil: hourLater,
+          now: now,
+        ),
+        refused('no_change'),
+      );
+    });
+
+    test('the command refuses an end within the margin of its own now', () {
+      expect(
+        () => applyServerTimeout(
+          commands(),
+          bob,
+          serverUntil: now.add(recordTimeoutMargin),
+          now: now,
+        ),
+        refused('timeout_ending'),
+      );
+    });
+
+    test('the command refuses outside the roster and against a superior', () {
+      expect(
+        () => applyServerTimeout(
+          commands(members: roster.difference({bob})),
+          bob,
+          serverUntil: hourLater,
+          now: now,
+        ),
+        refused('not_member'),
+      );
+      expect(
+        () => applyServerTimeout(
+          commands(actor: mod),
+          admin,
+          serverUntil: hourLater,
+          now: now,
+        ),
+        refused('hierarchy'),
       );
     });
   });

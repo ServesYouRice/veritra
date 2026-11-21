@@ -125,6 +125,7 @@ extension RoleActions on AppState {
         'not_elector' => 'Only the electing admins can do this.',
         'already_voted' => 'You have already voted.',
         'transfer_first' => 'The owner must transfer ownership first.',
+        'timeout_ending' => 'This timeout ends too soon to record.',
         'commit_pending' => 'Another change is still being sent. Try again.',
         'hierarchy' ||
         'notAllowed' ||

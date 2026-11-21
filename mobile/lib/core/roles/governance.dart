@@ -297,8 +297,11 @@ class GovernanceState {
   /// admin, elector and moderator roles, its `joined` entry, and its votes and
   /// votes for it. The owner is never pruned and nobody inherits (D81); the
   /// election's electorate is kept, so a removal can never decide a win.
-  /// [rev] is kept. Its timeout goes too (as on the server, leaving clears
-  /// it).
+  /// [rev] is kept. Its timeout entry goes too (every timed-out account is
+  /// in the roster), although the server remembers the timeout and restores
+  /// it on a rejoin (migration 0095); an admin then writes it back with an
+  /// explicit action (docs/designs/C5-moderation.md, "Timeouts after a
+  /// rejoin").
   GovernanceState removeAccount(String account) {
     final e = election;
     return copyWith(

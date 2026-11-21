@@ -677,6 +677,15 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
   List<ConversationMember>? _members;
   bool _failed = false;
 
+  /// The server's running timeouts (C5), read for owners and admins only
+  /// (the route refuses others); null when not read or the read failed,
+  /// which only hides the rejoin-gap rows below, never the member list.
+  List<CommunityTimeout>? _serverTimeouts;
+
+  /// Members whose server timeout this device may write into the record
+  /// now ([AppState.serverTimeoutsToApply]).
+  Set<String> _applicable = const <String>{};
+
   /// This page's own copy of the last failure (see [_failureOf]).
   String? _error;
 
@@ -702,6 +711,24 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     setState(() {
       _members = members;
       _failed = members == null;
+    });
+    await _loadTimeouts();
+  }
+
+  /// C5 rejoin gap: the server's running timeouts, once the roster says
+  /// this account is an owner or admin (a moderator's read would be
+  /// refused), and which of them this device may write into the record.
+  Future<void> _loadTimeouts() async {
+    final role = _myRole;
+    if (role != 'owner' && role != 'admin') return;
+    final timeouts = await state.loadCommunityTimeouts(_communityId);
+    final applicable = timeouts == null
+        ? const <String>{}
+        : await state.serverTimeoutsToApply(_communityId, timeouts);
+    if (!mounted) return;
+    setState(() {
+      _serverTimeouts = timeouts;
+      _applicable = applicable;
     });
   }
 
@@ -775,8 +802,9 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
       seconds,
     );
     if (!mounted) return;
+    if (done) unawaited(_loadTimeouts());
     if (!done) {
-      setState(() => _error = _failureOf(state));
+      setState(() => _error = _failureOf(state) ?? state.errorFor(Ops.members));
     } else if (!lift) {
       // A timeout is reversible, so it can say so: Undo lifts it. (A removal
       // or ban is not offered Undo: nothing here can give the person back
@@ -795,6 +823,32 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
           ),
         );
     }
+  }
+
+  /// C5 rejoin gap: writes [member]'s running server timeout, ending at
+  /// [until], into the shared group's record (from now). Only on this
+  /// explicit action; the server is not called (it holds the timeout).
+  Future<void> _applyToRecord(
+    ConversationMember member,
+    DateTime until,
+  ) async {
+    setState(() => _error = null);
+    final done = await state.applyServerTimeoutToRecord(
+      _communityId,
+      member.accountId,
+      until,
+    );
+    if (!mounted) return;
+    if (!done) {
+      setState(() => _error = state.errorFor(Ops.members) ?? _failureOf(state));
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(context.l10n.memberTimeoutAppliedToRecord)),
+      );
+    await _loadTimeouts();
   }
 
   Future<void> _leave() async {
@@ -831,6 +885,20 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     if (until == null) return null;
     final end = DateTime.fromMillisecondsSinceEpoch(until);
     return end.isAfter(DateTime.now()) ? end : null;
+  }
+
+  /// C5 rejoin gap: [accountId]'s running server timeout while the record
+  /// has none (the server restored it on a rejoin; the record pruned it on
+  /// the removal), else null.
+  DateTime? _serverOnlyUntil(String accountId) {
+    if (_timedOutUntil(accountId) != null) return null;
+    final now = DateTime.now();
+    for (final t in _serverTimeouts ?? const <CommunityTimeout>[]) {
+      if (t.member && t.accountId == accountId && t.timeoutUntil.isAfter(now)) {
+        return t.timeoutUntil.toLocal();
+      }
+    }
+    return null;
   }
 
   @override
@@ -907,6 +975,35 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     );
   }
 
+  Widget _memberRow(
+    ConversationMember member,
+    String? me,
+    String? myRole,
+    bool canManageMembers,
+    bool busy,
+  ) {
+    final serverOnly = _serverOnlyUntil(member.accountId);
+    return _MemberRow(
+      member: member,
+      isSelf: member.accountId == me,
+      timedOutUntil: _timedOutUntil(member.accountId),
+      serverOnlyTimeoutUntil: serverOnly,
+      canApplyToRecord:
+          serverOnly != null && _applicable.contains(member.accountId),
+      canRemove: canManageMembers &&
+          member.accountId != me &&
+          (_rank[myRole] ?? 0) > (_rank[member.role] ?? 0),
+      busy: busy,
+      onRemove: () => _remove(member),
+      onBan: () => _ban(member),
+      onTimeout: () => _timeout(member, lift: false),
+      onLiftTimeout: () => _timeout(member, lift: true),
+      onApplyToRecord: () {
+        if (serverOnly != null) unawaited(_applyToRecord(member, serverOnly));
+      },
+    );
+  }
+
   /// The members, the moderation entry and leaving.
   Widget _membersTab(BuildContext context) {
     final l10n = context.l10n;
@@ -951,19 +1048,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
                 )
               else
                 for (final member in members)
-                  _MemberRow(
-                    member: member,
-                    isSelf: member.accountId == me,
-                    timedOutUntil: _timedOutUntil(member.accountId),
-                    canRemove: canManageMembers &&
-                        member.accountId != me &&
-                        (_rank[myRole] ?? 0) > (_rank[member.role] ?? 0),
-                    busy: busy,
-                    onRemove: () => _remove(member),
-                    onBan: () => _ban(member),
-                    onTimeout: () => _timeout(member, lift: false),
-                    onLiftTimeout: () => _timeout(member, lift: true),
-                  ),
+                  _memberRow(member, me, myRole, canManageMembers, busy),
             ],
           ),
           if (error != null) _InlineError(error),
@@ -1036,12 +1121,15 @@ class _MemberRow extends StatelessWidget {
     required this.member,
     required this.isSelf,
     required this.timedOutUntil,
+    required this.serverOnlyTimeoutUntil,
+    required this.canApplyToRecord,
     required this.canRemove,
     required this.busy,
     required this.onRemove,
     required this.onBan,
     required this.onTimeout,
     required this.onLiftTimeout,
+    required this.onApplyToRecord,
   });
 
   final ConversationMember member;
@@ -1049,12 +1137,20 @@ class _MemberRow extends StatelessWidget {
 
   /// When a running timeout ends, from the verified role record; else null.
   final DateTime? timedOutUntil;
+
+  /// C5 rejoin gap: when the server's running timeout ends while the record
+  /// has none (shown to owners and admins only); else null.
+  final DateTime? serverOnlyTimeoutUntil;
+
+  /// Whether "Apply to the record" is offered for [serverOnlyTimeoutUntil].
+  final bool canApplyToRecord;
   final bool canRemove;
   final bool busy;
   final VoidCallback onRemove;
   final VoidCallback onBan;
   final VoidCallback onTimeout;
   final VoidCallback onLiftTimeout;
+  final VoidCallback onApplyToRecord;
 
   @override
   Widget build(BuildContext context) {
@@ -1068,7 +1164,11 @@ class _MemberRow extends StatelessWidget {
       if (member.joinedAt != null)
         l10n.detailsJoined(formatDate(context, member.joinedAt!)),
       if (timedOutUntil != null)
-        l10n.memberTimedOutUntil(formatDateTime(context, timedOutUntil!)),
+        l10n.memberTimedOutUntil(formatDateTime(context, timedOutUntil!))
+      else if (serverOnlyTimeoutUntil != null)
+        l10n.memberServerTimeoutUntil(
+          formatDateTime(context, serverOnlyTimeoutUntil!),
+        ),
     ];
     return MergeSemantics(
       child: ListTile(
@@ -1111,11 +1211,17 @@ class _MemberRow extends StatelessWidget {
                     value: onTimeout,
                     child: Text(l10n.memberTimeoutAction),
                   ),
-                  // U9: only a member who is timed out has a timeout to lift.
-                  if (timedOutUntil != null)
+                  // U9: only a member who is timed out has a timeout to lift
+                  // (in the record, or on the server alone after a rejoin).
+                  if (timedOutUntil != null || serverOnlyTimeoutUntil != null)
                     PopupMenuItem<VoidCallback>(
                       value: onLiftTimeout,
                       child: Text(l10n.memberTimeoutLift),
+                    ),
+                  if (canApplyToRecord)
+                    PopupMenuItem<VoidCallback>(
+                      value: onApplyToRecord,
+                      child: Text(l10n.memberTimeoutApplyToRecord),
                     ),
                 ],
               )

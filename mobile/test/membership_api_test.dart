@@ -480,7 +480,7 @@ void main() {
 
   // Owner decision 2026-11-21: a paused community's requests are listed with
   // the pause, and the running timeouts of people who left are read.
-  test('a paused list carries the pause; departed timeouts are read', () async {
+  test('a paused list carries the pause; running timeouts are read', () async {
     final (client, calls) = await _client((call) {
       if (call.path.endsWith('/join-requests')) {
         return <String, Object?>{
@@ -505,6 +505,11 @@ void main() {
             'username': 'carol',
             'timeout_until': '2026-11-09T10:00:00Z',
           },
+          <String, Object?>{
+            'account_id': 'acct_d',
+            'timeout_until': '2026-11-09T11:00:00Z',
+            'member': true,
+          },
         ],
       };
     });
@@ -518,10 +523,17 @@ void main() {
       JoinRequestList.pausedUntilOf(listed),
       DateTime.utc(2026, 11, 8, 10),
     );
-    final departed = await client.departedTimeouts('tok', 'comm_1');
-    expect(departed.single.accountId, 'acct_c');
-    expect(departed.single.username, 'carol');
-    expect(departed.single.timeoutUntil, DateTime.utc(2026, 11, 9, 10));
+    final timeouts = await client.communityTimeouts('tok', 'comm_1');
+    expect(timeouts, hasLength(2));
+    final departed = timeouts.first;
+    expect(departed.accountId, 'acct_c');
+    expect(departed.username, 'carol');
+    expect(departed.timeoutUntil, DateTime.utc(2026, 11, 9, 10));
+    // C5 rejoin gap: the flag says who is a member now; a server that
+    // predates it lists departed accounts only, so a missing flag is false.
+    expect(departed.member, isFalse);
+    expect(timeouts.last.member, isTrue);
+    expect(timeouts.last.username, isNull);
     expect(calls.map((c) => '${c.method} ${c.path}').toList(), <String>[
       'GET /api/v1/communities/comm_1/join-requests',
       'GET /api/v1/communities/comm_1/timeouts',

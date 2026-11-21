@@ -298,41 +298,47 @@ func clearDepartedTimeoutTx(ctx context.Context, tx *sql.Tx, communityID, actorR
 	return tx.Commit()
 }
 
-// DepartedTimeout is a running timeout remembered for an account that is not
-// a member now (it left or was kicked).
-type DepartedTimeout struct {
+// CommunityTimeout is a running timeout the server remembers for an account
+// (member_timeouts). Member says whether the account is a member now: a
+// member's timeout is the one its posts are refused under, which the C4
+// record may lack after a rejoin (migration 0095 restores the server's,
+// not the record's); a non-member's comes back if it rejoins.
+type CommunityTimeout struct {
 	AccountID    string    `json:"account_id"`
 	Username     string    `json:"username,omitempty"`
 	TimeoutUntil time.Time `json:"timeout_until"`
+	Member       bool      `json:"member"`
 }
 
-// ListDepartedTimeouts lists the running timeouts of accounts that are no
-// longer members, for the same roles that see the bans list.
-func (s *Store) ListDepartedTimeouts(ctx context.Context, communityID, actorAccountID string) ([]DepartedTimeout, error) {
+// ListCommunityTimeouts lists every running timeout of a community, members
+// and accounts that left alike, for admins and above (owner decision
+// 2026-11-21: the same roles that lift a departed account's timeout;
+// moderators are refused).
+func (s *Store) ListCommunityTimeouts(ctx context.Context, communityID, actorAccountID string) ([]CommunityTimeout, error) {
 	role, err := communityRoleTx(ctx, s.db, communityID, actorAccountID)
 	if err != nil {
 		return nil, err
 	}
-	if !domain.CanManageMembers(role) {
+	if !domain.CanManageInvites(role) {
 		return nil, ErrForbidden
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.account_id, COALESCE(a.username, ''), t.timeout_until
+		SELECT t.account_id, COALESCE(a.username, ''), t.timeout_until,
+		       EXISTS (SELECT 1 FROM memberships m WHERE m.community_id = t.community_id AND m.account_id = t.account_id)
 		FROM member_timeouts t
 		JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
 		WHERE t.community_id = ? AND t.timeout_until > ?
-		  AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.community_id = t.community_id AND m.account_id = t.account_id)
 		ORDER BY t.timeout_until, t.account_id
-		LIMIT 200`, communityID, nowString())
+		LIMIT 500`, communityID, nowString())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]DepartedTimeout, 0)
+	out := make([]CommunityTimeout, 0)
 	for rows.Next() {
-		var item DepartedTimeout
+		var item CommunityTimeout
 		var until string
-		if err := rows.Scan(&item.AccountID, &item.Username, &until); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.Username, &until, &item.Member); err != nil {
 			return nil, err
 		}
 		item.TimeoutUntil = parseTime(until)

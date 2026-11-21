@@ -68,6 +68,7 @@ import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
 import 'roles/private_channel_membership.dart';
+import 'roles/record_timeout_gap.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';

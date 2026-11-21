@@ -710,13 +710,75 @@ extension MembershipActions on AppState {
         (current, client) => client.communityBans(current.token, communityId),
       );
 
-  /// Running timeouts of accounts that left the community (C5). Admins lift
-  /// one with [timeoutCommunityMember] and 0 (owner decision 2026-11-21).
-  Future<List<DepartedTimeout>?> loadDepartedTimeouts(String communityId) =>
-      _membershipCall<List<DepartedTimeout>>(
+  /// Every running timeout of the community the server remembers (C5),
+  /// for admins and above: of accounts that left (`member` false; lifted
+  /// with [timeoutCommunityMember] and 0, owner decision 2026-11-21) and of
+  /// current members (`member` true).
+  Future<List<CommunityTimeout>?> loadCommunityTimeouts(String communityId) =>
+      _membershipCall<List<CommunityTimeout>>(
         (current, client) =>
-            client.departedTimeouts(current.token, communityId),
+            client.communityTimeouts(current.token, communityId),
       );
+
+  /// C5 rejoin gap: the members among [timeouts] whose running server
+  /// timeout this device may write into the shared group's record now
+  /// ([mayApplyServerTimeout]: the record lacks it, they are in the MLS
+  /// roster, the record lets this account act on them, and the end is far
+  /// enough ahead). Empty without a record.
+  Future<Set<String>> serverTimeoutsToApply(
+    String communityId,
+    List<CommunityTimeout> timeouts,
+  ) async {
+    final self = session?.accountId;
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    final members = timeouts.where((t) => t.member).toList();
+    if (self == null || shared == null || members.isEmpty) return const {};
+    final view = await governanceViewFor(shared);
+    if (view == null) return const {};
+    final now = DateTime.now();
+    return <String>{
+      for (final t in members)
+        if (mayApplyServerTimeout(
+          record: view.record,
+          roster: view.roster,
+          actor: self,
+          account: t.accountId,
+          serverUntil: t.timeoutUntil,
+          now: now,
+        ))
+          t.accountId,
+    };
+  }
+
+  /// C5 rejoin gap: writes a member's running server timeout, ending at
+  /// [until], into the shared group's record, starting now
+  /// ([applyServerTimeout], checked again against the record when staged).
+  /// Only ever an admin's explicit action: no device does it on its own, so
+  /// admins' devices do not race. The server already holds the timeout and
+  /// is not called. False (with the error under [Ops.members]) when refused.
+  Future<bool> applyServerTimeoutToRecord(
+    String communityId,
+    String accountId,
+    DateTime until,
+  ) async {
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (shared == null) return false;
+    return _roleCommand(
+      shared,
+      (commands, _, now) => applyServerTimeout(
+        commands,
+        accountId,
+        serverUntil: until,
+        now: now,
+      ),
+    );
+  }
 
   Future<ModerationState?> loadModerationState(String communityId) =>
       _membershipCall<ModerationState>(

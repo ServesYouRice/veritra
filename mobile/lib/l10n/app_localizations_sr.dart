@@ -4278,6 +4278,17 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String memberServerTimeoutUntil(String time) {
+    return 'Утишан/а до $time (само на серверу)';
+  }
+
+  @override
+  String get memberTimeoutApplyToRecord => 'Примените на запис';
+
+  @override
+  String get memberTimeoutAppliedToRecord => 'Утишавање је додато у запис.';
+
+  @override
   String banTitle(String username) {
     return 'Забранити налог $username?';
   }
@@ -9903,6 +9914,17 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String memberTimedOutUntil(String time) {
     return 'Utišan/a do $time';
   }
+
+  @override
+  String memberServerTimeoutUntil(String time) {
+    return 'Utišan/a do $time (samo na serveru)';
+  }
+
+  @override
+  String get memberTimeoutApplyToRecord => 'Primenite na zapis';
+
+  @override
+  String get memberTimeoutAppliedToRecord => 'Utišavanje je dodato u zapis.';
 
   @override
   String banTitle(String username) {
