@@ -9,8 +9,9 @@ import 'safety_number_screen.dart';
 /// L1 (D94): one banner per account whose devices hold this chat, with why
 /// and what the person can do. "Check again" reads the lists again; a
 /// contact's list in conflict also offers the safety number and, after a
-/// warning, trusting the list the server shows now (one of the two signed
-/// versions only; [AppState.trustContactDeviceList]).
+/// warning that says how many devices it approves, trusting the list the
+/// server shows now (one of the two signed versions only;
+/// [AppState.prepareContactDeviceListTrust]).
 class ApprovalHoldBanners extends StatelessWidget {
   const ApprovalHoldBanners({
     required this.state,
@@ -104,11 +105,36 @@ class ApprovalHoldBanners extends StatelessWidget {
     final l10n = context.l10n;
     final name = memberName(accountId);
     final messenger = ScaffoldMessenger.maybeOf(context);
+    void answer(String text) => messenger
+      // A new answer replaces the last one rather than queueing behind it.
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text)));
+    // The branch is read and verified first, so the warning can say what
+    // trusting it approves, and the confirmation pins exactly that branch.
+    final plan = await state.prepareContactDeviceListTrust(accountId);
+    if (plan == null) {
+      answer(l10n.chatHoldTrustRefused);
+      return;
+    }
+    if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialog) => AlertDialog(
         title: Text(l10n.chatHoldTrustTitle(name)),
-        content: Text(l10n.chatHoldTrustBody(name)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(l10n.chatHoldTrustBody(name)),
+              const SizedBox(height: 12),
+              Text(
+                l10n.chatHoldTrustNewDevices(name, plan.newDevices),
+                key: const ValueKey<String>('l1-hold-trust-new-devices'),
+              ),
+            ],
+          ),
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialog).pop(false),
@@ -123,14 +149,7 @@ class ApprovalHoldBanners extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-    final trusted = await state.trustContactDeviceList(accountId);
-    // A new answer replaces the last one rather than queueing behind it.
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(
-          trusted ? l10n.chatHoldTrusted(name) : l10n.chatHoldTrustRefused,
-        ),
-      ));
+    final trusted = await state.trustContactDeviceList(plan);
+    answer(trusted ? l10n.chatHoldTrusted(name) : l10n.chatHoldTrustRefused);
   }
 }

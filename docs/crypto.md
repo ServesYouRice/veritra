@@ -1801,8 +1801,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   yet, checking) and offers Check again. A contact's sticky list conflict
   can be reset by the person, only to a chain with the pinned list
   identity that carries one of the two proven statements at every fork
-  version; it is fetched and verified first and replaces the conflicted
-  pin by compare-and-swap, so the account is never pinless. The own
+  version; it is fetched and verified first, the warning then states how
+  many devices it newly approves, and on confirmation exactly that
+  verified chain replaces the conflicted pin by compare-and-swap on the
+  conflicted head, so the account is never pinless and a server that
+  switches branch after the warning changes nothing. The own
   account's conflict cannot be reset. No ABI, schema, migration or
   dependency change. Design:
   [`L1-approved-devices.md`](designs/L1-approved-devices.md). Adversarial

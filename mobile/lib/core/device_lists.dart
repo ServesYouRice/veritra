@@ -99,6 +99,35 @@ enum DeviceListState {
   conflict,
 }
 
+/// A verified branch a conflict reset would pin
+/// ([DeviceListPins.prepareServedBranch]).
+class DeviceListResetPlan {
+  const DeviceListResetPlan._({
+    required this.accountId,
+    required this.chain,
+    required this.conflictedHead,
+    required this.newDevices,
+    required List<Uint8List> statements,
+  }) : _statements = statements;
+
+  final String accountId;
+
+  /// The verified pin the reset writes.
+  final DeviceListPin chain;
+
+  /// The conflicted head the plan was made from.
+  final List<int> conflictedHead;
+
+  /// Devices (by pair) the branch lists that the conflicted pin does not
+  /// list now: what trusting it newly approves. A device the pinned branch
+  /// removed and the other lists again counts as new.
+  final int newDevices;
+
+  /// The verified chain, version 1 first, to check the fork proofs against
+  /// again at commit.
+  final List<Uint8List> _statements;
+}
+
 /// Why a conflict reset ([DeviceListPins.trustServedBranch]) changed
 /// nothing. The conflict stays as it was.
 class DeviceListResetRefused implements Exception {
@@ -553,24 +582,26 @@ class DeviceListPins {
     return DeviceListStatus(DeviceListState.conflict, stored ?? pin);
   }
 
-  /// Clears [accountId]'s sticky conflict by pinning the branch the server
-  /// shows now, after the person chose to (design, "Pins, rollback and
-  /// forks": the app re-pins from that branch's version 1). Only another
-  /// account's list is reset this way; the caller refuses its own.
+  /// Step one of clearing [accountId]'s sticky conflict (design, "Pins,
+  /// rollback and forks": the app re-pins from the branch the contact's
+  /// devices show). Only another account's list is reset this way; the
+  /// caller refuses its own. Nothing is written here.
   ///
-  /// The account is never left without a pin: the whole chain is fetched
-  /// and verified first (native chain and step checks, as at first sight),
-  /// and only then replaces the conflicted pin in one compare-and-swap.
-  /// The chain must grow from the pinned list identity and, at every
-  /// version a fork proof was kept for, carry one of that proof's two
-  /// statements. A statement fixes its whole prefix by `prev_hash`, so the
-  /// reset can only pick one of the two branches a listed key signed; a
-  /// server holding no listed key cannot use it to bring in a chain of its
-  /// own. The fork proofs are kept, and the first-pin time restarts (a
-  /// re-pin is a new first sight for report verdicts, review M2).
+  /// The whole chain the server shows now is fetched and verified (native
+  /// chain and step checks, as at first sight). It must have the pinned
+  /// list identity and, at every version a fork proof was kept for, carry
+  /// one of that proof's two statements. A statement fixes its whole prefix
+  /// by `prev_hash`, so the reset can only pick one of the two branches a
+  /// listed key signed; a server holding no listed key cannot use it to
+  /// bring in a chain of its own.
   ///
-  /// Throws [DeviceListResetRefused] and changes nothing otherwise.
-  Future<DeviceListPin> trustServedBranch(String accountId) async {
+  /// The plan says how many devices the chosen branch lists that the
+  /// conflicted pin does not list now, so the person is told before
+  /// they confirm; [commitServedBranch] then pins exactly this chain, never
+  /// one fetched after the confirmation.
+  ///
+  /// Throws [DeviceListResetRefused] otherwise.
+  Future<DeviceListResetPlan> prepareServedBranch(String accountId) async {
     final stored = await store.loadDeviceListPin(accountId);
     if (stored == null || !stored.conflict) {
       throw const DeviceListResetRefused('no conflict to reset');
@@ -599,18 +630,73 @@ class DeviceListPins {
     if (!_same(chain.listId, stored.listId)) {
       throw const DeviceListResetRefused('another list identity');
     }
+    _checkProvenBranch(statements, proofs);
+    final newDevices = chain.listed
+        .where(
+          (key) => !stored.listed.any(
+            (old) =>
+                _same(old.deviceId, key.deviceId) &&
+                _same(old.signingKey, key.signingKey),
+          ),
+        )
+        .length;
+    return DeviceListResetPlan._(
+      accountId: accountId,
+      chain: chain,
+      conflictedHead: stored.headStatement,
+      newDevices: newDevices,
+      statements: List.unmodifiable(statements),
+    );
+  }
+
+  static void _checkProvenBranch(
+    List<Uint8List> statements,
+    List<DeviceListConflictProof> proofs,
+  ) {
     for (final proof in proofs) {
       if (statements.length < proof.version ||
           !proof.names(statements[proof.version - 1])) {
         throw const DeviceListResetRefused('not one of the proven branches');
       }
     }
-    if (!await store.replaceConflictedDeviceListPin(chain)) {
+  }
+
+  /// Step two: replaces the conflicted pin with [plan]'s chain in one
+  /// compare-and-swap, only while the stored pin is still the conflicted
+  /// head the plan was made from. Any failure leaves the conflict exactly as
+  /// it was, so the account is never left without a pin. The fork proofs
+  /// are kept, and the first-pin time restarts (a re-pin is a new first
+  /// sight for report verdicts, review M2).
+  Future<DeviceListPin> commitServedBranch(DeviceListResetPlan plan) async {
+    final stored = await store.loadDeviceListPin(plan.accountId);
+    if (stored == null ||
+        !stored.conflict ||
+        !_same(stored.headStatement, plan.conflictedHead)) {
       throw const DeviceListResetRefused('the pin changed meanwhile');
     }
-    _lastState[accountId] = DeviceListState.ok;
-    return (await store.loadDeviceListPin(accountId)) ?? chain;
+    // A proof kept since the plan was made must hold for it too.
+    final proofs = await store.loadDeviceListConflicts(plan.accountId);
+    if (proofs.isEmpty) {
+      throw const DeviceListResetRefused('no fork proof is kept');
+    }
+    _checkProvenBranch(plan._statements, proofs);
+    final now = _nowMs;
+    final chain = plan.chain.copyWith(checkedAt: now, pinnedAt: now);
+    if (!await store.replaceConflictedDeviceListPin(
+      chain,
+      plan.conflictedHead,
+    )) {
+      throw const DeviceListResetRefused('the pin changed meanwhile');
+    }
+    _lastState[plan.accountId] = DeviceListState.ok;
+    invalidate(plan.accountId);
+    return (await store.loadDeviceListPin(plan.accountId)) ?? chain;
   }
+
+  /// [prepareServedBranch] and [commitServedBranch] at once, for callers
+  /// that show nothing in between.
+  Future<DeviceListPin> trustServedBranch(String accountId) async =>
+      commitServedBranch(await prepareServedBranch(accountId));
 
   /// What the last refresh of [accountId] found, or null before any. Lets
   /// a caller tell an account with no list yet ([DeviceListState.empty])

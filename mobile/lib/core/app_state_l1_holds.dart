@@ -73,6 +73,20 @@ class _L1HoldState {
 }
 
 extension AppStateL1Holds on AppState {
+  /// Runs [body]; when the approval hold refuses it, reads the chat's hold
+  /// state at once so the banner shows why, then rethrows.
+  Future<void> _noticeApprovalHold(
+    String conversationId,
+    Future<void> Function() body,
+  ) async {
+    try {
+      await body();
+    } on ConversationApprovalHeldException {
+      unawaited(refreshApprovalHoldSummary(conversationId));
+      rethrow;
+    }
+  }
+
   /// The accounts holding [conversationId], as last read (most serious
   /// first). Empty when it is not held or has not been read yet.
   List<ApprovalHoldAccount> approvalHoldAccounts(String conversationId) =>
@@ -204,21 +218,43 @@ extension AppStateL1Holds on AppState {
     }
   }
 
-  /// Resets [accountId]'s sticky list conflict to the branch the server
-  /// shows now, then judges every held conversation again
-  /// ([DeviceListPins.trustServedBranch] has the rules). Never this
-  /// device's own account: its own list is its authority, so a fork there
-  /// keeps the existing error. Returns false when the reset was refused;
-  /// the conflict then stays as it was.
-  Future<bool> trustContactDeviceList(String accountId) async {
+  /// Step one of resetting [accountId]'s sticky list conflict: reads and
+  /// verifies the branch the server shows now and says how many devices it
+  /// would newly approve, writing nothing
+  /// ([DeviceListPins.prepareServedBranch] has the rules). Null when the
+  /// reset is refused, and always for this device's own account: its own
+  /// list is its authority, so a fork there keeps the existing error.
+  Future<DeviceListResetPlan?> prepareContactDeviceListTrust(
+    String accountId,
+  ) async {
     final pins = _deviceListPins;
     final current = session;
     if (pins == null || current == null || accountId == current.accountId) {
+      return null;
+    }
+    try {
+      return await pins.prepareServedBranch(accountId);
+    } on DeviceListResetRefused {
+      return null;
+    }
+  }
+
+  /// Step two, after the person confirmed: pins exactly [plan]'s branch
+  /// while the conflict is still the one it was made from
+  /// ([DeviceListPins.commitServedBranch]), then judges every held
+  /// conversation again. Returns false when refused; the conflict then
+  /// stays as it was.
+  Future<bool> trustContactDeviceList(DeviceListResetPlan plan) async {
+    final pins = _deviceListPins;
+    final current = session;
+    if (pins == null ||
+        current == null ||
+        plan.accountId == current.accountId) {
       return false;
     }
     final generation = _sessionGeneration;
     try {
-      await pins.trustServedBranch(accountId);
+      await pins.commitServedBranch(plan);
     } on DeviceListResetRefused {
       return false;
     }

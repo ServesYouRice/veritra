@@ -3984,8 +3984,14 @@ abstract class AppLocalizations {
   /// No description provided for @chatHoldTrustBody.
   ///
   /// In en, this message translates to:
-  /// **'One of {name}\'s devices signed two different versions of their device list. Ask {name} to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after {name} confirms the devices in this chat are theirs.'**
+  /// **'One of {name}\'s devices, or their recovery key, signed two different versions of their device list. Ask {name} to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after {name} confirms the devices in this chat are theirs.'**
   String chatHoldTrustBody(String name);
+
+  /// No description provided for @chatHoldTrustNewDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices of {name} that this device doesn\'t approve now: {count}. Trusting the list approves them, and they can be added to your chats.'**
+  String chatHoldTrustNewDevices(String name, int count);
 
   /// No description provided for @chatHoldTrustConfirm.
   ///

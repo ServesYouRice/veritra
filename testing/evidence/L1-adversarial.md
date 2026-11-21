@@ -34,7 +34,10 @@ account and why, with Check again; a contact's sticky conflict can be reset
 to one of the two proven branches only. Files:
 `mobile/lib/core/app_state_l1_holds.dart`,
 `mobile/lib/features/chat/approval_hold_banners.dart`,
-`DeviceListPins.trustServedBranch` in `mobile/lib/core/device_lists.dart`,
+`DeviceListPins.prepareServedBranch`/`commitServedBranch` in
+`mobile/lib/core/device_lists.dart` (the warning is shown between the two
+and states how many devices the branch newly approves; the commit pins
+exactly the prepared chain),
 `replaceConflictedDeviceListPin`/`readDeviceListConflicts` in
 `mobile/lib/storage/device_list_sql.dart` and `local_store.dart`. Strings
 in English and formal Serbian (Cyrillic and generated Latin).
@@ -64,16 +67,23 @@ third validly signed branch outside the proof, a chain shorter than the
 fork, a damaged statement, an unreachable or unknown server, no conflict;
 after failed resets an ordinary refresh serving a made-up chain is still a
 conflict (never a first sight); the store's compare-and-swap refuses
-another list identity and a pin no longer in conflict.
+another list identity and a pin no longer in conflict. Prepare writes nothing and
+counts the newly approved devices (a device the pinned branch removed
+counts as new); commit pins the prepared chain even when the server
+switches branch meanwhile (no fetch), refuses a plan made from a conflict
+that is gone, and checks a fork proof kept after the plan; the store
+refuses a replacement made from another conflicted head.
 
 `mobile/test/l1_app_state_lists_test.dart`, through `AppState`: one reason
 per account (conflict, unapproved, own unapproved, removed, waiting for a
 pre-L1 account, checking) in severity order; Check again reads the lists
 and is spaced; the reset is refused for the own account and for a made-up
-chain, and a proven branch clears the conflict in every chat. A widget
+chain (nothing to confirm), and the prepared proven branch clears the
+conflict in every chat even when the server switches after the
+confirmation. A widget
 test checks the banner wording, Check again, the safety-number button, the
-warning dialog (cancel changes nothing), the refusal message and the
-trusted state.
+warning dialog with the newly approved device count (cancel changes
+nothing), the refusal message without a dialog, and the trusted state.
 
 ## Mutations
 
@@ -89,6 +99,11 @@ Each guard was removed in turn and the named tests run
 | M7 a removed pair judged approved | rollback; both removed-then-re-added tests; proven-branch reset |
 | M8 add gate stages with the server's key | injected device never staged |
 | M9 conflict not sticky on refresh | fork test; five reset tests |
+| M1c commit skips the proof recheck | proof kept after the plan (both stores) |
+| M11 commit re-fetches instead of pinning the prepared chain | prepare/commit test (both stores); conflict reset through AppState |
+| M12 new devices counted against every pair ever listed | removed device counts as new (both stores) |
+| M13 SQL replace ignores the conflicted head | store compare-and-swap (sqlite) |
+| M13m memory replace ignores the conflicted head | store compare-and-swap (memory) |
 | M10 another genesis becomes a sticky conflict | forged statements test |
 | M2 reset skips the list-identity check | **not caught, by design**: a proof statement fixes its prefix through `prev_hash`, so the proof check already refuses another genesis. Kept as defence in depth |
 
@@ -100,6 +115,11 @@ AppState and UI mutations (`l1_app_state_lists_test.dart`):
 | U2 the own account may be reset | conflict reset through AppState (own pin put in conflict) |
 | U3 Check again not spaced | hold banner reasons test |
 | U4 trust without the warning dialog | banner widget test |
+
+M1, M9, U2 and U4 were rerun after the reset was split into prepare and
+commit (U2 now on `prepareContactDeviceListTrust`); all caught. M3, M3m,
+M4, M7, M8, M10, U1 and U3 were run before the split, on code it did not
+change.
 
 Rule checks inside Rust (no-return, one key one device, signatures) were
 not mutated here: no Rust build was allowed on this machine. They are
@@ -129,7 +149,7 @@ branch's Rust sources are unchanged); no Rust build was allowed here.
 
 - Focused: every `test/l1_*_test.dart`, `device_link_v3_flow_test.dart`,
   `l10n_locales_test.dart`, `l10n_hardcoded_strings_test.dart`,
-  `l2_schema43_test.dart`: 230 passed, native required.
+  `l2_schema43_test.dart`: 236 passed, native required.
 - Full `flutter test` with native required: 3,633 passed, 7 skipped, 2
   failed. `desktop_shell_test.dart` "settings screen offers the hide
   preview switch on desktop" fails the same way at the base `42626ff`

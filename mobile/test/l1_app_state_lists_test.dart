@@ -1403,13 +1403,13 @@ void main() {
       otherStatement: const [1, 2, 3],
       recordedAt: 1,
     );
-    expect(await state.trustContactDeviceList(_account), isFalse);
+    expect(await state.prepareContactDeviceListTrust(_account), isNull);
     expect(
       (await state.localStore.loadDeviceListPin(_account))!.conflict,
       isTrue,
     );
     api.others['acct_bob'] = [fork.madeUp];
-    expect(await state.trustContactDeviceList('acct_bob'), isFalse);
+    expect(await state.prepareContactDeviceListTrust('acct_bob'), isNull);
     expect(
       state.approvalHoldAccounts('conv_1').single.reason,
       ApprovalHoldReason.conflict,
@@ -1418,7 +1418,17 @@ void main() {
     expect(pin?.conflict, isTrue);
 
     api.others['acct_bob'] = [fork.genesis, fork.right];
-    expect(await state.trustContactDeviceList('acct_bob'), isTrue);
+    final plan = (await state.prepareContactDeviceListTrust('acct_bob'))!;
+    // dev_three, which the pinned left branch never listed.
+    expect(plan.newDevices, 1);
+    expect(
+      (await state.localStore.loadDeviceListPin('acct_bob'))!.conflict,
+      isTrue,
+    );
+    // What the server shows after the confirmation does not matter: the
+    // branch the person was shown is pinned.
+    api.others['acct_bob'] = [fork.madeUp];
+    expect(await state.trustContactDeviceList(plan), isTrue);
     final trusted = await state.localStore.loadDeviceListPin('acct_bob');
     expect(trusted?.conflict, isFalse);
     expect(trusted?.headStatement, fork.right);
@@ -1481,28 +1491,43 @@ void main() {
     expect(find.text(englishL10n.chatHoldCompare), findsOneWidget);
 
     // Trusting needs the warning to be confirmed; cancel changes nothing.
+    // The branch is read first, and the warning says what it approves.
     await tester.tap(find.text(englishL10n.chatHoldTrust));
+    await pumpUntil(
+      tester,
+      () =>
+          find.text(englishL10n.chatHoldTrustBody('Bob')).evaluate().isNotEmpty,
+    );
     await tester.pumpAndSettle();
-    expect(find.text(englishL10n.chatHoldTrustBody('Bob')), findsOneWidget);
+    expect(
+      find.text(englishL10n.chatHoldTrustNewDevices('Bob', 1)),
+      findsOneWidget,
+    );
     await tester.tap(find.text(englishL10n.commonCancel));
     await tester.pumpAndSettle();
     expect(find.text(englishL10n.chatHoldConflict('Bob')), findsOneWidget);
 
-    // A made-up chain is refused and said so.
+    // A made-up chain is refused before any warning, and said so.
     api.others['acct_bob'] = [fork.madeUp];
     await tester.tap(find.text(englishL10n.chatHoldTrust));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('l1-hold-trust-confirm')));
     await pumpUntil(
       tester,
       () => find.text(englishL10n.chatHoldTrustRefused).evaluate().isNotEmpty,
     );
     expect(find.text(englishL10n.chatHoldTrustRefused), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text(englishL10n.chatHoldConflict('Bob')), findsOneWidget);
 
     // The proven branch is taken.
     api.others['acct_bob'] = [fork.genesis, fork.left];
     await tester.tap(find.text(englishL10n.chatHoldTrust));
+    await pumpUntil(
+      tester,
+      () => find
+          .text(englishL10n.chatHoldTrustNewDevices('Bob', 0))
+          .evaluate()
+          .isNotEmpty,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('l1-hold-trust-confirm')));
     await pumpUntil(

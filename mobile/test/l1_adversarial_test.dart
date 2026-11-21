@@ -956,6 +956,9 @@ class _PinsOnDisk extends MemoryLocalStore {
       db.readDeviceListConflicts(accountId);
 
   @override
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) =>
-      db.replaceConflictedDeviceListPin(pin);
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  ) =>
+      db.replaceConflictedDeviceListPin(pin, conflictedHead);
 }

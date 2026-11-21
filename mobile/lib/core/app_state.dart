@@ -5746,7 +5746,8 @@ class AppState extends ChangeNotifier
           : reportKeyPayloadTypes.contains(type)
               ? Ops.reportKeys
               : Ops.send,
-      () async {
+      // L1: a send the approval hold refused updates the chat's banner now.
+      () => _noticeApprovalHold(conversationId, () async {
         if (!_syncOwnerActive(owner, ownerGeneration)) return;
         final current = session;
         final client = api;
@@ -5870,7 +5871,7 @@ class AppState extends ChangeNotifier
         // Durable acceptance is the send result. Network delivery is owned by
         // the single retry worker, so a slow connection never holds the draft.
         unawaited(_flushOutbox());
-      },
+      }),
     ).then((succeeded) => succeeded && held ? null : succeeded && queued);
   }
 

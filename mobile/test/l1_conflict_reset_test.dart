@@ -89,11 +89,29 @@ void main() {
       ),
       idBytes('dev_carol'),
     );
+    // Another version 3 on the right branch, by alice: carol stays and the
+    // dave device is added (a fork of rightNext).
+    final rightKeep = alice.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_fork'),
+        version: 3,
+        prevHash: rightHead.listHash,
+        createdAtMs: 3,
+        change: DeviceListChange.add,
+        entries: [
+          DeviceListPair(idBytes('dev_alice'), aliceKey),
+          DeviceListPair(idBytes('dev_carol'), carol.signingPublicKey()),
+          DeviceListPair(idBytes('dev_dave'), dave.signingPublicKey()),
+        ],
+      ),
+      idBytes('dev_alice'),
+    );
     return _Fork(
       genesis: genesis,
       left: add('dev_bob', bob.signingPublicKey()),
       right: right,
       rightNext: rightNext,
+      rightKeep: rightKeep,
       third: add('dev_dave', dave.signingPublicKey()),
       madeUp: genesisBy(server, 'dev_server'),
       carolKey: Uint8List.fromList(carol.signingPublicKey()),
@@ -306,6 +324,104 @@ void main() {
         skip: skip,
       );
 
+      test(
+        'prepare writes nothing and counts the devices the branch newly '
+        'approves; commit pins exactly the prepared branch',
+        () async {
+          later();
+          server.chain = [fork.genesis, fork.right];
+          final right = await pins.prepareServedBranch('acct_fork');
+          // The right branch lists carol, whom the pinned left never did.
+          expect(right.newDevices, 1);
+          expect(right.chain.headStatement, fork.right);
+          await expectStillConflicted();
+          server.chain = [fork.genesis, fork.left];
+          final left = await pins.prepareServedBranch('acct_fork');
+          expect(left.newDevices, 0);
+          await expectStillConflicted();
+
+          // The server switches branch after the person confirmed: the
+          // commit reads nothing and pins the branch they were shown.
+          server.chain = [fork.genesis, fork.right];
+          server.fetches = 0;
+          final pin = await pins.commitServedBranch(left);
+          expect(server.fetches, 0);
+          expect(pin.headStatement, fork.left);
+          expect(
+            (await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            fork.left,
+          );
+          // The other plan was made from the conflict that is gone now.
+          await expectLater(
+            pins.commitServedBranch(right),
+            throwsA(isA<DeviceListResetRefused>()),
+          );
+          expect(
+            (await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            fork.left,
+          );
+        },
+        skip: skip,
+      );
+
+      test(
+        'a device the pinned branch removed counts as new when the other '
+        'branch lists it',
+        () async {
+          // Pinned on the right branch after carol removed itself; then
+          // another version 3 that keeps carol and adds dave.
+          final rightPins = DeviceListPins(
+            store: MemoryLocalStore(),
+            source: server,
+            verifier: _Verifier(bindings),
+            clock: () => now,
+          );
+          server.chain = [fork.genesis, fork.right, fork.rightNext];
+          expect(
+            (await rightPins.refresh('acct_fork')).state,
+            DeviceListState.ok,
+          );
+          later();
+          server.chain = [fork.genesis, fork.right, fork.rightKeep];
+          expect(
+            (await rightPins.refresh('acct_fork')).state,
+            DeviceListState.conflict,
+          );
+          final plan = await rightPins.prepareServedBranch('acct_fork');
+          // Carol (removed on the pinned branch) and dave.
+          expect(plan.newDevices, 2);
+          later();
+          server.chain = [fork.genesis, fork.right, fork.rightNext];
+          final back = await rightPins.prepareServedBranch('acct_fork');
+          expect(back.newDevices, 0);
+        },
+        skip: skip,
+      );
+
+      test(
+        'a fork proof kept after the plan was made must hold for it too',
+        () async {
+          later();
+          server.chain = [fork.genesis, fork.right];
+          final plan = await pins.prepareServedBranch('acct_fork');
+          // A proof at version 3 (as a later fork further on would leave):
+          // the two-version plan carries neither of its statements.
+          await store.saveDeviceListConflict(
+            accountId: 'acct_fork',
+            version: 3,
+            pinnedStatement: fork.rightNext,
+            otherStatement: fork.rightKeep,
+            recordedAt: 3,
+          );
+          await expectLater(
+            pins.commitServedBranch(plan),
+            throwsA(isA<DeviceListResetRefused>()),
+          );
+          await expectStillConflicted();
+        },
+        skip: skip,
+      );
+
       test('an account in no conflict has nothing to reset', () async {
         later();
         server.chain = [fork.genesis, fork.right];
@@ -341,7 +457,13 @@ void main() {
             checkedAt: 1,
             keys: const [],
           );
-          expect(await store.replaceConflictedDeviceListPin(swapped), isFalse);
+          expect(
+            await store.replaceConflictedDeviceListPin(
+              swapped,
+              stored.headStatement,
+            ),
+            isFalse,
+          );
           await expectStillConflicted();
           final honest = DeviceListPin(
             accountId: 'acct_fork',
@@ -353,9 +475,27 @@ void main() {
             checkedAt: 2,
             keys: stored.keys,
           );
-          expect(await store.replaceConflictedDeviceListPin(honest), isTrue);
+          // Not the conflicted head it was planned from: refused.
+          expect(
+            await store.replaceConflictedDeviceListPin(honest, fork.madeUp),
+            isFalse,
+          );
+          await expectStillConflicted();
+          expect(
+            await store.replaceConflictedDeviceListPin(
+              honest,
+              stored.headStatement,
+            ),
+            isTrue,
+          );
           // Once cleared, a second replacement is refused (compare-and-swap).
-          expect(await store.replaceConflictedDeviceListPin(honest), isFalse);
+          expect(
+            await store.replaceConflictedDeviceListPin(
+              honest,
+              stored.headStatement,
+            ),
+            isFalse,
+          );
         },
         skip: skip,
       );
@@ -369,6 +509,7 @@ class _Fork {
     required this.left,
     required this.right,
     required this.rightNext,
+    required this.rightKeep,
     required this.third,
     required this.madeUp,
     required this.carolKey,
@@ -379,6 +520,7 @@ class _Fork {
   final Uint8List left;
   final Uint8List right;
   final Uint8List rightNext;
+  final Uint8List rightKeep;
   final Uint8List third;
   final Uint8List madeUp;
   final Uint8List carolKey;
@@ -415,12 +557,14 @@ class _Server implements DeviceListSource {
   List<Uint8List> chain = <Uint8List>[];
   bool fail = false;
   bool unknown = false;
+  int fetches = 0;
 
   @override
   Future<DeviceListPage?> fetchDeviceList(
     String accountId, {
     required int after,
   }) async {
+    fetches++;
     if (fail) throw const SocketException('down');
     if (unknown) return null;
     return DeviceListPage(
@@ -477,6 +621,9 @@ class _DatabaseStore extends MemoryLocalStore {
       db.readDeviceListConflicts(accountId);
 
   @override
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) =>
-      db.replaceConflictedDeviceListPin(pin);
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  ) =>
+      db.replaceConflictedDeviceListPin(pin, conflictedHead);
 }

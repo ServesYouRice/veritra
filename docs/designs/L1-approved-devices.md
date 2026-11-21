@@ -231,7 +231,8 @@ batch size and the owner check) were each caught by the matching test.
 The approval hold was enforced but not explained: a held chat only showed
 an error when a send failed. The chat now shows one banner per account
 that holds it, read from the stored leaf verdicts and that account's pin
-(local reads only, at chat open and after every sync pass). The most
+(local reads only, at chat open, after every sync pass and when a send is
+refused by the hold). The most
 serious reason wins: conflict (the pin is in conflict), never approved,
 removed, waiting (no pin, and the last fetch found no list: an account
 from before L1), checking. The own account is worded apart ("A device you
@@ -246,14 +247,31 @@ design says the person clears it after comparing safety numbers, and the
 app "re-pins from that branch's version 1". Done naively (drop the pin,
 fetch again) that is trust on first use under the server's choice, which
 the 2026-11-08 owner decision rejected for chains from another genesis. So
-the reset (`DeviceListPins.trustServedBranch`) is narrower:
+the reset is narrower, and has two steps so the person confirms exactly
+what is pinned:
+
+- `prepareServedBranch` reads and verifies the branch the server shows,
+  applies the rules below and writes nothing. It counts the devices the
+  branch lists that the conflicted pin does not list now (a device the
+  pinned branch removed counts as new). The warning is shown only after
+  this, and states that count: trusting the list approves them, and they
+  can be added to chats. A refused branch shows "nothing changed" without
+  a warning.
+- `commitServedBranch` pins exactly the prepared chain, never one fetched
+  after the confirmation, so a server that switches branch while the
+  dialog is open changes nothing. It checks every kept fork proof again
+  (one recorded meanwhile must hold too), and the store's compare-and-swap
+  writes only while the stored pin is still the conflicted head the plan
+  was made from.
+
+The rules:
 
 - Only another account's list. The own list is its own authority; a fork
   there keeps today's error.
 - The whole served chain is fetched and verified first (native chain and
   step checks, as at first sight). Only then does one compare-and-swap
   replace the pin, and only while the stored pin is still in `conflict`
-  with the same list identity. Any failure leaves the conflict exactly as
+  with the same list identity and the same conflicted head. Any failure leaves the conflict exactly as
   it was; the account is never left without a pin, so a later refresh can
   never become a first sight.
 - The chain must have the pinned list identity and, at every version a

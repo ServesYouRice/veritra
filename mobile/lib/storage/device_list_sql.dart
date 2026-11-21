@@ -232,21 +232,29 @@ extension DeviceListSql on EncryptedLocalDatabase {
   }
 
   /// Replaces a conflicted pin with [pin] (L1 conflict reset): only while
-  /// the stored head is in `conflict` and has [pin]'s list identity, in one
+  /// the stored head is in `conflict`, has [pin]'s list identity and is
+  /// still [conflictedHead], in one
   /// transaction, so a failure leaves the conflict exactly as it was. The
   /// first-pin time restarts at [pin]'s (review M2: the re-pin is a new
   /// first sight). The fork proofs are kept. Returns whether it was written.
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) =>
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  ) =>
       transaction(() async {
         final current = await customSelect(
-          'SELECT state, list_id FROM local_device_list_heads '
+          'SELECT state, list_id, head_statement FROM local_device_list_heads '
           'WHERE account_id = ?',
           variables: [Variable.withString(pin.accountId)],
         ).getSingleOrNull();
         if (current == null ||
             current.read<String>('state') != 'conflict' ||
             pin.conflict ||
-            !_sameBytes(current.read<Uint8List>('list_id'), pin.listId)) {
+            !_sameBytes(current.read<Uint8List>('list_id'), pin.listId) ||
+            !_sameBytes(
+              current.read<Uint8List>('head_statement'),
+              conflictedHead,
+            )) {
           return false;
         }
         await customStatement(

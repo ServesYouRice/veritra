@@ -836,10 +836,13 @@ abstract class LocalStore {
   );
 
   /// Replaces [pin.accountId]'s conflicted pin with [pin] in one step, only
-  /// while the stored pin is in conflict and has [pin]'s list identity (the
-  /// L1 conflict reset). The first-pin time restarts; the proofs stay.
-  /// Returns whether it was written.
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin);
+  /// while the stored pin is in conflict, has [pin]'s list identity and its
+  /// head is still [conflictedHead] (the L1 conflict reset). The first-pin
+  /// time restarts; the proofs stay. Returns whether it was written.
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  );
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId);
   Future<void> saveApprovalLeaves(ApprovalLeafChange change);
   Future<List<String>> loadHeldConversations();
@@ -2210,12 +2213,16 @@ class MemoryLocalStore implements LocalStore {
       ]..sort((a, b) => a.version.compareTo(b.version));
 
   @override
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) async {
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  ) async {
     final current = _deviceListPins[pin.accountId];
     if (current == null ||
         !current.conflict ||
         pin.conflict ||
-        !_sameDeviceListBytes(current.listId, pin.listId)) {
+        !_sameDeviceListBytes(current.listId, pin.listId) ||
+        !_sameDeviceListBytes(current.headStatement, conflictedHead)) {
       return false;
     }
     _deviceListPins[pin.accountId] = pin.copyWith(
@@ -4455,8 +4462,11 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readDeviceListConflicts(accountId);
 
   @override
-  Future<bool> replaceConflictedDeviceListPin(DeviceListPin pin) async =>
-      (await _database()).replaceConflictedDeviceListPin(pin);
+  Future<bool> replaceConflictedDeviceListPin(
+    DeviceListPin pin,
+    List<int> conflictedHead,
+  ) async =>
+      (await _database()).replaceConflictedDeviceListPin(pin, conflictedHead);
 
   @override
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) async =>
