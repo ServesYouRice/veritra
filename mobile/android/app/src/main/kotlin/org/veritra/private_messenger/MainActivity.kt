@@ -255,15 +255,22 @@ class MainActivity : FlutterActivity() {
     }
 }
 
-// The one notification Veritra shows (I41): a fixed sentence, never message
-// text, a sender or a conversation. Shown only while the app is not in the
-// foreground and only when notifications are allowed.
+// The notifications Veritra shows (I41): a fixed sentence, never message
+// text, a sender, a conversation or a community. Shown only while the app is
+// not in the foreground and only when notifications are allowed. C1's "New
+// join request" (owner decision 2026-11-21) has its own channel, so it can be
+// turned off apart from messages, and its words come from the app's
+// resources in the device language.
 object GenericNotification {
     private const val CHANNEL = "veritra_messages"
+    private const val JOIN_REQUEST_CHANNEL = "veritra_join_requests"
     private const val ID = 4102
 
     @Suppress("DEPRECATION")
-    fun show(context: Context, notificationId: Int = ID): Boolean {
+    fun show(context: Context, notificationId: Int = ID,
+             notice: WakeRules.Notice = WakeRules.Notice.MESSAGE): Boolean {
+        val joinRequest = notice == WakeRules.Notice.JOIN_REQUEST
+        val channel = if (joinRequest) JOIN_REQUEST_CHANNEL else CHANNEL
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED) return false
@@ -271,15 +278,18 @@ object GenericNotification {
             ?: return false
         if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled()) return false
         val builder = if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(NotificationChannel(
+            manager.createNotificationChannel(if (joinRequest) NotificationChannel(
+                JOIN_REQUEST_CHANNEL, context.getString(R.string.notification_channel_join_requests),
+                NotificationManager.IMPORTANCE_DEFAULT) else NotificationChannel(
                 CHANNEL, "Messages", NotificationManager.IMPORTANCE_DEFAULT))
-            Notification.Builder(context, CHANNEL)
+            Notification.Builder(context, channel)
         } else {
             Notification.Builder(context)
         }
         builder.setSmallIcon(context.applicationInfo.icon)
             .setContentTitle("Veritra")
-            .setContentText("New encrypted message")
+            .setContentText(if (joinRequest) context.getString(R.string.notification_join_request)
+                else "New encrypted message")
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
@@ -287,7 +297,7 @@ object GenericNotification {
                 context, 0, launch,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         }
-        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+        if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(channel)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         manager.notify(notificationId, builder.build())
         return true
     }

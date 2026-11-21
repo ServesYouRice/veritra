@@ -577,7 +577,7 @@ func (s *Store) requestToJoin(ctx context.Context, accountID, locator string) (r
 	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_join_requests(id, invite_id, community_id, conversation_id, account_id, status, created_at) VALUES(?, ?, ?, ?, ?, 'pending', ?)`, id, invite.id, community, conversation, accountID, formatTime(now)); err != nil {
 		return domain.JoinRequest{}, false, nil, err
 	}
-	notices, err = joinRequestNoticesTx(ctx, tx, invite.target, accountID, formatTime(now))
+	notices, err = joinRequestNoticesTx(ctx, tx, invite.target, binding.AnchorGroupID, accountID, now)
 	if err != nil {
 		return domain.JoinRequest{}, false, nil, err
 	}
@@ -605,7 +605,15 @@ const joinRequestNoticeQuiet = 10 * time.Minute
 // joinRequestNoticesTx records the content-free notice event for every active
 // owner and admin of target except the requester, leaving out anyone already
 // told within joinRequestNoticeQuiet of now.
-func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarget, requester, now string) ([]JoinRequestNotice, error) {
+//
+// It also leaves out anyone who muted the target's conversation (mutedVia:
+// the group itself, or a community's shared conversation; empty for none),
+// while that mute lasts. The notice names no target, so neither the app nor
+// the phone could tell which mute applies: the server, which knows the
+// target, decides. A muted admin gets no event and no wake, and the quiet
+// window is not used up, so a request for a target they did not mute still
+// tells them. The list itself still shows the request.
+func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarget, mutedVia, requester string, now time.Time) ([]JoinRequestNotice, error) {
 	community, conversation := target.columns()
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.account_id
@@ -613,8 +621,12 @@ func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarg
 		JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL
 		WHERE m.community_id IS ? AND m.conversation_id IS ? AND m.role IN ('`+domain.RoleOwner+`', '`+domain.RoleAdmin+`')
 		  AND m.account_id <> ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM conversation_notification_preferences p
+			WHERE p.account_id = m.account_id AND p.conversation_id = ? AND p.muted = 1
+			  AND (p.muted_until IS NULL OR p.muted_until > ?))
 		ORDER BY m.created_at, m.account_id
-		LIMIT ?`, community, conversation, requester, maxJoinRequestNotices)
+		LIMIT ?`, community, conversation, requester, mutedVia, now.Unix(), maxJoinRequestNotices)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +645,8 @@ func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarg
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	quietSince := formatTime(parseTime(now).Add(-joinRequestNoticeQuiet))
+	quietSince := formatTime(now.Add(-joinRequestNoticeQuiet))
+	nowText := formatTime(now)
 	notices := make([]JoinRequestNotice, 0, len(admins))
 	for _, admin := range admins {
 		admin := admin
@@ -644,7 +657,7 @@ func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarg
 		if recent != 0 {
 			continue
 		}
-		eventID, err := insertSyncEvent(ctx, tx, JoinRequestNoticeEventType, &admin, "", struct{}{}, now)
+		eventID, err := insertSyncEvent(ctx, tx, JoinRequestNoticeEventType, &admin, "", struct{}{}, nowText)
 		if err != nil {
 			return nil, err
 		}

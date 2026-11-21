@@ -267,7 +267,10 @@ strictly higher rank. Groups keep their existing routes.
   request records one `account.join_request` event for each active owner and
   admin of the target (payload `{}`: no requester, username, target or name),
   published to their connected devices, plus the provider's fixed generic
-  push wake (legacy-mode APNs skipped, as for recovery wakes). The app shows
+  push wake to their `local_decrypt_v1` devices only (2026-11-21: a
+  legacy-mode device would show "New encrypted message"). An owner or admin
+  who muted the target (the group, or a community's shared conversation) is
+  not told. The app shows
   "New join request" in the notice stack. A repeated ask tells no one, and
   an owner or admin told within the last 10 minutes is not told again by
   any request (`joinRequestNoticeQuiet`, per account across targets and
@@ -275,10 +278,9 @@ strictly higher rank. Groups keep their existing routes.
   decline-and-refile with one link pushed every admin on each round, up to
   the requester's write budget). Cost: an admin who dismissed the notice
   inside the window is not pushed for a later request; the list shows it. The
-  phone's own notification while the app is closed is not built: the native
-  notice is the fixed "New encrypted message" text fed by the message
-  outbox, so a background admin's device syncs silently and shows the notice
-  when opened.
+  phone's own notification while the app is closed is built (2026-11-21, see
+  [C1-progress](C1-progress.md), last section): a background wake pass holds
+  the notice and native shows "New join request" in the device language.
 - C0 shared groups, per-conversation sync bounds, client cursors.
 
 ## 2026-11-09 port: group Welcome anchor (partial C1)

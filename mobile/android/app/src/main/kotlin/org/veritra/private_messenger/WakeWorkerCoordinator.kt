@@ -67,9 +67,8 @@ object WakeWorkerCoordinator {
                             result.success(false)
                         } else { result.success(unregister(context)) }
                     }
-                    "validatePermit", "presentGenericNotice" -> {
-                        val allowed = if (call.method == "validatePermit") setOf("protocol", "permit", "profile")
-                            else setOf("protocol", "permit", "profile", "notice_id")
+                    "validatePermit", "presentGenericNotice", "presentJoinRequestNotice" -> {
+                        val allowed = WakeRules.permitArguments(call.method)
                         val id = args["permit"] as? String
                         val permit = active?.permit
                         val valid = args.keys == allowed && id != null && profile == name &&
@@ -79,13 +78,14 @@ object WakeWorkerCoordinator {
                             result.success(mapOf("active" to (remaining > 0), "remaining_ms" to remaining))
                         } else {
                             val notice = args["notice_id"] as? String
-                            if (!valid || notice == null || !notice.matches(Regex("[0-9a-f]{32}"))) result.success("unavailable")
+                            val kind = WakeRules.notice(call.method)
+                            if (!valid || notice == null || kind == null || !WakeRules.noticeId(notice)) result.success("unavailable")
                             else if (PushEventBridge.foreground) result.success("suppressed")
                             else when (WakeMarkerStore.claimNotice(context, name!!, notice)) {
                                 2 -> result.success("suppressed")
                                 1 -> {
                                     if (!permit.matches(id, name, SystemClock.elapsedRealtime())) result.success("unavailable")
-                                    else result.success(if (GenericNotification.show(context, notice.take(8).toLong(16).toInt())) "shown" else "suppressed")
+                                    else result.success(if (GenericNotification.show(context, WakeRules.notificationId(kind, notice), kind)) "shown" else "suppressed")
                                 }
                                 else -> result.success("unavailable")
                             }

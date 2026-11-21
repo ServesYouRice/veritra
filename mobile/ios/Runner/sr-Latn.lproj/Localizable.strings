@@ -1,2 +1,4 @@
 /* The generic iOS notification (D53): fixed text, no sender, no content. */
 "veritra.notification.new_message" = "Nova poruka";
+/* C1: the phone notice for a join request. Fixed text: no requester, group or community. */
+"veritra.notification.join_request" = "Novi zahtev za pridruživanje";

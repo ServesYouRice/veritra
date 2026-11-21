@@ -199,3 +199,30 @@ longer read. Item 1 of "Still open" above is built; the independent security
 review (item 3) now covers v3 too. Remaining limit: the inviter's own
 community-to-group mapping still comes from the server (needs the C0 signed
 layout record).
+
+## 2026-11-21: "New join request" on a closed phone
+
+Item 2 of "Still open" above is built. The server records the content-free
+`account.join_request` event per owner and admin as before (at most once per
+admin per 10 minutes) and now also leaves out anyone who muted the target
+while the mute lasts: the group's conversation, or a community's shared
+conversation. The event names no target, so only the server can apply the
+mute; a muted admin gets no event and no wake, and their quiet window stays
+unused. The wake goes only to `local_decrypt_v1` subscriptions: a
+legacy-mode device would show its fixed "New encrypted message" for a wake
+that brought none (as D87 for APNs). Those devices see the notice in the app.
+
+On the phone, a background wake pass (D52, the same bounded opt-in path as
+message notices) holds the notice in a scoped local setting before the
+event's cursor commits, then asks native through the new
+`presentJoinRequestNotice` wake-worker method, with only the permit, profile
+and an opaque local ID (SHA-256 of a domain, the account scope and the event
+id). Native words "New join request" from its own resources in the device
+language (Android `strings.xml` in `values`, `values-sr`, `values-b+sr+Latn`
+on its own "Join requests" channel; iOS `Localizable.strings`), one at a time
+(a fixed notification id/identifier). An unanswered presentation keeps the
+wake pending and retries with the same ID; opening the app drops a held
+notice and shows the in-app one instead. An event older than 24 hours is not
+turned into a phone notice. Like message notices, this exists only in builds
+with phone notices (demo + `VERITRA_PHONE_NOTICES`); release builds keep both
+off. Native code is compiled by CI only; device evidence is still open.

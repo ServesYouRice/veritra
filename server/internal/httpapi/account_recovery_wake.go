@@ -73,13 +73,16 @@ func (w *accountWakes) stop() {
 // and web push wakes are data-only, so they are still sent. Targets and errors are never
 // logged (they hold tokens and endpoints).
 func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
-	a.wakeAccount(accountID, excludeDeviceID, "recovery_wake")
+	a.wakeAccount(accountID, excludeDeviceID, "recovery_wake", false)
 }
 
 // wakeAccount is wakeAccountDevices with the log key's prefix: the same
 // fixed generic wake serves the C1 join-request notice ("join_request_wake"),
-// whose payload is just as content-free.
-func (a *API) wakeAccount(accountID, excludeDeviceID, logKey string) {
+// whose payload is just as content-free. With localDecryptOnly only
+// local_decrypt_v1 subscriptions are woken: their app reads the event and
+// words the notice itself, while a legacy-mode device would show its fixed
+// "New encrypted message" for a wake that brought none.
+func (a *API) wakeAccount(accountID, excludeDeviceID, logKey string, localDecryptOnly bool) {
 	if a.Push == nil || a.Store == nil {
 		return
 	}
@@ -103,7 +106,8 @@ func (a *API) wakeAccount(accountID, excludeDeviceID, logKey string) {
 			if ctx.Err() != nil {
 				return
 			}
-			if target.Provider == "apns" && target.NotificationMode != domain.PushNotificationLocalDecrypt {
+			if target.NotificationMode != domain.PushNotificationLocalDecrypt &&
+				(localDecryptOnly || target.Provider == "apns") {
 				continue
 			}
 			sendCtx, sendCancel := context.WithTimeout(ctx, recoveryWakeSendTimeout)

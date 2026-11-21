@@ -58,6 +58,34 @@ public final class WakeRules {
         result.put("worker_attached", true); result.put("can_opt_in", phoneNoticesBuild);
         return result;
     }
+    /** The fixed sentence a present method shows: the generic message
+     * notice (I41) or C1's "New join request". Native words both; Dart sends
+     * only the method and an opaque local notice ID. */
+    public enum Notice { MESSAGE, JOIN_REQUEST }
+    /** The exact argument keys of a permit-bound method, or null when the
+     * method is not one. */
+    public static Set<String> permitArguments(String method) {
+        if ("validatePermit".equals(method)) return keys("protocol", "permit", "profile");
+        if (notice(method) != null) return keys("protocol", "permit", "profile", "notice_id");
+        return null;
+    }
+    public static Notice notice(String method) {
+        if ("presentGenericNotice".equals(method)) return Notice.MESSAGE;
+        if ("presentJoinRequestNotice".equals(method)) return Notice.JOIN_REQUEST;
+        return null;
+    }
+    public static boolean noticeId(String value) {
+        return value != null && value.matches("[0-9a-f]{32}");
+    }
+    /** Each message notice has its own notification; join-request notices
+     * share one, so a newer one replaces an older one instead of stacking
+     * identical lines. */
+    public static final int JOIN_REQUEST_NOTIFICATION_ID = 4104;
+    public static int notificationId(Notice notice, String noticeId) {
+        if (notice == null || !noticeId(noticeId)) throw new IllegalArgumentException("invalid notice");
+        if (notice == Notice.JOIN_REQUEST) return JOIN_REQUEST_NOTIFICATION_ID;
+        return (int) Long.parseLong(noticeId.substring(0, 8), 16);
+    }
     public enum NoticeClaim { NEW, DUPLICATE, FULL, CLOCK_ROLLBACK }
     public static final int MAX_NOTICE_ENTRIES = 4096;
     public static final long NOTICE_RETENTION_MS = 60L * 60 * 1000;
