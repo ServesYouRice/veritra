@@ -41,7 +41,6 @@
   "settingsSectionRecovery": "Опоравак",
   "settingsSectionComingSoon": "Ускоро",
   "settingsSectionAppearance": "Изглед",
-  "settingsSectionNotifications": "Обавештења",
   "settingsHideNotificationPreview": "Сакриј преглед поруке",
   "settingsHideNotificationPreviewDetail": "Обавештења приказују „Нова порука“ без пошиљаоца и текста.",
   "notificationNewMessage": "Нова порука",
@@ -273,7 +272,6 @@
   "blockedUnblockFailed": "Деблокирање налога {label} није успело.",
   "blockedLoadFailed": "Учитавање блокираних налога није успело",
   "commonRetry": "Покушај поново",
-  "commonUndo": "Поништи",
 
   "accountPickerHelper": "Унесите тачно корисничко име или налепите ИД налога (acct_…).",
   "accountPickerKnown": "Људи које знате",

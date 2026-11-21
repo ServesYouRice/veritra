@@ -83,7 +83,6 @@
   "settingsSectionRecovery": "Recovery",
   "settingsSectionComingSoon": "Coming soon",
   "settingsSectionAppearance": "Appearance",
-  "settingsSectionNotifications": "Notifications",
   "settingsHideNotificationPreview": "Hide message preview",
   "settingsHideNotificationPreviewDetail": "Notifications say \"New message\" and show no sender or text.",
   "notificationNewMessage": "New message",
@@ -353,7 +352,6 @@
   "@blockedUnblockFailed": {"placeholders": {"label": {"type": "String"}}},
   "blockedLoadFailed": "Couldn’t load blocked accounts",
   "commonRetry": "Retry",
-  "commonUndo": "Undo",
 
   "accountPickerHelper": "Exact username, or paste an account ID (acct_…).",
   "accountPickerKnown": "People you know",
