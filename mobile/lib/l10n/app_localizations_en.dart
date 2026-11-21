@@ -3461,11 +3461,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryKeyCheckSavedNotCurrent =>
-      'This is a recovery key, but not your account\'s current one. It may be an older key that was replaced. If you cannot find the current one, create a new key.';
+      'This is a recovery key, but not this account\'s current one. It may be an older key that was replaced, or the key of another account. If you cannot find the current one, create a new key.';
 
   @override
   String get recoveryKeyCheckSavedUnknown =>
-      'The key could not be checked right now. Check your connection and try again.';
+      'The key could not be checked right now. Try again later.';
 
   @override
   String get recoveryKeyTooLong =>

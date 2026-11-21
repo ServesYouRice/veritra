@@ -3482,11 +3482,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get recoveryKeyCheckSavedNotCurrent =>
-      'Ово јесте кључ за опоравак, али није тренутни кључ вашег налога. Можда је то старији кључ који је замењен. Ако не можете да нађете тренутни, направите нови кључ.';
+      'Ово јесте кључ за опоравак, али није тренутни кључ овог налога. Можда је то старији кључ који је замењен, или кључ другог налога. Ако не можете да нађете тренутни, направите нови кључ.';
 
   @override
   String get recoveryKeyCheckSavedUnknown =>
-      'Кључ тренутно не може да се провери. Проверите везу и покушајте поново.';
+      'Кључ тренутно не може да се провери. Покушајте касније.';
 
   @override
   String get recoveryKeyTooLong =>
@@ -8922,11 +8922,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get recoveryKeyCheckSavedNotCurrent =>
-      'Ovo jeste ključ za oporavak, ali nije trenutni ključ vašeg naloga. Možda je to stariji ključ koji je zamenjen. Ako ne možete da nađete trenutni, napravite novi ključ.';
+      'Ovo jeste ključ za oporavak, ali nije trenutni ključ ovog naloga. Možda je to stariji ključ koji je zamenjen, ili ključ drugog naloga. Ako ne možete da nađete trenutni, napravite novi ključ.';
 
   @override
   String get recoveryKeyCheckSavedUnknown =>
-      'Ključ trenutno ne može da se proveri. Proverite vezu i pokušajte ponovo.';
+      'Ključ trenutno ne može da se proveri. Pokušajte kasnije.';
 
   @override
   String get recoveryKeyTooLong =>

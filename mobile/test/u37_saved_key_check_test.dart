@@ -12,6 +12,7 @@ import 'package:private_messenger/ui/theme.dart';
 
 import 'k0_recovery_fakes.dart';
 import 'native_test_env.dart';
+import 'test_crypto_service.dart';
 
 /// U37: "Check my key" for a recovery key saved earlier. The typed key is
 /// decoded and its key id derived on the device, then compared with the id
@@ -161,6 +162,24 @@ void main() {
         );
         expect(crypto.decodedTexts, isEmpty);
         expectLocalAndWiped(crypto);
+        state.dispose();
+      });
+    }
+
+    for (final (name, engine) in <(String, CryptoService)>[
+      ('the release gate', UnavailableCryptoService()),
+      ('an engine without recovery', TestOnlyCryptoService()),
+    ]) {
+      test('$name: no answer and no request', () async {
+        final state = k0App(server, store, engine)
+          ..session = k0SignedIn
+          ..api = K0Api(server);
+        expect(state.recoveryAvailable, isFalse);
+        expect(
+          await state.checkSavedRecoveryKey(k0Display),
+          SavedRecoveryKeyCheck.unknown,
+        );
+        expect(server.statusReads, 0);
         state.dispose();
       });
     }

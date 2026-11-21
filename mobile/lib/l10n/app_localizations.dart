@@ -5640,13 +5640,13 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryKeyCheckSavedNotCurrent.
   ///
   /// In en, this message translates to:
-  /// **'This is a recovery key, but not your account\'s current one. It may be an older key that was replaced. If you cannot find the current one, create a new key.'**
+  /// **'This is a recovery key, but not this account\'s current one. It may be an older key that was replaced, or the key of another account. If you cannot find the current one, create a new key.'**
   String get recoveryKeyCheckSavedNotCurrent;
 
   /// No description provided for @recoveryKeyCheckSavedUnknown.
   ///
   /// In en, this message translates to:
-  /// **'The key could not be checked right now. Check your connection and try again.'**
+  /// **'The key could not be checked right now. Try again later.'**
   String get recoveryKeyCheckSavedUnknown;
 
   /// No description provided for @recoveryKeyTooLong.
