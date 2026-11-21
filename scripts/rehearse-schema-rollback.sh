@@ -68,6 +68,29 @@ start() { # BINARY LABEL
   stop_server
   return 1
 }
+# probe LABEL: signs in with the smoke owner and creates a community with two
+# request bodies, printing only HTTP status codes. Informational: it shows a
+# write path whose tables a newer migration changed (0082 dropped the
+# plaintext name columns of communities), which `verify` does not touch.
+probe() {
+  python3 - "$WORK/state.json" "$BASE" "$1" <<'PY'
+import json, sys, urllib.request, urllib.error
+state, base, label = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+def call(path, body, token=None):
+    request = urllib.request.Request(base + path, json.dumps(body).encode(), {"Content-Type": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        return error.code, {}
+status, body = call("/api/v1/auth/login", {"username": state["username"], "password": state["password"], "device_id": state["device_id"], "device_secret": state["device_secret"]})
+if status != 200:
+    print(f"{label}: probe login -> {status}"); sys.exit(0)
+for name, payload in (("no name", {}), ("with a name", {"name": "rollback probe"})):
+    code, _ = call("/api/v1/communities", payload, body["token"])
+    print(f"{label}: probe, create a community ({name}) -> HTTP {code}")
+PY
+}
 applied() { # prints how many schema_migrations rows the data directory holds
   python3 - "$WORK/data" <<'PY'
 import sqlite3, sys, glob
@@ -84,6 +107,7 @@ start "$WORK/server-head" head-1 || exit 1
   -turn-secret-file "$WORK/secrets/turn_shared_secret" -turn-urls "turn:127.0.0.1:3478?transport=udp" \
   -vapid-public "$VAPID_PUBLIC" > "$WORK/logs/run.log" 2>&1 || { say "first-run smoke failed"; tail -5 "$WORK/logs/run.log"; exit 1; }
 say "first-run smoke: ok"
+probe "HEAD"
 say "applied migrations: $(applied)"
 stop_server
 
@@ -96,6 +120,7 @@ if start "$WORK/server-old" old; then
     say "old binary on the newer schema: verify FAILED"; STATUS=1
     sed 's/^/    /' "$WORK/logs/verify-old.log" | tail -8
   fi
+  probe "OLD on the newer schema"
   grep -i -c "error\|fail" "$WORK/logs/old.log" | sed 's/^/old server log lines with error or fail: /'
   stop_server
 else
@@ -106,6 +131,7 @@ say "== 3. roll forward: HEAD again"
 if start "$WORK/server-head" head-2; then
   if "$WORK/smoke-client" verify -base "$BASE" -state "$WORK/state.json" > "$WORK/logs/verify-head.log" 2>&1; then
     say "HEAD after the rollback: verify ok"
+    probe "HEAD after the rollback"
   else
     say "HEAD after the rollback: verify FAILED"; STATUS=1; tail -8 "$WORK/logs/verify-head.log" | sed 's/^/    /'
   fi

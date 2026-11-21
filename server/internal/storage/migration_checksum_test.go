@@ -155,6 +155,12 @@ func TestMigrateOnANewerDatabaseLeavesUnknownMigrationsAloneAndStillRefusesEdits
 	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM schema_migrations`); n != 2 {
 		t.Fatalf("schema_migrations rows = %d, want both kept", n)
 	}
+	if unknown, err := store.UnknownAppliedMigrations(ctx, older); err != nil || len(unknown) != 1 || unknown[0] != "0002_b.sql" {
+		t.Fatalf("unknown applied migrations for the older binary = %v, err = %v, want [0002_b.sql]", unknown, err)
+	}
+	if unknown, err := store.UnknownAppliedMigrations(ctx, newer); err != nil || len(unknown) != 0 {
+		t.Fatalf("unknown applied migrations for the newer binary = %v, err = %v, want none", unknown, err)
+	}
 	var extra string
 	if err := store.db.QueryRowContext(ctx, `SELECT extra FROM b_thing WHERE id = 'row'`).Scan(&extra); err != nil || extra != "kept" {
 		t.Fatalf("the newer migration's data = %q, err = %v", extra, err)

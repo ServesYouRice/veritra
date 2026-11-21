@@ -424,6 +424,18 @@ every category row once. The mobile client writes the bounded pages to a local
 5. If rollback crosses an incompatible migration, stop the server, restore the
    matching pre-upgrade backup, and reinstall its matching binary.
 
+An older binary on a newer database starts: it applies nothing, leaves the
+newer migrations alone, and (from the release that carries the warning) logs
+`database_schema_newer_than_binary` with the number and names of the
+migrations it does not know. It never refuses, so a rollback across a
+migration that dropped or rebuilt a table starts, answers `/readyz`, and then
+fails on the routes that use that table (rehearsed: community creation
+answered 500 after a rollback across migration 0082). Read the warning,
+check whether the migrations between the two releases only added tables,
+columns or indexes, and otherwise restore the matching pre-upgrade backup. To
+rehearse a rollback locally: `scripts/rehearse-schema-rollback.sh OLD_REV`
+(results: `testing/evidence/server-schema-rollback-2026-11-21.md`).
+
 Rolling back past the Argon2id change (migration 0032) is special: the older
 binary starts and accepts current sessions, but it cannot verify Argon2id
 hashes, so anyone who signed in, registered or changed their password after
@@ -605,8 +617,10 @@ would find the old pod still holding the lock. On rollback, the older binary
 checks the checksums of the migrations it knows and leaves newer ones alone,
 so it starts; it works only if those newer migrations were additive. Across
 an incompatible migration, restore the matching backup instead (see Restore
-safety). The rehearsal's upgrade and rollback used images with the same
-schema, so schema skew is untested.
+safety). The k3s rehearsal's upgrade and rollback used images with the same
+schema; schema skew was rehearsed separately with local binaries
+(`scripts/rehearse-schema-rollback.sh`, evidence in
+`testing/evidence/server-schema-rollback-2026-11-21.md`).
 
 The Kustomization waits for the Deployment and the Certificate with a
 10-minute timeout, which covers the Recreate stop (up to 40 s) and the

@@ -425,6 +425,40 @@ func (s *Store) Migrate(ctx context.Context, migrations fs.FS) error {
 	return nil
 }
 
+// UnknownAppliedMigrations lists the applied migrations this binary does not
+// carry, oldest first: a database that a newer server has migrated. Migrate
+// leaves them alone and the older binary starts (docs/operations.md, "Upgrade
+// and rollback"); that only works if the newer migrations were additive, so
+// the caller says so in the log. Names only, never row data.
+func (s *Store) UnknownAppliedMigrations(ctx context.Context, migrations fs.FS) ([]string, error) {
+	entries, err := fs.ReadDir(migrations, ".")
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		known[entry.Name()] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, err
+	}
+	var unknown []string
+	if err := eachRow(rows, func(rows rowIterator) error {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return err
+		}
+		if !known[version] {
+			unknown = append(unknown, version)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return unknown, nil
+}
+
 // ensureMigrationChecksums adds the checksum column to a schema_migrations
 // table that predates it and backfills every applied row from contents (the
 // current migration files by name), as one transaction. An interruption, or a
