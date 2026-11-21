@@ -469,6 +469,15 @@ void main() {
       });
     }
 
+    test('VP8 in any letter case passes', () async {
+      room.videoCodec = 'VP8';
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      await sfu.senderCryptor(camera, 'acct_a/dev_a:1');
+      await camera.setEnabled(true);
+      expect(sfu.poisoned, isFalse);
+      expect(room.published.single.enabled, isTrue);
+    });
+
     test('a backup codec sender that appears later is refused at enable',
         () async {
       final camera = await sfu.publishDisabled(roomSlotCamera);

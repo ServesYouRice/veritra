@@ -232,7 +232,7 @@ class LiveKitSfuConnection implements SfuConnection {
       throw StateError('the SFU connection is not fail closed');
     }
     if (slot != roomSlotVoice &&
-        (media.codec != roomVideoCodec ||
+        (media.codec?.toLowerCase() != roomVideoCodec ||
             media.extraSenders != 0 ||
             _driver.dynacast)) {
       // Not the one VP8 sender asked for: the SFU moved the codec or made
