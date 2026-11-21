@@ -572,7 +572,7 @@ func TestAdminLiftsDepartedMembersTimeout(t *testing.T) {
 // C5: a banned account's devices cannot be claimed for an add to any of the
 // community's conversations. The ban removes the membership in the same
 // transaction and every later add refuses the account, and a claim needs the
-// target to be a member, so no separate ban check is needed in the claim.
+// target to be a member; the claim also checks the ban itself (below).
 func TestBannedAccountDevicesCannotBeClaimed(t *testing.T) {
 	ctx := context.Background()
 	f := newInviteFixture(t, ctx, config.Limits{})
@@ -592,6 +592,53 @@ func TestBannedAccountDevicesCannotBeClaimed(t *testing.T) {
 	}
 	if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("re-add after the ban: %v", err)
+	}
+}
+
+// C5: the claim refuses a banned account on the ban row alone, as the
+// requester and as a target, even where a membership row survived the ban
+// (written here directly: no route leaves one today). Each refusal fails
+// with the ban check removed.
+func TestKeyPackageClaimsRefuseABannedAccountOnTheBanAlone(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob := f.people[0], f.people[1]
+	for _, who := range []AccountDevice{alice, bob} {
+		f.addMember(t, ctx, who, domain.RoleMember)
+		if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, who.Account.ID, domain.RoleMember); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ban := func(who AccountDevice) {
+		t.Helper()
+		if _, err := f.store.db.ExecContext(ctx, `INSERT INTO member_bans(community_id, account_id, banned_by, created_at) VALUES(?, ?, ?, ?)`, f.comm.ID, who.Account.ID, f.admin.Account.ID, nowString()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Before any ban both claims work (no MLS state yet, so any member may).
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, f.owner.Account.ID, f.owner.Device.ID, []string{alice.Device.ID}); err != nil {
+		t.Fatalf("claim for alice before the ban: %v", err)
+	}
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, bob.Account.ID, bob.Device.ID, []string{f.owner.Device.ID}); err != nil {
+		t.Fatalf("claim by bob before the ban: %v", err)
+	}
+	ban(alice)
+	ban(bob)
+	// A target: one banned device refuses the whole claim, with nothing taken.
+	before := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM device_key_packages WHERE claimed_at IS NOT NULL`)
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, f.owner.Account.ID, f.owner.Device.ID, []string{f.member.Device.ID, alice.Device.ID}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("claim for a banned target: %v", err)
+	}
+	if after := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM device_key_packages WHERE claimed_at IS NOT NULL`); after != before {
+		t.Fatalf("claimed packages %d -> %d after a refused claim", before, after)
+	}
+	// The requester.
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, bob.Account.ID, bob.Device.ID, []string{f.member.Device.ID}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("claim by a banned requester: %v", err)
+	}
+	// Nobody else is affected.
+	if _, err := f.store.ClaimDeviceKeyPackages(ctx, f.conv.ID, f.owner.Account.ID, f.owner.Device.ID, []string{f.member.Device.ID}); err != nil {
+		t.Fatalf("claim for a member who is not banned: %v", err)
 	}
 }
 

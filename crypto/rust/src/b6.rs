@@ -1,5 +1,6 @@
-//! B6 (group calls, ABI 22): the media-key schedule and the join signature
-//! domain. See `docs/designs/B6-group-calls.md`.
+//! B6 (group calls, ABI 22; call-group marker ABI 28): the media-key
+//! schedule, the join signature domain and the call-group marker. See
+//! `docs/designs/B6-group-calls.md`.
 //!
 //! The call group's MLS exporter gives one secret `E` per epoch. `E` never
 //! leaves the core: only `K(s,t)`, one key per sender leaf and stream slot,
@@ -72,6 +73,48 @@ pub fn sender_key(
         return Err(B6Error::Crypto);
     }
     Ok(okm)
+}
+
+/// ABI 28: the GroupContext extension type of the call-group marker
+/// (private-use range; C4 is `0xF0C4`, the L2 pad `0xF0A2`).
+pub const CALL_EXTENSION_TYPE: u16 = 0xF0B6;
+/// Format byte of the marker's data.
+pub const CALL_MARKER_FORMAT: u8 = 1;
+
+/// The call-group marker's data:
+/// `u8(1) | lp(call_id) | lp(conversation_id)`, each id 1 to 128 bytes.
+pub fn encode_call_marker(call_id: &[u8], conversation_id: &[u8]) -> Result<Vec<u8>, B6Error> {
+    let mut out = vec![CALL_MARKER_FORMAT];
+    lp(&mut out, call_id)?;
+    lp(&mut out, conversation_id)?;
+    Ok(out)
+}
+
+fn read_lp<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], B6Error> {
+    let (len, rest) = input
+        .split_first_chunk::<2>()
+        .ok_or(B6Error::InvalidInput)?;
+    let len = usize::from(u16::from_be_bytes(*len));
+    if len == 0 || len > MAX_ID_BYTES || rest.len() < len {
+        return Err(B6Error::InvalidInput);
+    }
+    let (value, rest) = rest.split_at(len);
+    *input = rest;
+    Ok(value)
+}
+
+/// Decodes a marker strictly: format 1, both ids 1 to 128 bytes, nothing
+/// after them. Returns `(call_id, conversation_id)`.
+pub fn decode_call_marker(data: &[u8]) -> Result<(&[u8], &[u8]), B6Error> {
+    let Some((&CALL_MARKER_FORMAT, mut rest)) = data.split_first() else {
+        return Err(B6Error::InvalidInput);
+    };
+    let call_id = read_lp(&mut rest)?;
+    let conversation_id = read_lp(&mut rest)?;
+    if !rest.is_empty() {
+        return Err(B6Error::InvalidInput);
+    }
+    Ok((call_id, conversation_id))
 }
 
 /// The signed message of a join, without the domain:

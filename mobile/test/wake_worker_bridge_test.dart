@@ -63,6 +63,7 @@ void main() {
           },
         'validatePermit' => {'active': true, 'remaining_ms': 15000},
         'presentGenericNotice' => 'shown',
+        'presentJoinRequestNotice' => 'suppressed',
         'uninstall' => true,
         _ => throw MissingPluginException(),
       };
@@ -110,6 +111,18 @@ void main() {
       expect(
         notice.keys,
         unorderedEquals(['protocol', 'permit', 'profile', 'notice_id']),
+      );
+      // C1: the join-request notice is its own method with the same exact,
+      // content-free arguments; native picks the words.
+      expect(
+        await bridge.presentJoinRequestNotice(received!, 'b' * 32),
+        WakeNoticeResult.suppressed,
+      );
+      expect(calls.last.method, 'presentJoinRequestNotice');
+      expect(calls.last.arguments, {...notice, 'notice_id': 'b' * 32});
+      expect(
+        () => bridge.presentJoinRequestNotice(received!, 'New join request'),
+        throwsA(anything),
       );
     },
   );

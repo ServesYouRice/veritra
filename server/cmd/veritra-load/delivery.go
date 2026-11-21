@@ -85,34 +85,37 @@ func (t *deliveryTracker) sent(key string, ok bool) {
 	}
 }
 
-// observe records that client c saw the send's event at at. Only the first
-// sighting of an expected delivery counts; repeats, unexpected clients and
-// unknown keys (seeding, failed or finished sends) record nothing.
-func (t *deliveryTracker) observe(key string, c clientSlot, at time.Time) {
+// observe records that client c saw the send's event at at, and reports
+// whether that sighting counted. Only the first sighting of an expected
+// delivery counts; repeats, unexpected clients and unknown keys (seeding,
+// failed or finished sends) record nothing.
+func (t *deliveryTracker) observe(key string, c clientSlot, at time.Time) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	send := t.sends[key]
 	if send == nil || !send.expected[c] {
-		return
+		return false
 	}
 	if !send.acked {
 		if send.early == nil {
 			send.early = map[clientSlot]time.Time{}
 		}
-		if _, seen := send.early[c]; !seen {
-			send.early[c] = at
+		if _, seen := send.early[c]; seen {
+			return false
 		}
-		return
+		send.early[c] = at
+		return true
 	}
 	h := send.handles[c]
 	if h == nil {
-		return
+		return false
 	}
 	delete(send.handles, c)
 	t.rec.end(h, outcomeOK, at.Sub(send.started))
 	if len(send.handles) == 0 {
 		delete(t.sends, key)
 	}
+	return true
 }
 
 // expire records every awaited delivery of an acknowledged send that
@@ -176,7 +179,8 @@ func (t *deliveryTracker) size() int {
 // account and runCatchUp ignores only the sender device's own messages, so
 // this matches what runCatchUp observes. A client whose socket is down
 // when the message is sent still counts: it learns of the message from the
-// catch-up its reconnect runs, or the delivery is missed at the deadline.
+// catch-up its reconnect runs (before its first connect, from the read that
+// sets its cursor), or the delivery is missed at the deadline.
 func (w *world) expectedRecipients(sender *device, conv conversation) []clientSlot {
 	var expected []clientSlot
 	for _, member := range conv.members {

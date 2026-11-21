@@ -158,6 +158,11 @@ class _RolesScreenState extends State<RolesScreen> {
       );
       children.add(SectionHeader(l10n.rolesOwnership));
       children.add(_ownership(context, record, view, self, busy));
+      final rules = _rules(context, record, self, busy);
+      if (rules != null) {
+        children.add(SectionHeader(l10n.rolesRulesSection));
+        children.add(rules);
+      }
     }
     return Scaffold(
       appBar: LargeTitleBar(title: l10n.rolesTitle),
@@ -375,6 +380,58 @@ class _RolesScreenState extends State<RolesScreen> {
       }
     }
     return TileGroup(children: tiles);
+  }
+}
+
+extension on _RolesScreenState {
+  /// C4 record format 3: the group's rules in its verified record. A group
+  /// gets the admin-only pin switch (W8), a community the channel-info one
+  /// (C3). Admins and above switch them (every member's app refuses the
+  /// commit from anyone else); others see where they stand.
+  Widget? _rules(
+    BuildContext context,
+    GovernanceState record,
+    String? self,
+    bool busy,
+  ) {
+    final l10n = context.l10n;
+    final group = state.recordGroupFor(widget.conversationId);
+    final conversation = state.conversations
+        .where((c) => c.id == (group ?? widget.conversationId))
+        .firstOrNull;
+    if (conversation == null) return null;
+    final community = conversation.isCommunityShared;
+    if (!community && !conversation.isGroup) return null;
+    final mayChange =
+        self != null && record.rankOf(self) >= BuiltInRole.admin.rank && !busy;
+    final id = widget.conversationId;
+    return TileGroup(
+      children: <Widget>[
+        if (community)
+          SwitchListTile(
+            key: const Key('rules-channel-info'),
+            title: Text(l10n.rolesChannelInfoRestricted),
+            subtitle: Text(l10n.rolesChannelInfoRestrictedDetail),
+            value: record.channelInfoRestricted,
+            onChanged: mayChange
+                ? (value) =>
+                    _run(() => state.setChannelInfoRestricted(id, value))
+                : null,
+          )
+        else
+          SwitchListTile(
+            key: const Key('rules-admin-pins'),
+            title: Text(l10n.rolesPinsAdminsOnly),
+            subtitle: Text(l10n.rolesPinsAdminsOnlyDetail),
+            value: record.adminsOnlyPins,
+            onChanged: mayChange
+                ? (value) => _run(() => state.setAdminsOnlyPins(id, value))
+                : null,
+          ),
+        if (self != null && record.rankOf(self) < BuiltInRole.admin.rank)
+          ListTile(dense: true, subtitle: Text(l10n.rolesRulesAdminsOnly)),
+      ],
+    );
   }
 }
 

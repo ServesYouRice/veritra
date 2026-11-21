@@ -7,15 +7,26 @@ import 'link_preview.dart';
 /// A pin beyond the limit evicts the oldest by `pinned_at`.
 const pinLimitPerChat = 50;
 
-/// Who may pin (owner decision 2026-10-31): either member of a DM and any
-/// member of a group. Community conversations keep moderator roles until C4
-/// adds per-channel permissions; an admin-only group switch also waits for
-/// C4, because groups have no encrypted settings record yet. An unknown
-/// [kind] (roster not cached) authorizes only a moderator role.
-bool pinAllowed({required String? kind, required String? role}) =>
-    kind == 'dm' ||
-    kind == 'group' ||
-    const {'owner', 'admin', 'moderator'}.contains(role);
+/// Who may pin or unpin (owner decision 2026-10-31): either member of a DM
+/// and any member of a group; in a community, moderators and above.
+/// [adminsOnly] is the admin-only switch in the group's verified C4 record
+/// (record format 3, `adminsOnlyPins`; docs/crypto.md, "C4 record format
+/// 3"): then only owners and admins pin, in a group or a community. A DM
+/// has no record and no switch. An unknown [kind] (roster not cached)
+/// authorizes only a moderator role. [role] must come from the verified
+/// record wherever there is one (`AppState.roleOf`, never the server's row
+/// for a group with a record) and is null for a leaf its own account's
+/// list removed (D120).
+bool pinAllowed({
+  required String? kind,
+  required String? role,
+  bool adminsOnly = false,
+}) {
+  if (kind == 'dm') return true;
+  if (adminsOnly) return const {'owner', 'admin'}.contains(role);
+  return kind == 'group' ||
+      const {'owner', 'admin', 'moderator'}.contains(role);
+}
 
 const formatTypes = {
   'bold',

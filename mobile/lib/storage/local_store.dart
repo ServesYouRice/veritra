@@ -79,11 +79,11 @@ enum LocalStoreFailureKind {
   /// Writing a new key could not be confirmed.
   keyWriteFailed,
 
-  /// The key opened the database, but upgrading it to this app version
-  /// failed because the device is full or could not write (SQLite reported
-  /// `SQLITE_FULL` or `SQLITE_IOERR`). The upgrade rolled back; the database
-  /// and its key are as they were, and a retry after freeing space runs it
-  /// again.
+  /// Opening or upgrading the database for this app version failed because
+  /// the device is full or could not write (SQLite reported `SQLITE_FULL` or
+  /// `SQLITE_IOERR`), never because of the key. Any upgrade rolled back; the
+  /// database and its key are as they were, and a retry after freeing space
+  /// opens it (and runs the upgrade) again.
   upgradeStorageFull,
 
   /// The key opened the database, but upgrading or opening it for this app
@@ -731,6 +731,12 @@ abstract class LocalStore {
   /// message, one received before schema 19, or one that was deleted, hidden
   /// or expired since). Only a reporting flow reads this.
   Future<FrankReveal?> loadFrankReveal(String messageKey);
+
+  /// L2-3: the keys of [conversationId]'s received messages that came sealed
+  /// (their kept reveal names the sender MLS authenticated). The server
+  /// cannot hide a blocked account's sealed post, so the timeline hides it
+  /// by these keys, also when it shows the row from local history.
+  Future<Set<String>> loadSealedMessageKeys(String conversationId);
 
   /// C3 (schema 31): what arrived over MLS for one community info subject,
   /// oldest first, bounded per subject.
@@ -1864,6 +1870,13 @@ class MemoryLocalStore implements LocalStore {
       _acceptedCommunityInfo[key] = info;
     }
   }
+
+  @override
+  Future<Set<String>> loadSealedMessageKeys(String conversationId) async => {
+        for (final reveal in _frankReveals.values)
+          if (reveal.conversationId == conversationId && reveal.sealed)
+            reveal.messageKey,
+      };
 
   @override
   Future<FrankReveal?> loadFrankReveal(String messageKey) async {
@@ -4272,6 +4285,10 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readFrankReveal(messageKey);
 
   @override
+  Future<Set<String>> loadSealedMessageKeys(String conversationId) async =>
+      (await _database()).readSealedMessageKeys(conversationId);
+
+  @override
   Future<int> saveSealedTokens(List<SealedToken> tokens) async =>
       (await _database()).writeSealedTokens(tokens);
 
@@ -5534,6 +5551,16 @@ class SecureLocalStore implements LocalStore {
         try {
           await database?.close();
         } catch (_) {}
+        if (isStorageFullError(error)) {
+          // A full device (or a failed write) while opening an existing
+          // database is never a wrong key: a wrong key fails as "not a
+          // database". Reporting it as a full device keeps the reset (which
+          // a wrong key offers at once) away until a retry after freeing
+          // space has failed the same way.
+          throw const LocalStoreUnavailableException(
+            LocalStoreFailureKind.upgradeStorageFull,
+          );
+        }
         throw const LocalStoreUnavailableException(
           LocalStoreFailureKind.keyRejected,
         );

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/ban_verdict.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/governance_codec.dart';
 import 'package:private_messenger/core/roles/governance_commands.dart';
@@ -644,6 +645,280 @@ void main() {
         expect(cancelled.owner, w.alice.account);
         // The cancel is not an owner decision: ownerRev stays.
         expect(cancelled.ownerRev, open.ownerRev);
+      },
+      skip: skip,
+    );
+  }
+
+  // C4 record format 3 (docs/crypto.md, "C4 record format 3"): the C3 and
+  // W8 switches and the C5 ban list, against Mallory's modified client.
+  {
+    /// Mallory's forged record [forged] is refused by every honest app for
+    /// [reason], and nothing merges.
+    Future<void> refusedEverywhere(
+      _World w,
+      List<_Client> victims,
+      ({List<int> commit, List<int> welcome, int epoch}) staged,
+      GovernanceReject reason,
+      String what,
+    ) async {
+      for (final victim in victims) {
+        final before = await w.record(victim);
+        final epoch = await victim.epoch();
+        await expectLater(
+          victim.applyRaw('acct_mallory', 'dev_mallory', staged.commit),
+          throwsA(
+            isA<GovernanceRefusedException>()
+                .having((e) => e.reason, 'reason', reason.name),
+          ),
+          reason: what,
+        );
+        expect(await w.record(victim), before, reason: what);
+        expect(await victim.epoch(), epoch, reason: what);
+      }
+    }
+
+    test(
+      'record format 3: a moderator cannot switch the rules or lift a ban; the owner can, '
+      'and the record moves to format 3',
+      () async {
+        final w = await world();
+        final start = await w.record(w.carol);
+        final next = start.rev + 1;
+        for (final (what, forged) in [
+          ('pins admins only', start.copyWith(rev: next, adminsOnlyPins: true)),
+          (
+            'channel info restricted',
+            start.copyWith(rev: next, channelInfoRestricted: true),
+          ),
+          ('a ban of someone gone', start.copyWith(rev: next, bans: {'x'})),
+        ]) {
+          final staged = w.mallory.stageCommitWithRoles(
+            group,
+            record: encodeGovernance(forged),
+          );
+          w.mallory.clearPendingCommit(group);
+          await refusedEverywhere(
+            w,
+            [w.alice, w.bob, w.carol],
+            staged,
+            GovernanceReject.notAllowed,
+            what,
+          );
+        }
+        // Format 2 until something needs format 3.
+        expect(w.mallory.groupRoleState(group).record!.first, 2);
+
+        // Alice's honest app switches pins to admins only and bans an
+        // account that is not in the group.
+        await w.alice.service.stageRoleChange(
+          group,
+          (c, _, __) => c.setAdminsOnlyPins(true),
+        );
+        await w.deliverHonest(w.alice, await _complete(w.alice));
+        await w.alice.service.stageRoleChange(
+          group,
+          (c, _, __) => c.ban('acct_dave'),
+        );
+        await w.deliverHonest(w.alice, await _complete(w.alice));
+        final ruled = await w.record(w.carol);
+        expect(ruled.adminsOnlyPins, isTrue);
+        expect(ruled.bans, {'acct_dave'});
+        // Not an owner role decision: ownerRev stays.
+        expect(ruled.ownerRev, start.ownerRev);
+        expect(w.mallory.groupRoleState(group).record!.first, 3);
+
+        // Mallory tries to undo both.
+        for (final (what, forged) in [
+          (
+            'pins back to everyone',
+            ruled.copyWith(rev: ruled.rev + 1, adminsOnlyPins: false),
+          ),
+          (
+            'lifts the ban',
+            ruled.copyWith(rev: ruled.rev + 1, bans: const <String>{}),
+          ),
+        ]) {
+          final staged = w.mallory.stageCommitWithRoles(
+            group,
+            record: encodeGovernance(forged),
+          );
+          w.mallory.clearPendingCommit(group);
+          await refusedEverywhere(
+            w,
+            [w.alice, w.bob, w.carol],
+            staged,
+            GovernanceReject.notAllowed,
+            what,
+          );
+        }
+      },
+      skip: skip,
+    );
+
+    test(
+      'record format 3: a moderator cannot kick and ban the admin above her',
+      () async {
+        final w = await world();
+        final before = await w.record(w.carol);
+        final roster = before.joined.keys.toSet();
+        final without = roster.difference({w.bob.account});
+        final pruned = requiredRecord(
+          before,
+          'acct_mallory',
+          before: roster,
+          after: without,
+        );
+        final banned = pruned.copyWith(
+          rev: before.rev + 1,
+          bans: {w.bob.account},
+        );
+        final kick = w.mallory.stageCommitWithRoles(
+          group,
+          record: encodeGovernance(banned),
+          removes: [
+            (
+              accountId: idBytes(w.bob.account),
+              deviceId: idBytes(w.bob.device),
+            ),
+          ],
+        );
+        w.mallory.clearPendingCommit(group);
+        await refusedEverywhere(
+          w,
+          [w.alice, w.carol],
+          kick,
+          GovernanceReject.hierarchy,
+          'kick and ban of an admin',
+        );
+      },
+      skip: skip,
+    );
+
+    test(
+      'record format 3: a ban rides in its removal commit, and nobody adds the account back '
+      'until an admin lifts it',
+      () async {
+        final w = await world();
+        // Alice's app owes Carol's ban (the server has just banned her).
+        await w.alice.store.saveSetting(
+          banRecordOwedSetting(group),
+          encodeOwedBans({
+            w.carol.account:
+                _now.add(banRecordOwedLifetime).millisecondsSinceEpoch,
+          }),
+        );
+        await w.alice.service.stageMembershipChange(
+          group,
+          removes: [(accountId: w.carol.account, deviceId: w.carol.device)],
+        );
+        final removal = await _complete(w.alice);
+        await w.bob.applyCommit(w.alice, removal);
+        w.mallory.stageIncomingCommit(group, removal.commit);
+        w.mallory.mergeIncomingCommit(group, removal.commit);
+        final banned = await w.record(w.bob);
+        expect(banned.bans, {w.carol.account});
+        expect(banned.joined.containsKey(w.carol.account), isFalse);
+        expect(await w.record(w.alice), banned);
+
+        // Mallory re-adds Carol: with no record change, with the `joined`
+        // stamp and the ban lifted (only admins lift), and with the stamp and
+        // the ban kept (bytes she builds by hand, since no honest encoder
+        // writes a banned account that holds a place). Every honest app
+        // refuses all three.
+        final roster = banned.joined.keys.toSet();
+        final withCarol = {...roster, w.carol.account};
+        final package = await w.carol.keyPackage();
+        final add = (
+          keyPackage: package.keyPackage,
+          accountId: idBytes(w.carol.account),
+          deviceId: idBytes(w.carol.device),
+          signingKey: await w.carol.service.currentSigningKey(),
+        );
+        final plain = w.mallory.stageCommitKeyed(group, adds: [add]);
+        w.mallory.clearPendingCommit(group);
+        await refusedEverywhere(
+          w,
+          [w.alice, w.bob],
+          plain,
+          GovernanceReject.banned,
+          'add with no record change',
+        );
+        final stamped = requiredRecord(
+          banned,
+          'acct_mallory',
+          before: roster,
+          after: withCarol,
+        );
+        final lifted = w.mallory.stageCommitWithRoles(
+          group,
+          record: encodeGovernance(stamped.copyWith(bans: const <String>{})),
+          adds: [add],
+        );
+        w.mallory.clearPendingCommit(group);
+        await refusedEverywhere(
+          w,
+          [w.alice, w.bob],
+          lifted,
+          GovernanceReject.notAllowed,
+          'add that lifts the ban',
+        );
+        // Same length as Carol's id, so swapping the bytes keeps the layout.
+        final stand = 'acct_carox';
+        expect(stand.length, w.carol.account.length);
+        final handmade = encodeGovernance(stamped.copyWith(bans: {stand}));
+        final at = handmade.length - stand.length;
+        expect(String.fromCharCodes(handmade.sublist(at)), stand);
+        handmade.setAll(at, w.carol.account.codeUnits);
+        final kept = w.mallory.stageCommitWithRoles(
+          group,
+          record: handmade,
+          adds: [add],
+        );
+        w.mallory.clearPendingCommit(group);
+        for (final victim in [w.alice, w.bob]) {
+          await expectLater(
+            victim.applyRaw('acct_mallory', 'dev_mallory', kept.commit),
+            throwsA(
+              isA<GovernanceRefusedException>()
+                  .having((e) => e.reason, 'reason', 'record_unreadable'),
+            ),
+          );
+          expect(await w.record(victim), banned);
+        }
+
+        // Bob's honest app does not even stage the add.
+        await expectLater(
+          w.bob.service.stageMembershipChange(
+            group,
+            adds: [await w.carol.keyPackage()],
+          ),
+          throwsA(isA<BannedAddRefusedException>()),
+        );
+        expect(await w.bob.store.pendingMlsMessages(), isEmpty);
+
+        // Alice (the owner) lifts the ban; then Bob's add goes through.
+        await w.alice.service.stageRoleChange(
+          group,
+          (c, _, __) => c.liftBan(w.carol.account),
+        );
+        final lift = await _complete(w.alice);
+        await w.bob.applyCommit(w.alice, lift);
+        w.mallory.stageIncomingCommit(group, lift.commit);
+        w.mallory.mergeIncomingCommit(group, lift.commit);
+        expect((await w.record(w.bob)).bans, isEmpty);
+        // Format 2 again, byte for byte, once nothing needs format 3.
+        expect(w.mallory.groupRoleState(group).record!.first, 2);
+        await w.bob.service.stageMembershipChange(
+          group,
+          adds: [await w.carol.keyPackage()],
+        );
+        final readd = await _complete(w.bob);
+        await w.alice.applyCommit(w.bob, readd);
+        expect(
+          (await w.record(w.alice)).joined.containsKey(w.carol.account),
+          isTrue,
+        );
       },
       skip: skip,
     );

@@ -177,12 +177,16 @@ func (a *API) requestToJoin(w http.ResponseWriter, r *http.Request, principal do
 // is waiting (owner decision 2026-11-21): the stored account event, published
 // to their connected devices, and the provider's fixed generic push wake for
 // the rest. Neither carries the requester, a username, the target or its name;
-// the app shows only "New join request". Nothing here is logged.
+// the app shows only "New join request", in the app or, woken while closed,
+// as a phone notification it words itself. Only local_decrypt_v1 devices are
+// woken: a legacy-mode wake shows "New encrypted message", which would be
+// wrong. Muted targets and the quiet window are applied when the notices are
+// recorded (storage.joinRequestNoticesTx). Nothing here is logged.
 func (a *API) noticeJoinRequest(r *http.Request, notices []storage.JoinRequestNotice) {
 	now := time.Now().UTC()
 	for _, notice := range notices {
 		a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.JoinRequestNoticeEventType, ID: notice.EventID, Payload: struct{}{}, CreatedAt: now})
-		a.wakeAccount(notice.AccountID, "", "join_request_wake")
+		a.wakeAccount(notice.AccountID, "", "join_request_wake", true)
 	}
 }
 

@@ -64,6 +64,7 @@ import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
 import 'sealed_sender.dart';
+import 'roles/ban_verdict.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
@@ -132,6 +133,7 @@ part 'app_state_roles.dart';
 part 'app_state_previews.dart';
 part 'app_state_private_channels.dart';
 part 'app_state_posting.dart';
+part 'app_state_record_v3.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -855,6 +857,8 @@ class AppState extends ChangeNotifier
   bool canPinMessages(String id) => pinAllowed(
         kind: conversationKind(id),
         role: roleOf(id, session?.accountId ?? ''),
+        // W8: the admin-only switch in the verified record (format 3).
+        adminsOnly: governanceOf(id)?.adminsOnlyPins ?? false,
       );
 
   Future<void> setMentionsInMutedChats(bool value) async {
@@ -1913,6 +1917,7 @@ class AppState extends ChangeNotifier
       reactions: reactions,
       copiedKeys:
           (await localStore.loadHistoryNamespace()).provenance.keys.toSet(),
+      sealedKeys: await localStore.loadSealedMessageKeys(conversationId),
     );
   }
 
@@ -2000,6 +2005,9 @@ class AppState extends ChangeNotifier
           local.createdAt,
           isUtc: true,
         ),
+        // L2-3: kept so [timelineFor] hides a blocked sender's sealed
+        // message shown from local history (the server cannot hide it).
+        sealed: history.isSealed(local.key),
       );
     }
     return byKey.values.toList()
@@ -7196,10 +7204,11 @@ class AppState extends ChangeNotifier
       final after = await localStore.loadSyncCursor();
       await wake.check();
       final notices = await _processPendingNotices(current, client, wake);
+      final joinRequest = await _presentJoinRequestPhoneNotice(current, wake);
       return WakeCatchUpResult(
         caughtUp: true,
-        decisionsDurable: notices.durable,
-        changed: after != before || notices.shown > 0,
+        decisionsDurable: notices.durable && joinRequest.durable,
+        changed: after != before || notices.shown > 0 || joinRequest.shown > 0,
       );
     } catch (_) {
       return failed;
@@ -7328,6 +7337,7 @@ class AppState extends ChangeNotifier
     Session current, {
     bool always = false,
   }) async {
+    if (always || _isForeground) await _dropJoinRequestPhoneNotice(current);
     if (!always) {
       final capture = cryptoService;
       if (!_isForeground ||
@@ -7653,6 +7663,7 @@ class AppState extends ChangeNotifier
             // A background pass makes no list/device requests; the next
             // foreground resume refreshes instead.
             projections.forEach(_deferProjectionRefresh);
+            await _holdJoinRequestPhoneNotice(projections, current, wake);
           } else {
             await _refreshProjectionForSyncEvents(projections);
           }
@@ -7842,6 +7853,8 @@ class AppState extends ChangeNotifier
           await reconcileServerOwners();
           // C2: posting settings this device still owes the record.
           await _retryPostingRecords();
+          // C5: bans this device still owes the record (format 3).
+          await _retryBanRecords();
           // C6: announce this moderator's report key where it is due. Not
           // awaited, like the C3 refresh: sending never holds up sync.
           unawaited(_announceReportKeys());
@@ -10210,6 +10223,7 @@ class AppState extends ChangeNotifier
                 messages: cached.messages.where(live).toList(),
                 reactions: const [],
                 copiedKeys: cached.copiedKeys,
+                sealedKeys: cached.sealedKeys,
               );
             }
             _historyReloadPending.add(id);

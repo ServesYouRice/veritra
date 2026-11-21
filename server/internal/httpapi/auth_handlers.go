@@ -1056,14 +1056,15 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "device_session_required")
 		return
 	}
-	eventID, listResult, err := a.Store.RevokeDeviceWithDeviceList(r.Context(), principal.AccountID, principal.DeviceID, deviceID, req.DeviceList)
+	revoked, err := a.Store.RevokeDeviceWithDeviceList(r.Context(), principal.AccountID, principal.DeviceID, deviceID, req.DeviceList)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
 	payload := map[string]string{"device_id": deviceID}
-	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
-	a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeRemove)
+	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: revoked.EventID, Payload: payload, CreatedAt: time.Now().UTC()})
+	a.publishDeviceListEvent(r, principal.AccountID, revoked.DeviceList, devicelist.ChangeRemove)
+	a.publishRevocationsPending(r.Context(), principal.AccountID, deviceID, revoked.MLSRevocations)
 	a.Hub.DisconnectDevice(principal.AccountID, deviceID)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "device.revoked", map[string]string{"device_id": deviceID})
 	w.WriteHeader(http.StatusNoContent)

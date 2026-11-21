@@ -1725,6 +1725,59 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END
     expect(await hasEnvelopeIndex(databases.last), isTrue);
   });
 
+  test(
+      'a full disk while opening an existing database is a full device, '
+      'never a wrong key', () async {
+    final original = await seedAndClose();
+    final key = await secureStorage.read(key: 'veritra.database_key.v1');
+    for (final code in <int>[13, 10]) {
+      // The key is right; the open itself cannot write (SQLITE_FULL, then
+      // SQLITE_IOERR), before any create or upgrade starts.
+      var diskFull = true;
+      final store = SecureLocalStore(
+        storage: secureStorage,
+        directoryProvider: () async => directory,
+        databaseFactory: (file, keyHex) {
+          final database = diskFull
+              ? _openOnFullDevice(file, keyHex, code)
+              : openEncryptedLocalDatabase(file, keyHex);
+          databases.add(database);
+          return database;
+        },
+      );
+      await expectLater(
+        store.loadSyncCursor(),
+        throwsA(
+          allOf(
+            _storeFailure(LocalStoreFailureKind.upgradeStorageFull),
+            isA<LocalStoreUnavailableException>().having(
+              (error) => error.retryable,
+              'retryable',
+              isTrue,
+            ),
+          ),
+        ),
+        reason: 'code $code',
+      );
+      // Nothing was changed, moved, deleted or reset.
+      await expectDatabaseUnchanged(original);
+      expect(await secureStorage.read(key: 'veritra.database_key.v1'), key);
+      expect(
+        directory.listSync().where((item) => item.path.contains('unreadable-')),
+        isEmpty,
+      );
+
+      // With room again, a retry on the same store opens it.
+      diskFull = false;
+      expect(await store.loadSyncCursor(), 4);
+      await store.close();
+      for (final database in databases) {
+        await database.close();
+      }
+      databases.clear();
+    }
+  });
+
   test('only a full device or an I/O error counts as a full device', () {
     SqliteException sqlite(int code) =>
         SqliteException(extendedResultCode: code, message: 'test');
@@ -1972,6 +2025,25 @@ EncryptedLocalDatabase _openWithoutRoom(
           rawDatabase.select('SELECT count(*) FROM sqlite_master');
           rawDatabase.execute('PRAGMA journal_mode = WAL');
           rawDatabase.execute('PRAGMA max_page_count = $maxPages');
+        },
+      ),
+    );
+
+/// Opens with the right key, then fails the way a full device (or a failed
+/// write) fails an open, with SQLite result [code], inside the background
+/// isolate as a real failure would.
+EncryptedLocalDatabase _openOnFullDevice(File file, String keyHex, int code) =>
+    EncryptedLocalDatabase(
+      NativeDatabase.createInBackground(
+        file,
+        setup: (rawDatabase) {
+          rawDatabase.execute("PRAGMA cipher = 'chacha20'");
+          rawDatabase.execute("PRAGMA hexkey = '$keyHex'");
+          rawDatabase.select('SELECT count(*) FROM sqlite_master');
+          throw SqliteException(
+            extendedResultCode: code,
+            message: 'database or disk is full',
+          );
         },
       ),
     );

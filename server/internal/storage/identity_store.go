@@ -640,32 +640,50 @@ func (s *Store) RevokeDeviceWithSyncEvent(ctx context.Context, accountID, device
 	return s.revokeDevice(ctx, accountID, deviceID, "device.revoked")
 }
 
+// QueuedMLSRevocation is one mls.revocation.pending event a device
+// revocation recorded: the group whose remaining members must commit the
+// removal, and the sync event that says so.
+type QueuedMLSRevocation struct {
+	ConversationID string
+	EventID        int64
+}
+
+// DeviceRevocation is what RevokeDeviceWithDeviceList committed: the
+// device.revoked event, the per-group revocations it queued (announced live
+// to each group's members, the coordinator among them), and the device list
+// version.
+type DeviceRevocation struct {
+	EventID        int64
+	MLSRevocations []QueuedMLSRevocation
+	DeviceList     *DeviceListResult
+}
+
 // RevokeDeviceWithDeviceList is RevokeDeviceWithSyncEvent that also stores the
 // change-3 version the caller signed (statement), in the same transaction. A
 // revocation with no version is still taken (an old client, or a revocation
 // no device can sign for): the listed device stays listed until a listed
 // device repairs the list (POST /account/device-list). The statement must be
 // signed by the caller and remove exactly this device.
-func (s *Store) RevokeDeviceWithDeviceList(ctx context.Context, accountID, callerDeviceID, deviceID string, statement []byte) (int64, *DeviceListResult, error) {
+func (s *Store) RevokeDeviceWithDeviceList(ctx context.Context, accountID, callerDeviceID, deviceID string, statement []byte) (DeviceRevocation, error) {
 	now := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, nil, err
+		return DeviceRevocation{}, err
 	}
 	defer tx.Rollback()
-	eventID, err := revokeDeviceTx(ctx, tx, accountID, deviceID, "device.revoked", now)
+	eventID, queued, err := revokeDeviceQueuedTx(ctx, tx, accountID, deviceID, "device.revoked", now)
 	if err != nil {
-		return 0, nil, err
+		return DeviceRevocation{}, err
 	}
 	rule := DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeRemove}, Signer: callerDeviceID, Removed: []string{deviceID}}
 	result, err := optionalDeviceListTx(ctx, tx, accountID, statement, rule, false, now)
 	if err != nil {
-		return 0, nil, err
+		return DeviceRevocation{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, nil, err
+		return DeviceRevocation{}, err
 	}
-	return eventID, result, nil
+	return DeviceRevocation{EventID: eventID, MLSRevocations: queued, DeviceList: result}, nil
 }
 
 func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType string) (int64, error) {
@@ -691,41 +709,49 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 // MLS revocations and releases the confirmations it owed. Recovery
 // completion runs it for each old device.
 func revokeDeviceTx(ctx context.Context, tx *sql.Tx, accountID, deviceID, eventType, now string) (int64, error) {
+	eventID, _, err := revokeDeviceQueuedTx(ctx, tx, accountID, deviceID, eventType, now)
+	return eventID, err
+}
+
+// revokeDeviceQueuedTx is revokeDeviceTx that also returns the MLS
+// revocations it queued.
+func revokeDeviceQueuedTx(ctx context.Context, tx *sql.Tx, accountID, deviceID, eventType, now string) (int64, []QueuedMLSRevocation, error) {
 	result, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND account_id = ?`, now, deviceID, accountID)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if rows == 0 {
-		return 0, ErrNotFound
+		return 0, nil, ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE device_id = ?`, deviceID); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	// A revoked device keeps no open passkey ceremony.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM passkey_ceremonies WHERE device_id = ?`, deviceID); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if err := retireDeviceLinksV3ForDevice(ctx, tx, accountID, deviceID); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	payload := map[string]string{"device_id": deviceID}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
+	var queued []QueuedMLSRevocation
 	if eventType != "" {
-		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
-			return 0, err
+		if queued, err = queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
+			return 0, nil, err
 		}
 		if err := releaseMLSRevocationConfirmations(ctx, tx, deviceID, parseTime(now)); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 	}
-	return eventID, nil
+	return eventID, queued, nil
 }
 
 // queueMLSRevocations queues the removal of a revoked device from every MLS
@@ -735,7 +761,7 @@ func revokeDeviceTx(ctx context.Context, tx *sql.Tx, accountID, deviceID, eventT
 // marked revoked, and its account's membership must still be in place (groups
 // without a recorded roster are found through it). A group that already has a
 // revocation for the device keeps it and gets no second event.
-func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, now string) error {
+func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, now string) ([]QueuedMLSRevocation, error) {
 	// Rostered groups (card I51) need a revocation only when the device is
 	// in the group, and only group devices can coordinate or confirm it.
 	// Without a roster only a legacy group (pre-I51: it has MLS messages, the
@@ -765,7 +791,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 		WHERE target.device_id = ? AND target.removed_after_event_id IS NULL
 		GROUP BY r.conversation_id`, accountID, deviceID, deviceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	type pendingRevocation struct{ conversationID, coordinatorDeviceID string }
 	pending := make([]pendingRevocation, 0)
@@ -773,17 +799,18 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 		var item pendingRevocation
 		if err := rows.Scan(&item.conversationID, &item.coordinatorDeviceID); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		pending = append(pending, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return nil, err
 	}
+	var queued []QueuedMLSRevocation
 	for _, item := range pending {
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO mls_revocations(conversation_id, revoked_device_id, revoked_account_id,
@@ -792,10 +819,10 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			ON CONFLICT(conversation_id, revoked_device_id) DO NOTHING`,
 			item.conversationID, deviceID, accountID, item.coordinatorDeviceID, now)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if queued, err := result.RowsAffected(); err != nil {
-			return err
+			return nil, err
 		} else if queued == 0 {
 			continue
 		}
@@ -810,14 +837,16 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
 			                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 			item.conversationID, deviceID, item.conversationID, deviceID); err != nil {
-			return err
+			return nil, err
 		}
-		if _, err := insertSyncEvent(ctx, tx, "mls.revocation.pending", nil,
-			item.conversationID, map[string]string{"device_id": deviceID, "account_id": accountID}, now); err != nil {
-			return err
+		eventID, err := insertSyncEvent(ctx, tx, "mls.revocation.pending", nil,
+			item.conversationID, map[string]string{"device_id": deviceID, "account_id": accountID}, now)
+		if err != nil {
+			return nil, err
 		}
+		queued = append(queued, QueuedMLSRevocation{ConversationID: item.conversationID, EventID: eventID})
 	}
-	return nil
+	return queued, nil
 }
 
 func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int, expiresAt *time.Time) (domain.Invite, error) {

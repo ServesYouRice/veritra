@@ -109,7 +109,18 @@ class WakeRunContext {
 
   /// The caller must first commit an eligible, deduplicated notice decision.
   /// Only its opaque local ID crosses the native boundary.
-  Future<WakeNoticeResult> presentDecision(String noticeId) async {
+  Future<WakeNoticeResult> presentDecision(String noticeId) =>
+      _present(noticeId, _bridge.presentGenericNotice);
+
+  /// C1: the fixed "New join request" notice for a durably held, opaque
+  /// local notice ID (no requester, target or name crosses to native).
+  Future<WakeNoticeResult> presentJoinRequestNotice(String noticeId) =>
+      _present(noticeId, _bridge.presentJoinRequestNotice);
+
+  Future<WakeNoticeResult> _present(
+    String noticeId,
+    Future<WakeNoticeResult> Function(WakePermit, String) present,
+  ) async {
     if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(noticeId)) {
       throw const FormatException('invalid local notice identity');
     }
@@ -117,8 +128,7 @@ class WakeRunContext {
     try {
       // Native presentation is independently deadline-fenced and idempotent
       // for this durable notice ID. A late reply cannot authorize more work.
-      return await _bridge
-          .presentGenericNotice(permit, noticeId)
+      return await present(permit, noticeId)
           .timeout(Duration(milliseconds: remainingMs));
     } on TimeoutException {
       cancel();

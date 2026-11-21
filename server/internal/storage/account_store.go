@@ -190,7 +190,7 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	// the memberships are dropped only afterwards, since groups without a
 	// recorded roster are found through them.
 	for _, deviceID := range deviceIDs {
-		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
+		if _, err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
 			return nil, err
 		}
 		// A device that will never confirm another device's revocation
@@ -239,6 +239,16 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		if _, err := tx.ExecContext(ctx, query, accountID); err != nil {
 			return nil, err
 		}
+	}
+	// C4: a deleted account never asks again and can never be made owner, so
+	// its succession asks and the asks naming it go. A group or community it
+	// owned keeps no owner row (its membership went above); its roles stay
+	// in each group's record, where a removed owner is never pruned. The
+	// server's row follows the record's later win through the succession
+	// rule, which treats a scope with no owner as already quiet: a deleted
+	// owner can never be active again (succession_store.go).
+	if _, err := tx.ExecContext(ctx, `DELETE FROM owner_succession_requests WHERE account_id = ? OR candidate_account_id = ?`, accountID, accountID); err != nil {
+		return nil, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE accounts SET username = 'deleted_' || replace(id, '_', ''), email = NULL, password_hash = '!', status = 'deleted', deleted_at = COALESCE(deleted_at, ?) WHERE id = ?`, now, accountID)
 	if err != nil {

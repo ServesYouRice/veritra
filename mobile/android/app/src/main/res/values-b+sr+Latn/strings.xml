@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_join_request">Novi zahtev za pridruživanje</string>
+    <string name="notification_channel_join_requests">Zahtevi za pridruživanje</string>
+</resources>

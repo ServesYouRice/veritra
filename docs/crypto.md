@@ -1337,6 +1337,67 @@ device key, the code-signing certificate or the recovery key).
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **B6 call-group marker (2026-11-21, crypto ABI 28; no wire format the
+  server parses, no server, migration, local schema, vector or dependency
+  change):** closes the gap the ABI 22 entry below names. Design:
+  [`B6-group-calls.md`](designs/B6-group-calls.md), "Call-group marker
+  (ABI 28)"; code `crypto/rust/src/mls/call_group.rs`,
+  `crypto/rust/src/ffi/b6_calls.rs`.
+  - **Marker.** GroupContext extension `0xF0B6` with data
+    `u8(1) | lp(call_id) | lp(conversation_id)` (u16 big-endian lengths,
+    each id 1 to 128 bytes, strict decode). A call group's context is
+    exactly `[RequiredCapabilities{0xF0B6}, marker]` and never changes (a
+    GroupContextExtensions proposal is refused in any group without a C4
+    record, and a C4 proposal keeps every other extension byte for byte).
+  - **Capability.** Every key package and creator leaf now lists `0xF0B6`
+    beside `0xF0C4` and `0xF0A2` (`c4::leaf_capabilities`); key packages
+    grow by 2 bytes before L2 padding. An ABI 27 key package cannot be added
+    to a call group (refused at staging).
+  - **New symbols.** `pm_crypto_group_b6_create(handle, group_id, call_id,
+    conversation_id)` and `pm_crypto_group_b6_join(handle,
+    expected_group_id, welcome, call_id, conversation_id)`. The join stores
+    the group only when the Welcome's context is exactly the list above for
+    those ids (`PM_CRYPTO_ERROR` otherwise, nothing stored;
+    `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` for another device's
+    Welcome). `pm_crypto_group_join` now refuses a Welcome that carries the
+    marker.
+  - **Changed semantics.** `pm_crypto_group_b6_media_key` (same signature)
+    now refuses with `PM_CRYPTO_ERROR` any group that is not a call group
+    and any `call_id` other than the one its marker names. The key schedule
+    is unchanged, so `testing/vectors/b6-media-v1.json` stands. The C7
+    boundary exception is now what the ABI 22 entry meant it to be: call
+    groups only.
+  - **App.** `NativeCryptoDevice.b6CreateCallGroup` and `b6JoinCallGroup`;
+    `CallGroupCrypto.createGroup` and `joinWithWelcome` take the call and
+    conversation ids; a refused Welcome for this device is
+    `CallWelcomeRefused` (leave and rejoin).
+  - **Mixed ABI.** As for every earlier bump, every client must run ABI 28
+    (the Dart bindings refuse any other version). Between devices it fails
+    closed: an ABI 28 committer cannot add an ABI 27 key package to a call
+    group, and an ABI 28 device refuses an ABI 27 call group's Welcome and
+    derives no key from it. Nothing is released, so there is no mixed fleet.
+  - The header, the Rust constant, the Dart binding and
+    `scripts/verify-mobile-crypto.sh` pin ABI 28. Needs the independent
+    crypto review with the rest of B6.
+- **C4 record format 3 (2026-11-21; no ABI, server, migration or local
+  schema change; Rust treats the record as opaque bytes):** the role record
+  gains a format 3 (version byte 3) that carries C3's "admins restrict
+  channel info" switch, W8's admin-only pin switch and C5's ban list, each
+  enforced by every member's app ("C4 record format 3" below). A record that
+  uses none of them is still written as format 2, byte for byte as before
+  (vector `testing/vectors/c4-governance-record-v3.json` keeps every format
+  2 case at its old bytes), so builds that read only format 2 keep working
+  in every group that has not switched one on. A build older than this stops
+  syncing a group at the first commit that writes format 3 (an unreadable
+  record is an invalid commit under I33) until it updates; one that joins
+  such a group by Welcome holds no verified roles there. New rules:
+  switches need admin or above; a ban needs a moderator or above who
+  outranks the account in the commit that removes it, or admin or above
+  for an account already gone, and only admin or above lifts one; no commit
+  may leave a banned account in the roster (receivers refuse it with
+  `banned`, whatever the record says). None of them moves `owner_rev`
+  (D86's list is unchanged). Producers leave banned accounts out of adds
+  and carry a ban this device made in its own removal commit.
 - **G27 libcrux placeholder (2026-11-21, owner decision D29; no ABI, wire,
   server, migration, local schema or build-graph change):** hpke-rs 0.7
   declares its libcrux backend `hpke-rs-libcrux` =0.7.0 as an optional
@@ -2153,7 +2214,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   (`server/internal/b6vector`); the Dart check and binding come with S5. The
   number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
   crypto review before release (design S2). Not built yet: the call-group
-  context extension check. **For the reviewer:** the core does not know
+  context extension check (built at ABI 28, see that entry: the call now
+  refuses every group but a call group). **For the reviewer:** the core does not know
   which groups are call groups, so the call accepts any stored group id,
   a persistent conversation group included. The label keeps the output
   separate from every other exporter value, but the exception is wider than
@@ -2952,6 +3014,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   Tests: `server/internal/httpapi/account_recovery_member_notice_test.go`;
   `mobile/test/demo_e2e_test.dart` K1-7 now runs with the client's audit
   interval and fallback unchanged and no app resume.
+
+- **Pending revocations published live (2026-11-21, L1-5 live run):** no
+  ABI, payload, schema, migration or client change. Found by
+  `mobile/test/l1_live_e2e_test.dart`: revoking a device
+  (`DELETE /api/v1/devices/{id}`) wrote one `mls.revocation.pending` sync
+  event per group but published none live, so a coordinator on another
+  account committed the leaf removal only at its next catch-up for some
+  other reason (minutes, or never in an idle chat), and messages it sent
+  meanwhile were still encrypted to the revoked leaf. The route now
+  publishes each of those events, after `device_list.updated`, to the
+  conversation's member accounts: the accounts and payload (`device_id`,
+  `account_id` of the revoked device) the durable event already reaches
+  through sync, as `mls.revocation.completed` already is. The client
+  already runs a catch-up, then its revocation pass, on any live event. No
+  push wake (a background pass sends no commits). Not covered: revocations
+  queued by recovery completion (the D96 change-4 notice starts the
+  coordinator's catch-up in practice), by expired link cleanup and by
+  account deletion still wait for the next catch-up. Test:
+  `server/internal/httpapi/revocation_pending_live_test.go`.
 
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
@@ -4116,6 +4197,11 @@ markup:
 - **Old apps.** A pin is an MLS payload, shared by every member. It is
   sent with `hidden: true`, so an older app stores it as a hidden
   `unsupported` row and shows nothing.
+- **Who pins (2026-11-21).** Either member of a DM, anyone in a group,
+  moderators and above in a community. A group's or community's verified
+  C4 record can switch pinning to owners and admins only (record format 3,
+  "C4 record format 3"); every receiver then ignores other senders' pins
+  and unpins.
 
 #### 5.5 Polls and votes (B3)
 
@@ -4811,7 +4897,9 @@ does not, and is judged against the shared group's record (C0).
 **Format, version 2** (big-endian, canonical; any other byte string is
 invalid). Version 1 was documented but no build ever wrote it, so it is
 withdrawn and refused. Code: `mobile/lib/core/roles/governance_codec.dart`,
-vector `testing/vectors/c4-governance-record-v2.json`.
+vector `testing/vectors/c4-governance-record-v3.json` (format 2 and 3
+cases; every format 2 case kept its bytes). Format 3 appends the C3, W8 and
+C5 fields ("C4 record format 3", below).
 
 ```
 u8  version = 2
@@ -5204,7 +5292,10 @@ record are record changes, so the same rule covers them.
   ask from the owner is a transfer. Residuals: a colluding admin majority
   can move the row after 37 days of silence (the record, which apps use,
   does not follow); a large or inactive admin set may never reach quorum;
-  apps never read that row for roles.
+  apps never read that row for roles. An owner whose account is deleted
+  leaves no owner row, and a scope with none counts as quiet at once (a
+  deleted account is never active again), so the majority's asks move the
+  row without the 37 days; the record's own vote still waits (2026-11-21).
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A
@@ -5232,7 +5323,8 @@ roster; `from_ms < until_ms` and `until_ms - from_ms` at most 28 days
 (`maxTimeoutMillis`, the server's `domain.MaxTimeout`). `from_ms` and
 `until_ms` are the server's clock (its `timeout_until` and that minus the
 length, Unix milliseconds); `epoch` is the MLS epoch the setting commit
-produces. Vectors: `testing/vectors/c4-governance-record-v2.json`
+produces. Vectors: `testing/vectors/c4-governance-record-v3.json` (until
+2026-11-21 `-v2.json`)
 (`with_timeouts`, `timeouts_flag_without_body`,
 `timeouts_flag_with_empty_list`; the unknown-flag vector now uses bit 3).
 
@@ -5275,6 +5367,118 @@ when the record already holds a running entry; no format change;
 `docs/designs/C5-moderation.md`, "Timeouts after a rejoin"). Builds older than this refuse
 a record with timeouts (unknown flag bit) and their sync of that group
 stops until they update.
+
+### C4 record format 3 (2026-11-21)
+
+Three packages waited on fields in the verified record: C3's "admins
+restrict channel info" (D80: any member edits channel names and topics
+unless admins restrict it), W8's admin-only pin switch for groups, and C5's
+ban list checked by members' apps. Format 3 adds them. Code:
+`mobile/lib/core/roles/governance_codec.dart`, rules
+`mobile/lib/core/roles/governance.dart`, commands
+`governance_commands.dart`, receivers `ban_verdict.dart`,
+`private_channel_membership.dart`, `community_info_book.dart`,
+`crypto/message_format.dart` (`pinAllowed`); app actions
+`mobile/lib/core/app_state_record_v3.dart`. Design notes:
+`docs/designs/C4-custom-roles.md`, "Record format 3".
+
+**Format.** Version byte 3, then format 2's body exactly (every field and
+section, flags bits 0 to 2 unchanged), then:
+
+```
+u8  settings          bit 0 channel_info_restricted (C3), bit 1 admins_only_pins (W8); rest zero
+u16 ban_count         { u16 len || account }*   sorted by bytes, no duplicates, at most 1,000
+```
+
+A state is encoded as format 3 only when it uses one of these (a setting
+bit or a ban); otherwise as format 2. A format 3 record with no setting bit
+and no ban is refused ("format 3 without its fields"), so each state still
+has one byte string. Shape checks (codec): the owner is never banned; a
+banned account holds no admin or moderator role, no `joined` entry and no
+timeout; at most 1,000 bans (`maxBans`, so a full list stays near a quarter
+of the 256 KiB bound); the usual id rules. Vectors:
+`testing/vectors/c4-governance-record-v3.json` (`v3_switches`,
+`v3_bans_after_everything`, and refusals: `version_3_without_tail`,
+`version_3_without_fields`, `version_3_unknown_setting_bit`, unsorted and
+duplicate bans, `version_3_owner_banned`, `version_3_too_many_bans`,
+`version_4`).
+
+**Compatibility.**
+- *Format 2 records* decode to a state with both switches off and no bans;
+  nothing is migrated. The first commit that sets a switch or a ban writes
+  format 3; lifting the last of them writes format 2 again.
+- *Older builds* (format 2 only) read every record that uses none of these
+  fields as before. At the first commit carrying format 3 their receiver
+  cannot decode the record after it (`record_unreadable`), refuses the
+  commit and the group pauses for them under I33, like any commit they
+  cannot judge, until they update and resume it (nothing was merged
+  meanwhile, so the same commit is judged again). An
+  older build that joins by a Welcome carrying format 3 reads no record
+  there (`governanceOf` is null): it shows no verified roles, drops no
+  restricted posts and shows no channel info until it updates. Neither path
+  lets it apply anything the record forbids from a role it cannot read.
+- *A later format* (4 or above) is refused the same way by this build.
+
+**Who writes what** (`validateTransition`, `validateCommit`):
+
+| Field | Set | Clear |
+|---|---|---|
+| `channel_info_restricted` | admin or above | admin or above |
+| `admins_only_pins` | admin or above | admin or above |
+| ban of an account in the roster before the commit | moderator or above who outranks it under the record before the commit (`mayActOn`), in the commit that removes it | admin or above |
+| ban of an account not in the roster | admin or above (the server's ban of someone who left needs an admin too) | admin or above |
+
+Never oneself, never the owner (who stays owner out of the roster, D81).
+A removal never drops a ban (`removeAccount` keeps it). A won election or
+claim changes none of them. None of them moves `owner_rev`: D86 names the
+fields an owner decision moves, and these are not among them (an owner
+decision would be needed to add them). A switch commit by the owner keeps
+`owner_rev`; one that stamps it is refused (`badShape`).
+
+**Enforcement on receive.**
+- *Bans.* `validateCommit` refuses any commit whose roster after it holds
+  an account its record bans (`banned`), before any other check: an add
+  that stamps `joined`, an add with no record change, a ban that leaves the
+  account in. Only an admin's commit that lifts the ban may add it back in
+  the same commit. A private channel's group (no record of its own) holds a
+  commit that adds a banned account (`privateChannelAddAccepted`, held like
+  any unauthorized private add). Content (`timeoutRefusedTypes`) from a
+  banned sender is hidden like a timed-out member's (`shouldDropBannedPost`),
+  which matters where a private channel still holds the account.
+- *Pins.* `pinAllowed(adminsOnly:)`: with the switch on, a pin or unpin
+  applies only from an owner or admin by the record, in a group or a
+  community; off, as before (any member of a group, moderators and above
+  in a community). A leaf its list removed has no role (D120).
+- *Channel info.* `GovernanceInfoEditPolicy` reads the switch: with it on,
+  an `info_update` for a channel counts only from a moderator or above (the
+  record of the community's shared group); community and category info
+  stay owner and admins. Moderators stay editors so that their re-seal
+  after a D122 rotation (a private channel with no admin in it) still
+  verifies; admins-only would hide it (owner question, C4 design). The
+  server still accepts a channel write from any reader; apps do not show it.
+
+**Producers.** An add of an account the record bans is left out of the
+staged commit (`BannedAddRefusedException` when nothing else is left), as
+for a private channel. When this device bans an account (C5's
+`banCommunityMember`), the app remembers it (`c5.ban_record.<group>`,
+lapsing after 7 days) and the device's own removal commit carries the ban
+(`recordWithBans`, checked by `validateCommit` first; a ban the check would
+refuse is left out and the plain record goes). A sync pass writes owed bans
+of accounts already gone as one role-only commit when this device is admin
+or above, and drops the rest; an admin can write any server ban into the
+record from the Moderation screen ("Apply"), which also covers bans made
+before this build. A lift writes the record first, then the server.
+
+**Residuals.** The switches and bans are judged by the record as this
+device holds it now, not as it was at a message's epoch (as C2): an edit or
+pin accepted before a switch stays. A moderator's ban whose removal another
+device committed stays server-only until an admin applies it. A record ban
+the server has lifted (an older build lifted it there only) keeps refusing
+the account in every app until an admin lifts it in the app (the Moderation
+screen lists it). A server that hides a ban keeps refusing joins anyway;
+one that drops it cannot get the account back into the group's MLS roster.
+More than 1,000 bans in one community stay server-only past the first
+1,000.
 
 ### C4 leave proof in the commit (owner-approved 2026-11-11; built at crypto ABI 24)
 

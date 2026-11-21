@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- C1 (owner decision 2026-11-21): the phone notice for a join request.
+         Fixed words only: no requester, group or community. Keep in step
+         with joinRequestNoticeText in lib/l10n. -->
+    <string name="notification_join_request">New join request</string>
+    <!-- The Android notification channel for that notice. -->
+    <string name="notification_channel_join_requests">Join requests</string>
+</resources>

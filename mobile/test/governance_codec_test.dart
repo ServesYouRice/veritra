@@ -6,10 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/governance_codec.dart';
 
-/// C4 record codec (format v2) against testing/vectors/c4-governance-record-v2.json.
-/// Set C4_WRITE_VECTORS=1 to rewrite the vector from the cases below. A missing
+/// C4 record codec (formats 2 and 3) against
+/// testing/vectors/c4-governance-record-v3.json. Every format 2 case keeps the
+/// bytes it had in the format 2 vector (`c4-governance-record-v2.json` at
+/// `e156462`): a state that uses no format 3 field is still written as format
+/// 2, so builds that read only format 2 keep reading it. Set
+/// C4_WRITE_VECTORS=1 to rewrite the vector from the cases below. A missing
 /// vector fails; it never skips.
-const _vectorPath = '../testing/vectors/c4-governance-record-v2.json';
+const _vectorPath = '../testing/vectors/c4-governance-record-v3.json';
 
 String _hex(List<int> b) =>
     [for (final x in b) x.toRadixString(16).padLeft(2, '0')].join();
@@ -66,12 +70,46 @@ final Map<String, GovernanceState> _valid = {
       ),
     },
   ),
+  // Format 3: the C3 and W8 switches alone (no bans).
+  'v3_switches': GovernanceState(
+    rev: 4,
+    owner: 'acc_owner',
+    ownerRev: 1,
+    admins: {'acc_a': 1},
+    joined: {'acc_owner': 0, 'acc_a': 1},
+    channelInfoRestricted: true,
+    adminsOnlyPins: true,
+  ),
+  // Format 3: bans alone, sorted by bytes, beside a format 2 election and
+  // timeouts (the format 3 tail follows every format 2 section).
+  'v3_bans_after_everything': _full().copyWith(
+    rev: 10,
+    timeouts: {
+      'acc_m1': const MemberTimeout(
+        epoch: 3,
+        fromMs: 1700000000000,
+        untilMs: 1700000600000,
+      ),
+    },
+    bans: {'acc_z', 'acc_x', '\u{1F600}'},
+  ),
+};
+
+/// The format 2 bytes each format 2 state had before format 3 existed
+/// (`testing/vectors/c4-governance-record-v2.json` at `e156462`), pinned
+/// here so the encoder can never start writing them differently.
+const _formatTwoBytes = <String, String>{
+  'genesis':
+      '02000000000000000000000000000000000000096163635f6f776e6572000000000000000100096163635f6f776e65720000000000000000',
+  'no_owner': '02000000000000000100000000000000000000000000000000000000',
+  'with_timeouts':
+      '02000000000000000300000000000000010400096163635f6f776e65720000000100056163635f6d0000000400056163635f6d000000000000000100096163635f6f776e6572000000000000000000056163635f78000000000000000200056163635f790000000000000002000200056163635f7800000000000000060000018bcfd625c00000018bd00d144000056163635f7900000000000000070000018bcfe568000000018bcfee8fc0',
 };
 
 void main() {
   if (Platform.environment['C4_WRITE_VECTORS'] == '1') {
     final out = {
-      'format': 'veritra-c4-governance-record-v2',
+      'format': 'veritra-c4-governance-record-v3',
       'valid': {
         for (final e in _valid.entries) e.key: _hex(encodeGovernance(e.value)),
       },
@@ -112,6 +150,48 @@ void main() {
           ),
         ),
         reason: e.key,
+      );
+    }
+  });
+
+  test('format 2 states keep their format 2 bytes', () {
+    for (final e in _formatTwoBytes.entries) {
+      expect(_hex(encodeGovernance(_valid[e.key]!)), e.value, reason: e.key);
+      expect(valid[e.key], e.value, reason: e.key);
+    }
+    for (final e in _valid.entries) {
+      final version = encodeGovernance(e.value).first;
+      expect(version, e.value.usesFormat3 ? 3 : 2, reason: e.key);
+    }
+  });
+
+  test('format 3 round-trips each field and drops back to 2 without them', () {
+    final base = GovernanceState.genesis('acc_owner');
+    for (final state in [
+      base.copyWith(channelInfoRestricted: true),
+      base.copyWith(adminsOnlyPins: true),
+      base.copyWith(bans: {'acc_gone'}),
+    ]) {
+      final bytes = encodeGovernance(state);
+      expect(bytes.first, 3);
+      expect(decodeGovernance(bytes), state);
+      // Lifting the field writes the format 2 bytes again.
+      final lifted = state.copyWith(
+        channelInfoRestricted: false,
+        adminsOnlyPins: false,
+        bans: const <String>{},
+      );
+      expect(_hex(encodeGovernance(lifted)), _formatTwoBytes['genesis']);
+    }
+  });
+
+  test('every truncation of a format 3 record is refused', () {
+    final bytes = encodeGovernance(_valid['v3_bans_after_everything']!);
+    for (var n = 0; n < bytes.length; n++) {
+      expect(
+        () => decodeGovernance(Uint8List.sublistView(bytes, 0, n)),
+        throwsA(isA<GovernanceCodecException>()),
+        reason: 'cut at $n',
       );
     }
   });
@@ -187,6 +267,20 @@ void main() {
       ),
       'empty id': s(moderators: {''}),
       'long id': s(moderators: {'a' * 256}),
+      'owner banned': s().copyWith(bans: {'o'}),
+      'banned admin': s(admins: {'a': 1}).copyWith(bans: {'a'}),
+      'banned moderator': s(moderators: {'m'}).copyWith(bans: {'m'}),
+      'banned and joined': GovernanceState(
+        rev: 3,
+        owner: 'o',
+        ownerRev: 0,
+        joined: {'j': 1},
+        bans: {'j'},
+      ),
+      'empty banned id': s().copyWith(bans: {''}),
+      'too many bans': s().copyWith(
+        bans: {for (var i = 0; i <= maxBans; i++) 'b$i'},
+      ),
     };
     for (final e in bad.entries) {
       expect(
@@ -224,9 +318,28 @@ Map<String, Map<String, String>> _invalid() {
         'hex': hex,
         'reason': reason,
       };
+  // Format 3: the genesis body, then the settings byte and the ban list.
+  List<int> v3(List<int> tail) => [...with_(0, 3), ...tail];
   return {
     'version_1': bad(h(with_(0, 1)), 'unknown version'),
-    'version_3': bad(h(with_(0, 3)), 'unknown version'),
+    'version_4': bad(h(with_(0, 4)), 'unknown version'),
+    // A format 2 body marked 3 lacks the settings byte and ban list.
+    'version_3_without_tail': bad(h(with_(0, 3)), 'truncated'),
+    'version_3_settings_without_bans': bad(h(v3([1])), 'truncated'),
+    // One state, one encoding: format 3 must carry something.
+    'version_3_without_fields': bad(h(v3([0, 0, 0])), 'format 3 without'),
+    'version_3_unknown_setting_bit': bad(h(v3([4, 0, 0])), 'unknown setting'),
+    'version_3_bans_unsorted': bad(
+      h(v3([0, 0, 2, 0, 1, 0x62, 0, 1, 0x61])),
+      'not sorted',
+    ),
+    'version_3_bans_duplicate': bad(
+      h(v3([0, 0, 2, 0, 1, 0x61, 0, 1, 0x61])),
+      'not sorted',
+    ),
+    'version_3_owner_banned': bad(h(v3([0, 0, 1, 0, 1, 0x6f])), 'owner is'),
+    'version_3_trailing_byte': bad(h(v3([1, 0, 0, 0])), 'trailing'),
+    'version_3_too_many_bans': bad(h(v3([0, 0x03, 0xe9])), 'too many bans'),
     'unknown_flag_bit': bad(h(with_(flags, 8)), 'unknown flag'),
     'election_flag_without_body': bad(h(with_(flags, 2)), 'truncated'),
     // C5: bit 2 announces a timeout list, which must hold at least one.

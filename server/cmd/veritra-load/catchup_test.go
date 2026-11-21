@@ -123,3 +123,72 @@ func TestCatchUpObservesDeliveries(t *testing.T) {
 		t.Fatalf("%d sends still tracked, want 1 (the device's own message is never delivered to it)", w.deliveries.size())
 	}
 }
+
+// TestFirstCatchUpCountsSendsAlreadyInTheStream: load starts before every
+// client has read the stream to its end, so the read that sets a client's
+// cursor can hold a message this run sent it. That message reached the
+// client and is one delivery (and its attachment one download); the seeded
+// history in the same read is no send of this run and counts for nothing.
+// Before the fix the first read counted nothing, so such a delivery was
+// recorded as missed at the deadline (CI run 44900439690).
+func TestFirstCatchUpCountsSendsAlreadyInTheStream(t *testing.T) {
+	const history = `{"events":[` +
+		`{"id":3,"type":"message.envelope.created","payload":{"envelope":{"sender_device_id":"d1","idempotency_key":"seeded","attachment_refs":["att-old"]}}}` +
+		`],"scanned_through":4,"scan_truncated":true}`
+	const sentDuringStartup = `{"events":[` +
+		`{"id":6,"type":"message.envelope.created","payload":{"envelope":{"sender_device_id":"d1","idempotency_key":"k-early","attachment_refs":["att-new"]}}},` +
+		`{"id":7,"type":"message.envelope.created","payload":{"envelope":{"sender_device_id":"d1","idempotency_key":"k-unacked","attachment_refs":[]}}}` +
+		`],"scanned_through":7,"scan_truncated":false}`
+	var paged atomic.Int64
+	w := testWorld(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		switch r.URL.RawQuery {
+		case "after=0&limit=200&scan=bounded":
+			_, _ = rw.Write([]byte(history))
+		case "after=4&limit=200&scan=bounded":
+			_, _ = rw.Write([]byte(sentDuringStartup))
+		case "after=7&limit=200&scan=bounded":
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":7,"scan_truncated":false}`))
+		default:
+			paged.Add(1)
+			_, _ = rw.Write([]byte(`{"events":[],"scanned_through":7,"scan_truncated":false}`))
+		}
+	}))
+	client := clientSlot{dev: 0}
+	started := time.Now()
+	w.deliveries.start("k-early", started, []clientSlot{client})
+	w.deliveries.sent("k-early", true)
+	// The server committed and published this one; its sender has not seen
+	// the response yet.
+	w.deliveries.start("k-unacked", started, []clientSlot{client})
+	queue := make(chan download, 8)
+	wakeUp := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { w.runCatchUp(ctx, w.devices[0], client, wakeUp, nil, queue); close(done) }()
+
+	wake(wakeUp)
+	waitFor(t, "the delivery from the first catch-up", func() bool { return countSamples(w.rec, opDelivery, outcomeOK) == 1 })
+	w.deliveries.sent("k-unacked", true)
+	waitFor(t, "the early sighting to count once acknowledged", func() bool { return countSamples(w.rec, opDelivery, outcomeOK) == 2 })
+	// A later wake-up re-reads nothing the first catch-up counted.
+	wake(wakeUp)
+	waitFor(t, "the sync after the first catch-up", func() bool { return countSamples(w.rec, opSync) >= 4 })
+	cancel()
+	<-done
+	if n := countSamples(w.rec, opDelivery); n != 2 {
+		t.Fatalf("%d delivery samples, want 2", n)
+	}
+	if w.deliveries.size() != 0 {
+		t.Fatalf("%d sends still tracked, want none: both deliveries were in the first read", w.deliveries.size())
+	}
+	if paged.Load() != 0 {
+		t.Fatal("the cursor after the first catch-up is not where its last page ended")
+	}
+	if len(queue) != 1 {
+		t.Fatalf("%d downloads queued, want 1 (this run's attachment, not the seeded history's)", len(queue))
+	}
+	if job := <-queue; job.id != "att-new" {
+		t.Fatalf("queued %q, want att-new", job.id)
+	}
+}

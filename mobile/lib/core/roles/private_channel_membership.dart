@@ -61,19 +61,22 @@ String encodePrivateChannelPicks(Map<String, int> picks) =>
 
 /// Receiver: whether [committer] may bring the accounts of [after] that are
 /// not in [before] into a private channel's group: only an owner, admin or
-/// moderator ([privateChannelAddMinRole]) may. [record] is the community's
-/// verified role record as this device holds it (null when it holds none:
-/// then no new account is accepted). The committer's leaf must also be
-/// approved by its account's list; the caller checks that.
+/// moderator ([privateChannelAddMinRole]) may, and never an account the
+/// community's record bans (C5, record format 3). [record] is the
+/// community's verified role record as this device holds it (null when it
+/// holds none: then no new account is accepted). The committer's leaf must
+/// also be approved by its account's list; the caller checks that.
 bool privateChannelAddAccepted({
   required GovernanceState? record,
   required String committer,
   required Set<String> before,
   required Set<String> after,
 }) {
-  if (after.difference(before).isEmpty) return true;
+  final newcomers = after.difference(before);
+  if (newcomers.isEmpty) return true;
   return record != null &&
-      record.rankOf(committer) >= privateChannelAddMinRole.rank;
+      record.rankOf(committer) >= privateChannelAddMinRole.rank &&
+      !newcomers.any(record.bans.contains);
 }
 
 /// Producer: the accounts of [candidates] this device may add to a private
@@ -81,7 +84,8 @@ bool privateChannelAddAccepted({
 /// (new devices), and, only while [self] is an owner, admin or moderator
 /// under [record] ([privateChannelAddMinRole]), the accounts its user
 /// picked ([picked]). The role is checked now, when the add is staged, not
-/// when the user picked: a moderator demoted since then adds nothing.
+/// when the user picked: a moderator demoted since then adds nothing. An
+/// account the record bans is never added (C5).
 Set<String> privateChannelAddableAccounts({
   required GovernanceState? record,
   required String self,
@@ -91,11 +95,13 @@ Set<String> privateChannelAddableAccounts({
 }) {
   final mayPick =
       record != null && record.rankOf(self) >= privateChannelAddMinRole.rank;
+  final banned = record?.bans ?? const <String>{};
   return <String>{
     for (final account in candidates)
-      if (account == self ||
-          inGroup.contains(account) ||
-          (mayPick && picked.contains(account)))
+      if (!banned.contains(account) &&
+          (account == self ||
+              inGroup.contains(account) ||
+              (mayPick && picked.contains(account))))
         account,
   };
 }

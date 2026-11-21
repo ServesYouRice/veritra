@@ -193,10 +193,58 @@ class _ModerationScreenState extends State<ModerationScreen> {
     if (await state.setInvitesPaused(_communityId, 0)) await _load();
   }
 
-  Future<void> _unban(CommunityBan ban) async {
-    if (await state.unbanCommunityMember(_communityId, ban.accountId)) {
+  Future<void> _unban(String accountId) async {
+    if (await state.unbanCommunityMember(_communityId, accountId)) {
       await _load();
     }
+  }
+
+  /// C5: writes a server ban into the community's verified record, so every
+  /// member's app refuses the account too (admins and above).
+  Future<void> _applyBan(String accountId) async {
+    if (await state.applyBanToRecord(_communityId, accountId)) await _load();
+  }
+
+  /// One ban row: the server's list, plus bans only the record holds (the
+  /// server's was lifted by an older build), each with where it holds.
+  Widget _banTile(
+    AppLocalizations l10n,
+    String accountId, {
+    required bool onServer,
+    required bool busy,
+  }) {
+    final inRecord = state.recordBans(_communityId, accountId);
+    final mayWriteRecord = state.mayManageRecordBans(_communityId);
+    final name = _name(accountId);
+    final String? status = switch ((onServer, inRecord)) {
+      (_, null) => null,
+      (true, true) => l10n.moderationBanEnforced,
+      (true, false) => l10n.moderationBanNotInRecord,
+      (false, _) => l10n.moderationBanRecordOnly,
+    };
+    return ListTile(
+      leading: const Icon(Icons.block),
+      title: Text(name),
+      subtitle: status == null ? null : Text(status),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (inRecord == false && mayWriteRecord)
+            IconButton(
+              tooltip: l10n.moderationBanApply(name),
+              onPressed: busy ? null : () => _applyBan(accountId),
+              icon: const Icon(Icons.verified_user_outlined),
+            ),
+          // The server lets admins and above lift bans.
+          if (widget.canManageInvites)
+            IconButton(
+              tooltip: l10n.moderationUnban(name),
+              onPressed: busy ? null : () => _unban(accountId),
+              icon: const Icon(Icons.undo),
+            ),
+        ],
+      ),
+    );
   }
 
   /// Lifts the timeout of someone who left, so a rejoin starts without it
@@ -258,6 +306,12 @@ class _ModerationScreenState extends State<ModerationScreen> {
     final channels =
         state.channelsByCommunity[_communityId] ?? const <Channel>[];
     final bans = _bans ?? const <CommunityBan>[];
+    final serverBanned = {for (final ban in bans) ban.accountId};
+    final recordOnly = state
+        .recordBansOf(_communityId)
+        .where((account) => !serverBanned.contains(account))
+        .toList()
+      ..sort();
     final events = _events ?? const <ModerationEvent>[];
     final departed = _departed ?? const <CommunityTimeout>[];
     return ListView(
@@ -327,22 +381,14 @@ class _ModerationScreenState extends State<ModerationScreen> {
         SectionHeader(l10n.moderationSectionBans),
         TileGroup(
           children: <Widget>[
-            if (bans.isEmpty)
+            if (bans.isEmpty && recordOnly.isEmpty)
               ListTile(title: Text(l10n.moderationNoBans))
-            else
+            else ...<Widget>[
               for (final ban in bans)
-                ListTile(
-                  leading: const Icon(Icons.block),
-                  title: Text(_name(ban.accountId)),
-                  // The server lets admins and above lift bans.
-                  trailing: widget.canManageInvites
-                      ? IconButton(
-                          tooltip: l10n.moderationUnban(_name(ban.accountId)),
-                          onPressed: busy ? null : () => _unban(ban),
-                          icon: const Icon(Icons.undo),
-                        )
-                      : null,
-                ),
+                _banTile(l10n, ban.accountId, onServer: true, busy: busy),
+              for (final account in recordOnly)
+                _banTile(l10n, account, onServer: false, busy: busy),
+            ],
           ],
         ),
         if (widget.canManageInvites) ...<Widget>[
