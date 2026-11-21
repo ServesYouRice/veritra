@@ -10,8 +10,8 @@ resources:
 components:
   - ../monitoring
 images:
-  # scripts/release-image.sh --infra-dir <this folder> rewrites the digest
-  # line below.
+  # Set the digest scripts/release-image.sh prints, commit and push; the
+  # release command never writes here itself.
   - name: ghcr.io/servesyourice/veritra
     digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 configMapGenerator:
@@ -19,6 +19,9 @@ configMapGenerator:
     namespace: veritra
     literals:
       - PRIVATE_MESSENGER_INSTANCE_NAME=Veritra
+      # The one permanent origin clients use. Account recovery and automatic
+      # backups stay off while it is unset (docs/operations.md).
+      - PRIVATE_MESSENGER_PUBLIC_ORIGIN=https://chat.example.org
       # - PRIVATE_MESSENGER_VAPID_SUBSCRIBER=mailto:owner@example.com
       # - PRIVATE_MESSENGER_VAPID_PUBLIC_KEY=...
       # - PRIVATE_MESSENGER_TURN_URLS=turns:turn.example.com:5349?transport=tcp

@@ -1,7 +1,7 @@
 # Plain Prometheus scrape job for the private metrics port, for a collector
 # without the Prometheus Operator (Prometheus, or Grafana Alloy through
 # prometheus.scrape with discovery.kubernetes). It must run in the
-# `monitoring` namespace (see metrics.yaml) and keep job="veritra-metrics",
+# `observability` namespace (see metrics.yaml) and keep job="veritra-metrics",
 # which the alert rules expect. Add under scrape_configs:
 scrape_configs:
   - job_name: veritra-metrics

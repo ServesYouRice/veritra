@@ -5,7 +5,7 @@
 #   port 9090 (production refuses a public or wildcard address, so the pod IP
 #   comes from the downward API);
 # - adds a headless veritra-metrics Service and a NetworkPolicy that lets
-#   only the `monitoring` namespace reach that port. The public Service and
+#   only the `observability` namespace reach that port. The public Service and
 #   Traefik never see it.
 #
 # The metrics hold aggregate counts and ages only: no user, account,

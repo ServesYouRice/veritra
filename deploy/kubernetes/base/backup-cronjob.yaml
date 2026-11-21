@@ -83,6 +83,7 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
                 limits:
                   memory: 512Mi
           containers:
@@ -131,6 +132,7 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
                 limits:
                   memory: 256Mi
           volumes:

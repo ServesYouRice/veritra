@@ -570,7 +570,8 @@ The base holds:
 Cluster-wide pieces live in infra; `examples/` has one of each:
 `traefik-helmchartconfig.yaml` raises the websecure read timeout to 16
 minutes, redirects HTTP to HTTPS and sets `externalTrafficPolicy: Local` so
-Traefik sees real client addresses; `cluster-issuer.yaml`;
+Traefik sees real client addresses; `cluster-issuer.yaml` (named
+`letsencrypt-production`, as in the owner's infra);
 `secrets.example.yaml` (encrypt with SOPS); `flux-kustomization.yaml`. The
 timeout matters: in the 2026-10-23 rehearsal a 90-second upload was cut off
 at 60 s (HTTP 502) by Traefik's default and completed with this file. With
@@ -1008,7 +1009,8 @@ endpoints.
 **Kubernetes.** `deploy/kubernetes/examples/monitoring` is a kustomize
 component (the example overlay includes it): it binds the listener to the
 pod IP, adds a headless `veritra-metrics` Service and lets only the
-`monitoring` namespace reach port 9090. Scrape it with `servicemonitor.yaml`
+`observability` namespace reach port 9090 (change the label if your
+collector runs elsewhere). Scrape it with `servicemonitor.yaml`
 (Prometheus Operator) or `scrape-config.yml` (Grafana Alloy, plain
 Prometheus); keep `job="veritra-metrics"`. Load the rules as
 `prometheus-rules.yaml` or, for Grafana Cloud, `mimirtool rules load

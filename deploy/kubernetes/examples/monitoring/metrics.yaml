@@ -18,12 +18,13 @@ spec:
       port: 9090
       targetPort: metrics
 ---
-# Only Prometheus or Grafana Alloy in the `monitoring` namespace may scrape.
-# Change the namespace label if the collector runs elsewhere.
+# Only the collector in the `observability` namespace may scrape (the owner's
+# infra runs its OpenTelemetry Collector there). Change the namespace label if
+# your Prometheus or Grafana Alloy runs elsewhere, for example `monitoring`.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: server-metrics-from-monitoring
+  name: server-metrics-from-observability
   namespace: veritra
   labels:
     app.kubernetes.io/name: veritra
@@ -39,7 +40,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: monitoring
+              kubernetes.io/metadata.name: observability
       ports:
         - protocol: TCP
           port: 9090

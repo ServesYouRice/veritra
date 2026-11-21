@@ -75,6 +75,7 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
                 limits:
                   memory: 256Mi
           containers:
@@ -101,9 +102,13 @@ spec:
                 requests:
                   cpu: 50m
                   memory: 64Mi
+                  ephemeral-storage: 64Mi
                 limits:
                   memory: 512Mi
           volumes:
+            # On the node's disk. The containers request only 64Mi of ephemeral
+            # storage, so under disk pressure the kubelet evicts this pod before
+            # pods that stay within their requests (the databases, the server).
             - name: scratch
               emptyDir:
                 sizeLimit: 20Gi

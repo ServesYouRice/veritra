@@ -1,6 +1,7 @@
 # Issued by cert-manager through Cloudflare DNS-01, so it works even though
-# the hostname is DNS-only. The ClusterIssuer lives in the infra repository;
-# ../examples/cluster-issuer.yaml shows one.
+# the hostname is DNS-only. The ClusterIssuer lives in the infra repository,
+# which names it letsencrypt-production; ../examples/cluster-issuer.yaml
+# shows one.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -11,7 +12,7 @@ spec:
     - veritra.example.com
   issuerRef:
     kind: ClusterIssuer
-    name: letsencrypt-cloudflare
+    name: letsencrypt-production
   privateKey:
     algorithm: ECDSA
     size: 256
