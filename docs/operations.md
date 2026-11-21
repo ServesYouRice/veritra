@@ -50,6 +50,23 @@ rotates the session token; the old token works for two more minutes so
 requests in flight finish, without recent-auth rights. Sign-out, password
 change, sign-out of other devices and device removal revoke both tokens.
 
+**Registration invites.** An invite code is a bearer credential: whoever
+holds it can create an account until the invite is used up, expires or is
+turned off. The server keeps only SHA-256 of each code (`invites.code_hash`,
+the same hash as session tokens), returns the code once in the answer to
+`POST /api/v1/invites`, and never lists, logs, exports or audits it;
+`GET /api/v1/invites` returns the id, uses, maximum uses and expiry. The app
+that created an invite keeps its code in its encrypted local database, by
+invite id, so that device can share it again; on any other device the invite
+reads "Can't be shared again" and can only be turned off. Migration 0094
+hashed the codes stored before it, so invites handed out earlier keep
+working. Two copies of those older codes outlive the upgrade: backups taken
+before it, which hold them in plaintext and still register until each
+invite is used up, expires or is turned off, and free pages of the live
+database file and its write-ahead log, until SQLite reuses them (the server
+does not set `secure_delete`). Treat pre-upgrade backups as credentials, or
+turn off the outstanding invites after upgrading and hand out new ones.
+
 The 15-minute recovery-token route (`GET /api/v1/recovery`) and the VBK2 backup
 upload (a `POST /api/v1/backups` whose metadata has no `kind`) are retired
 (K1-6, D91). Both answer `410` with the typed codes `recovery_route_retired`
@@ -443,6 +460,11 @@ the upgrade cannot sign in on it. Prefer rolling forward. Otherwise restore the
 pre-upgrade backup (later data is lost), or keep the old binary and recover
 only the owner with `reset-owner-password`.
 
+Rolling back past migration 0094 (hashed invite codes) is not supported:
+an older binary looks invites up by a `code` column that no longer exists, so
+registration and the invite list fail. Restore the pre-upgrade backup with its
+binary instead; invites created after the upgrade are lost with it.
+
 Shutdown fits a 25-second budget, below the 30-second stop grace of the
 supported Compose service (`stop_grace_period`) and systemd unit
 (`TimeoutStopSec`); keep both above 25 seconds if you change them. It marks
@@ -688,7 +710,7 @@ The app accepts only HTTPS and has no "skip certificate check". For a second PC 
 - **CA security:** Install the internal CA only on workstations you own and control. Anyone holding `root.key` can impersonate any host on machines that trust that CA. Keep `root.key` restricted to the server host.
 - **Mobile caveats:** Android 7+ does not trust user-added root CAs for user applications; use Path A for Android mobile clients.
 - **Firewall:** Open inbound ports 80 and 443 on the server PC's firewall for the LAN subnet only.
-- **No cleartext:** Plain `http://` is strictly prohibited outside loopback demo builds (`mobile/lib/main_demo.dart`).
+- **No cleartext:** Plain `http://` is strictly prohibited outside loopback demo builds (`mobile/lib/main_demo.dart`) for any server connection. (The app's own in-process `http://127.0.0.1` voice player feed is not a server connection; see `docs/security-review.md`.)
 
 
 ## Post-quantum TLS

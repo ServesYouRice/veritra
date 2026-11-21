@@ -490,11 +490,13 @@ func TestRecoveryMigrationBackfillsTheDecoyKeyAndKeepsReservations(t *testing.T)
 		t.Fatal(err)
 	}
 	owner := createTestOwner(t, ctx, store)
-	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
-	if err != nil {
+	// The schema of 0044 still has invites.code (0094 hashes it), so the
+	// invite and its reservation are written as that schema expects.
+	inviteID := "inv_before_recovery"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO invites(id, code, created_by, max_uses, created_at) VALUES(?, 'BEFORERECOVERY', ?, 1, ?)`, inviteID, owner.Account.ID, nowString()); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := store.ReserveRegistrationEnrollment(ctx, invite.Code)
+	pending, err := store.createEnrollmentReservation(ctx, "register", &inviteID)
 	if err != nil {
 		t.Fatal(err)
 	}

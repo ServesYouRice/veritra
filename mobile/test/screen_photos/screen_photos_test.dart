@@ -1,6 +1,6 @@
 // U38 screen photographs on demand: a test-only harness, off by default.
 //
-// Renders every screen listed below at 360 x 800 dp, in dark and light, with
+// Renders every screen of screen_catalog.dart at 360 x 800 dp, in dark and light, with
 // the real Roboto and Material Icons fonts, and writes per state
 //   <out>/<screen>_<theme>.png   the picture
 //   <out>/<screen>_<theme>.json  the measurements
@@ -18,8 +18,12 @@
 //           names get a "_x2.0" suffix).
 // Without the opt-in the file registers one skipped test and does nothing
 // else, so the normal suite pays nothing. The output goes under build/ and
-// is never compared with anything. To add a screen, append to [_screens]
-// and reuse the fixtures in ../goldens/golden_harness.dart.
+// is never compared with anything. To add a screen, add an entry to
+// screen_catalog.dart (screen_catalog_guard_test.dart fails until every
+// Screen, Page, Dialog and Sheet class of lib/features has one, or an
+// explicit skip with its reason). A run also writes <out>/summary.json:
+// which classes were photographed, which were skipped and why.
+// Narrow a run with --plain-name 'photograph search'.
 // See testing/evidence/UI-audit-2026-11-14.md (Method) for what the audit
 // measured.
 import 'dart:convert';
@@ -38,6 +42,9 @@ import 'package:private_messenger/ui/appearance.dart';
 import 'package:private_messenger/ui/theme.dart';
 
 import '../goldens/golden_harness.dart';
+import 'photo_fixtures.dart';
+import 'photo_screen.dart';
+import 'screen_catalog.dart';
 
 const _dartDefine = String.fromEnvironment('SCREEN_PHOTOS');
 
@@ -47,52 +54,6 @@ bool get _enabled {
       : Platform.environment['SCREEN_PHOTOS'] ?? '';
   return v.isNotEmpty && v != '0';
 }
-
-class _Screen {
-  const _Screen(this.name, {required this.connected, this.open});
-  final String name;
-  final bool connected;
-  final Future<void> Function(WidgetTester tester)? open;
-}
-
-// Same screens, reached the same way, as the goldens.
-final _screens = <_Screen>[
-  _Screen('chat_details', connected: true, open: (tester) async {
-    await tester.tap(find.text('@alice'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Show menu'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Conversation details'));
-  }),
-  for (final row in <String>[
-    'Change password',
-    'Export account data',
-    'Delete account',
-    'Link a new device',
-  ])
-    _Screen('settings_${row.toLowerCase().replaceAll(' ', '_')}',
-        connected: true, open: (tester) async {
-      await tester.tap(find.byIcon(Icons.settings_outlined));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(row));
-    }),
-  const _Screen('connect', connected: false),
-  const _Screen('chats', connected: true),
-  _Screen(
-    'chat',
-    connected: true,
-    open: (tester) async {
-      await tester.tap(find.text('@alice'));
-    },
-  ),
-  _Screen(
-    'settings',
-    connected: true,
-    open: (tester) async {
-      await tester.tap(find.byIcon(Icons.settings_outlined));
-    },
-  ),
-];
 
 const _themes = <String, ThemeMode>{
   'light': ThemeMode.light,
@@ -272,7 +233,41 @@ void main() {
     }
   });
 
-  for (final screen in _screens) {
+  tearDownAll(() {
+    final photographed = <String>{
+      for (final s in photoScreens)
+        if (!s.isSkipped) s.className,
+    };
+    final skipped = <String, String>{
+      for (final s in photoScreens)
+        if (s.isSkipped) s.className: s.skipReason!,
+    };
+    File('${outDir.path}/summary$suffix.json').writeAsStringSync(
+      const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+        'photographedClasses': photographed.toList()..sort(),
+        'skippedClasses': skipped,
+        'entries': photoScreens.where((s) => !s.isSkipped).length,
+        'photographs': _photographs,
+        'themes': _themes.keys.toList(),
+        'textScale': scale,
+      }),
+    );
+    stdout.writeln(
+      'screen photos: ${photographed.length} classes photographed, '
+      '${skipped.length} skipped, $_photographs photographs '
+      '(each at ${_themes.length} themes) in ${outDir.path}',
+    );
+  });
+
+  for (final screen in photoScreens) {
+    if (screen.isSkipped) {
+      test(
+        'photograph ${screen.name}',
+        () {},
+        skip: '${screen.className}: ${screen.skipReason}',
+      );
+      continue;
+    }
     for (final theme in _themes.entries) {
       final name = '${screen.name}_${theme.key}$suffix';
       testWidgets('photograph $name', (tester) async {
@@ -280,50 +275,74 @@ void main() {
         final semantics = tester.ensureSemantics();
         // Real shadows: widget tests switch them off by default.
         debugDisableShadows = false;
-        final AppState state =
-            screen.connected ? await connectedState() : disconnectedState();
-        addTearDown(state.dispose);
-        await tester.pumpWidget(
-          RepaintBoundary(
-            child: _photoApp(
-              state: state,
-              themeMode: theme.value,
-              textScale: scale,
-              disableAnimations: true,
+        PhotoNet.reset();
+        final env = PhotoEnv(tester);
+        // The handle and the shadow switch are released in the body, not in
+        // addTearDown: the binding checks for open handles before those run,
+        // and one failed screen must not fail every later one.
+        try {
+          final Widget home;
+          if (screen.build != null) {
+            home = await screen.build!(env);
+          } else {
+            final AppState state = screen.connected!
+                ? await connectedState()
+                : disconnectedState();
+            addTearDown(state.dispose);
+            env.listenables.add(state);
+            home = AppShell(state: state);
+          }
+          await tester.pumpWidget(
+            RepaintBoundary(
+              child: _photoApp(
+                home: home,
+                listenable: Listenable.merge(env.listenables),
+                themeMode: theme.value,
+                textScale: scale,
+                disableAnimations: true,
+              ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        if (screen.open != null) {
-          await screen.open!(tester);
-          await _settle(tester);
-        }
-
-        // One photograph per viewport: the first scrollable is dragged by
-        // 90% of the window until it stops moving (at most 8 viewports).
-        for (var view = 1; view <= 8; view++) {
-          final viewName = view == 1 ? name : '${name}_v$view';
-          await _capture(tester, outDir, viewName, screen.name, theme.key,
-              scale, realFonts, view);
-          final scrollable = find.byType(Scrollable);
-          if (scrollable.evaluate().isEmpty) break;
-          // A dialog or menu is open: its page behind must not scroll.
-          if (find.byType(ModalBarrier).evaluate().length > 1) break;
-          final position =
-              tester.state<ScrollableState>(scrollable.first).position;
-          if (position.pixels >= position.maxScrollExtent - 1) break;
-          position.jumpTo(
-            math.min(position.pixels + phoneSize.height * 0.9,
-                position.maxScrollExtent),
           );
           await _settle(tester);
+          if (screen.open != null) {
+            await screen.open!(tester, env);
+            await _settle(tester);
+          }
+
+          // One photograph per viewport: the first scrollable is dragged by
+          // 90% of the window until it stops moving (at most 8 viewports).
+          for (var view = 1; view <= 8; view++) {
+            final viewName = view == 1 ? name : '${name}_v$view';
+            await _capture(tester, outDir, viewName, screen.name, theme.key,
+                scale, realFonts, view);
+            _photographs++;
+            final scrollable = find.byType(Scrollable);
+            if (scrollable.evaluate().isEmpty) break;
+            // A dialog or menu is open: its page behind must not scroll.
+            if (find.byType(ModalBarrier).evaluate().length > 1) break;
+            final position =
+                tester.state<ScrollableState>(scrollable.first).position;
+            if (position.pixels >= position.maxScrollExtent - 1) break;
+            position.jumpTo(
+              math.min(position.pixels + phoneSize.height * 0.9,
+                  position.maxScrollExtent),
+            );
+            await _settle(tester);
+          }
+        } finally {
+          // Stop timers and polls (a device-link poll, a clock) before the
+          // binding checks for them.
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(seconds: 1));
+          debugDisableShadows = true;
+          semantics.dispose();
         }
-        debugDisableShadows = true;
-        semantics.dispose();
       });
     }
   }
 }
+
+var _photographs = 0;
 
 Future<void> _capture(
   WidgetTester tester,
@@ -335,7 +354,7 @@ Future<void> _capture(
   bool realFonts,
   int viewport,
 ) async {
-  final context = tester.element(find.byType(Scaffold).first);
+  final context = photoContext(tester);
   final fallback = Theme.of(context).colorScheme.surface;
   final android = await androidTapTargetGuideline.evaluate(tester);
   final labeled = await labeledTapTargetGuideline.evaluate(tester);
@@ -352,6 +371,7 @@ Future<void> _capture(
       'realFonts': realFonts,
       'textRuns': runs,
       'tapTargets': targets,
+      'networkCalls': List<String>.of(PhotoNet.calls),
       'guidelines': <String, Object?>{
         'androidTapTarget': <String, Object?>{
           'passed': android.passed,
@@ -384,7 +404,8 @@ Future<void> _settle(WidgetTester tester) async {
 /// resolves a style with no family to Roboto; the test binding draws it in
 /// its square-glyph font, which turned list and dialog titles into blocks.
 Widget _photoApp({
-  required AppState state,
+  required Widget home,
+  required Listenable listenable,
   required ThemeMode themeMode,
   required double textScale,
   required bool disableAnimations,
@@ -431,7 +452,7 @@ Widget _photoApp({
   final appearance = AppearanceController(MemoryAppearanceStore(themeMode));
   appearance.load();
   return AnimatedBuilder(
-    animation: Listenable.merge(<Listenable>[state, appearance]),
+    animation: Listenable.merge(<Listenable>[listenable, appearance]),
     builder: (context, _) => AppearanceScope(
       controller: appearance,
       child: MaterialApp(
@@ -450,7 +471,7 @@ Widget _photoApp({
           ),
           child: child!,
         ),
-        home: AppShell(state: state),
+        home: home,
       ),
     ),
   );

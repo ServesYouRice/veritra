@@ -153,8 +153,10 @@ type DeviceLink struct {
 }
 
 type Invite struct {
-	ID        string     `json:"id"`
-	Code      string     `json:"code"`
+	ID string `json:"id"`
+	// Code is set only in the answer to the request that created the invite.
+	// The server keeps only its hash, so a listed invite has none.
+	Code      string     `json:"code,omitempty"`
 	CreatedBy string     `json:"created_by"`
 	MaxUses   int        `json:"max_uses"`
 	Uses      int        `json:"uses"`

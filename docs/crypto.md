@@ -1777,6 +1777,27 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   or server migration change. Rules: "Group role state (C4)", "C4 app
   wiring" below. Needs the independent review; not yet covered by tests.
 
+- **C4 hostile-member tests and the handover warning (2026-11-21):** the
+  wiring is now exercised end to end through `processMlsMessage` against a
+  modified client (`mobile/test/c4_adversarial_native_test.dart`): ten
+  forged record changes from a moderator (ownership, self-promotion,
+  promotion above her rank, demoting an admin, posting switches, a skipped
+  or replayed `rev`, a forged `ownerRev`, an election she may not open) are
+  refused on every honest app and stay refused after a restart; a commit on
+  a superseded epoch and a replayed commit change nothing; a moderator's
+  kick of an admin is held, the admin's kick of the moderator merges and
+  prunes; a leaf added under the owner's account id with the attacker's key
+  cannot act as the owner (held `committer_unapproved`). Each guard was
+  removed in turn and its test failed. New: `stageRoleChange` runs
+  `validateCommit` on whatever its builder returns (the producer rule
+  above; `GovernanceCommands` already did, any other builder did not); a
+  won election or claim this device's own clocks would have refused sets
+  `c4.early_win.<group>` with the commit, and the roles screen warns while
+  it is the owner's last decision; the roles screen asks the owner to mark
+  trusted admins as electors; `AppState.verifiedRoleOf` is the read API for
+  C2/C3 (null without a verified record, never the server's role). No ABI,
+  local schema, wire or server change. Rules: "C4 app wiring" below.
+
 - **C7 two-part messages, first slice (2026-11-11):** no ABI or schema
   change; behind the server's `PRIVATE_MESSENGER_C7_HISTORY` (off by
   default), which the setup status reports as `c7_history`. While it is on,
@@ -4733,7 +4754,10 @@ replacement, revocation) computes `requiredRecord` for itself and, when it
 differs from the current record, stages it with `stageCommitWithRoles`
 after running `validateCommit` on it. Role commands (`GovernanceCommands`:
 set role, electors, posting, transfer, open, vote, close) are role-only
-commits through the same call. The owner's periodic self-update, while an
+commits through the same call, and `stageRoleChange` runs `validateCommit`
+on whatever record its builder returns before staging it (2026-11-21), so
+no builder can send a record every receiver would refuse (which would pause
+the group under I33). The owner's periodic self-update, while an
 election is open, is replaced by the cancel (a path-only update carries no
 record and receivers refuse an owner commit that leaves an election open).
 A bundle that carries a record is marked `role_change: true`; the server
@@ -4852,12 +4876,30 @@ Owner posts in a private channel's group do not count (their record is the
 shared group's), which can only make a challenge happen sooner; the owner's
 app cancels it.
 
+*Early handover* (2026-11-21, the design's "an honest app that sees a win
+its own clock would have refused should say so"). When a commit that is not
+the owner's sets a new owner (a won election or claim), the receiver reads
+its observations saved before that commit; if they show owner activity in
+the last 30 days, or this election open here for less than 7 days (or never
+seen open), it saves `c4.early_win.<group>` = the commit's `rev` with the
+commit's transition. The commit still merges: receivers judge order and
+roles only, so every device keeps the same record. The roles screen shows a
+warning while the record's `ownerRev` equals that `rev` (the new owner's
+first role decision ends it). A device with no saved clocks says nothing.
+
 **Owner cancel.** On each self-update pass the owner's app schedules, for
 each record group with an open election, one cancel after a random delay
 of up to 24 hours; it sends it only if the election is still open.
 
 **Using the record.** `AppState.governanceOf` maps a community channel to
-its shared group. `roleOf`, `mayPost`, `canCreateChannel`, the C2 drop and
+its shared group. Other packages read a role with
+`AppState.verifiedRoleOf(conversationId, accountId)` (a `BuiltInRole`, or
+null when there is no verified record; it never falls back to the server)
+or the record itself (`governanceOf(...)`: `roleOf`, `rankOf`, `mayPost`,
+`mayActOn`, `isRestricted`); `AppState.roleOf` is the display helper that
+falls back to the server's role where there is no record. None of them
+judges a device: where the actor is a leaf, D120 (owner decision B) still
+needs its verdict. `roleOf`, `mayPost`, `canCreateChannel`, the C2 drop and
 the C3 info checks read the record first, the server's role only where
 there is none. Granting a role or transferring ownership commits the record
 and then updates the server's row, so the server's own route checks follow
@@ -4897,6 +4939,22 @@ record are record changes, so the same rule covers them.
 **Residuals.**
 - A plain member's forced removal needs no proof; it moves only `joined`,
   which orders the no-admin claim.
+- The rosters the rules see are every leaf's account, approved or not (the
+  committer is gated, the rosters are not: an L1 verdict differs between
+  devices, and the roster must not). A leaf a member adds under another
+  account's id can therefore keep that account in the roster: the account
+  is not pruned, its removal needs no proof while the extra leaf stays (its
+  real devices can be taken out unproven, and it keeps its role, which no
+  device of it can then use), it keeps counting in an election's snapshot
+  and blocks a no-admin claim while it is an admin. An extra leaf only ever
+  adds accounts, so this can delay or block a role change (an election may
+  never reach its majority; the group keeps its owner), never grant one.
+  Every honest member's sends are held while the leaf is unapproved (D94),
+  so the group notices.
+- Any member can stop a group's sync for everyone with a commit the rules
+  refuse (the server cannot read the record, so it relays it). This is
+  I33's rule for every invalid control message; leaving the conversation
+  stays offered.
 - An account deleted without sending `member_leave` (or a server removal
   of a governing account nobody can prove) stays in the tree: its removal
   stays pending and the D68 send hold in that group does not release.

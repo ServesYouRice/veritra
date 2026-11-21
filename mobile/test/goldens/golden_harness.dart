@@ -95,14 +95,15 @@ Widget veritraTestApp({
 
 /// A state with no session, so the shell shows the connect screen.
 AppState disconnectedState() {
-  return _FixtureState(_FixtureApi())..lifecycle = SessionLifecycle.ready;
+  return _FixtureState(FixtureApi())..lifecycle = SessionLifecycle.ready;
 }
 
 /// A signed-in state with a few conversations and decrypted history for
 /// [chatConversationId], including one message whose sender could not be
 /// verified.
-Future<AppState> connectedState() async {
-  final api = _FixtureApi()
+Future<AppState> connectedState({FixtureApi? api}) async {
+  api ??= FixtureApi();
+  api
     ..envelopes = <ReceivedMessageEnvelope>[
       // Newest first, as the server pages them. Each matches a local
       // record below by sender device and idempotency key.
@@ -287,8 +288,9 @@ class _FixtureState extends AppState {
 }
 
 /// Answers every call the fixture screens make without touching the network.
-class _FixtureApi extends ApiClient {
-  _FixtureApi() : super(baseUrl: 'https://chat.example.org');
+/// Public so the screen photographs (test/screen_photos) can extend it.
+class FixtureApi extends ApiClient {
+  FixtureApi({super.httpClient}) : super(baseUrl: 'https://chat.example.org');
 
   List<ReceivedMessageEnvelope> envelopes = <ReceivedMessageEnvelope>[];
 
