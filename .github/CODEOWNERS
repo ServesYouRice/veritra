@@ -53,6 +53,7 @@
 /scripts/g24-matrix_test.py @ServesYouRice
 /mobile/lib/desktop/update_trust.dart @ServesYouRice
 /mobile/lib/desktop/update_installer.dart @ServesYouRice
+/mobile/lib/desktop/update_service.dart @ServesYouRice
 /mobile/lib/desktop/update_verifier.dart @ServesYouRice
 /mobile/test/fixtures/update-feed/ @ServesYouRice
 /crypto/rust/src/update_feed.rs @ServesYouRice
