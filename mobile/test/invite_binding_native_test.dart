@@ -96,6 +96,39 @@ void main() {
     skip: nativeCryptoSkip(),
   );
 
+  test(
+    'the v3 vector signature verifies through the engine, under the v2 domain',
+    () {
+      final v3 = jsonDecode(
+        File('../testing/vectors/invite-binding-v3.json').readAsStringSync(),
+      ) as Map<String, dynamic>;
+      final out = v3['outputs'] as Map<String, dynamic>;
+      final key = hex(out['signing_public_key_hex']);
+      final message = hex(out['signed_message_hex']);
+      final signature = hex(out['signature_hex']);
+      expect(
+        bindings.c7Verify(
+          domain: inviteBindingSigningDomain,
+          publicKey: key,
+          message: message,
+          signature: signature,
+        ),
+        isTrue,
+      );
+      // The v2 vector's signature (same device, same link) is no v3 answer.
+      expect(
+        bindings.c7Verify(
+          domain: inviteBindingSigningDomain,
+          publicKey: key,
+          message: message,
+          signature: hex(outputs['signature_hex']),
+        ),
+        isFalse,
+      );
+    },
+    skip: nativeCryptoSkip(),
+  );
+
   for (final failure in ['none', 'key', 'missing inviter', 'target']) {
     test(
       'Welcome checks the persisted invitation anchor ($failure)',
@@ -186,6 +219,7 @@ void main() {
       Uint8List messageFor(String targetId) => link.bindingMessage(
             kind: InviteTargetKind.group,
             targetId: targetId,
+            anchorGroupId: targetId,
             inviterAccountId: 'acct_alice',
             inviterDeviceId: 'dev_alice',
             inviterSigningKey: aliceKey,
@@ -230,12 +264,14 @@ void main() {
       final binding = InviteBinding(
         kind: InviteTargetKind.group,
         targetId: 'conv_1',
+        anchorGroupId: 'conv_1',
         inviterAccountId: 'acct_alice',
         inviterDeviceId: 'dev_alice',
         inviterSigningKey: aliceKey,
         tag: link.bindingTag(
           kind: InviteTargetKind.group,
           targetId: 'conv_1',
+          anchorGroupId: 'conv_1',
           inviterAccountId: 'acct_alice',
           inviterDeviceId: 'dev_alice',
           inviterSigningKey: aliceKey,
@@ -243,6 +279,22 @@ void main() {
         signature: signature,
       );
       expect(link.matches(binding), isTrue);
+      // v3: the same signature does not cover another anchor group.
+      expect(
+        await bobVerifies(
+          aliceKey,
+          link.bindingMessage(
+            kind: InviteTargetKind.group,
+            targetId: 'conv_1',
+            anchorGroupId: 'conv_2',
+            inviterAccountId: 'acct_alice',
+            inviterDeviceId: 'dev_alice',
+            inviterSigningKey: aliceKey,
+          ),
+          signature,
+        ),
+        isFalse,
+      );
 
       // Bob holds a group with Alice: its roster names the same key. A stranger
       // and an unknown conversation read as nothing.

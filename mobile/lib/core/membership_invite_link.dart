@@ -6,14 +6,17 @@ import 'membership_models.dart';
 import 'server_origin.dart';
 import 'sha256.dart';
 
-/// A group or community invitation link (C1, format v2):
-/// `<origin>/join#v2.<secret>.<key commitment>`.
+/// A group or community invitation link (C1, format v3):
+/// `<origin>/join#v3.<secret>.<key commitment>`.
 ///
 /// The fragment also holds a 128-bit commitment to the inviting device's
 /// signing key, so a joiner can tell that the key the server names is the one
 /// the link was made with (see [matches] and `docs/designs/C1-invite-format.md`).
-/// v1 links (`#v1.<secret>`, secret-keyed MAC only) are not read: nothing was
-/// released with them, and a v1 link has no commitment to check.
+/// v3 binds the MLS group the invitation admits to (a community's shared
+/// group, or the group itself) next to the target. v1 and v2 links are not
+/// read: nothing was released with them, v1 has no commitment and v2 no
+/// anchor, and reading only v3 keeps a server from steering a joiner to the
+/// weaker form.
 ///
 /// The secret stays in the URL fragment. Browsers and this app never send a
 /// fragment to a server, and this class never lets the secret into a path, a
@@ -41,7 +44,11 @@ class MembershipInviteLink {
   static const int signingKeyLength = 32;
   static const int signatureLength = 64;
   static const String path = '/join';
-  static const String fragmentPrefix = 'v2.';
+  static const String fragmentPrefix = 'v3.';
+
+  /// The first field of every v3 binding. A v2 binding starts with the
+  /// origin, which always has a scheme, so no v2 message equals a v3 one.
+  static const String _versionField = 'veritra/membership-invite/v3';
 
   /// Domain separation for [locator]; the NUL ends the label.
   static const String _locatorLabel =
@@ -51,17 +58,18 @@ class MembershipInviteLink {
   static const String _keyCommitLabel =
       'veritra/membership-invite/v2/key-commit\x00';
 
-  /// Domain separation for the binding key and for the bound message (D90).
+  /// Domain separation for the binding key (D90, unchanged since v1) and for
+  /// the tagged message (v3).
   static const String _bindingKeyLabel =
       'veritra/membership-invite/v1/binding-key\x00';
   static const String _bindingLabel =
-      'veritra/membership-invite/v1/binding\x00';
+      'veritra/membership-invite/v3/binding\x00';
 
   /// Longest text [tryParse] looks at.
   static const int maxLinkLength = 512;
 
   static final RegExp _fragmentPattern = RegExp(
-    r'^v2\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22})$',
+    r'^v3\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{22})$',
   );
 
   /// A new link with a random secret for the server at [origin], committed
@@ -177,14 +185,16 @@ class MembershipInviteLink {
   String get locator =>
       sha256Hex(<int>[...utf8.encode(_locatorLabel), ..._secret]);
 
-  /// The tag that binds an invitation to its target, the inviting account and
-  /// device, and that device's signing key (D90): HMAC-SHA256, keyed by
-  /// SHA-256 of a fixed label and the secret, over a fixed label, [origin] and
-  /// those fields, each with a 16-bit big-endian length in front. The key is
-  /// not the locator, so a server that holds the locator cannot make a tag.
+  /// The tag that binds an invitation to its target, the MLS group it admits
+  /// to ([anchorGroupId], v3), the inviting account and device, and that
+  /// device's signing key (D90): HMAC-SHA256, keyed by SHA-256 of a fixed
+  /// label and the secret, over a fixed label, the version field, [origin]
+  /// and those fields, each with a 16-bit big-endian length in front. The key
+  /// is not the locator, so a server that holds the locator cannot make a tag.
   String bindingTag({
     required InviteTargetKind kind,
     required String targetId,
+    required String anchorGroupId,
     required String inviterAccountId,
     required String inviterDeviceId,
     required List<int> inviterSigningKey,
@@ -194,6 +204,7 @@ class MembershipInviteLink {
       message,
       kind: kind,
       targetId: targetId,
+      anchorGroupId: anchorGroupId,
       inviterAccountId: inviterAccountId,
       inviterDeviceId: inviterDeviceId,
       inviterSigningKey: inviterSigningKey,
@@ -203,19 +214,23 @@ class MembershipInviteLink {
   }
 
   /// The fields both the tag and the signed message cover, each with a
-  /// 16-bit big-endian length in front.
+  /// 16-bit big-endian length in front (v3: the version field first, the
+  /// anchor group after the target).
   void _addFields(
     BytesBuilder out, {
     required InviteTargetKind kind,
     required String targetId,
+    required String anchorGroupId,
     required String inviterAccountId,
     required String inviterDeviceId,
     required List<int> inviterSigningKey,
   }) {
     for (final field in <List<int>>[
+      utf8.encode(_versionField),
       utf8.encode(origin),
       utf8.encode(kind.wire),
       utf8.encode(targetId),
+      utf8.encode(anchorGroupId),
       utf8.encode(inviterAccountId),
       utf8.encode(inviterDeviceId),
       inviterSigningKey,
@@ -231,13 +246,15 @@ class MembershipInviteLink {
       ..add(field);
   }
 
-  /// The bytes the creating device signs (v2), under the native domain
-  /// `veritra-invite-binding-v2` (which the engine prepends): the fields of
-  /// [bindingTag] and this link's [locator], so a signature made for one link
-  /// is no answer for another link of the same inviter.
+  /// The bytes the creating device signs (v3), under the native domain
+  /// `veritra-invite-binding-v2` (which the engine prepends; the layout's
+  /// version is its first field): the fields of [bindingTag] and this link's
+  /// [locator], so a signature made for one link is no answer for another
+  /// link of the same inviter.
   Uint8List bindingMessage({
     required InviteTargetKind kind,
     required String targetId,
+    required String anchorGroupId,
     required String inviterAccountId,
     required String inviterDeviceId,
     required List<int> inviterSigningKey,
@@ -247,6 +264,7 @@ class MembershipInviteLink {
       message,
       kind: kind,
       targetId: targetId,
+      anchorGroupId: anchorGroupId,
       inviterAccountId: inviterAccountId,
       inviterDeviceId: inviterDeviceId,
       inviterSigningKey: inviterSigningKey,
@@ -259,6 +277,7 @@ class MembershipInviteLink {
   Uint8List bindingMessageOf(InviteBinding binding) => bindingMessage(
         kind: binding.kind,
         targetId: binding.targetId,
+        anchorGroupId: binding.anchorGroupId,
         inviterAccountId: binding.inviterAccountId,
         inviterDeviceId: binding.inviterDeviceId,
         inviterSigningKey: binding.inviterSigningKey,
@@ -267,13 +286,21 @@ class MembershipInviteLink {
   /// Whether [binding] agrees with this link on everything the link itself
   /// can tell, without the native engine: the key is 32 bytes and hashes to
   /// the commitment in the link, the signature has its length, and the tag is
-  /// the one the secret makes (a swapped target, account, device or key
-  /// fails). It does NOT check the signature: the joiner does that through
+  /// the one the secret makes (a swapped target, anchor, account, device or
+  /// key fails), and the anchor names a group: never empty, and a group's own
+  /// id for a group invitation. It does NOT check the signature: the joiner does that through
   /// `InviteBindingCryptoService.verifyInviteBinding` over [bindingMessageOf]
   /// and the key, and a binding is accepted only when both pass.
   bool matches(InviteBinding binding) {
     if (binding.inviterSigningKey.length != signingKeyLength ||
         binding.signature.length != signatureLength) {
+      return false;
+    }
+    // v3: the anchor is the group a Welcome must come from. A group admits
+    // to itself; a community to its shared group, never to nothing.
+    if (binding.anchorGroupId.isEmpty ||
+        (binding.kind == InviteTargetKind.group &&
+            binding.anchorGroupId != binding.targetId)) {
       return false;
     }
     // The key must be the one the link was made with. A server that holds the
@@ -289,6 +316,7 @@ class MembershipInviteLink {
       expected = bindingTag(
         kind: binding.kind,
         targetId: binding.targetId,
+        anchorGroupId: binding.anchorGroupId,
         inviterAccountId: binding.inviterAccountId,
         inviterDeviceId: binding.inviterDeviceId,
         inviterSigningKey: binding.inviterSigningKey,

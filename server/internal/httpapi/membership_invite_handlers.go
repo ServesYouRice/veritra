@@ -39,6 +39,10 @@ type createMembershipInviteRequest struct {
 	SigningKey       []byte `json:"signing_key"`
 	BindingTag       string `json:"binding_tag"`
 	BindingSignature []byte `json:"binding_signature"`
+	// AnchorGroupID is the MLS group the app signed (v3): the group itself or
+	// the community's shared conversation. The server checks it against its
+	// own record and stores nothing new.
+	AnchorGroupID    string `json:"anchor_group_id"`
 	MaxUses          int    `json:"max_uses"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
 }
@@ -97,6 +101,7 @@ func (a *API) createMembershipInvite(w http.ResponseWriter, r *http.Request, pri
 	}
 	invite, err := a.Store.CreateMembershipInvite(r.Context(), storage.CreateMembershipInviteInput{
 		Target:            target,
+		AnchorGroupID:     req.AnchorGroupID,
 		CreatedBy:         principal.AccountID,
 		CreatedByDeviceID: principal.DeviceID,
 		SigningKey:        req.SigningKey,

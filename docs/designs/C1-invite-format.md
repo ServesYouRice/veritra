@@ -4,15 +4,21 @@ Status 2026-11-07. Built on the owner's approval of the format (secret after
 the `#`, requests an admin approves; bound to the target, account and device
 keys by D90, see "Binding" below). Server migrations 0048 and 0066 (v2).
 Format v2 (owner decision 2026-11-07: close the collusion residual with a
-real device signature). Read with
+real device signature). **Format v3 since 2026-11-21** (owner approval: the
+community-to-shared-group anchor): v2 plus the MLS group the invitation
+admits to, signed; see the last section. Read with
 [C1-membership-plan](C1-membership-plan.md) and
 [C1-progress](C1-progress.md).
 
 ## The link
 
 ```
-<server origin>/join#v2.<secret>.<key commitment>
+<server origin>/join#v3.<secret>.<key commitment>
 ```
+
+(v3 since 2026-11-21: the same parts as v2, which this section describes;
+the signed fields gained the MLS group the invitation admits to. See the last
+section. v2 links, like v1, are no longer read.)
 
 `secret` is 32 random bytes, base64url without padding (43 characters). It is
 made on the creating device and exists only in the link. `key commitment` is
@@ -277,3 +283,113 @@ group ids: the signed invitation does not carry that shared id. A durable
 community anchor and authenticated mapping still need implementation and
 review. C1 remains open (encrypted rename is wired through W11 and C3).
 The owner requested solo work, so no independent review was performed.
+
+## 2026-11-21: v3, the shared-group anchor (community and group)
+
+Owner approval 2026-11-21 ("community-to-shared-group invite anchor"). A
+community's id is not the id of the MLS group a joiner is welcomed into (the
+C0 shared conversation), and v2 did not sign that group, so a joiner of a
+community could not tell which group the invitation was anchored to: a server
+could name any group as the community's and the Welcome check above had no
+anchor to apply. v3 signs it. No crypto ABI, Rust, server migration or local
+schema change.
+
+**What is signed.** Every field of v2, plus `anchor_group_id`, and a version
+field first:
+
+```
+fields    = lp("veritra/membership-invite/v3") || lp(origin) || lp(target_kind)
+            || lp(target_id) || lp(anchor_group_id) || lp(inviter_account_id)
+            || lp(inviter_device_id) || lp(inviter_signing_key)
+tag       = hex(HMAC-SHA256(binding_key, "veritra/membership-invite/v3/binding\0" || fields))
+message   = fields || lp(locator)
+signature = Ed25519(inviter credential key, "veritra-invite-binding-v2" || message)
+```
+
+`anchor_group_id` is the MLS group id (the conversation id) the joiner will
+be welcomed into: the group's own id for a group, and the community's C0
+shared conversation for a community. It is never empty. `binding_key`, the
+locator and the key commitment are v2's, unchanged. The signing domain stays
+`veritra-invite-binding-v2` (the ABI allowlist entry, so no Rust change); the
+version lives in the message instead. A v2 message starts with `lp(origin)`
+and an origin always has a scheme, so no v2 message equals a v3 message and
+a signature made for one layout never verifies as the other. Vector:
+`testing/vectors/invite-binding-v3.json` (Go builds it with the standard
+library; Dart checks the message, the tag and the fragment, and the native
+engine verifies the signature).
+
+**The link.** `<origin>/join#v3.<secret>.<key commitment>`, the same parts as
+v2. The anchor is not in the link: the joiner reads it from the server and
+the signature authenticates it, which keeps the link short.
+
+**Downgrade.** The version is in the fragment, which the server never sees,
+and is chosen by the inviting app. The app reads only `v3.` links; v1 and v2
+links are "invalid" and v2 invitations made before this change "no longer
+work" and expire (nothing was released with either, the same rule v2 applied
+to v1). A v3 joiner rebuilds only the v3 message, so a server that strips or
+swaps the anchor, or returns a v2-era signature, fails the signature. The
+joiner also refuses an empty anchor, and a group whose anchor is not its own
+id.
+
+**Creating.** The app takes the anchor from what it holds: the group id, or
+the community's `shared_conversation_id`. A legacy community (no shared
+group, only while the server's `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` switch is
+off) gets no invitation from the app. Before signing, the app reads its own
+leaf in that MLS group (`pm_crypto_group_member_signature_key`) and refuses
+unless it is this device with its own key: it anchors only a group it is in.
+The body carries `anchor_group_id`; the server derives the same value (the
+group id, or `community_layouts.shared_conversation_id` of an active layout)
+and answers 400 `invalid_input` to a mismatch. It stores nothing new and
+returns the derived value as `binding.anchor_group_id` on the preview and on
+the request answer. If a community's shared group ever changed, its earlier
+invitations would stop verifying: fail closed. (A legacy community derives
+no anchor; the server still accepts an anchor-less body for it, which no v3
+app makes and no v3 joiner accepts.)
+
+**How the joiner verifies.** On preview and again on the request answer,
+before showing the target or keeping a request:
+
+1. v2's checks over the v3 fields: shown kind, key commitment, tag, the
+   signature in the invitation domain, and the roster check.
+2. `anchor_group_id` is not empty; for a group it equals `target_id`.
+3. Community: if this device already pinned the community to a group (an
+   earlier verified link), the new anchor must be the same group.
+4. The request answer must carry the same target and anchor as the preview.
+
+Before filing the request the app pins, for both kinds,
+`InviteAnchor(anchor_group_id, inviter account, device, key)` (the D99 table,
+schema 32), and for a community also `community -> anchor_group_id` (an
+encrypted local setting `c1.community_anchor.<id>`, cleared with the invite
+anchors on identity replacement, backup restore and wipe, never exported).
+Then:
+
+- **Welcome.** The D99 check now covers communities: a Welcome to the anchor
+  group is committed only if the group's actual MLS id is that id and the
+  inviter's leaf in it carries the pinned key; otherwise the state is
+  restored and the conversation enters the per-conversation failure UI.
+- **Mapping.** When the app lists communities, a community it pinned is
+  shown only if the server's `shared_conversation_id` is the pinned group
+  and every open or announcement channel is routed to it. A server that
+  names another group (a replay of the invitation into another group) gets
+  the community hidden, not shown with that group.
+
+**What the server learns.** Nothing new: it already holds the community's
+shared conversation, and the anchor in the create body is that value. The
+preview now shows that opaque id to a signed-in link holder who is not yet a
+member; it opens nothing without membership (every route checks it).
+
+**Limits, stated plainly.**
+
+- The inviting app's own idea of which group is the community's comes from
+  the server's listing plus its MLS membership of that group. A server that
+  lies to the inviter can make it anchor another group the inviter is in;
+  the joiner then joins that real group of the inviter's. Closing this needs
+  an end-to-end signed community-to-group record (the C0 layout control
+  record of `C0-preserving-migration.md`), not built.
+- A pin exists only for a join through a link. A member added by hand, or a
+  device that joined before v3, trusts the server's mapping as before.
+- The link must still reach the joiner out of the server's sight (see the v2
+  limits); a link the server can read gets no protection.
+- Private channels have their own groups and are not anchored (a joiner is
+  not added to them on approval).
+- **Needs the independent security review**, with the rest of v2.

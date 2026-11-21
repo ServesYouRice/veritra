@@ -136,3 +136,33 @@ pipeline error.
   tests pass (measurement/vector-print tests remain ignored); Flutter has
   2,361 pass, 21 skipped, no failures. The native device-link cleanup tests
   that failed on the incoming branch now pass in the full suite too.
+
+## 2026-11-21 invite v3: community-to-shared-group anchor
+
+Design: `docs/designs/C1-invite-format.md`, last section. No ABI, Rust,
+migration or local schema change. Checks on branch `c1-anchor` (from
+28cc86a), Linux, Flutter 3.44.0, Go 1.26.11, the prebuilt native library
+from `/home/user/veritra/crypto/rust/target/release` (Rust not rebuilt):
+
+- Vector `testing/vectors/invite-binding-v3.json`: built with Go's standard
+  library; the tag and message reproduced independently with Python
+  `hashlib`/`hmac`; Dart rebuilds the message, tag and fragment; the native
+  engine verifies the signature under `veritra-invite-binding-v2` and refuses
+  the v2 vector's signature for it.
+- Guards removed one at a time each fail a test: empty anchor allowed, a
+  group anchored elsewhere allowed, no community pin check, no mapping
+  check, v2 links read, no version field, no community pin saved, inviter
+  not in the group, anchor keyed by target (Dart); the server's anchor check
+  (Go).
+- `go test -p 2 ./...`, `gofmt -l`, `go vet ./...`: pass.
+- Python policy fixture tests (`scripts/*_test.py`), demo boundary: pass.
+- `flutter analyze`: only the two pre-existing `test/screen_photos/
+  screen_catalog.dart` errors from the B6 merge (untouched here);
+  `dart format --set-exit-if-changed .`: clean.
+- `flutter test -j 2` with the native library required: 3,759 pass, 8
+  skipped, 2 fail to load: `test/screen_photos/screen_photos_test.dart` and
+  `screen_catalog_guard_test.dart`, both from the same pre-existing
+  `screen_catalog.dart` compile errors (B6 call-control API change; not
+  touched here). The invitation tests (94, native included) all pass.
+- Not run: `cargo test`, `cargo clippy` (no Rust change; disk budget forbids
+  a Rust build in this round). Not run on a device.

@@ -132,10 +132,29 @@ type inviteRow struct {
 	createdBy string
 }
 
+// inviteAnchorGroupTx is the MLS group an invitation to target admits to
+// (v3): a group's own conversation, or the shared conversation of a community
+// with the C0 layout. A legacy community has none and gets "".
+func inviteAnchorGroupTx(ctx context.Context, q queryRower, target MembershipTarget) (string, error) {
+	if target.Kind != domain.InviteTargetCommunity {
+		return target.ID, nil
+	}
+	layout, err := communityLayoutOf(ctx, q, target.ID)
+	if err != nil || !layout.active {
+		return "", err
+	}
+	return layout.sharedConversationID, nil
+}
+
 // inviteBindingTx reads what the creating device bound invitation id to.
 func inviteBindingTx(ctx context.Context, q queryRower, invite inviteRow) (domain.InviteBinding, error) {
 	binding := domain.InviteBinding{TargetKind: invite.target.Kind, TargetID: invite.target.ID, InviterAccountID: invite.createdBy}
-	err := q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag, binding_signature FROM membership_invites WHERE id = ?`, invite.id).
+	anchor, err := inviteAnchorGroupTx(ctx, q, invite.target)
+	if err != nil {
+		return domain.InviteBinding{}, err
+	}
+	binding.AnchorGroupID = anchor
+	err = q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag, binding_signature FROM membership_invites WHERE id = ?`, invite.id).
 		Scan(&binding.InviterDeviceID, &binding.InviterSigningKey, &binding.Tag, &binding.Signature)
 	return binding, err
 }
@@ -226,8 +245,13 @@ func targetNameTx(ctx context.Context, q queryRower, target MembershipTarget) (s
 // device's v2 signature (64 bytes). The server cannot check the tag (that
 // needs the secret) or the signature (that needs the origin the link names);
 // it keeps both for the joiner.
+//
+// AnchorGroupID is the MLS group the app signed (v3): it must be the one the
+// server derives for the target (inviteAnchorGroupTx), so an honest app that
+// holds a stale mapping learns at once. Nothing new is stored.
 type CreateMembershipInviteInput struct {
 	Target            MembershipTarget
+	AnchorGroupID     string
 	CreatedBy         string
 	CreatedByDeviceID string
 	SigningKey        []byte
@@ -260,6 +284,13 @@ func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembersh
 	defer tx.Rollback()
 	if err := inviteAdminRoleTx(ctx, tx, input.Target, input.CreatedBy); err != nil {
 		return domain.MembershipInvite{}, err
+	}
+	anchor, err := inviteAnchorGroupTx(ctx, tx, input.Target)
+	if err != nil {
+		return domain.MembershipInvite{}, err
+	}
+	if anchor != input.AnchorGroupID {
+		return domain.MembershipInvite{}, ErrInvalidInput
 	}
 	// The binding names a live device of the creating account, with the
 	// signing key the server has on record for it.

@@ -2460,6 +2460,21 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Refactor.** The K2 bundle (kind 2) shares the header reader and the
     chunk decoder; its bytes and tests are unchanged.
 
+- **C1 invitation binding v3, no ABI change (2026-11-21):** the signed
+  invitation message gains a version field first
+  (`veritra/membership-invite/v3`) and `anchor_group_id` (the MLS group the
+  invitation admits to: a community's shared conversation, or the group
+  itself) after the target; the HMAC tag label becomes
+  `veritra/membership-invite/v3/binding`. The signing domain stays
+  `veritra-invite-binding-v2` (the ABI 21 allowlist entry); a v2 message
+  starts with the origin, so the two layouts never share bytes. The joiner
+  pins the anchor and the D99 Welcome check applies to community joins.
+  Layout and limits: [`C1-invite-format.md`](designs/C1-invite-format.md),
+  last section; vector `testing/vectors/invite-binding-v3.json` (Go builds
+  it; Dart checks it; the native engine verifies its signature). The Rust
+  tests still pin only the v2 vector (the domain); a Rust check of the v3
+  vector is optional. **Needs the independent crypto review before
+  release.**
 - **C1 invitation binding v2, ABI 21 (ported 2026-11-09):** an
   allowlist entry only; no function, struct or length changed. The current
   header and Dart binding pin ABI 21; local schema 32 stores group invite

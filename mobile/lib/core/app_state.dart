@@ -2709,6 +2709,8 @@ class AppState extends ChangeNotifier
         _refreshOwned(current, generation);
     try {
       final list = await client.listCommunities(current.token);
+      // C1 v3: read before the channels, so the commit below stays as it was.
+      final pins = await _communityInviteAnchorsOf(list);
       final channels = <String, List<Channel>>{};
       final creationAccess = <String, bool>{};
       for (final community in list) {
@@ -2738,9 +2740,23 @@ class AppState extends ChangeNotifier
           // Unknown rights hide the entry; refresh can try again later.
         }
       }
+      // C1 v3: a community a verified invitation pinned to a shared group
+      // is shown only while the server names that same group.
+      final kept = <Community>[
+        for (final community in list)
+          if (MembershipActions._communityKeepsInviteAnchor(
+            community,
+            channels[community.id] ?? const <Channel>[],
+            pins[community.id],
+          ))
+            community,
+      ];
       if (!active()) return;
-      communities = list;
-      channelsByCommunity = channels;
+      communities = kept;
+      channelsByCommunity = <String, List<Channel>>{
+        for (final community in kept)
+          community.id: channels[community.id] ?? const <Channel>[],
+      };
       _channelCreationAccess.addAll(creationAccess);
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.

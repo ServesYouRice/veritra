@@ -1835,6 +1835,7 @@ class ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required String anchorGroupId,
     required List<int> signingKey,
     required String bindingTag,
     required List<int> bindingSignature,
@@ -1847,6 +1848,7 @@ class ApiClient {
       token: token,
       body: <String, Object?>{
         'locator': locator,
+        'anchor_group_id': anchorGroupId,
         'signing_key': base64.encode(signingKey),
         'binding_tag': bindingTag,
         'binding_signature': base64.encode(bindingSignature),

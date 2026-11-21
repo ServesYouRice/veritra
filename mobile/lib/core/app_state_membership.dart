@@ -29,13 +29,18 @@ extension MembershipActions on AppState {
   /// administers and returns the link to share. The link holds the secret and
   /// is not stored anywhere: the server keeps a hash of the locator only.
   ///
-  /// The invitation is bound (D90, v2) to the target, this account and device,
-  /// and the device's signing key: by a tag derived from the secret, by a
-  /// commitment to the key in the link, and by this device's signature over
-  /// the same fields and the link's locator (ABI 13 sign, domain
-  /// `veritra-invite-binding-v2`). The key and the signature come from the
-  /// native engine; without it (any build that is not the reviewed engine) no
-  /// invitation is made.
+  /// The invitation is bound (D90, v3) to the target, the MLS group it admits
+  /// to, this account and device, and the device's signing key: by a tag
+  /// derived from the secret, by a commitment to the key in the link, and by
+  /// this device's signature over the same fields and the link's locator
+  /// (ABI 13 sign, domain `veritra-invite-binding-v2`). The key and the
+  /// signature come from the native engine; without it (any build that is not
+  /// the reviewed engine) no invitation is made.
+  ///
+  /// The anchor group is the group itself, or the community's shared group;
+  /// a legacy community (no shared group) gets no invitation. It is anchored
+  /// only if this device is in that MLS group with its own key, so a joiner's
+  /// Welcome check can pass.
   Future<String?> createInviteLink(InviteTargetKind kind, String targetId) {
     return _membershipCall<String>((current, client) async {
       // Only the native engine reads the device key and signs; the
@@ -56,6 +61,28 @@ extension MembershipActions on AppState {
         accountId: accountId,
         deviceId: deviceId,
       );
+      final anchorGroupId = kind == InviteTargetKind.group
+          ? targetId
+          : communities
+              .where((community) => community.id == targetId)
+              .firstOrNull
+              ?.sharedConversationId;
+      if (anchorGroupId == null || anchorGroupId.isEmpty) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
+      Uint8List? ownLeaf;
+      try {
+        ownLeaf = await signer.memberSigningKey(
+          conversationId: anchorGroupId,
+          accountId: accountId,
+          deviceId: deviceId,
+        );
+      } on Object {
+        ownLeaf = null;
+      }
+      if (ownLeaf == null || !_sameBytes(ownLeaf, signingKey)) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
       final link = MembershipInviteLink.generate(
         origin: client.baseUrl,
         inviterSigningKey: signingKey,
@@ -63,6 +90,7 @@ extension MembershipActions on AppState {
       final message = link.bindingMessage(
         kind: kind,
         targetId: targetId,
+        anchorGroupId: anchorGroupId,
         inviterAccountId: accountId,
         inviterDeviceId: deviceId,
         inviterSigningKey: signingKey,
@@ -85,10 +113,12 @@ extension MembershipActions on AppState {
         kind,
         targetId,
         locator: link.locator,
+        anchorGroupId: anchorGroupId,
         signingKey: signingKey,
         bindingTag: link.bindingTag(
           kind: kind,
           targetId: targetId,
+          anchorGroupId: anchorGroupId,
           inviterAccountId: accountId,
           inviterDeviceId: deviceId,
           inviterSigningKey: signingKey,
@@ -100,18 +130,20 @@ extension MembershipActions on AppState {
   }
 
   /// Whether what the server says about an invitation is what its creating
-  /// device bound it to (D90, v2). Fails closed: every check below must pass,
+  /// device bound it to (D90, v3). Fails closed: every check below must pass,
   /// and a build without the signing engine accepts nothing.
   ///
   /// 1. The shown kind is the bound kind, the key hashes to the commitment in
-  ///    the link, and the tag is the one the secret makes
-  ///    (`MembershipInviteLink.matches`).
+  ///    the link, the tag is the one the secret makes, and the anchor names a
+  ///    group (a group's own id for a group) (`MembershipInviteLink.matches`).
   /// 2. The device's signature verifies under the key over the message the
   ///    link rebuilds, in the invitation domain.
   /// 3. Where this device already holds an MLS group with the inviting device,
   ///    that group's roster key must be the key named. A stranger to the
   ///    inviter shares no group, so nothing is read and the commitment in the
   ///    link is the anchor; any group that names another key refuses.
+  /// 4. A community this device already pinned to a shared group through an
+  ///    earlier verified link must be anchored to that same group.
   Future<bool> _inviteBindingHolds(
     MembershipInviteLink link,
     InviteBinding binding,
@@ -128,6 +160,12 @@ extension MembershipActions on AppState {
         signature: binding.signature,
       );
       if (!signed) return false;
+      if (binding.kind == InviteTargetKind.community) {
+        final pinned = await localStore.loadCommunityInviteAnchor(
+          binding.targetId,
+        );
+        if (pinned != null && pinned != binding.anchorGroupId) return false;
+      }
       for (final conversation in conversations.toList(growable: false)) {
         final Uint8List? known;
         try {
@@ -145,6 +183,44 @@ extension MembershipActions on AppState {
       }
     } on Object {
       return false;
+    }
+    return true;
+  }
+
+  /// C1 v3: the shared group a verified invitation pinned each of
+  /// [communities] to, or null where none was pinned. A pin this device
+  /// cannot read is '' (matches no group), so the community is hidden rather
+  /// than trusted to the server's mapping.
+  Future<Map<String, String?>> _communityInviteAnchorsOf(
+    List<Community> communities,
+  ) async {
+    final pins = <String, String?>{};
+    for (final community in communities) {
+      try {
+        pins[community.id] = await localStore.loadCommunityInviteAnchor(
+          community.id,
+        );
+      } on Object {
+        pins[community.id] = '';
+      }
+    }
+    return pins;
+  }
+
+  /// C1 v3: whether the server's account of [community] agrees with the
+  /// shared group in [pinned] (from [_communityInviteAnchorsOf]): its shared
+  /// group is the pinned one and so is every open or announcement channel's.
+  /// A community this device never pinned passes.
+  static bool _communityKeepsInviteAnchor(
+    Community community,
+    List<Channel> channels,
+    String? pinned,
+  ) {
+    if (pinned == null) return true;
+    if (community.sharedConversationId != pinned) return false;
+    for (final channel in channels) {
+      if (channel.kind == 'private') continue;
+      if (channel.conversationId != pinned) return false;
     }
     return true;
   }
@@ -218,8 +294,11 @@ extension MembershipActions on AppState {
   Future<JoinRequest?> requestToJoin(MembershipInviteLink link) {
     return _membershipCall<JoinRequest>((current, client) async {
       try {
-        // Persist the verified group anchor before the server can approve and
-        // deliver a Welcome, including when the request response is lost.
+        // Persist the verified anchor before the server can approve and
+        // deliver a Welcome, including when the request response is lost: the
+        // group a Welcome must come from (the group, or the community's shared
+        // group, v3) with the inviter's key, and for a community the group the
+        // server must name as its shared group from now on.
         final preview = await client.previewMembershipInvite(
           current.token,
           link.locator,
@@ -227,23 +306,30 @@ extension MembershipActions on AppState {
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
-        if (preview.kind == InviteTargetKind.group) {
-          final binding = preview.binding;
-          await localStore.saveInviteAnchor(
-            InviteAnchor(
-              conversationId: binding.targetId,
-              accountId: binding.inviterAccountId,
-              deviceId: binding.inviterDeviceId,
-              signingKey: binding.inviterSigningKey,
-            ),
+        final verified = preview.binding;
+        await localStore.saveInviteAnchor(
+          InviteAnchor(
+            conversationId: verified.anchorGroupId,
+            accountId: verified.inviterAccountId,
+            deviceId: verified.inviterDeviceId,
+            signingKey: verified.inviterSigningKey,
+          ),
+        );
+        if (preview.kind == InviteTargetKind.community) {
+          await localStore.saveCommunityInviteAnchor(
+            verified.targetId,
+            verified.anchorGroupId,
           );
         }
         final request = await client.requestToJoin(current.token, link.locator);
-        // The answer must carry the binding of this very link; otherwise the
-        // server filed the request against something else (a swap between
-        // the preview and the request). Withdraw it, best effort.
+        // The answer must carry the binding of this very link, for the target
+        // and group the preview showed; otherwise the server filed the
+        // request against something else (a swap between the preview and the
+        // request). Withdraw it, best effort.
         final binding = request.binding;
         if (binding == null ||
+            binding.targetId != verified.targetId ||
+            binding.anchorGroupId != verified.anchorGroupId ||
             !await _inviteBindingHolds(link, binding, request.kind)) {
           try {
             await client.cancelJoinRequest(current.token, request.id);

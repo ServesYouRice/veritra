@@ -77,7 +77,11 @@ func (f inviteFixture) communityTarget() MembershipTarget {
 
 func (f inviteFixture) invite(t *testing.T, ctx context.Context, target MembershipTarget, by AccountDevice, locator string, maxUses int) domain.MembershipInvite {
 	t.Helper()
-	invite, err := f.store.CreateMembershipInvite(ctx, CreateMembershipInviteInput{Target: target, CreatedBy: by.Account.ID, CreatedByDeviceID: by.Device.ID, SigningKey: by.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: locator, MaxUses: maxUses, ExpiresAt: time.Now().Add(time.Hour)})
+	anchor, err := inviteAnchorGroupTx(ctx, f.store.db, target)
+	if err != nil {
+		t.Fatalf("invite anchor: %v", err)
+	}
+	invite, err := f.store.CreateMembershipInvite(ctx, CreateMembershipInviteInput{Target: target, AnchorGroupID: anchor, CreatedBy: by.Account.ID, CreatedByDeviceID: by.Device.ID, SigningKey: by.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: locator, MaxUses: maxUses, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -214,7 +218,7 @@ func TestInviteAndApprovalAuthorization(t *testing.T) {
 		}
 	}
 	// Channel conversations and direct messages take no invitation.
-	if _, err := f.store.CreateMembershipInvite(ctx, CreateMembershipInviteInput{Target: MembershipTarget{Kind: domain.InviteTargetGroup, ID: f.conv.ID}, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(3), MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, ErrNotMember) {
+	if _, err := f.store.CreateMembershipInvite(ctx, CreateMembershipInviteInput{Target: MembershipTarget{Kind: domain.InviteTargetGroup, ID: f.conv.ID}, AnchorGroupID: f.conv.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(3), MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, ErrNotMember) {
 		t.Fatalf("invite for a channel conversation: %v", err)
 	}
 	f.invite(t, ctx, f.groupTarget(), f.owner, testLocator(4), 3)
@@ -494,12 +498,12 @@ func TestCancelAndBounds(t *testing.T) {
 	}
 	// Input bounds.
 	bad := []CreateMembershipInviteInput{
-		{Target: f.groupTarget(), CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 0, ExpiresAt: time.Now().Add(time.Hour)},
-		{Target: f.groupTarget(), CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1001, ExpiresAt: time.Now().Add(time.Hour)},
-		{Target: f.groupTarget(), CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(-time.Hour)},
-		{Target: f.groupTarget(), CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(MaxMembershipInviteLifetime + time.Hour)},
-		{Target: f.groupTarget(), CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: "not-hex", MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)},
-		{Target: MembershipTarget{Kind: "other", ID: f.group.ID}, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)},
+		{Target: f.groupTarget(), AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 0, ExpiresAt: time.Now().Add(time.Hour)},
+		{Target: f.groupTarget(), AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1001, ExpiresAt: time.Now().Add(time.Hour)},
+		{Target: f.groupTarget(), AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(-time.Hour)},
+		{Target: f.groupTarget(), AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(MaxMembershipInviteLifetime + time.Hour)},
+		{Target: f.groupTarget(), AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: "not-hex", MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)},
+		{Target: MembershipTarget{Kind: "other", ID: f.group.ID}, AnchorGroupID: f.group.ID, CreatedBy: f.owner.Account.ID, CreatedByDeviceID: f.owner.Device.ID, SigningKey: f.owner.Device.SigningKey, BindingTag: testBindingTag, BindingSignature: testBindingSignature, Locator: testLocator(51), MaxUses: 1, ExpiresAt: time.Now().Add(time.Hour)},
 	}
 	for i, input := range bad {
 		if _, err := f.store.CreateMembershipInvite(ctx, input); !errors.Is(err, ErrInvalidInput) {

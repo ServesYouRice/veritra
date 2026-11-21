@@ -183,3 +183,17 @@ design.
 3. Independent security review of invite v2 (the 2026-11-09 port was done
    solo at the owner's request), and native end-to-end evidence for a
    community approval and removal on devices.
+
+## 2026-11-21: community-to-shared-group anchor (invite v3)
+
+Owner approved the anchor 2026-11-21. Built as invitation format v3 (design in
+[C1-invite-format](C1-invite-format.md), last section): the signed binding
+now names the MLS group the invitation admits to (a community's C0 shared
+conversation, or the group itself). The joiner pins it before filing the
+request, the D99 Welcome check then covers community joins, and a community
+pinned this way is shown only while the server names the same shared group.
+No crypto ABI, Rust, migration or local schema change; v1 and v2 links are no
+longer read. Item 1 of "Still open" above is built; the independent security
+review (item 3) now covers v3 too. Remaining limit: the inviter's own
+community-to-group mapping still comes from the server (needs the C0 signed
+layout record).

@@ -21,28 +21,34 @@ MembershipInviteLink newInviteLink({
       inviterSigningKey: signingKey ?? defaultInviterKey,
     );
 
-/// What an honest creating device binds [link] to (D90, v2): the tag and the
+/// What an honest creating device binds [link] to (D90, v3): the tag and the
 /// signature (the test engine's stand-in, see [fakeInviteSignature]) over the
 /// fields. Defaults name a group `conv_1` and the inviter `acct_alice` on
-/// `dev_alice`.
+/// `dev_alice`; [anchorGroupId] defaults to the target for a group and to
+/// `conv_shared_1` for a community.
 InviteBinding honestBinding(
   MembershipInviteLink link, {
   InviteTargetKind kind = InviteTargetKind.group,
   String targetId = 'conv_1',
+  String? anchorGroupId,
   String accountId = 'acct_alice',
   String deviceId = 'dev_alice',
   List<int>? signingKey,
 }) {
   final key = Uint8List.fromList(signingKey ?? defaultInviterKey);
+  final anchor = anchorGroupId ??
+      (kind == InviteTargetKind.group ? targetId : 'conv_shared_1');
   return InviteBinding(
     kind: kind,
     targetId: targetId,
+    anchorGroupId: anchor,
     inviterAccountId: accountId,
     inviterDeviceId: deviceId,
     inviterSigningKey: key,
     tag: link.bindingTag(
       kind: kind,
       targetId: targetId,
+      anchorGroupId: anchor,
       inviterAccountId: accountId,
       inviterDeviceId: deviceId,
       inviterSigningKey: key,
@@ -52,6 +58,7 @@ InviteBinding honestBinding(
       link.bindingMessage(
         kind: kind,
         targetId: targetId,
+        anchorGroupId: anchor,
         inviterAccountId: accountId,
         inviterDeviceId: deviceId,
         inviterSigningKey: key,
@@ -65,6 +72,7 @@ InviteBinding tampered(
   InviteBinding binding, {
   InviteTargetKind? kind,
   String? targetId,
+  String? anchorGroupId,
   String? accountId,
   String? deviceId,
   List<int>? signingKey,
@@ -74,6 +82,7 @@ InviteBinding tampered(
     InviteBinding(
       kind: kind ?? binding.kind,
       targetId: targetId ?? binding.targetId,
+      anchorGroupId: anchorGroupId ?? binding.anchorGroupId,
       inviterAccountId: accountId ?? binding.inviterAccountId,
       inviterDeviceId: deviceId ?? binding.inviterDeviceId,
       inviterSigningKey: Uint8List.fromList(
