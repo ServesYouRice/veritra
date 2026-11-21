@@ -69,10 +69,10 @@ the crypto surface since the freeze is in [`crypto.md`](crypto.md).
 - in-memory voice playback on iOS, macOS and Linux
   (`mobile/lib/features/chat/loopback_clip_server.dart`): a decrypted note is
   served over `http://127.0.0.1` on a random port and a 256-bit random path,
-  so it needs the iOS ATS key `NSAllowsLocalNetworking` (local loads only)
-  and the macOS sandbox entitlement `com.apple.security.network.server`
-  (which is not loopback-scoped: the code, not the sandbox, keeps the
-  listener on 127.0.0.1)
+  so it needs the ATS key `NSAllowsLocalNetworking` on iOS and macOS (local
+  loads only) and the macOS sandbox entitlement
+  `com.apple.security.network.server` (which is not loopback-scoped: the
+  code, not the sandbox, keeps the listener on 127.0.0.1)
 - `THIRD_PARTY_NOTICES.md`, lockfiles, CI, and release scripts
 - the OpenMLS 0.9.0 → 0.9.2 upgrade and the libcrux advisory exception (G27)
 

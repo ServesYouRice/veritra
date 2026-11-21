@@ -153,27 +153,32 @@ void main() {
   // http://127.0.0.1 (`LoopbackClipServer`). iOS needs ATS to allow local
   // loads and the macOS sandbox needs the server entitlement to listen.
   // Both stay this narrow: no arbitrary loads, no exception domains.
-  test('iOS ATS allows local loads only, for loopback voice playback', () {
-    final infoPlist = File('ios/Runner/Info.plist').readAsStringSync();
-    final start = infoPlist.indexOf('<key>NSAppTransportSecurity</key>');
-    expect(start, isNonNegative);
-    final dict = infoPlist.substring(
-      infoPlist.indexOf('<dict>', start),
-      infoPlist.indexOf('</dict>', start) + '</dict>'.length,
-    );
-    expect(
-      RegExp(r'<key>([^<]+)</key>')
-          .allMatches(dict)
-          .map((m) => m.group(1))
-          .toList(),
-      <String>['NSAllowsLocalNetworking'],
-    );
-    expect(
-      dict.replaceAll(RegExp(r'\s'), ''),
-      contains('<key>NSAllowsLocalNetworking</key><true/>'),
-    );
-    expect(infoPlist, isNot(contains('NSAllowsArbitraryLoads')));
-    expect(infoPlist, isNot(contains('NSExceptionDomains')));
+  test('Apple ATS allows local loads only, for loopback voice playback', () {
+    for (final path in <String>[
+      'ios/Runner/Info.plist',
+      'macos/Runner/Info.plist',
+    ]) {
+      final infoPlist = File(path).readAsStringSync();
+      final start = infoPlist.indexOf('<key>NSAppTransportSecurity</key>');
+      expect(start, isNonNegative, reason: path);
+      final dict = infoPlist.substring(
+        infoPlist.indexOf('<dict>', start),
+        infoPlist.indexOf('</dict>', start) + '</dict>'.length,
+      );
+      expect(
+        RegExp(r'<key>([^<]+)</key>')
+            .allMatches(dict)
+            .map((m) => m.group(1))
+            .toList(),
+        <String>['NSAllowsLocalNetworking'],
+      );
+      expect(
+        dict.replaceAll(RegExp(r'\s'), ''),
+        contains('<key>NSAllowsLocalNetworking</key><true/>'),
+      );
+      expect(infoPlist, isNot(contains('NSAllowsArbitraryLoads')));
+      expect(infoPlist, isNot(contains('NSExceptionDomains')));
+    }
     expect(
       File('lib/features/chat/loopback_clip_server.dart').readAsStringSync(),
       contains('HttpServer.bind(InternetAddress.loopbackIPv4, 0)'),

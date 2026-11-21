@@ -24,8 +24,9 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 ///   wiping them wipes what it serves. What was already sent still sits in
 ///   dart:io and kernel socket buffers and in the player's own buffers.
 ///
-/// On Apple platforms this needs the iOS `NSAllowsLocalNetworking` ATS key
-/// and the macOS `com.apple.security.network.server` sandbox entitlement.
+/// On Apple platforms this needs the `NSAllowsLocalNetworking` ATS key (iOS
+/// and macOS) and the macOS `com.apple.security.network.server` sandbox
+/// entitlement.
 ///
 /// Call [close] as soon as playback ends, before wiping the bytes.
 class LoopbackClipServer {
