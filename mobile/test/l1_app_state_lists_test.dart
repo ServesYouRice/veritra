@@ -4,15 +4,17 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:drift/native.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/features/chat/approval_hold_banners.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
+import 'package:private_messenger/l10n/app_localizations.dart';
 import 'package:private_messenger/l10n/l10n.dart' show englishL10n;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -1225,6 +1227,277 @@ void main() {
     expect(api.recoveryKeyLists.single, api.chain.last);
     expect(state.recoveryKeyNeedsConfirmation, isFalse);
   }, skip: skip);
+
+  /// acct_bob's genesis by dev_bob and two validly signed version 2s (a
+  /// fork, which takes a key the list holds), and a chain from another
+  /// genesis a server could make up alone.
+  ({Uint8List genesis, Uint8List left, Uint8List right, Uint8List madeUp})
+      bobFork() {
+    final bob = bindings.createDevice('acct_bob', 'dev_bob');
+    final two = bindings.createDevice('acct_bob', 'dev_two');
+    final three = bindings.createDevice('acct_bob', 'dev_three');
+    final server = bindings.createDevice('acct_bob', 'dev_server');
+    for (final device in [bob, two, three, server]) {
+      addTearDown(device.close);
+    }
+    Uint8List genesisBy(NativeCryptoDevice device, String id) =>
+        device.signDeviceList(
+          DeviceListBody(
+            accountId: idBytes('acct_bob'),
+            version: 1,
+            prevHash: DeviceListBody.zeroHash,
+            createdAtMs: 1,
+            change: DeviceListChange.genesis,
+            entries: [DeviceListPair(idBytes(id), device.signingPublicKey())],
+          ),
+          idBytes(id),
+        );
+    final genesis = genesisBy(bob, 'dev_bob');
+    final head = bindings.checkDeviceListStep(
+      expectedAccountId: idBytes('acct_bob'),
+      statement: genesis,
+    );
+    Uint8List add(String id, List<int> key) => bob.signDeviceList(
+          DeviceListBody(
+            accountId: idBytes('acct_bob'),
+            version: 2,
+            prevHash: head.listHash,
+            createdAtMs: 2,
+            change: DeviceListChange.add,
+            entries: [
+              DeviceListPair(idBytes('dev_bob'), bob.signingPublicKey()),
+              DeviceListPair(idBytes(id), key),
+            ],
+          ),
+          idBytes('dev_bob'),
+        );
+    return (
+      genesis: genesis,
+      left: add('dev_two', two.signingPublicKey()),
+      right: add('dev_three', three.signingPublicKey()),
+      madeUp: genesisBy(server, 'dev_server'),
+    );
+  }
+
+  ApprovalLeaf heldLeaf(String conversation, String account, String device,
+          LeafVerdict verdict) =>
+      ApprovalLeaf(
+        conversationId: conversation,
+        accountId: utf8.encode(account),
+        deviceId: utf8.encode(device),
+        signingKey: Uint8List(32)..[0] = device.length,
+        verdict: verdict,
+        updatedAt: 1,
+      );
+
+  /// An owner signed in, a group's leaves judged as [leaves] (no MLS group:
+  /// the stored verdicts are what the banner reads).
+  Future<({_ListApi api, AppState state})> holdSetup(
+    Map<String, LeafVerdict> leaves,
+  ) async {
+    final api = _ListApi(bindings);
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    for (final conversation in ['conv_1', 'conv_2']) {
+      await crypto.localStore.saveApprovalLeaves(
+        ApprovalLeafChange(
+          conversationId: conversation,
+          leaves: [
+            heldLeaf(conversation, _account, _own, LeafVerdict.approved),
+            for (final entry in leaves.entries)
+              heldLeaf(
+                conversation,
+                entry.key.split('/').first,
+                entry.key.split('/').last,
+                entry.value,
+              ),
+          ],
+          replaceAll: true,
+        ),
+      );
+    }
+    return (api: api, state: state);
+  }
+
+  test(
+      'hold banner: one reason per account, the own account apart, a list '
+      'not made yet is waiting; Check again reads the lists', () async {
+    final (:api, :state) = await holdSetup({
+      'acct_bob/dev_ghost': LeafVerdict.unapproved,
+      '$_account/dev_ghost': LeafVerdict.unapproved,
+      'acct_frank/dev_frank': LeafVerdict.removed,
+      'acct_dave/dev_dave': LeafVerdict.checking,
+      'acct_erin/dev_erin': LeafVerdict.checking,
+    });
+    final fork = bobFork();
+    api.others['acct_bob'] = [fork.genesis, fork.left];
+    api.others['acct_dave'] = <Uint8List>[];
+    expect(state.approvalHoldAccounts('conv_1'), isEmpty);
+    final fetches = api.listFetches;
+    await state.recheckApprovalHold('conv_1');
+    expect(api.listFetches, greaterThan(fetches));
+    expect(state.approvalHoldAccounts('conv_1'), const [
+      ApprovalHoldAccount(
+        accountId: 'acct_bob',
+        reason: ApprovalHoldReason.unapproved,
+        own: false,
+      ),
+      ApprovalHoldAccount(
+        accountId: _account,
+        reason: ApprovalHoldReason.unapproved,
+        own: true,
+      ),
+      ApprovalHoldAccount(
+        accountId: 'acct_frank',
+        reason: ApprovalHoldReason.removed,
+        own: false,
+      ),
+      ApprovalHoldAccount(
+        accountId: 'acct_dave',
+        reason: ApprovalHoldReason.waiting,
+        own: false,
+      ),
+      ApprovalHoldAccount(
+        accountId: 'acct_erin',
+        reason: ApprovalHoldReason.checking,
+        own: false,
+      ),
+    ]);
+    // Check again is spaced: a second press at once reads no list.
+    final again = api.listFetches;
+    await state.recheckApprovalHold('conv_1');
+    expect(api.listFetches, again);
+  }, skip: skip);
+
+  test(
+      'conflict reset: refused for the own account and for a chain the '
+      'server made up; a proven branch clears the conflict', () async {
+    final (:api, :state) = await holdSetup({
+      'acct_bob/dev_ghost': LeafVerdict.unapproved,
+    });
+    final fork = bobFork();
+    api.others['acct_bob'] = [fork.genesis, fork.left];
+    await state.recheckApprovalHold('conv_1');
+    // The server shows another validly signed version 2 (another chat's
+    // Check again reads it): a sticky conflict, shown in every chat.
+    api.others['acct_bob'] = [fork.genesis, fork.right];
+    await state.recheckApprovalHold('conv_2');
+    await state.refreshApprovalHoldSummary('conv_1');
+    expect(
+      state.approvalHoldAccounts('conv_1').single.reason,
+      ApprovalHoldReason.conflict,
+    );
+
+    expect(await state.trustContactDeviceList(_account), isFalse);
+    api.others['acct_bob'] = [fork.madeUp];
+    expect(await state.trustContactDeviceList('acct_bob'), isFalse);
+    expect(
+      state.approvalHoldAccounts('conv_1').single.reason,
+      ApprovalHoldReason.conflict,
+    );
+    final pin = await state.localStore.loadDeviceListPin('acct_bob');
+    expect(pin?.conflict, isTrue);
+
+    api.others['acct_bob'] = [fork.genesis, fork.right];
+    expect(await state.trustContactDeviceList('acct_bob'), isTrue);
+    final trusted = await state.localStore.loadDeviceListPin('acct_bob');
+    expect(trusted?.conflict, isFalse);
+    expect(trusted?.headStatement, fork.right);
+    // The stored leaf is still not on the list: held, no longer a conflict.
+    for (final conversation in ['conv_1', 'conv_2']) {
+      expect(
+        state.approvalHoldAccounts(conversation).single.reason,
+        ApprovalHoldReason.unapproved,
+      );
+    }
+  }, skip: skip);
+
+  testWidgets('hold banners: wording, Check again, and trusting a list',
+      (tester) async {
+    late AppState state;
+    late _ListApi api;
+    late ({
+      Uint8List genesis,
+      Uint8List left,
+      Uint8List right,
+      Uint8List madeUp
+    }) fork;
+    await tester.runAsync(() async {
+      final setup = await holdSetup({
+        'acct_bob/dev_ghost': LeafVerdict.unapproved,
+        '$_account/dev_ghost': LeafVerdict.unapproved,
+        'acct_frank/dev_frank': LeafVerdict.removed,
+      });
+      state = setup.state;
+      api = setup.api;
+      fork = bobFork();
+      api.others['acct_bob'] = [fork.genesis, fork.left];
+      await state.recheckApprovalHold('conv_1');
+      api.others['acct_bob'] = [fork.genesis, fork.right];
+      await state.recheckApprovalHold('conv_2');
+      await state.refreshApprovalHoldSummary('conv_1');
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ListenableBuilder(
+            listenable: state,
+            builder: (context, _) => ApprovalHoldBanners(
+              state: state,
+              conversationId: 'conv_1',
+              memberName: (account) => account == 'acct_bob' ? 'Bob' : 'Frank',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text(englishL10n.chatHoldConflict('Bob')), findsOneWidget);
+    expect(find.text(englishL10n.chatHoldOwnUnapproved), findsOneWidget);
+    expect(find.text(englishL10n.chatHoldRemoved('Frank')), findsOneWidget);
+    // Check again for the others, the safety number and trust for Bob.
+    expect(find.text(englishL10n.chatHoldCheckAgain), findsNWidgets(2));
+    expect(find.text(englishL10n.chatHoldCompare), findsOneWidget);
+
+    // Trusting needs the warning to be confirmed; cancel changes nothing.
+    await tester.tap(find.text(englishL10n.chatHoldTrust));
+    await tester.pumpAndSettle();
+    expect(find.text(englishL10n.chatHoldTrustBody('Bob')), findsOneWidget);
+    await tester.tap(find.text(englishL10n.commonCancel));
+    await tester.pumpAndSettle();
+    expect(find.text(englishL10n.chatHoldConflict('Bob')), findsOneWidget);
+
+    // A made-up chain is refused and said so.
+    api.others['acct_bob'] = [fork.madeUp];
+    await tester.tap(find.text(englishL10n.chatHoldTrust));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('l1-hold-trust-confirm')));
+    await pumpUntil(
+      tester,
+      () => find.text(englishL10n.chatHoldTrustRefused).evaluate().isNotEmpty,
+    );
+    expect(find.text(englishL10n.chatHoldTrustRefused), findsOneWidget);
+    expect(find.text(englishL10n.chatHoldConflict('Bob')), findsOneWidget);
+
+    // The proven branch is taken.
+    api.others['acct_bob'] = [fork.genesis, fork.left];
+    await tester.tap(find.text(englishL10n.chatHoldTrust));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('l1-hold-trust-confirm')));
+    await pumpUntil(
+      tester,
+      () => find.text(englishL10n.chatHoldTrusted('Bob')).evaluate().isNotEmpty,
+    );
+    expect(find.text(englishL10n.chatHoldTrusted('Bob')), findsOneWidget);
+    expect(find.text(englishL10n.chatHoldUnapproved('Bob')), findsOneWidget);
+  }, skip: skip != false);
 }
 
 Future<void> _addSignedPhone(
@@ -1404,6 +1677,17 @@ AppState _state(_ListApi api, NativeCryptoService crypto) => AppState(
       syncServiceFactory: (_, __) => _QuietSync(),
     );
 
+/// Pumps until [condition] holds, letting the app's async work run.
+Future<void> pumpUntil(WidgetTester tester, bool Function() condition) async {
+  for (var i = 0; i < 200 && !condition(); i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+  }
+  expect(condition(), isTrue);
+}
+
 Future<void> _until(bool Function() condition, {int ticks = 200}) async {
   for (var i = 0; i < ticks && !condition(); i++) {
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -1518,6 +1802,9 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   /// What fetches serve instead of [chain] (a lying server).
   List<Uint8List>? served;
 
+  /// What fetches serve for accounts other than this one.
+  final Map<String, List<Uint8List>> others = <String, List<Uint8List>>{};
+
   @override
   Future<DeviceListPage?> fetchDeviceList(
     String token,
@@ -1530,7 +1817,19 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
     }
     if (listRead == 'missing') return null;
     if (listRead == 'unavailable') throw ApiException(503, '');
-    if (accountId != _account) return null;
+    if (accountId != _account) {
+      // Other accounts' lists, as a test sets them (null: unknown).
+      final other = others[accountId];
+      if (other == null) return null;
+      return DeviceListPage(
+        headVersion: other.length,
+        more: false,
+        statements: [
+          for (var i = after; i < other.length; i++)
+            (version: i + 1, statement: other[i]),
+        ],
+      );
+    }
     final rest = (served ?? chain).skip(after).toList();
     return DeviceListPage(
       headVersion: (served ?? chain).length,

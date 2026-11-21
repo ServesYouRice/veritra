@@ -124,10 +124,13 @@ class ApprovalHoldBanners extends StatelessWidget {
     );
     if (confirmed != true) return;
     final trusted = await state.trustContactDeviceList(accountId);
-    messenger?.showSnackBar(SnackBar(
-      content: Text(
-        trusted ? l10n.chatHoldTrusted(name) : l10n.chatHoldTrustRefused,
-      ),
-    ));
+    // A new answer replaces the last one rather than queueing behind it.
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          trusted ? l10n.chatHoldTrusted(name) : l10n.chatHoldTrustRefused,
+        ),
+      ));
   }
 }

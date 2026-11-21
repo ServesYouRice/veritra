@@ -155,6 +155,94 @@ void main() {
     );
   });
 
+  // The durable trust anchors survive an upgrade: a store from before the
+  // L2-3 columns (schema 42: no `frank_key`, no `pinned_at`) keeps every
+  // pin, key, removal, conflict proof, leaf verdict and the activation
+  // journal (a setting) across the upgrade and a second open.
+  test(
+      'an upgrade keeps pins, removals, conflicts, verdicts and the '
+      'activation journal', () async {
+    final dir = await Directory.systemTemp.createTemp('l1-upgrade-keep-');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/l.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    expect(await db.writeDeviceListPin(_pin(1), expectedVersion: null), isTrue);
+    expect(await db.writeDeviceListPin(_pin(2), expectedVersion: 1), isTrue);
+    final other = DeviceListPin(
+      accountId: 'acct_b',
+      version: 3,
+      listHash: Uint8List(32)..[0] = 3,
+      listId: Uint8List(32)..[0] = 9,
+      headStatement: const [3, 3],
+      conflict: false,
+      checkedAt: 20,
+      keys: [
+        DeviceListKeyRow(
+          deviceId: [4],
+          signingKey: Uint8List(32)..[0] = 4,
+          addedVersion: 1,
+          removedVersion: 0,
+        ),
+      ],
+    );
+    expect(await db.writeDeviceListPin(other, expectedVersion: null), isTrue);
+    await db.writeDeviceListConflict(
+      accountId: 'acct_b',
+      version: 3,
+      pinnedStatement: const [3, 3],
+      otherStatement: const [3, 4],
+      recordedAt: 30,
+    );
+    await db.writeApprovalLeaves(
+      ApprovalLeafChange(
+        conversationId: 'conv_1',
+        leaves: [_leaf('dev_1', LeafVerdict.removed)],
+        replaceAll: true,
+      ),
+    );
+    await db.writeMetadata('setting:l1.activation.x', '["AQI="]');
+    await db.customStatement(
+      'ALTER TABLE local_device_list_keys DROP COLUMN frank_key',
+    );
+    await db.customStatement(
+      'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at',
+    );
+    await db.customStatement('PRAGMA user_version = 42');
+    await db.close();
+
+    for (var open = 0; open < 2; open++) {
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      final pin = (await db.readDeviceListPin('acct_a'))!;
+      expect(pin.version, 2);
+      expect(pin.conflict, isFalse);
+      expect(pin.headStatement, [2, 1, 2]);
+      expect(pin.recoveryKey, Uint8List(32)..[1] = 5);
+      expect(pin.pinnedAt, 10);
+      expect(pin.keys.single.removedVersion, 2);
+      expect(pin.keys.single.frankKey, isNull);
+      final conflicted = (await db.readDeviceListPin('acct_b'))!;
+      expect(conflicted.conflict, isTrue);
+      expect(conflicted.keys.single.listed, isTrue);
+      final proofs = await db.readDeviceListConflicts('acct_b');
+      expect(proofs.single.otherStatement, [3, 4]);
+      expect(
+        (await db.readApprovalLeaves('conv_1')).single.verdict,
+        LeafVerdict.removed,
+      );
+      expect(await db.readMetadata('setting:l1.activation.x'), '["AQI="]');
+      // Still only forward, and still sticky.
+      expect(await db.writeDeviceListPin(_pin(1), expectedVersion: 2), isFalse);
+      expect(
+        await db.writeDeviceListPin(
+          other.copyWith(checkedAt: 40),
+          expectedVersion: 3,
+        ),
+        isFalse,
+      );
+      await db.close();
+    }
+  });
+
   test('sign-out clears every L1 table', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);
