@@ -100,9 +100,14 @@ Step 2 stays unproven. Nothing here changes the default.
 - Owner-host command (Docker, `m` container: 2 CPUs, 2 GiB):
 
   ```sh
+  VERITRA_CAPACITY_SERVER_ENV=PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE=100000 \
   scripts/capacity.sh c8 load -accounts 500 -group-size 500 -online 500 \
     -rate 0.1,0.25,0.5 -warmup 15s -duration 60s
   ```
+
+  The raised budget is only for seeding (about 2 hours otherwise, see the
+  finding below); say so when reporting. Drop the first line to seed at the
+  1,002 floor and wait.
 
   Pass means verdict PASS at some step (send and sync p95 <= 150 ms, p99 <=
   500 ms, errors <= 0.1%, realtime delivery p99 <= 2 s), with the host quiet.
@@ -110,13 +115,20 @@ Step 2 stays unproven. Nothing here changes the default.
 
 ### Finding: seeding a 500 group at the 1,002 budget takes hours
 
-Every write reserves `1 + member limit` deliveries (501 at limit 500), so
-at 1,002 a minute an account can make 2 writes a minute. The 400 member adds
-the seed needs therefore take about 200 minutes. The tool retries 429s and
-would finish, but for a quick run raise the budget for the whole run:
+A write is admitted only while the account's delivery balance is at least
+`1 + member limit` (501 at limit 500) and is then charged what it used:
+`1 +` the recipients of the events it published (`withWriteBudget`,
+`admission.Budget`; a bucket starts at the budget and refills at
+`DELIVERIES_PER_MINUTE` a minute). A DM message therefore costs 2, and a
+message into a full 500 group costs about 500, so one sender may post about 2
+messages a minute there. Adding a member publishes `membership.updated` to
+every current member, so the 400 adds the seed needs cost about 1 + k each
+(k from 100 to 499), about 120,000 deliveries in all: roughly two hours at
+1,002 a minute (the 429s seen with the first attempt). The tool retries 429s
+and would finish. For a quick run raise the budget for the whole run:
 `VERITRA_CAPACITY_SERVER_ENV=PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE=100000`.
-Steady-state senders in these runs stay far below 2 messages a minute, so the
-budget does not bind the measured window; the budget at the floor itself is
+Steady-state senders in the measured windows stay far below 2 messages a
+minute, so the budget does not bind there; the budget at the floor itself is
 covered by `Limits.Validate` and its tests, not by a run.
 
 ### Method of the container runs
@@ -157,13 +169,19 @@ size differs. Every other member is offline (a stored delivery, no socket).
   general limit (240 requests/minute; each device syncs about 290 a minute),
   as tier S did at 16 in T47: a tool and limit effect, not group size.
 - **500 online (C):** all 500 members online at 0.1, 0.25 and 0.5 msgs/device/min
-  missed every target by seconds (send p95 6-23 s, 30 s delivery deadline
-  hit), with the host load average at 34. Server CPU averaged under one core
-  and the writer queue was long in the first step, so the generator (500
-  sockets and about 100 sync GETs/s on the same 4 CPUs) and the other
-  agents' work starved the server. **This run says nothing for or against
-  500**; it shows this container cannot host the 500-online case, which is
-  why the design asks for the owner's host.
+  missed every target by seconds (send p95 6-23 s; the 30 s delivery
+  deadline hit), with the host load average at 34. Server CPU averaged under
+  one core and the writer queue was long in the first step, so the generator
+  (500 sockets, 30-100 sync GETs/s on the same 4 CPUs) and the other agents'
+  work starved the server. **This run says nothing for or against 500**; it
+  shows this container cannot host the 500-online case, which is why the
+  design asks for the owner's host. Its server log also holds about 8,000
+  401s (sync, conversations, sends) and 550 500s, all starting together a few
+  minutes in and lasting to the end of the run; the A and B runs had none.
+  The session tokens were valid (the tool never rotates them), and
+  `withAuth` answers 401 for **any** error from the session lookup, including
+  a database timeout or a cancelled request, so these are most likely
+  overload errors reported as 401. Not proven; see the report's finding.
 - The storage layer on its own (run again, `-benchtime 20x`, same host): send
   plus recipient list 2.5 ms at 500 and 2.7 ms at 1,000 (3.2 ms at 250);
   member list 1.6 ms at 500, 3.4 ms at 1,000; message page 0.4-0.8 ms.

@@ -37,10 +37,13 @@ can already set any value in the range by hand; steps change the default.
   device (C0 evidence); the C0 self-update rule keeps them down.
 
 - **Seeding cost.** A group above 100 is finished through the member route,
-  one write each, and a write reserves `1 + limit` deliveries, so at the
-  1,002 floor one account adds about 2 members a minute. A real community of
-  500 is built over time (or by several admins); the capacity run raises the
-  budget for seeding.
+  one write each. A write is admitted only with a balance of `1 + limit`
+  deliveries and is charged `1 +` its recipients, and an add reaches every
+  current member, so adding 400 members costs about 120,000 deliveries: about
+  two hours at the 1,002 floor for one account. A real community of 500 is
+  built over time (or by several admins); the capacity run raises the budget
+  for seeding. Owner question 2 (scale the budget with the limit) is the
+  same issue seen from the other side.
 - **Creation cap.** Creating a conversation names at most 100 other
   accounts.
 

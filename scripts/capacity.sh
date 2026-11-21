@@ -18,10 +18,10 @@
 # to 500 and deliveries a minute to 1,002, the design's step 2 minimum.
 # Resize it with -group-size (the load tool raises the account count to fit).
 # Seeding a group above 100 adds the other members one write at a time, and
-# every write reserves 1 + the member limit deliveries (501 here), so at 1,002
-# a minute one account can add about 2 members a minute and seeding 500 takes
-# hours. For a quick run raise the budget for the whole run (and say so when
-# reporting): VERITRA_CAPACITY_SERVER_ENV=PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE=100000
+# each add reaches every current member: about 120,000 deliveries for 500, so
+# about two hours at 1,002 a minute. For a quick run raise the budget for the
+# whole run (and say so when reporting):
+# VERITRA_CAPACITY_SERVER_ENV=PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE=100000
 # These server settings are forwarded to the container; set
 # VERITRA_CAPACITY_SERVER_ENV="PRIVATE_MESSENGER_LIMIT_X=1 PRIVATE_MESSENGER_LIMIT_Y=2"
 # to override or add any (a later value wins). The container takes no other
