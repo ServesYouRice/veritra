@@ -337,6 +337,13 @@ void main() {
     await propose(alice, [bob, carol], full: true, create: true);
     final opened = await alice.epoch();
     final firstKey = (await alice.book()).sealGenAt(opened)!.key!;
+    // Every generation key Carol holds before she is removed: what a
+    // former member could keep (adversarial, brief C7).
+    final carolKeys = <Uint8List>[
+      for (final gen in (await carol.book()).gens)
+        if (gen.key != null) Uint8List.fromList(gen.key!),
+    ];
+    expect(carolKeys, isNotEmpty);
     await alice.service.stageMembershipChange(
       _conversation,
       removes: [(accountId: 'acct_carol', deviceId: 'dev_carol')],
@@ -368,6 +375,194 @@ void main() {
     expect(await bob.sealedUnderChannelKey(post, key: secondKey), isTrue);
     await alice.receive(bob, post);
     expect((await alice.view())!.status, 'ok');
+    // Carol, removed, cannot read the post with any key she kept: not the
+    // channel generation (fails if the removal does not rekey), and not
+    // through MLS (she is out of the group).
+    for (final key in carolKeys) {
+      expect(await bob.sealedUnderChannelKey(post, key: key), isFalse);
+    }
+    try {
+      await carol.receive(bob, post);
+    } on Object {
+      // Refused outright is fine too; what matters is no plaintext.
+    }
+    expect(
+      (await carol.rows()).where((row) => row.body == 'after carol left'),
+      isEmpty,
+    );
+  }, skip: skip);
+
+  test(
+      'a newcomer drops history posts whose signature fails: zeroed, replayed '
+      'under another action id, or another member\'s signed post claimed for '
+      'this sender (adversarial, brief C7)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    final dave = await client('dave');
+    await group(alice, [bob, carol]);
+    final record = await propose(alice, [bob, carol], full: true, create: true);
+    final opened = await alice.epoch();
+    final chk = (await alice.book()).sealGenAt(opened)!.key!;
+    final genuine = await bob.send('genuine post');
+    final fromCarol = await carol.send('written by carol');
+    final keys = C7Keys(bindings);
+
+    ({Uint8List signature, Uint8List paddedVap1}) openAs(
+      MessageEnvelope sent,
+      String device,
+    ) {
+      final opened = keys.openBody(
+        bodyKey: keys.postBodyKey(
+          chk: chk,
+          communityId: _community,
+          channelId: _channel,
+          senderDeviceId: device,
+          actionId: sent.idempotencyKey,
+        ),
+        aad: C7Keys.bodyAad(
+          conversationId: _conversation,
+          channelId: _channel,
+          senderDeviceId: device,
+          actionId: sent.idempotencyKey,
+        ),
+        sealed: Uint8List.fromList(sent.sealedBody!),
+      );
+      return opened!;
+    }
+
+    // A member holding the generation key seals a body that opens for Bob's
+    // device under a fresh action id: only the signature can catch it.
+    Uint8List forge(String actionId, List<int> signature, List<int> vap1) =>
+        keys.sealBody(
+          bodyKey: keys.postBodyKey(
+            chk: chk,
+            communityId: _community,
+            channelId: _channel,
+            senderDeviceId: bob.deviceId,
+            actionId: actionId,
+          ),
+          aad: C7Keys.bodyAad(
+            conversationId: _conversation,
+            channelId: _channel,
+            senderDeviceId: bob.deviceId,
+            actionId: actionId,
+          ),
+          signature: signature,
+          paddedVap1: vap1,
+        );
+    final bobBody = openAs(genuine, bob.deviceId);
+    final carolBody = openAs(fromCarol, carol.deviceId);
+    // Each forgery carries a well-formed payload for its own action id and
+    // Bob's device, so only the post signature can refuse it.
+    Uint8List payloadFor(String actionId) => AppPayloadCodec().encode(
+          type: AppPayloadType.text,
+          conversationId: _conversation,
+          senderDeviceId: bob.deviceId,
+          actionId: actionId,
+          // A private channel's own group names no channel in payloads.
+          body: <String, Object?>{'text': 'forged $actionId'},
+        );
+    final forged = <String, Uint8List>{
+      for (final (actionId, signature) in <(String, List<int>)>[
+        // No signature at all (64 zero bytes).
+        ('forged-zero-signature', Uint8List(64)),
+        // Bob's real signature, lifted from his genuine post.
+        ('forged-replayed', bobBody.signature),
+        // Carol's real signature over her own post, claimed for Bob.
+        ('forged-impersonated', carolBody.signature),
+      ])
+        actionId: forge(actionId, signature, payloadFor(actionId)),
+    };
+    final epoch = (genuine.cryptoMetadata as Map)['mls_epoch'] as int;
+    var ids = 0;
+    C7HistoryRow row(String device, String actionId, List<int> body) =>
+        C7HistoryRow(
+          messageId: 'hist_${++ids}',
+          senderDeviceId: device,
+          actionId: actionId,
+          channelId: _channel,
+          createdAt: DateTime.now().toUtc(),
+          epoch: epoch,
+          body: Uint8List.fromList(body),
+        );
+    final channelRows = <C7HistoryRow>[
+      row(bob.deviceId, genuine.idempotencyKey, genuine.sealedBody!),
+      for (final entry in forged.entries)
+        row(bob.deviceId, entry.key, entry.value),
+    ];
+    // Precondition: each forgery opens under the generation key, so the
+    // signature, not the AEAD, is what must refuse it.
+    for (final entry in forged.entries) {
+      final opened = keys.openBody(
+        bodyKey: keys.postBodyKey(
+          chk: chk,
+          communityId: _community,
+          channelId: _channel,
+          senderDeviceId: bob.deviceId,
+          actionId: entry.key,
+        ),
+        aad: C7Keys.bodyAad(
+          conversationId: _conversation,
+          channelId: _channel,
+          senderDeviceId: bob.deviceId,
+          actionId: entry.key,
+        ),
+        sealed: entry.value,
+      );
+      expect(opened, isNotNull, reason: entry.key);
+      expect(
+        AppPayloadCodec().classify(
+          opened!.paddedVap1,
+          conversationId: _conversation,
+          senderDeviceId: bob.deviceId,
+          actionId: entry.key,
+          channelId: _channel,
+        ),
+        isA<DecodedAppPayload>(),
+        reason: entry.key,
+      );
+    }
+    final recordMeta = record.cryptoMetadata as Map;
+    final groupLevel = <C7HistoryRow>[
+      C7HistoryRow(
+        messageId: 'hist_record',
+        senderDeviceId: alice.deviceId,
+        actionId: record.idempotencyKey,
+        channelId: recordMeta['channel_id'] as String?,
+        createdAt: DateTime.now().toUtc(),
+        epoch: recordMeta['mls_epoch'] as int,
+        body: Uint8List.fromList(record.sealedBody!),
+      ),
+    ];
+    await alice.service.stageMembershipChange(
+      _conversation,
+      adds: [await dave.keyPackage()],
+    );
+    await _accept(alice, [dave], [bob, carol]);
+    final due = (await alice.service.c7DueWork([_conversation]))
+        .whereType<C7DueSync>()
+        .single;
+    final join = (await alice.service.c7Send(due))!;
+    await alice.store.removePendingEnvelope(join.idempotencyKey);
+    await dave.receive(alice, join);
+    expect(await dave.service.c7ImportDue([_conversation]), [_conversation]);
+    final imported = await dave.service.c7ImportHistory(
+      _conversation,
+      groupLevel: C7HistoryPage(groupLevel, complete: true),
+      channels: <String, C7HistoryPage>{
+        _channel: C7HistoryPage(channelRows.reversed.toList(), complete: true),
+      },
+    );
+    final bodies = [for (final row in await dave.rows()) row.body];
+    expect(bodies, contains('genuine post'));
+    expect(bodies, isNot(contains('written by carol')));
+    expect(bodies.where((b) => (b ?? '').startsWith('forged')), isEmpty);
+    expect(imported, 1);
+    final keysSeen = {for (final row in await dave.rows()) row.key};
+    for (final actionId in forged.keys) {
+      expect(keysSeen, isNot(contains('${bob.deviceId}:$actionId')));
+    }
   }, skip: skip);
 
   test(
