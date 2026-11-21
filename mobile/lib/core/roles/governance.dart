@@ -29,6 +29,12 @@ const int maxAnnouncementChannels = 500;
 /// C5: the longest timeout, as the server's `domain.MaxTimeout` (28 days).
 const int maxTimeoutMillis = 28 * 24 * 60 * 60 * 1000;
 
+/// C5 (record format 3): at most this many banned accounts in a record. With
+/// ids of up to 255 bytes this keeps a full ban list near 256 KiB's quarter,
+/// so the rest of the record always fits. A community that bans more keeps
+/// the rest on the server only (its refusal still holds).
+const int maxBans = 1000;
+
 /// C5: a member's timeout as the verified record holds it (docs/crypto.md,
 /// "C5 timeouts in the record"). [fromMs] and [untilMs] are the server's
 /// clock (Unix milliseconds: `timeout_until` and that minus the length), so
@@ -165,12 +171,16 @@ class GovernanceState {
     this.election,
     Map<String, int> joined = const {},
     Map<String, MemberTimeout> timeouts = const {},
+    this.channelInfoRestricted = false,
+    this.adminsOnlyPins = false,
+    Set<String> bans = const {},
   })  : admins = Map.unmodifiable(admins),
         moderators = Set.unmodifiable(moderators),
         announcementChannels = Set.unmodifiable(announcementChannels),
         electors = Set.unmodifiable(electors),
         joined = Map.unmodifiable(joined),
-        timeouts = Map.unmodifiable(timeouts);
+        timeouts = Map.unmodifiable(timeouts),
+        bans = Set.unmodifiable(bans);
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
@@ -229,6 +239,30 @@ class GovernanceState {
   /// then simply refuses nothing.
   final Map<String, MemberTimeout> timeouts;
 
+  /// C3 (record format 3): admins have restricted channel names and topics,
+  /// which then only moderators and above edit (D80's "any member unless
+  /// admins restrict it"). Community and category info are owner and admins
+  /// only whatever this says. Admins and above switch it.
+  final bool channelInfoRestricted;
+
+  /// W8 (record format 3): only owners and admins pin and unpin messages.
+  /// Off: anyone in a group pins (owner decision 2026-10-31), moderators and
+  /// above in a community. Admins and above switch it.
+  final bool adminsOnlyPins;
+
+  /// C5 (record format 3): accounts banned from this group. A banned
+  /// account is never in the MLS roster: every app refuses a commit whose
+  /// roster names one, so nobody can add it back while the ban stands.
+  /// Never the owner. A removal keeps the entry (it outlives membership);
+  /// only an admin or above lifts it.
+  final Set<String> bans;
+
+  /// Whether this state needs record format 3 (any of its fields is set).
+  /// Without them the record is written as format 2, byte for byte as
+  /// before, so older apps keep reading groups that use none of them.
+  bool get usesFormat3 =>
+      channelInfoRestricted || adminsOnlyPins || bans.isNotEmpty;
+
   /// D81: the owner cannot leave without transferring ownership first. An app
   /// rule: it refuses to commit such a leave. [validateCommit] still accepts a
   /// forced removal of the owner (the server can force one) and keeps it owner.
@@ -248,6 +282,9 @@ class GovernanceState {
     bool clearElection = false,
     Map<String, int>? joined,
     Map<String, MemberTimeout>? timeouts,
+    bool? channelInfoRestricted,
+    bool? adminsOnlyPins,
+    Set<String>? bans,
   }) =>
       GovernanceState(
         rev: rev ?? this.rev,
@@ -261,6 +298,10 @@ class GovernanceState {
         election: clearElection ? null : (election ?? this.election),
         joined: joined ?? this.joined,
         timeouts: timeouts ?? this.timeouts,
+        channelInfoRestricted:
+            channelInfoRestricted ?? this.channelInfoRestricted,
+        adminsOnlyPins: adminsOnlyPins ?? this.adminsOnlyPins,
+        bans: bans ?? this.bans,
       );
 
   /// The account's role. Meaningful only for an account in the MLS roster.
@@ -290,6 +331,21 @@ class GovernanceState {
       actor != target &&
       rankOf(actor) >= BuiltInRole.moderator.rank &&
       rankOf(target) < rankOf(actor);
+
+  /// W8: may [account] pin or unpin here? [community] for a community's
+  /// shared group (and its channels): moderators and above, admins and
+  /// above under [adminsOnlyPins]. In a group: anyone, owners and admins
+  /// only under [adminsOnlyPins].
+  bool mayPin(String account, {required bool community}) {
+    final rank = rankOf(account);
+    if (adminsOnlyPins) return rank >= BuiltInRole.admin.rank;
+    return !community || rank >= BuiltInRole.moderator.rank;
+  }
+
+  /// C3: may [account] edit channel names and topics? Anyone unless
+  /// [channelInfoRestricted]; then moderators and above.
+  bool mayEditChannelInfo(String account) =>
+      !channelInfoRestricted || rankOf(account) >= BuiltInRole.moderator.rank;
 
   /// The state after [account]'s last device left the MLS group. The
   /// removing commit must carry exactly this (or a valid change from it), so
@@ -336,7 +392,10 @@ class GovernanceState {
       _setEq(other.electors, electors) &&
       other.election == election &&
       _mapEq(other.joined, joined) &&
-      _mapEq(other.timeouts, timeouts);
+      _mapEq(other.timeouts, timeouts) &&
+      other.channelInfoRestricted == channelInfoRestricted &&
+      other.adminsOnlyPins == adminsOnlyPins &&
+      _setEq(other.bans, bans);
 
   @override
   int get hashCode => Object.hash(
@@ -351,6 +410,9 @@ class GovernanceState {
         election,
         joined.length,
         timeouts.length,
+        channelInfoRestricted,
+        adminsOnlyPins,
+        bans.length,
       );
 }
 
@@ -368,6 +430,10 @@ enum GovernanceReject {
 
   /// A commit removed a named account but did not prune it.
   notPruned,
+
+  /// C5: the roster after the commit holds an account the record bans (an
+  /// add of a banned account, or a ban of someone the commit keeps in).
+  banned,
 }
 
 class GovernanceCheck {
@@ -405,6 +471,16 @@ class GovernanceCheck {
 /// who outranks the member (`mayActOn` before the commit); a set entry names
 /// [epoch], the epoch this commit produces (from MLS, never the server), and
 /// stays within [maxTimeoutMillis]. Timeouts never move `ownerRev`.
+///
+/// Record format 3 (docs/crypto.md, "C4 record format 3"): the
+/// channel-info and pin switches need admin or above. A ban of an account
+/// in the roster [before] the commit needs a moderator or above who
+/// outranks it under [prior] (the record before pruning; the commit must
+/// also take it out), a ban of an account already gone needs admin or
+/// above (as the server's `BanCommunityMember`), and only admin or above
+/// lifts one. Never oneself, never the owner, and no banned account may be
+/// in [members]. None of them moves `ownerRev`. [before] defaults to
+/// [members] (a role-only commit) and [prior] to [prev].
 GovernanceCheck validateTransition(
   GovernanceState prev,
   GovernanceState next,
@@ -412,6 +488,8 @@ GovernanceCheck validateTransition(
   required Set<String> members,
   Set<String> added = const {},
   int? epoch,
+  Set<String>? before,
+  GovernanceState? prior,
 }) {
   GovernanceCheck no(GovernanceReject r) => GovernanceCheck.no(r);
   if (next.rev != prev.rev + 1) return no(GovernanceReject.badRev);
@@ -517,6 +595,45 @@ GovernanceCheck validateTransition(
     if (now != null && (epoch == null || now.epoch != epoch)) {
       return no(GovernanceReject.badShape);
     }
+  }
+
+  // Record format 3 switches: admins and above, as the posting fields.
+  if (next.channelInfoRestricted != prev.channelInfoRestricted ||
+      next.adminsOnlyPins != prev.adminsOnlyPins) {
+    if (actorRank < BuiltInRole.admin.rank) {
+      return no(GovernanceReject.notAllowed);
+    }
+  }
+
+  // C5 bans (record format 3), as the server's BanCommunityMember and
+  // UnbanCommunityMember.
+  if (next.bans.length > maxBans ||
+      next.bans.any((b) => b.isEmpty) ||
+      (owner != null && next.bans.contains(owner))) {
+    return no(GovernanceReject.badShape);
+  }
+  if (next.bans.any(members.contains)) return no(GovernanceReject.banned);
+  final wasIn = before ?? members;
+  final judged = prior ?? prev;
+  for (final account in next.bans.difference(prev.bans)) {
+    if (account == actor) return no(GovernanceReject.notAllowed);
+    if (wasIn.contains(account)) {
+      // Banned as it is taken out: the actor must outrank it as it was.
+      if (!judged.mayActOn(actor, account)) {
+        return no(
+          actorRank >= BuiltInRole.moderator.rank
+              ? GovernanceReject.hierarchy
+              : GovernanceReject.notAllowed,
+        );
+      }
+    } else if (actorRank < BuiltInRole.admin.rank) {
+      // Banning someone who already left is an admin's call.
+      return no(GovernanceReject.notAllowed);
+    }
+  }
+  if (prev.bans.difference(next.bans).isNotEmpty &&
+      actorRank < BuiltInRole.admin.rank) {
+    return no(GovernanceReject.notAllowed);
   }
 
   // Electors: only an owner commit sets or clears the flag of an admin that
@@ -644,7 +761,10 @@ GovernanceReject? _checkWin(
       _setEq(next.electors, prev.electors.difference({winner})) &&
       _setEq(next.moderators, prev.moderators.difference({winner})) &&
       next.adminsOnlyPosting == prev.adminsOnlyPosting &&
-      _setEq(next.announcementChannels, prev.announcementChannels);
+      _setEq(next.announcementChannels, prev.announcementChannels) &&
+      next.channelInfoRestricted == prev.channelInfoRestricted &&
+      next.adminsOnlyPins == prev.adminsOnlyPins &&
+      _setEq(next.bans, prev.bans);
   return ok ? null : GovernanceReject.badShape;
 }
 
@@ -786,6 +906,12 @@ GovernanceCheck validateCommit(
   required Set<String> after,
   int? epoch,
 }) {
+  // C5: nobody the record bans is in the roster after any commit, whether
+  // the commit carries a record change or not (an add of a banned account
+  // changes only `joined`, which [requiredRecord] would otherwise accept).
+  if (next.bans.any(after.contains)) {
+    return const GovernanceCheck.no(GovernanceReject.banned);
+  }
   final (:base, record: expected, :cancel) = _required(
     prev,
     committer,
@@ -809,7 +935,50 @@ GovernanceCheck validateCommit(
     members: after,
     added: after.difference(before),
     epoch: epoch,
+    before: before,
+    prior: prev,
   );
+}
+
+/// C5: the record a commit by [committer] that takes [banned] out of the
+/// group carries when it bans them too: [requiredRecord] for the commit,
+/// plus the bans, at `rev + 1` from the pruned record. Null when the
+/// receivers' check would refuse it (the committer does not outrank one of
+/// them, for instance); the caller then sends the plain record and leaves
+/// the ban to a later commit. Producers use this so a moderator's ban lands
+/// in the same commit as its removal, where the record can still see the
+/// rank the banned account had.
+GovernanceState? recordWithBans(
+  GovernanceState prev,
+  String committer, {
+  required Set<String> before,
+  required Set<String> after,
+  required Set<String> banned,
+  int? epoch,
+}) {
+  final fresh = banned
+      .where((a) => before.contains(a) && !after.contains(a))
+      .where((a) => !prev.bans.contains(a))
+      .toSet();
+  if (fresh.isEmpty) return null;
+  final (:base, :record, cancel: _) = _required(
+    prev,
+    committer,
+    before: before,
+    after: after,
+  );
+  final next =
+      (record.rev == base.rev ? record.copyWith(rev: base.rev + 1) : record)
+          .copyWith(bans: {...record.bans, ...fresh});
+  final check = validateCommit(
+    prev,
+    next,
+    committer,
+    before: before,
+    after: after,
+    epoch: epoch,
+  );
+  return check.ok ? next : null;
 }
 
 /// C4 removal proofs (docs/crypto.md, "C4 app wiring"): whether a commit that

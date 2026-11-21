@@ -4353,6 +4353,23 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get moderationBanEnforced =>
+      'Апликације чланова такође одбијају да поново додају овај налог.';
+
+  @override
+  String get moderationBanNotInRecord =>
+      'Ову забрану спроводи само сервер. Апликације чланова је још не проверавају.';
+
+  @override
+  String get moderationBanRecordOnly =>
+      'Апликације чланова одбијају да поново додају овај налог. Сервер га више не забрањује.';
+
+  @override
+  String moderationBanApply(String username) {
+    return 'Нека апликације чланова спроводе забрану за $username';
+  }
+
+  @override
   String get moderationSectionLog => 'Дневник активности';
 
   @override
@@ -5389,6 +5406,28 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
+
+  @override
+  String get rolesRulesSection => 'Правила групе';
+
+  @override
+  String get rolesPinsAdminsOnly => 'Само администратори могу да закаче поруке';
+
+  @override
+  String get rolesPinsAdminsOnlyDetail =>
+      'Када је укључено, само власник и администратори могу да закаче или откаче поруку. Апликација сваког члана занемарује качења свих осталих.';
+
+  @override
+  String get rolesChannelInfoRestricted =>
+      'Само модератори и администратори могу да мењају називе канала';
+
+  @override
+  String get rolesChannelInfoRestrictedDetail =>
+      'Када је укључено, само власник, администратори и модератори могу да мењају називе и теме канала. Апликација сваког члана занемарује измене свих осталих.';
+
+  @override
+  String get rolesRulesAdminsOnly =>
+      'Само власник и администратори могу да мењају ова правила.';
 
   @override
   String get channelHistoryTitle => 'Историја за нове чланове';
@@ -10013,6 +10052,23 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get moderationBanEnforced =>
+      'Aplikacije članova takođe odbijaju da ponovo dodaju ovaj nalog.';
+
+  @override
+  String get moderationBanNotInRecord =>
+      'Ovu zabranu sprovodi samo server. Aplikacije članova je još ne proveravaju.';
+
+  @override
+  String get moderationBanRecordOnly =>
+      'Aplikacije članova odbijaju da ponovo dodaju ovaj nalog. Server ga više ne zabranjuje.';
+
+  @override
+  String moderationBanApply(String username) {
+    return 'Neka aplikacije članova sprovode zabranu za $username';
+  }
+
+  @override
   String get moderationSectionLog => 'Dnevnik aktivnosti';
 
   @override
@@ -11051,6 +11107,28 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
+
+  @override
+  String get rolesRulesSection => 'Pravila grupe';
+
+  @override
+  String get rolesPinsAdminsOnly => 'Samo administratori mogu da zakače poruke';
+
+  @override
+  String get rolesPinsAdminsOnlyDetail =>
+      'Kada je uključeno, samo vlasnik i administratori mogu da zakače ili otkače poruku. Aplikacija svakog člana zanemaruje kačenja svih ostalih.';
+
+  @override
+  String get rolesChannelInfoRestricted =>
+      'Samo moderatori i administratori mogu da menjaju nazive kanala';
+
+  @override
+  String get rolesChannelInfoRestrictedDetail =>
+      'Kada je uključeno, samo vlasnik, administratori i moderatori mogu da menjaju nazive i teme kanala. Aplikacija svakog člana zanemaruje izmene svih ostalih.';
+
+  @override
+  String get rolesRulesAdminsOnly =>
+      'Samo vlasnik i administratori mogu da menjaju ova pravila.';
 
   @override
   String get channelHistoryTitle => 'Istorija za nove članove';

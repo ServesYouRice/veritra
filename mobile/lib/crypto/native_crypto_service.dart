@@ -10,6 +10,7 @@ import '../core/device_lists.dart' show DeviceListPins;
 import '../core/k1_backup.dart' show k1BackupPlaintextVersion;
 import '../core/models.dart';
 import '../core/roles/governance.dart';
+import '../core/roles/ban_verdict.dart';
 import '../core/roles/governance_codec.dart'
     show decodeGovernance, encodeGovernance;
 import '../core/roles/governance_commands.dart';
@@ -636,6 +637,21 @@ class NativeCryptoService
     return [
       for (final add in adds)
         if (allowed.contains(add.package.accountId)) add,
+    ];
+  }
+
+  /// [adds] without the devices of accounts [groupId]'s record bans (C5,
+  /// record format 3). A group without a record keeps them all.
+  List<({DeviceKeyPackage package, Uint8List signingKey})> _unbannedAdds(
+    String groupId,
+    List<({DeviceKeyPackage package, Uint8List signingKey})> adds,
+  ) {
+    if (adds.isEmpty) return adds;
+    final bans = governanceOf(groupId)?.bans ?? const <String>{};
+    if (bans.isEmpty) return adds;
+    return [
+      for (final add in adds)
+        if (!bans.contains(add.package.accountId)) add,
     ];
   }
 
@@ -2032,9 +2048,15 @@ class NativeCryptoService
           await _requireNotPaused(conversationId);
           // C3: in a private channel's group, a new account only by this
           // owner's or admin's own pick; members' new devices always.
-          final allowed = await _privateChannelAdds(conversationId, approved);
-          if (allowed.isEmpty && removes.isEmpty) {
+          final picked = await _privateChannelAdds(conversationId, approved);
+          if (picked.isEmpty && removes.isEmpty) {
             throw PrivateChannelAddRefusedException(conversationId);
+          }
+          // C5: never an account the group's record bans (every member's
+          // app would refuse the commit); it stays pending on the server.
+          final allowed = _unbannedAdds(conversationId, picked);
+          if (allowed.isEmpty && removes.isEmpty) {
+            throw BannedAddRefusedException(conversationId);
           }
           // C4: a removal that would prune a governing account and that
           // this device cannot prove stays pending for a device that can.
@@ -2691,6 +2713,25 @@ class NativeCryptoService
       after: after,
     );
     if (!check.ok) throw GovernanceCommandException(check.reject!.name);
+    // C5: an account this device's user banned leaves the group in this
+    // commit: the ban rides along, while the record still shows the rank it
+    // had (a moderator may ban only whom it outranks). When the receivers'
+    // check would refuse that, the plain record goes and the ban waits for
+    // an admin's later commit.
+    final owed = decodeOwedBans(
+      await localStore.loadSetting(banRecordOwedSetting(groupId)),
+      _clock(),
+    );
+    if (owed.isNotEmpty) {
+      final banned = recordWithBans(
+        prev,
+        self,
+        before: before,
+        after: after,
+        banned: owed.keys.toSet(),
+      );
+      if (banned != null) return banned;
+    }
     return next == prev ? null : next;
   }
 
@@ -4279,6 +4320,10 @@ class NativeCryptoService
             allowOwnPinEffect: pinAllowed(
               kind: _authority?.conversationKind(envelope.conversationId),
               role: _authority?.roleOf(envelope.conversationId, _accountId!),
+              adminsOnly: adminsOnlyPinsFor(
+                _authority,
+                envelope.conversationId,
+              ),
             ),
             c7Settings: ownC7,
           ),
@@ -4843,23 +4888,31 @@ class NativeCryptoService
                 reveal = null;
                 break;
               }
-              // C5: content from a member the verified record has in a
-              // timeout at this post's time is hidden the same way.
+              // C5: content from an account the verified record bans (a
+              // private channel's group may still hold it), or from a member
+              // it has in a timeout at this post's time, is hidden the same
+              // way.
               if (roles != null &&
-                  timeoutRefusedTypes.contains(payload.type) &&
-                  shouldDropTimedOutPost(
-                    record: roles.governanceOf(envelope.conversationId),
-                    sender: envelope.senderAccountId,
-                    serverTime: envelope.createdAt,
-                    receivedAt: _clock(),
-                    // Epochs compare only within the record's own group.
-                    postEpoch: governanceOf(envelope.conversationId) != null
-                        ? mlsMessageEpoch(
-                            envelope.ciphertext,
-                            envelope.conversationId,
-                          )
-                        : null,
-                  )) {
+                  (shouldDropBannedPost(
+                        record: roles.governanceOf(envelope.conversationId),
+                        sender: envelope.senderAccountId,
+                        type: payload.type,
+                      ) ||
+                      timeoutRefusedTypes.contains(payload.type) &&
+                          shouldDropTimedOutPost(
+                            record: roles.governanceOf(envelope.conversationId),
+                            sender: envelope.senderAccountId,
+                            serverTime: envelope.createdAt,
+                            receivedAt: _clock(),
+                            // Epochs compare only within the record's own group.
+                            postEpoch:
+                                governanceOf(envelope.conversationId) != null
+                                    ? mlsMessageEpoch(
+                                        envelope.ciphertext,
+                                        envelope.conversationId,
+                                      )
+                                    : null,
+                          ))) {
                 effects = <MessageEffect>[
                   _placeholderRow(
                     envelope,
@@ -6558,6 +6611,7 @@ List<MessageEffect> messageEffectsFor(
           role: senderActsWithRole
               ? authority?.roleOf(conversationId, senderAccountId)
               : null,
+          adminsOnly: adminsOnlyPinsFor(authority, conversationId),
         ))
           PinMessageEffect(
             conversationId: conversationId,
@@ -6748,6 +6802,23 @@ Set<String>? moderatorProtectsFor(
     })
       if (record.rankOf(account) >= rank) account,
   };
+}
+
+/// W8: whether the verified record the app holds for [conversationId] (a
+/// community channel: its shared group's) sets the admin-only pin switch
+/// (record format 3). False without a record: a group made before C4 has no
+/// switch to set.
+bool adminsOnlyPinsFor(
+  ConversationAuthority? authority,
+  String conversationId,
+) {
+  final roles =
+      authority is VerifiedRoleSource ? authority as VerifiedRoleSource : null;
+  try {
+    return roles?.governanceOf(conversationId)?.adminsOnlyPins ?? false;
+  } catch (_) {
+    return false;
+  }
 }
 
 class _TrackedCallGroup extends ScratchCallGroupHandle {

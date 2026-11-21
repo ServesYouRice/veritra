@@ -64,6 +64,7 @@ import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
 import 'sealed_sender.dart';
+import 'roles/ban_verdict.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
@@ -132,6 +133,7 @@ part 'app_state_roles.dart';
 part 'app_state_previews.dart';
 part 'app_state_private_channels.dart';
 part 'app_state_posting.dart';
+part 'app_state_record_v3.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -855,6 +857,8 @@ class AppState extends ChangeNotifier
   bool canPinMessages(String id) => pinAllowed(
         kind: conversationKind(id),
         role: roleOf(id, session?.accountId ?? ''),
+        // W8: the admin-only switch in the verified record (format 3).
+        adminsOnly: governanceOf(id)?.adminsOnlyPins ?? false,
       );
 
   Future<void> setMentionsInMutedChats(bool value) async {
@@ -7845,6 +7849,8 @@ class AppState extends ChangeNotifier
           await reconcileServerOwners();
           // C2: posting settings this device still owes the record.
           await _retryPostingRecords();
+          // C5: bans this device still owes the record (format 3).
+          await _retryBanRecords();
           // C6: announce this moderator's report key where it is due. Not
           // awaited, like the C3 refresh: sending never holds up sync.
           unawaited(_announceReportKeys());

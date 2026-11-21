@@ -6,7 +6,9 @@ paused invitations, slow mode per channel, bans and the activity log; reads
 `GET .../moderation-state`); 2026-11-11: delete-others built in apps
 (groups and communities, checked against C4's verified record, below); 2026-11-11: timeouts are in C4's verified record and receiving
 apps hide a timed-out member's posts (`docs/crypto.md`, "C5 timeouts in the
-record"); app checks of bans still not built.** Built: bans (`member_bans`; kick then record in
+record"); 2026-11-21: bans are in C4's record (format 3) and members' apps
+refuse to add a banned account back (`docs/crypto.md`, "C4 record format
+3").** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with
@@ -83,7 +85,7 @@ server's refusal, as the owner accepted for slow mode.
 | Action | Server | Apps (encrypted) |
 |---|---|---|
 | Kick | Remove membership, queue MLS removal (exists) | Commit removing the member's devices; receivers check `mayActOn(committer, target)` |
-| Ban | Row in `member_bans(community_id, account_id, banned_by, created_at)`; refuses add, join, invite redemption and key-package claims for that account | Later: ban list in the C4 record, a banned account's Add rejected. Until then, the server's refusal |
+| Ban | Row in `member_bans(community_id, account_id, banned_by, created_at)`; refuses add, join, invite redemption and key-package claims for that account | Built 2026-11-21: the ban list is in the C4 record (format 3); every app refuses a commit that puts a banned account in the roster, private channels refuse its add, and its posts are hidden |
 | Timeout | `timeout_until` on the membership; send refused until then (`TimedOut`) | Built 2026-11-11: the timeout is in the C4 record (flag bit 2) and receivers hide a post judged inside it (`shouldDropTimedOutPost`) |
 | Slow mode | `slow_mode_seconds` per channel; refuse a post within the gap of the sender's last one in `(conversation_id, channel_id)`; moderators exempt | Same check on receipt, with a small clock tolerance |
 | Delete others' messages | Redact the envelope like `deleteMessageEnvelope`, when the actor outranks the sender | Moderator sends a `moderation_delete` application message naming the target message; receivers verify the actor's authority (`mayActOn` on the C4 role state) before hiding it |
@@ -301,9 +303,11 @@ approved moderator who outranks the target). The chat's action sheet offers
 "Delete for everyone" on such messages. Rules: `docs/crypto.md`, "C4 app
 wiring", "C5 moderator delete". No schema, migration or ABI change.
 
-Still not built: app-side checks of bans and timeouts (they need record
-fields, a C4 record change), escalation and the instance ban. (Key-package
-claim refusal for banned accounts is built, 2026-11-21.) Server slow
+App-side checks of timeouts (2026-11-11) and bans (2026-11-21, C4 record
+format 3: the ban rides in the removal commit, an admin writes the rest,
+the Moderation screen shows where each ban holds) are built, and so is
+key-package claim refusal for banned accounts (2026-11-21). Still not
+built: escalation and the instance ban. Server slow
 mode stays the only slow-mode check (owner decision, round 2).
 
 ## Timeouts after a rejoin (built 2026-11-21, owner decision 2026-11-21)

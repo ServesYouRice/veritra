@@ -22,12 +22,14 @@ void main() {
     GovernanceState record,
     String self, {
     GovernanceObservations? observed,
+    String kind = 'group',
+    _RoleCrypto? crypto,
   }) async {
     final state = AppState(
       apiClientFactory: (_) => ApiClient(baseUrl: 'https://example.test'),
       syncServiceFactory: (_, __) => _QuietSync(),
       localStore: MemoryLocalStore(),
-      cryptoService: _RoleCrypto(record, observed),
+      cryptoService: crypto ?? _RoleCrypto(record, observed),
     );
     state.session = Session(
       baseUrl: 'https://example.test',
@@ -35,8 +37,11 @@ void main() {
       accountId: self,
       deviceId: 'dev_$self',
     );
+    if (crypto != null) {
+      state.api = ApiClient(baseUrl: 'https://example.test');
+    }
     state.conversations = [
-      Conversation(id: group, kind: 'group', title: 'Group'),
+      Conversation(id: group, kind: kind, title: 'Group'),
     ];
     return state;
   }
@@ -194,6 +199,81 @@ void main() {
     expect(state.verifiedRoleOf('conv_dm', 'alice'), isNull);
     expect(state.roleOf('conv_dm', 'alice'), 'owner');
   });
+
+  // C4 record format 3: the group rules section.
+  GovernanceState rules({bool pins = false, bool info = false}) =>
+      GovernanceState(
+        rev: 3,
+        owner: 'alice',
+        ownerRev: 1,
+        admins: const {'bob': 1},
+        joined: const {'alice': 0, 'bob': 1, 'carol': 2},
+        adminsOnlyPins: pins,
+        channelInfoRestricted: info,
+      );
+
+  SwitchListTile switchFor(WidgetTester tester, String key) =>
+      tester.widget<SwitchListTile>(find.byKey(Key(key)));
+
+  /// The rules section is the last one: a tall window shows it all.
+  void tall(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+  }
+
+  testWidgets('a group admin switches pins to admins only', (tester) async {
+    tall(tester);
+    final crypto = _RoleCrypto(rules(), null, actor: 'bob');
+    await pump(tester, await fixture(rules(), 'bob', crypto: crypto));
+    expect(find.text(l10n.rolesRulesSection.toUpperCase()), findsOneWidget);
+    expect(find.text(l10n.rolesPinsAdminsOnlyDetail), findsOneWidget);
+    expect(find.byKey(const Key('rules-channel-info')), findsNothing);
+    final pins = switchFor(tester, 'rules-admin-pins');
+    expect(pins.value, isFalse);
+    expect(pins.onChanged, isNotNull);
+    expect(find.text(l10n.rolesRulesAdminsOnly), findsNothing);
+    await tester.tap(find.byKey(const Key('rules-admin-pins')));
+    await tester.pumpAndSettle();
+    expect(crypto.staged.single.adminsOnlyPins, isTrue);
+    expect(crypto.staged.single.rev, 4);
+  });
+
+  testWidgets('a member sees the rules but cannot switch them', (
+    tester,
+  ) async {
+    tall(tester);
+    await pump(tester, await fixture(rules(pins: true), 'carol'));
+    final pins = switchFor(tester, 'rules-admin-pins');
+    expect(pins.value, isTrue);
+    expect(pins.onChanged, isNull);
+    expect(find.text(l10n.rolesRulesAdminsOnly), findsOneWidget);
+  });
+
+  testWidgets('a community gets the channel-info switch instead', (
+    tester,
+  ) async {
+    tall(tester);
+    final crypto = _RoleCrypto(rules(), null, actor: 'alice');
+    await pump(
+      tester,
+      await fixture(
+        rules(),
+        'alice',
+        kind: 'community_shared',
+        crypto: crypto,
+      ),
+    );
+    expect(find.byKey(const Key('rules-admin-pins')), findsNothing);
+    expect(find.text(l10n.rolesChannelInfoRestrictedDetail), findsOneWidget);
+    final info = switchFor(tester, 'rules-channel-info');
+    expect(info.value, isFalse);
+    await tester.tap(find.byKey(const Key('rules-channel-info')));
+    await tester.pumpAndSettle();
+    expect(crypto.staged.single.channelInfoRestricted, isTrue);
+    // The owner's switch is not a role decision (D86): ownerRev stays.
+    expect(crypto.staged.single.ownerRev, 1);
+  });
 }
 
 class _QuietSync implements SyncService {
@@ -208,9 +288,13 @@ class _QuietSync implements SyncService {
 /// Holds one record for [group]; every other MLS call is unused here.
 class _RoleCrypto extends UnavailableCryptoService
     implements MlsConversationCryptoService, RoleCommandCryptoService {
-  _RoleCrypto(this.record, this.observed);
+  _RoleCrypto(this.record, this.observed, {this.actor});
   final GovernanceState record;
   final GovernanceObservations? observed;
+
+  /// When set, each staged role change is built as this account and kept.
+  final String? actor;
+  final List<GovernanceState> staged = <GovernanceState>[];
 
   @override
   GovernanceState? governanceOf(String conversationId) =>
@@ -234,7 +318,21 @@ class _RoleCrypto extends UnavailableCryptoService
       GovernanceObservations? observed,
       DateTime now,
     ) build,
-  ) async {}
+  ) async {
+    final self = actor;
+    if (self == null) return;
+    staged.add(
+      build(
+        GovernanceCommands(
+          state: record,
+          actor: self,
+          members: record.joined.keys.toSet(),
+        ),
+        observed,
+        DateTime.now().toUtc(),
+      ),
+    );
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

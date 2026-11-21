@@ -4335,6 +4335,23 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get moderationBanEnforced =>
+      'Members\' apps also refuse to add this account back.';
+
+  @override
+  String get moderationBanNotInRecord =>
+      'Only the server enforces this ban. Members\' apps do not check it yet.';
+
+  @override
+  String get moderationBanRecordOnly =>
+      'Members\' apps refuse to add this account back. The server no longer bans it.';
+
+  @override
+  String moderationBanApply(String username) {
+    return 'Make members\' apps enforce the ban on $username';
+  }
+
+  @override
   String get moderationSectionLog => 'Activity log';
 
   @override
@@ -5368,6 +5385,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';
+
+  @override
+  String get rolesRulesSection => 'Group rules';
+
+  @override
+  String get rolesPinsAdminsOnly => 'Only admins can pin messages';
+
+  @override
+  String get rolesPinsAdminsOnlyDetail =>
+      'When on, only the owner and admins can pin or unpin. Every member\'s app ignores pins from anyone else.';
+
+  @override
+  String get rolesChannelInfoRestricted =>
+      'Only moderators and admins can edit channel names';
+
+  @override
+  String get rolesChannelInfoRestrictedDetail =>
+      'When on, only the owner, admins and moderators can change channel names and topics. Every member\'s app ignores changes from anyone else.';
+
+  @override
+  String get rolesRulesAdminsOnly =>
+      'Only the owner and admins can change these rules.';
 
   @override
   String get channelHistoryTitle => 'History for new members';
