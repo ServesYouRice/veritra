@@ -49,6 +49,8 @@
 /scripts/release-rc_test.py @ServesYouRice
 /scripts/update-feed.py @ServesYouRice
 /scripts/update-feed_test.py @ServesYouRice
+/scripts/g24-matrix.py @ServesYouRice
+/scripts/g24-matrix_test.py @ServesYouRice
 /mobile/lib/desktop/update_trust.dart @ServesYouRice
 /mobile/lib/desktop/update_installer.dart @ServesYouRice
 /mobile/android/gradle/ @ServesYouRice

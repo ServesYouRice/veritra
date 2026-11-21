@@ -105,6 +105,9 @@ Every row is pending until it is run on signed builds of one frozen candidate
 commit. Record sanitized platform versions and artifact digests, never device
 identifiers or signing material.
 
+The exact steps per row, the preflight and the evidence record are in
+[`g24-device-matrix.md`](g24-device-matrix.md) (`scripts/g24-matrix.py`).
+
 | Real-device flow | Android | iOS |
 |---|---|---|
 | Setup, invite, DM/group | Pending hardware | Pending hardware |

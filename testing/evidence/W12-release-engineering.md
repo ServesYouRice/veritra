@@ -61,3 +61,17 @@ b7754f44e6079944e277286d58afbf1587cab2ad0045aeca00528341e163e9c0  lib/libwindow_
 de423d26f2795586740a5eb271dd683e46bf12ee13df0c3ba8213069ef254679  private_messenger
 ```
 
+
+## Round 4 (2026-11-21): repository side finished, nothing re-measured
+
+No build was run. Added, all untested on Windows, macOS, Android and a hosted
+runner: `.github/workflows/repro.yml` (manual; Android on two runner images plus
+a digest compare, Windows twice, the unsigned installer, macOS twice),
+`scripts/repro/compare.sh`, a pinned-NDK check and `TOOLCHAIN.txt` records,
+Gradle dependency locking wiring (lock files cannot be written without the
+Android SDK: `scripts/gradle-lock.sh`), the update-feed tool and signed test
+vector, the installer download and digest check, and the G24 matrix script.
+Tested here with fakes: the repro guards (`scripts/repro_test.py`), the feed tool
+with OpenSSL, the Dart update service and installer logic, the G24 script with an
+adb shim, and the release-candidate dry run (`scripts/release-rc_test.py`).
+The Linux bundle is still 12 of 30 files different; not investigated.
