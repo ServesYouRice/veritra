@@ -47,6 +47,10 @@
 /scripts/repro_test.py @ServesYouRice
 /scripts/release-rc.py @ServesYouRice
 /scripts/release-rc_test.py @ServesYouRice
+/scripts/update-feed.py @ServesYouRice
+/scripts/update-feed_test.py @ServesYouRice
+/mobile/lib/desktop/update_trust.dart @ServesYouRice
+/mobile/lib/desktop/update_installer.dart @ServesYouRice
 /mobile/android/gradle/ @ServesYouRice
 
 # The G27 advisory exceptions the gate checks for expiry.

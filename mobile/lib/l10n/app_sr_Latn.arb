@@ -1465,6 +1465,19 @@
   },
   "settingsUpdateError": "Provera ažuriranja nije uspela",
   "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena",
+  "settingsUpdateUnavailable": "Provera ažuriranja nije dostupna u ovoj verziji",
+  "settingsUpdateDownload": "Preuzmi ažuriranje",
+  "settingsUpdateDownloading": "Preuzimanje ažuriranja…",
+  "settingsUpdateDownloadFailed": "Ažuriranje nije moglo da se preuzme ili proveri",
+  "settingsUpdateRestart": "Ponovo pokreni radi ažuriranja",
+  "settingsUpdateReady": "Verzija {version} je spremna",
+  "@settingsUpdateReady": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
   "settingsScreenGuard": "Zaštita ekrana",
   "settingsScreenGuardDetail": "Blokira snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.",
   "communityInfoTitle": "Kategorije i ikonica",

@@ -5035,6 +5035,28 @@ class AppLocalizationsSr extends AppLocalizations {
       'Аутоматска провера ажурирања је искључена';
 
   @override
+  String get settingsUpdateUnavailable =>
+      'Провера ажурирања није доступна у овој верзији';
+
+  @override
+  String get settingsUpdateDownload => 'Преузми ажурирање';
+
+  @override
+  String get settingsUpdateDownloading => 'Преузимање ажурирања…';
+
+  @override
+  String get settingsUpdateDownloadFailed =>
+      'Ажурирање није могло да се преузме или провери';
+
+  @override
+  String get settingsUpdateRestart => 'Поново покрени ради ажурирања';
+
+  @override
+  String settingsUpdateReady(String version) {
+    return 'Верзија $version је спремна';
+  }
+
+  @override
   String get settingsScreenGuard => 'Заштита екрана';
 
   @override
@@ -10486,6 +10508,28 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsUpdateDisabled =>
       'Automatska provera ažuriranja je isključena';
+
+  @override
+  String get settingsUpdateUnavailable =>
+      'Provera ažuriranja nije dostupna u ovoj verziji';
+
+  @override
+  String get settingsUpdateDownload => 'Preuzmi ažuriranje';
+
+  @override
+  String get settingsUpdateDownloading => 'Preuzimanje ažuriranja…';
+
+  @override
+  String get settingsUpdateDownloadFailed =>
+      'Ažuriranje nije moglo da se preuzme ili proveri';
+
+  @override
+  String get settingsUpdateRestart => 'Ponovo pokreni radi ažuriranja';
+
+  @override
+  String settingsUpdateReady(String version) {
+    return 'Verzija $version je spremna';
+  }
 
   @override
   String get settingsScreenGuard => 'Zaštita ekrana';

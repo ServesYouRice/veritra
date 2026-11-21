@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/widgets.dart';
@@ -9,6 +10,7 @@ import '../ui/about.dart';
 import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 import 'message_notifications.dart';
+import 'update_installer.dart';
 import 'update_service.dart';
 
 /// The desktop shell features (W3, W4) wired together: tray, closing to the
@@ -65,6 +67,15 @@ class DesktopServices {
       final updateService = UpdateService(
         settings: updateSettings,
         currentBuild: veritraBuildNumber,
+        // The channel exists for the Windows installer only.
+        platform: Platform.isWindows ? 'windows' : 'unsupported',
+        installer: UpdateInstaller(
+          downloader: const HttpUpdateDownloader(),
+          digester: const CertutilFileDigester(),
+          launcher: const InnoInstallerLauncher(),
+        ),
+        // The tray's own Quit, so the window and tray close the usual way.
+        onQuitForUpdate: () => unawaited(shell.quit()),
       );
       if (updateSettings.autoCheckEnabled) {
         unawaited(updateService.checkForUpdatesIfEnabled());

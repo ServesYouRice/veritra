@@ -30,6 +30,8 @@ if ($PythonCmd) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/release-rc_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/update-feed_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/build-windows-installer_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {

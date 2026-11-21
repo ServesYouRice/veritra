@@ -153,66 +153,100 @@ also fails while the files are missing.
 ## Windows installer
 
 `release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
-default, fixed `AppId` so updates replace the old install, Start-menu entry,
-optional desktop shortcut, uninstaller. It packages the folder
-`build.ps1` produced.
+default (the dialog can switch to all users), fixed `AppId` so an update replaces
+the old install in place, Windows 10 or newer, Start-menu entry, optional desktop
+shortcut, uninstaller, the app icon, and `CloseApplications` so a running Veritra
+is closed first. It packages the folder `build.ps1` produced.
+`scripts/build-windows-installer.ps1` builds it, refuses a crypto library built
+from uncommitted sources (D134) and writes `SHA256SUMS`:
 
-Build with `scripts\build-windows-installer.ps1` (or `release\windows\build.ps1`):
 ```powershell
-# Build unsigned installer (default)
-.\scripts\build-windows-installer.ps1
-
-# Specify build inputs and outputs
-.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -AppVersion 0.1.0 -OutDir C:\out\dist
-
-# Dry-run check (no iscc needed)
-.\scripts\build-windows-installer.ps1 -DryRun
+.\scripts\build-windows-installer.ps1 -BuildApp                  # build the app, then an unsigned installer
+.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -OutDir C:\out\dist
+.\scripts\build-windows-installer.ps1 -DryRun                    # print the iscc command, build nothing
 ```
 
-**Owner step (signing placeholder):** signing. After the owner buys a code-signing
-certificate, pass `-SignToolCommand` to the build script:
+CI builds the unsigned installer (`repro.yml`, job `windows-installer`), which
+proves the definition compiles. Nothing in the repository holds a certificate.
+
+**Owner step 1, signing.** After buying a code-signing certificate:
 ```powershell
 .\scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f'
 ```
-The certificate and password stay outside this repository. Without signing, Windows
-SmartScreen warns on first run; that is expected for the unsigned draft.
+The certificate and password stay outside the repository; a hardware token or a
+cloud signing service needs a different `signtool` line, which is the only thing
+to change. Without it SmartScreen warns on first run. Inno Setup's license (free,
+custom terms) is for the owner to check before first use; an MSIX alternative
+needs a Microsoft account or a self-managed certificate.
 
-Open questions for the owner: Inno Setup's license (free, custom terms) is
-checked by the owner before first use; an MSIX alternative would need a
-Microsoft account or a self-managed certificate.
+## Update channel
 
-## Update channel (design note, nothing built)
+Goal: an installed Windows app learns that a newer, genuine build exists, without
+a vendor service and without telemetry. Android has no channel (F-Droid and Play
+update themselves); Linux and macOS have none yet.
 
-Goal: a user's installed desktop app learns that a newer, genuine build exists,
-without a vendor service and without telemetry.
+What is built (`mobile/lib/desktop/update_service.dart`, `update_installer.dart`,
+`update_trust.dart`; tests in `mobile/test/update_service_test.dart`):
 
-1. **Where:** a static `update.json` on the GitHub release (or the user's own
-   server), plus a **detached** signature file `update.json.sig` over the exact
-   bytes. Fields: `version`, `build`, `platform`, `arch`, `issued_at`,
-   `expires_at`, `url`, `sha256`, `notes`.
-2. **Trust:** signed with an **update key**, separate from the Windows
-   code-signing certificate; its public key is compiled into the app. Rejected:
-   a bad signature, a digest mismatch, a different platform or arch, a lower
-   `build` (downgrade), and a file past `expires_at` (stops a mirror serving an
-   old but validly signed file forever).
-3. **Check:** one HTTPS `GET` of the file with no identifiers or cookies. It
-   still shows the user's IP address and the app's User-Agent to the host
-   (GitHub). **Owner decision:** on by default (daily, with an off switch), or
-   off until the user opts in. Opt-in is the more private choice; default-on
-   updates more users.
-4. **Install:** the app downloads the installer, checks the digest, shows
-   "Version X is ready, restart to update", and starts the signed installer in
-   silent mode. Never silently, never without the user's click.
+1. **Feed:** `update.json` plus a detached Ed25519 signature `update.json.sig`
+   (64 raw bytes over `veritra-update-feed-v1` followed by the exact bytes), published as release assets at
+   `updateFeedUrl`. Fields: `version`, `build`, `platform`, `arch`, `issued_at`,
+   `expires_at`, `url`, `sha256`, `notes`. The owner makes both with
+   `scripts/update-feed.py sign` after the installer is signed; the tool refuses
+   a non-https URL, a feed valid for more than 90 days and a signature that does
+   not verify. `scripts/update-feed.py keygen` makes the update key.
+2. **Trust:** the **update key**, separate from the code-signing certificate;
+   its public half is `updateFeedPublicKeyHex` in `update_trust.dart`. The app
+   rejects a bad signature, a digest mismatch, another platform or arch, a lower
+   `build` (downgrade) and an expired feed (so a mirror cannot serve an old,
+   validly signed file for ever).
+3. **Check:** one HTTPS `GET` of the file (and its `.sig`) with no identifiers or
+   cookies. It still shows the user's IP address to the host (GitHub). On by
+   default (daily at launch) with an off switch in Settings. **Owner decision:**
+   keep it on by default, or off until the user opts in (the more private
+   choice).
+4. **Install:** the Settings tile offers each step as a tap: check, then
+   "Download update" (the installer, https only with redirects checked, at most
+   512 MiB, a file name the app chooses, SHA-256 compared with the signed feed;
+   a mismatch deletes it), then "Restart to update". Before it starts, the file
+   is hashed again, so one swapped in the temporary folder never runs. The
+   installer runs `/SILENT /NORESTART /CLOSEAPPLICATIONS`, detached, and the app
+   quits through the tray's Quit. Never silently, never without the user's tap.
 5. **Never:** server-pushed updates, forced updates, or an update that changes
    the crypto or the server address without showing it.
 6. **Messaging gate:** until G24/G25 pass there is no public release, so no
    channel is switched on. A channel never delivers a build that
    `scripts/release-readiness.sh` rejects.
-7. **Android and F-Droid:** F-Droid and Play update themselves; the app has no
-   update check on Android.
 
-Needs an owner decision (a key, so not mine): who holds the update signing key
-and how it is backed up (rotation would need a second key in the app).
+**What is missing, and it is more than the signing account.** The app cannot
+check the feed signature yet. Dart has no Ed25519 and no new dependency or
+hand-written primitive is acceptable (artifact trust is a second-opinion area),
+so the shipped verifier (`FailClosedUpdateSignatureVerifier`) accepts nothing and
+the channel stays off: no network request is made, in Settings the tile says
+"Update checks are not available in this build". (An earlier placeholder returned
+true for any non-empty signature once a key was set; it is gone, and
+`update_service_test.dart` fails if the guard is removed.) To finish it:
+
+1. **Verification in the native library** (a Rust change and a crypto ABI bump,
+   which this session could not build or test): one verify-only function, for
+   example `pm_crypto_update_feed_verify(public_key[32], message, signature[64],
+   out_valid)`, strict Ed25519 over the raw message under a **separate domain**
+   `veritra-update-feed-v1` (prepend it like the C7 domains; never reuse the
+   invite-binding or C7 domains, never expose a sign function for it), message up
+   to 64 KiB, `PM_CRYPTO_INVALID_ARGUMENT` for a wrong length. Then an
+   `Ed25519UpdateSignatureVerifier` whose `isConfigured` is true only when
+   `updateFeedPublicKeyHex` is 64 hex characters. The signed vector in
+   `mobile/test/fixtures/update-feed/` (feed, signature, public key) is its
+   known-answer test: the signature is over `veritra-update-feed-v1` followed by
+   the feed bytes, which is what `scripts/update-feed.py` signs.
+   The alternative is a reviewed dependency such as a maintained Ed25519
+   package: an owner decision (AGENTS.md: new dependencies need license review).
+2. **The update key:** `scripts/update-feed.py keygen --out update-key.pem`, kept
+   offline and backed up by the owner; its public half goes into
+   `update_trust.dart` in a reviewed pull request. Open: who holds it and how it
+   is backed up (a rotation would need a second key in the app).
+3. **The signing certificate** (above), and a first real run on Windows: none of
+   the installer, download or launch code has run on a Windows machine.
 
 ## F-Droid
 

@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "build": 2,
+  "platform": "windows",
+  "arch": "x64",
+  "issued_at": "2026-11-21T00:00:00Z",
+  "expires_at": "2027-02-19T00:00:00Z",
+  "url": "https://github.com/ServesYouRice/veritra/releases/download/v0.2.0/Veritra-Setup-0.2.0-x64.exe",
+  "sha256": "008f0ea3c53baca8a168ab00653ff54885e643f987aee9b5a5c9195e33cc2665",
+  "notes": "Test vector for the update feed"
+}

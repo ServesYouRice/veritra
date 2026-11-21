@@ -5013,6 +5013,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUpdateDisabled => 'Automatic update checks are turned off';
 
   @override
+  String get settingsUpdateUnavailable =>
+      'Update checks are not available in this build';
+
+  @override
+  String get settingsUpdateDownload => 'Download update';
+
+  @override
+  String get settingsUpdateDownloading => 'Downloading the update…';
+
+  @override
+  String get settingsUpdateDownloadFailed =>
+      'The update could not be downloaded or verified';
+
+  @override
+  String get settingsUpdateRestart => 'Restart to update';
+
+  @override
+  String settingsUpdateReady(String version) {
+    return 'Version $version is ready';
+  }
+
+  @override
   String get settingsScreenGuard => 'Screen guard';
 
   @override

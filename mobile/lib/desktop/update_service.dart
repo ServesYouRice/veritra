@@ -9,6 +9,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../storage/profile_scope.dart';
 import '../ui/about.dart';
+import 'update_installer.dart';
+import 'update_trust.dart';
 
 /// Maximum size for update feed or signature file (64 KiB).
 const int maxUpdateFeedBytes = 64 * 1024;
@@ -18,7 +20,7 @@ const Duration updateCheckTimeout = Duration(seconds: 15);
 
 /// Metadata for a published Veritra update (W12, docs/release-engineering.md).
 /// Delivered via static update.json and detached update.json.sig.
-class UpdateInfo {
+class UpdateInfo implements UpdateInstallTarget {
   const UpdateInfo({
     required this.version,
     required this.build,
@@ -31,13 +33,16 @@ class UpdateInfo {
     required this.notes,
   });
 
+  @override
   final String version;
   final int build;
   final String platform;
   final String arch;
   final DateTime issuedAt;
   final DateTime expiresAt;
+  @override
   final String url;
+  @override
   final String sha256;
   final String notes;
 
@@ -146,6 +151,13 @@ enum UpdateStatusKind {
   upToDate,
   disabled,
   error,
+
+  /// This build cannot check: no verified feed (no key, or no signature
+  /// verification), or not a Windows build. No network request was made.
+  unavailable,
+  downloading,
+  readyToInstall,
+  downloadFailed,
 }
 
 class UpdateStatus {
@@ -179,6 +191,26 @@ class UpdateStatus {
         update = null,
         errorMessage = message;
 
+  const UpdateStatus.unavailable()
+      : kind = UpdateStatusKind.unavailable,
+        update = null,
+        errorMessage = null;
+
+  const UpdateStatus.downloading(UpdateInfo info)
+      : kind = UpdateStatusKind.downloading,
+        update = info,
+        errorMessage = null;
+
+  const UpdateStatus.readyToInstall(UpdateInfo info)
+      : kind = UpdateStatusKind.readyToInstall,
+        update = info,
+        errorMessage = null;
+
+  const UpdateStatus.downloadFailed(UpdateInfo info, String message)
+      : kind = UpdateStatusKind.downloadFailed,
+        update = info,
+        errorMessage = message;
+
   final UpdateStatusKind kind;
   final UpdateInfo? update;
   final String? errorMessage;
@@ -197,33 +229,33 @@ class UpdateStatus {
 }
 
 /// Verification interface for detached update signatures.
-/// Signing stays a placeholder that waits for the owner's certificate and key.
 abstract interface class UpdateSignatureVerifier {
+  /// Whether this verifier can really check a signature. The service does not
+  /// fetch a feed, and never reports an update, for one that cannot.
+  bool get isConfigured;
+
   Future<bool> verify({required List<int> data, required List<int>? signature});
 }
 
-/// Placeholder signature verifier: records that signing waits for the owner's
-/// certificate and update signing key (docs/release-engineering.md).
-class PlaceholderUpdateSignatureVerifier implements UpdateSignatureVerifier {
-  const PlaceholderUpdateSignatureVerifier({this.expectedPublicKey});
+/// The verifier this build has: it accepts nothing. A feed is only trusted
+/// after an Ed25519 check against [updateFeedPublicKeyHex], and the app has no
+/// such check yet (it needs one function in the native library, because the
+/// Dart side has no Ed25519 and must not hand-roll one: see
+/// docs/release-engineering.md, "Update channel"). Until then the channel
+/// stays off, whether or not the owner has already set a key; an earlier
+/// placeholder that returned true for any non-empty signature was removed.
+class FailClosedUpdateSignatureVerifier implements UpdateSignatureVerifier {
+  const FailClosedUpdateSignatureVerifier();
 
-  final Uint8List? expectedPublicKey;
+  @override
+  bool get isConfigured => false;
 
   @override
   Future<bool> verify({
     required List<int> data,
     required List<int>? signature,
-  }) async {
-    // If no owner public key is compiled in, signing stays a placeholder.
-    if (expectedPublicKey == null) {
-      return true;
-    }
-    if (signature == null || signature.isEmpty) {
-      return false;
-    }
-    // Reserved for when the owner configures the compiled-in update public key.
-    return true;
-  }
+  }) async =>
+      false;
 }
 
 /// Client interface for downloading update feeds without cookies or tracking.
@@ -434,27 +466,31 @@ class UpdateService extends ChangeNotifier {
     required this.settings,
     UpdateClient? client,
     UpdateSignatureVerifier? verifier,
+    UpdateInstaller? installer,
+    void Function()? onQuitForUpdate,
     Uri? feedUri,
     String? platform,
     String? arch,
     int? currentBuild,
     DateTime Function()? now,
   })  : _client = client ?? const HttpUpdateClient(),
-        _verifier = verifier ?? const PlaceholderUpdateSignatureVerifier(),
-        _feedUri = feedUri ??
-            Uri.parse(
-              'https://raw.githubusercontent.com/ServesYouRice/veritra/main/release/windows/update.json',
-            ),
+        _verifier = verifier ?? const FailClosedUpdateSignatureVerifier(),
+        _installer = installer,
+        _onQuitForUpdate = onQuitForUpdate,
+        _feedUri = feedUri ?? Uri.parse(updateFeedUrl),
         _platform = platform ?? 'windows',
         _arch = arch ?? 'x64',
         _currentBuild = currentBuild ?? veritraBuildNumber,
         _now = now ?? DateTime.now {
     settings.addListener(_onSettingsChanged);
+    if (!_canCheck) _status = const UpdateStatus.unavailable();
   }
 
   final UpdateSettings settings;
   final UpdateClient _client;
   final UpdateSignatureVerifier _verifier;
+  final UpdateInstaller? _installer;
+  final void Function()? _onQuitForUpdate;
   final Uri _feedUri;
   final String _platform;
   final String _arch;
@@ -463,6 +499,11 @@ class UpdateService extends ChangeNotifier {
 
   UpdateStatus _status = const UpdateStatus.idle();
   DateTime? _lastCheckTime;
+  File? _readyInstaller;
+
+  /// Only the Windows channel exists, and only with a verifier that can check
+  /// the feed's signature.
+  bool get _canCheck => _platform == 'windows' && _verifier.isConfigured;
 
   UpdateStatus get status => _status;
   DateTime? get lastCheckTime => _lastCheckTime;
@@ -481,6 +522,7 @@ class UpdateService extends ChangeNotifier {
 
   /// Checks for updates if automatic checking is enabled.
   Future<UpdateStatus> checkForUpdatesIfEnabled() async {
+    if (!_canCheck) return _setUnavailable();
     if (!settings.isLoaded) {
       await settings.load();
     }
@@ -497,6 +539,9 @@ class UpdateService extends ChangeNotifier {
     bool force = false,
     Uri? feedUri,
   }) async {
+    // Nothing is requested, not even by a manual check, from a build that
+    // cannot verify what comes back.
+    if (!_canCheck) return _setUnavailable();
     if (!settings.isLoaded) {
       await settings.load();
     }
@@ -514,7 +559,7 @@ class UpdateService extends ChangeNotifier {
       final fetched = await _client.fetchUpdate(targetUri);
       _lastCheckTime = _now();
 
-      // Signature verification (placeholder waits for owner's certificate)
+      // The signature is checked before the JSON is read at all.
       final validSig = await _verifier.verify(
         data: fetched.jsonBytes,
         signature: fetched.signatureBytes,
@@ -566,6 +611,60 @@ class UpdateService extends ChangeNotifier {
       notifyListeners();
       return _status;
     }
+  }
+
+  UpdateStatus _setUnavailable() {
+    _status = const UpdateStatus.unavailable();
+    notifyListeners();
+    return _status;
+  }
+
+  /// Downloads the installer of the update [status] offers and checks its
+  /// SHA-256 against the signed feed. Only from `updateAvailable`, and only
+  /// when the user asked (the settings tile); it never starts by itself.
+  Future<UpdateStatus> downloadUpdate() async {
+    final info = _status.update;
+    final installer = _installer;
+    if (_status.kind != UpdateStatusKind.updateAvailable ||
+        info == null ||
+        installer == null) {
+      return _status;
+    }
+    _status = UpdateStatus.downloading(info);
+    notifyListeners();
+    try {
+      _readyInstaller = await installer.download(info);
+      _status = UpdateStatus.readyToInstall(info);
+    } catch (e) {
+      _readyInstaller = null;
+      _status = UpdateStatus.downloadFailed(info, e.toString());
+    }
+    notifyListeners();
+    return _status;
+  }
+
+  /// Starts the verified installer (checked again just before) and asks the
+  /// app to quit so it can replace the files. Only from `readyToInstall`.
+  Future<UpdateStatus> installUpdate() async {
+    final info = _status.update;
+    final file = _readyInstaller;
+    final installer = _installer;
+    if (_status.kind != UpdateStatusKind.readyToInstall ||
+        info == null ||
+        file == null ||
+        installer == null) {
+      return _status;
+    }
+    try {
+      await installer.launch(file, info);
+    } catch (e) {
+      _readyInstaller = null;
+      _status = UpdateStatus.downloadFailed(info, e.toString());
+      notifyListeners();
+      return _status;
+    }
+    _onQuitForUpdate?.call();
+    return _status;
   }
 
   @override
