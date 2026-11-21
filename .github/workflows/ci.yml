@@ -142,7 +142,13 @@ jobs:
       - name: Build F-Droid release APK without signing
         run: flutter build apk --release --flavor fdroid
         working-directory: mobile
+      # Postponed by owner 2026-11-21: passkeys_android and mobile_scanner pull
+      # Google Play services; re-enable before any F-Droid release. The fdroid
+      # flavor still builds above, so its code keeps compiling. This check is
+      # skipped until the repository variable VERITRA_FDROID_BUILD is "true";
+      # set it when the F-Droid build is re-enabled, and the check must pass.
       - name: Verify F-Droid excludes Firebase and Google Play services
+        if: ${{ vars.VERITRA_FDROID_BUILD == 'true' }}
         run: |
           ./gradlew :app:dependencies --configuration fdroidReleaseRuntimeClasspath > fdroid-dependencies.txt
           if grep -Eq 'com.google.firebase:|com.google.android.gms:' fdroid-dependencies.txt; then

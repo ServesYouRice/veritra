@@ -7,6 +7,10 @@
 #      uses UnifiedPush only, following the owner's decision.
 #   3. F-Droid's own build server can compile the Rust crypto library (it
 #      needs the pinned Rust and the Android NDK in the recipe below).
+#   4. Google Play services are gone from the F-Droid build. Today
+#      passkeys_android and mobile_scanner pull them into every flavor; the
+#      owner postponed the F-Droid build on 2026-11-21 (CI check gated by
+#      the VERITRA_FDROID_BUILD repository variable).
 Categories:
   - Internet
   - Messaging

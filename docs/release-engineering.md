@@ -337,3 +337,13 @@ any non-empty signature is gone.
    with the developer's signed APK) needs the owner's APK signing key.
 4. First real run: the NDK, the APK file name and the Rust bootstrap in the
    recipe are written from the code, not tested.
+5. **Google Play services (postponed by the owner, 2026-11-21).** Firebase
+   is out of the `fdroid` flavor, but `passkeys_android` (play-services-auth,
+   play-services-fido) and `mobile_scanner` (ML Kit, play-services-basement)
+   pull Google Play services into every flavor, and Flutter has no
+   per-flavor plugins. The F-Droid build is postponed: CI still builds the
+   `fdroid` APK, but its "Verify F-Droid excludes Firebase and Google Play
+   services" step runs only when the repository variable
+   `VERITRA_FDROID_BUILD` is `true`. Re-enable it, and make it pass, before
+   any F-Droid release. No release workflow or script ships an F-Droid
+   artifact. See `testing/evidence/fdroid-unifiedpush-review.md`.
