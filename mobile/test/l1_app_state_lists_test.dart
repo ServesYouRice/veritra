@@ -1393,7 +1393,21 @@ void main() {
       ApprovalHoldReason.conflict,
     );
 
+    // The own list is its own authority: even a conflict there, with the
+    // server serving the pinned branch, is never reset from a chat.
+    final own = (await state.localStore.loadDeviceListPin(_account))!;
+    await state.localStore.saveDeviceListConflict(
+      accountId: _account,
+      version: own.version,
+      pinnedStatement: own.headStatement,
+      otherStatement: const [1, 2, 3],
+      recordedAt: 1,
+    );
     expect(await state.trustContactDeviceList(_account), isFalse);
+    expect(
+      (await state.localStore.loadDeviceListPin(_account))!.conflict,
+      isTrue,
+    );
     api.others['acct_bob'] = [fork.madeUp];
     expect(await state.trustContactDeviceList('acct_bob'), isFalse);
     expect(

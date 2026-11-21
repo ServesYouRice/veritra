@@ -92,7 +92,14 @@ Each guard was removed in turn and the named tests run
 | M10 another genesis becomes a sticky conflict | forged statements test |
 | M2 reset skips the list-identity check | **not caught, by design**: a proof statement fixes its prefix through `prev_hash`, so the proof check already refuses another genesis. Kept as defence in depth |
 
-AppState/UI mutations are listed with the checks below.
+AppState and UI mutations (`l1_app_state_lists_test.dart`):
+
+| Mutation | Caught by |
+|---|---|
+| U1 a conflicted pin never shown as conflict | conflict reset through AppState; banner widget test |
+| U2 the own account may be reset | conflict reset through AppState (own pin put in conflict) |
+| U3 Check again not spaced | hold banner reasons test |
+| U4 trust without the warning dialog | banner widget test |
 
 Rule checks inside Rust (no-return, one key one device, signatures) were
 not mutated here: no Rust build was allowed on this machine. They are
@@ -114,6 +121,24 @@ covered by the existing Rust vector tests (`testing/vectors/l1-device-list-v1.js
   `server/internal/storage/device_list_gates_test.go`.
 - Independent review of the reset and the banners.
 
-## Checks
+## Checks (Linux, shared prebuilt native library)
 
-Recorded at the end of the run; see the report for exact output.
+`VERITRA_CRYPTO_LIBRARY` was the shared
+`crypto/rust/target/release/libprivate_messenger_crypto.so` (ABI 26, the
+branch's Rust sources are unchanged); no Rust build was allowed here.
+
+- Focused: every `test/l1_*_test.dart`, `device_link_v3_flow_test.dart`,
+  `l10n_locales_test.dart`, `l10n_hardcoded_strings_test.dart`,
+  `l2_schema43_test.dart`: 230 passed, native required.
+- Full `flutter test` with native required: 3,633 passed, 7 skipped, 2
+  failed. `desktop_shell_test.dart` "settings screen offers the hide
+  preview switch on desktop" fails the same way at the base `42626ff`
+  with this branch's `mobile/lib` reverted (pre-existing).
+  `message_expiry_test.dart` "a signed-out device still deletes what
+  expired" passed when its file was rerun alone (load on a shared machine).
+- `flutter analyze`: no issues. `dart format --set-exit-if-changed .`:
+  0 changed. `scripts/l10n-sr-latn_test.py`: passed. `git diff --check`:
+  clean.
+- Not run: `cargo test`/`clippy` (no Rust change; builds not allowed on
+  this machine), Go tests and vet (no Go change), the full
+  `scripts/test.sh`/`lint.sh` (they build Rust).
