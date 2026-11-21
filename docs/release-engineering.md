@@ -257,8 +257,9 @@ What is built (`mobile/lib/desktop/update_service.dart`, `update_installer.dart`
    lowercase hex characters; with the key empty the build keeps
    `FailClosedUpdateSignatureVerifier` and requests nothing. The app rejects a
    bad or missing signature, a digest mismatch, another platform or arch, a
-   lower `build` (downgrade) and an expired feed (so a mirror cannot serve an
-   old, validly signed file for ever).
+   lower `build` (downgrade), an expired feed, and a feed valid for more than
+   90 days or issued more than a day ahead (so a mirror cannot serve an old,
+   validly signed file for long, even one not made by `update-feed.py`).
 3. **Check:** one HTTPS `GET` of the file and one of its `.sig`, with no
    cookies or credentials; redirects (GitHub serves assets from another host)
    are followed by hand, at most five, only to https, so a redirect to plain
