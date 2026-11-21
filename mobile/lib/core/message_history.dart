@@ -17,6 +17,7 @@ class ConversationHistory {
     required List<LocalMessage> messages,
     required List<LocalMessageReaction> reactions,
     this.copiedKeys = const {},
+    this.sealedKeys = const {},
   })  : _byKey = <String, LocalMessage>{
           for (final message in messages)
             if (message.conversationId == conversationId) message.key: message,
@@ -47,10 +48,18 @@ class ConversationHistory {
   ConversationHistory.empty(this.conversationId)
       : _byKey = const <String, LocalMessage>{},
         _byServerId = const <String, LocalMessage>{},
-        copiedKeys = const {};
+        copiedKeys = const {},
+        sealedKeys = const {};
 
   final String conversationId;
   final Set<String> copiedKeys;
+
+  /// L2-3: keys of the rows that came sealed ([isSealed]).
+  final Set<String> sealedKeys;
+
+  /// Whether the row [key] came sealed: its server row named no sender, so
+  /// only the app can hide it when its sender is blocked.
+  bool isSealed(String key) => sealedKeys.contains(key);
   final Map<String, LocalMessage> _byKey;
 
   /// Rows by the server envelope that produced them. Placeholder rows are

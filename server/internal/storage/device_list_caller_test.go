@@ -84,7 +84,7 @@ func TestDevicelessCallerIsRefusedOnAnAccountWithAHead(t *testing.T) {
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_extra', ?, 'Laptop', x'00', ?)`, owner.Account.ID, nowString()); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := store.RevokeDeviceWithDeviceList(ctx, owner.Account.ID, "", "dev_extra", someStatement); !errors.Is(err, ErrForbidden) {
+		if _, err := store.RevokeDeviceWithDeviceList(ctx, owner.Account.ID, "", "dev_extra", someStatement); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("revocation with a version and no caller device: %v, want ErrForbidden", err)
 		}
 		if got := count(`SELECT COUNT(*) FROM devices WHERE id = 'dev_extra' AND revoked_at IS NULL`); got != 1 {

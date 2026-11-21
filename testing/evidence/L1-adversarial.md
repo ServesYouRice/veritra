@@ -159,15 +159,73 @@ pin tests; the widget test does not show it.
   give"; L2).
 - Withholding: a server that never shows a signed removal keeps the device
   approved for that viewer until the own-device alert or a later fetch.
-- The live demo run against the real server binary (L1-5: register, link,
-  message, revoke, recover, with a ghost row written into the stopped
-  server's database) was not run: it needs a Go build and the demo e2e
-  harness, and disk on this machine was too tight. The Dart suite above is
-  the evidence for the client rules; the server's own gates are in
-  `server/internal/httpapi/device_list_test.go` and
-  `server/internal/storage/device_list_gates_test.go`.
+- The live L1-5 run was missing here; it was added later (next section).
 - The external independent security review of the reset and the banners
   (the agent review above does not count as it).
+
+## L1-5 live run against the real server (2026-11-21, branch `b4-e2e`)
+
+`mobile/test/l1_live_e2e_test.dart`, run by `scripts/test-live-e2e.sh`
+and in CI (mobile job). Real clients (`AppState`, OpenMLS through the
+shared native library, in-memory stores) against a server binary the test
+starts on loopback:
+
+1. Register the owner, invite Alice, DM both ways.
+2. Link a second device with v3 (commit, reveal, compare, approve); it is
+   added to the chat and gets Alice's message.
+3. Revoke it (the owner's device signs the removal): Alice's group drops
+   the leaf within 60 seconds, a message after it reaches the owner and not
+   the revoked device.
+4. Save a recovery key. Stop the server and run the test hook (below): a
+   device of the owner's account with a real key package, on no signed
+   list version, indexed on the head so the server offers it as a pending
+   add to Alice and hands out its key package on claim. Restart.
+5. Alice sees the ghost in `GET /mls/pending-changes`. Three rounds of
+   messages both ways, each followed by a reconcile on both ends: neither
+   Alice's group nor the owner's ever holds the ghost's leaf, and the
+   server still lists it as pending (no add commit was ever posted).
+6. The owner logs out; a new device recovers the account with password and
+   recovery key (no 7-day wait: no device has a live session), saves a new
+   key and a new password. Messages both ways; Alice's group is exactly {Alice, the
+   recovered device}: the listed device was added by the same reconcile
+   that never added the ghost.
+
+Result: passed, 2 min 21 s (Linux, ABI 27 shared library).
+
+The hook is `messenger-server test-insert-unlisted-device ACCOUNT DEVICE
+KEY_PACKAGE_FILE`
+(`server/cmd/messenger-server/testhooks.go`,
+`server/internal/storage/testhook_unlisted_device.go`). It is compiled
+only with the build tag `veritra_testhooks`; a default build answers
+"unknown command" (`testhooks_off_test.go`). A binary built with the tag
+refuses `serve` and the hook unless `PRIVATE_MESSENGER_ENV=development`
+(unset means production) and says "with test hooks, not for production"
+in `version` (`testhooks_test.go`). `testhooks_guard_test.go` fails if the
+Dockerfile, the release, repro and deploy scripts or `deploy/` ever name
+the tag, pass `-tags` or set `GOFLAGS`. The hook runs only on a stopped
+server's data directory (server lock and exclusive database probe).
+
+Found by the run and fixed:
+
+- A revocation was not announced live. Revoking a device queued
+  `mls.revocation.pending` for each group but published nothing, so when
+  the coordinator was another account's device (Alice's here, chosen by
+  lowest device id) it committed the removal only at its next catch-up for
+  another reason: more than four minutes in an idle chat, and messages
+  sent meanwhile were still encrypted to the revoked leaf. The revoke route
+  now publishes each pending event to the conversation's members, the
+  accounts and payload the durable event already reaches through sync
+  (`publishRevocationsPending`; test
+  `TestDeviceRevocationAnnouncesPendingRevocationLive`, which fails without
+  it). Other paths that queue revocations (recovery completion, expired
+  link cleanup, account deletion) still rely on the next catch-up; recovery
+  is covered in practice by the D96 member-link notice, which starts one.
+
+Not shown by the run: a negative control with the client add gates
+removed. `_gateAdds` stages an add only with the signing key the signed
+list names, and the list names none for the ghost, so there is no
+one-line switch to turn it off; the unit tests in `l1_*_test.dart` cover
+the gates themselves.
 
 ## Checks (Linux, shared prebuilt native library)
 

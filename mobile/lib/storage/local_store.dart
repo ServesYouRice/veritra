@@ -732,6 +732,12 @@ abstract class LocalStore {
   /// or expired since). Only a reporting flow reads this.
   Future<FrankReveal?> loadFrankReveal(String messageKey);
 
+  /// L2-3: the keys of [conversationId]'s received messages that came sealed
+  /// (their kept reveal names the sender MLS authenticated). The server
+  /// cannot hide a blocked account's sealed post, so the timeline hides it
+  /// by these keys, also when it shows the row from local history.
+  Future<Set<String>> loadSealedMessageKeys(String conversationId);
+
   /// C3 (schema 31): what arrived over MLS for one community info subject,
   /// oldest first, bounded per subject.
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
@@ -1864,6 +1870,13 @@ class MemoryLocalStore implements LocalStore {
       _acceptedCommunityInfo[key] = info;
     }
   }
+
+  @override
+  Future<Set<String>> loadSealedMessageKeys(String conversationId) async => {
+        for (final reveal in _frankReveals.values)
+          if (reveal.conversationId == conversationId && reveal.sealed)
+            reveal.messageKey,
+      };
 
   @override
   Future<FrankReveal?> loadFrankReveal(String messageKey) async {
@@ -4270,6 +4283,10 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<FrankReveal?> loadFrankReveal(String messageKey) async =>
       (await _database()).readFrankReveal(messageKey);
+
+  @override
+  Future<Set<String>> loadSealedMessageKeys(String conversationId) async =>
+      (await _database()).readSealedMessageKeys(conversationId);
 
   @override
   Future<int> saveSealedTokens(List<SealedToken> tokens) async =>

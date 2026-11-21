@@ -848,6 +848,23 @@ class NativeCryptoService
   /// Whether the first sealed state (and its state key) is still held.
   @visibleForTesting
   bool get holdsFirstState => _firstState != null;
+
+  /// The (account, device) of every leaf of [conversationId]'s MLS tree on
+  /// this device, or null without the group (tests only: the live L1-5 run
+  /// checks that a device no signed list names never joins).
+  @visibleForTesting
+  Future<Set<MlsDeviceRef>?> debugGroupLeaves(String conversationId) =>
+      _serial(() async {
+        final device = _device;
+        if (device == null || !await _hasGroup(conversationId)) return null;
+        return <MlsDeviceRef>{
+          for (final leaf in device.groupMembers(conversationId))
+            (
+              accountId: utf8.decode(leaf.accountId),
+              deviceId: utf8.decode(leaf.deviceId),
+            ),
+        };
+      });
   Future<void> _operationTail = Future<void>.value();
 
   @override

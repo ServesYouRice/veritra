@@ -116,6 +116,19 @@ func (a *API) publishRevocationCompleted(ctx context.Context, conversationID, re
 		ConversationID: conversationID, Payload: map[string]string{"device_id": revokedDeviceID}, CreatedAt: time.Now().UTC()})
 }
 
+// publishRevocationsPending announces live the mls.revocation.pending events
+// a device revocation recorded, each to its conversation's members: the
+// same accounts and payload the durable event reaches through sync. Without
+// it a coordinator on another account learns of the revocation only at its
+// next catch-up for some other reason, and until its commit lands, messages
+// in the group are still encrypted to the revoked device's leaf.
+func (a *API) publishRevocationsPending(ctx context.Context, accountID, revokedDeviceID string, queued []storage.QueuedMLSRevocation) {
+	for _, item := range queued {
+		a.publishCommittedEvent(ctx, a.conversationMemberIDs(ctx, item.ConversationID), realtime.Event{Version: "v1", Type: "mls.revocation.pending", ID: item.EventID,
+			ConversationID: item.ConversationID, Payload: map[string]string{"device_id": revokedDeviceID, "account_id": accountID}, CreatedAt: time.Now().UTC()})
+	}
+}
+
 func (a *API) getMLSMessage(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	if principal.DeviceID == "" {
 		writeError(w, http.StatusBadRequest, "device_session_required")

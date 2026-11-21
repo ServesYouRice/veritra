@@ -59,6 +59,36 @@ void main() {
         output: List<int>.filled(64, seed),
       );
 
+  // The timeline hides a blocked sender's sealed rows shown from local
+  // history by these keys (live run: test/sealed_live_e2e_test.dart).
+  test('sealed message keys: only sealed reveals of the conversation',
+      () async {
+    final db = EncryptedLocalDatabase(
+      NativeDatabase(File('${directory.path}/keys.db')),
+    );
+    addTearDown(db.close);
+    await db.customStatement('PRAGMA foreign_keys = OFF');
+    Future<void> reveal(String key, String conversation, String? sender) =>
+        db.customStatement(
+          'INSERT INTO local_frank_reveals(message_key, conversation_id, '
+          'envelope_id, frank_key, payload, stored_at, sender_account_id) '
+          'VALUES (?, ?, ?, ?, ?, 1, ?)',
+          <Object?>[
+            key,
+            conversation,
+            'msg_$key',
+            Uint8List(32),
+            Uint8List.fromList(<int>[123, 125]),
+            sender,
+          ],
+        );
+    await reveal('dev_b:sealed', 'conv_1', 'acct_b');
+    await reveal('dev_b:plain', 'conv_1', null);
+    await reveal('dev_b:other', 'conv_2', 'acct_b');
+    expect(await db.readSealedMessageKeys('conv_1'), <String>{'dev_b:sealed'});
+    expect(await db.readSealedMessageKeys('conv_3'), isEmpty);
+  });
+
   test('a new database has the tables and columns', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);

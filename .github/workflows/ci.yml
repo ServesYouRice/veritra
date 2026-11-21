@@ -38,6 +38,13 @@ jobs:
       - name: go vet
         run: go vet ./...
         working-directory: server
+      - name: Test the test-hook build (L1-5 ghost device; development only)
+        # These files compile only with the tag, which no release build sets
+        # (TestReleaseBuildsNeverSetTestHooksTag runs in the step above).
+        run: |
+          go vet -tags veritra_testhooks ./cmd/messenger-server ./internal/storage
+          go test -race -tags veritra_testhooks -run 'TestTestHookBinaryRefusesProduction|TestInsertUnlistedDeviceForTestOffersTheGhost|TestReleaseBuildsNeverSetTestHooksTag' ./cmd/messenger-server ./internal/storage
+        working-directory: server
       - name: Summarize Go coverage
         run: go tool cover -func=coverage.out | tee coverage-summary.txt
         working-directory: server
@@ -134,6 +141,12 @@ jobs:
         run: sh scripts/test-c7-e2e.sh
         env:
           VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
+      - name: Test C1, C3, C6, L2-3 sealed sender and L1-5 with real clients and server
+        run: sh scripts/test-live-e2e.sh
+        env:
+          VERITRA_CRYPTO_LIBRARY: ${{ github.workspace }}/crypto/rust/target/release/libprivate_messenger_crypto.so
+      - name: Test the Android rules that are plain Java (no Android SDK)
+        run: sh scripts/test-android-rules.sh
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
