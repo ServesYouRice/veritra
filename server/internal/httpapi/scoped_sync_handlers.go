@@ -37,10 +37,10 @@ func (a *API) accountSyncEvents(w http.ResponseWriter, r *http.Request, principa
 
 func (a *API) conversationSyncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, limit := syncPageParams(r)
-	bounded := r.URL.Query().Get("scan") == "bounded"
+	// Always bounded (D92, D134): ?scan=bounded is accepted and ignored.
 	conversationID := r.PathValue("id")
-	page, err := a.Store.ListConversationSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, storage.SyncReadOptions{Bounded: bounded, Sealed: a.noteSealedReader(r, principal)})
-	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, bounded, err)
+	page, err := a.Store.ListConversationSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, storage.SyncReadOptions{Bounded: true, Sealed: a.noteSealedReader(r, principal)})
+	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, true, err)
 }
 
 func syncPageParams(r *http.Request) (int64, int) {
@@ -49,10 +49,10 @@ func syncPageParams(r *http.Request) (int64, int) {
 	return after, limit
 }
 
-// writeScopedSync writes the stream envelope. The bounds are the account's,
-// as in the legacy stream, so a client must not read them as this scope's
-// progress or floor; the expiry decision itself is made per scope in
-// storage. A 409 pauses only this scope: the account scope keeps the
+// writeScopedSync writes the stream envelope. A 200 carries the sync epoch
+// only (D134). A 409 also carries the account's bounds, as in the legacy
+// stream, so a client must not read them as this scope's progress or floor;
+// the expiry decision itself is made per scope in storage. A 409 pauses only this scope: the account scope keeps the
 // device-wide device_recovery_required (missing account events stay a
 // device-wide condition), a conversation scope answers
 // conversation_recovery_required so a client never relinks the whole device
@@ -67,13 +67,13 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 		writeError(w, http.StatusInternalServerError, "sync_events_failed")
 		return
 	}
-	epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)
-	if boundsErr != nil {
-		writeError(w, http.StatusInternalServerError, "sync_events_failed")
-		return
-	}
-	body := map[string]interface{}{"scope": scope, "scope_id": scopeID, "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest}
 	if expired {
+		epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)
+		if boundsErr != nil {
+			writeError(w, http.StatusInternalServerError, "sync_events_failed")
+			return
+		}
+		body := map[string]interface{}{"scope": scope, "scope_id": scopeID, "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest}
 		body["error"] = "device_recovery_required"
 		if scope == syncScopeConversation {
 			body["error"] = "conversation_recovery_required"
@@ -81,6 +81,12 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 		writeJSON(w, http.StatusConflict, body)
 		return
 	}
+	epoch, epochErr := a.Store.SyncEpoch(r.Context())
+	if epochErr != nil {
+		writeError(w, http.StatusInternalServerError, "sync_events_failed")
+		return
+	}
+	body := map[string]interface{}{"scope": scope, "scope_id": scopeID, "sync_epoch": epoch}
 	events := page.Events
 	if events == nil {
 		events = []domain.SyncEvent{}
@@ -89,9 +95,9 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 	// The position the server scanned to, hidden rows included, and whether
 	// the scan budget cut the page short (D92, C1 bounds). A client may move
 	// its cursor to scanned_through after applying the events, and keeps
-	// paging while scan_truncated. Sent only on request (?scan=bounded): an
-	// older client would stop at a truncated empty page, so it never gets
-	// the budget or the fields.
+	// paging while scan_truncated. The conversation route always sends them
+	// (D134); the account stream sends neither: it does filter other devices'
+	// events, but its cursor is the event id and it is not scan-budgeted.
 	if bounded {
 		body["scanned_through"] = page.ScannedThrough
 		body["scan_truncated"] = page.Truncated

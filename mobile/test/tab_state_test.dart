@@ -25,25 +25,24 @@ Future<(AppState, MemoryLocalStore)> _wide(
   await store.saveSession(benchSession);
   final envelopes = benchEnvelopes(longConversationId, 0, 3);
   await seedHistory(
-    store,
-    <MessageEffect>[
-      for (final (index, envelope) in envelopes.reversed.indexed)
-        InsertMessageEffect(
-          key: benchKey(envelope),
-          serverMessageId: envelope.id,
-          conversationId: envelope.conversationId,
-          senderAccountId: envelope.senderAccountId,
-          senderDeviceId: envelope.senderDeviceId,
-          kind: LocalMessageKind.text,
-          body: 'Message number $index',
-          createdAt: envelope.createdAt.millisecondsSinceEpoch,
-          state: envelope.senderDeviceId == benchSession.deviceId
-              ? LocalMessageState.sent
-              : LocalMessageState.received,
-        ),
-    ],
-    envelopes: envelopes,
-  );
+      store,
+      <MessageEffect>[
+        for (final (index, envelope) in envelopes.reversed.indexed)
+          InsertMessageEffect(
+            key: benchKey(envelope),
+            serverMessageId: envelope.id,
+            conversationId: envelope.conversationId,
+            senderAccountId: envelope.senderAccountId,
+            senderDeviceId: envelope.senderDeviceId,
+            kind: LocalMessageKind.text,
+            body: 'Message number $index',
+            createdAt: envelope.createdAt.millisecondsSinceEpoch,
+            state: envelope.senderDeviceId == benchSession.deviceId
+                ? LocalMessageState.sent
+                : LocalMessageState.received,
+          ),
+      ],
+      envelopes: envelopes);
   final api = BenchApi(conversationList: benchConversations(conversations))
     ..pages[longConversationId] = envelopes;
   final state = benchState(api: api, store: store);
@@ -75,22 +74,28 @@ Future<void> _visitSettings(WidgetTester tester) async {
     Icons.settings_outlined,
     Icons.chat_bubble_outline,
   ]) {
-    await tester.tap(find.descendant(
-      of: find.byType(NavigationRail),
-      matching: find.byIcon(icon),
-    ));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.byIcon(icon),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 }
 
 /// Leaves the chat for Settings, runs [whileAway], and comes back.
 Future<void> _awayFromChats(
-    WidgetTester tester, Future<void> Function() whileAway) async {
+  WidgetTester tester,
+  Future<void> Function() whileAway,
+) async {
   Future<void> tapRail(IconData icon) async {
-    await tester.tap(find.descendant(
-      of: find.byType(NavigationRail),
-      matching: find.byIcon(icon),
-    ));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.byIcon(icon),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -111,20 +116,25 @@ Future<void> _chooseReply(WidgetTester tester, String text) async {
 
 /// The stored record of the seeded message showing [text].
 Future<LocalMessage> _stored(MemoryLocalStore store, String text) async =>
-    (await store.loadMessages(longConversationId))
+    (await store.loadMessages(
+      longConversationId,
+    ))
         .singleWhere((message) => message.body == text);
 
 Future<void> _open(WidgetTester tester, String title) async {
-  await tester.tap(find.descendant(
-    of: find.byType(ChatListScreen),
-    matching: find.text(title),
-  ));
+  await tester.tap(
+    find.descendant(
+      of: find.byType(ChatListScreen),
+      matching: find.text(title),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('the chat list keeps its scroll offset across destinations',
-      (tester) async {
+  testWidgets('the chat list keeps its scroll offset across destinations', (
+    tester,
+  ) async {
     final (state, _) = await _wide(tester, conversations: 400);
     _listPosition(tester).jumpTo(2400);
     await tester.pump();
@@ -133,8 +143,9 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('an unsent draft is kept across destinations, on device only',
-      (tester) async {
+  testWidgets('an unsent draft is kept across destinations, on device only', (
+    tester,
+  ) async {
     final (state, store) = await _wide(tester);
     await _open(tester, 'Long group');
     await tester.enterText(_composer, 'half a thought');
@@ -148,7 +159,9 @@ void main() {
     expect(await store.pendingEnvelopeRecords(), isEmpty);
     final stored = await store.loadMessages(longConversationId);
     expect(
-        stored.where((message) => message.body == 'half a thought'), isEmpty);
+      stored.where((message) => message.body == 'half a thought'),
+      isEmpty,
+    );
     expect('${state.composerDrafts}', isNot(contains('half a thought')));
     state.dispose();
   });
@@ -171,8 +184,9 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('a kept reply target shows its message as edited since',
-      (tester) async {
+  testWidgets('a kept reply target shows its message as edited since', (
+    tester,
+  ) async {
     final (state, store) = await _wide(tester);
     await _open(tester, 'Long group');
     await _chooseReply(tester, 'Message number 1');
@@ -191,7 +205,9 @@ void main() {
       await state.refreshHistory(longConversationId);
     });
     expect(
-        find.text('Replying to: Message number 1, corrected'), findsOneWidget);
+      find.text('Replying to: Message number 1, corrected'),
+      findsOneWidget,
+    );
     expect(find.text('Replying to: Message number 1'), findsNothing);
     state.dispose();
   });
@@ -218,15 +234,18 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('a reply target no longer in the history is dropped',
-      (tester) async {
+  testWidgets('a reply target no longer in the history is dropped', (
+    tester,
+  ) async {
     final (state, _) = await _wide(tester);
     await _open(tester, 'Long group');
     // Kept from earlier, for a message this device no longer holds (it
     // expired, say).
     await _awayFromChats(tester, () async {
-      state.composerDrafts
-          .setReplyTarget(longConversationId, 'dev_peer:expired');
+      state.composerDrafts.setReplyTarget(
+        longConversationId,
+        'dev_peer:expired',
+      );
     });
     expect(find.textContaining('Replying to:'), findsNothing);
     expect(state.composerDrafts.replyTargetFor(longConversationId), isNull);
@@ -287,12 +306,16 @@ void main() {
     await state.refreshConversations();
 
     expect(
-        state.conversations.map((item) => item.id), isNot(contains(removed)));
+      state.conversations.map((item) => item.id),
+      isNot(contains(removed)),
+    );
     expect(state.composerDrafts.textFor(removed), isEmpty);
     expect(state.composerDrafts.replyTargetFor(removed), isNull);
     expect(state.composerDrafts.textFor(longConversationId), 'still wanted');
     expect(
-        state.composerDrafts.replyTargetFor(longConversationId), 'dev_peer:1');
+      state.composerDrafts.replyTargetFor(longConversationId),
+      'dev_peer:1',
+    );
 
     // A refresh that fails keeps the last list, and with it every draft.
     api

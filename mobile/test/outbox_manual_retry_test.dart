@@ -25,12 +25,14 @@ void main() {
 
   test('a tapped retry that fails locally reports it under Ops.send', () async {
     final store = _FailingStore();
-    await store.enqueueEnvelope(MessageEnvelope(
-      conversationId: 'conv_1',
-      idempotencyKey: 'env_1',
-      ciphertext: const <int>[1],
-      cryptoProtocol: 'test-only-not-production',
-    ));
+    await store.enqueueEnvelope(
+      MessageEnvelope(
+        conversationId: 'conv_1',
+        idempotencyKey: 'env_1',
+        ciphertext: const <int>[1],
+        cryptoProtocol: 'test-only-not-production',
+      ),
+    );
     final api = _Api();
     final state = AppState(
       apiClientFactory: (_) => api,
@@ -62,10 +64,12 @@ class _FailingStore extends MemoryLocalStore {
     DateTime? nextAttemptAt,
   }) async {
     if (failRecording) throw StateError('database is locked');
-    return super.recordOutboxFailure(idempotencyKey,
-        failureClass: failureClass,
-        terminal: terminal,
-        nextAttemptAt: nextAttemptAt);
+    return super.recordOutboxFailure(
+      idempotencyKey,
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttemptAt,
+    );
   }
 }
 

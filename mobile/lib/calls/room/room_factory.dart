@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'room_capture.dart';
 import 'room_engine.dart';
 import 'room_media.dart';
 import 'room_ports.dart';
@@ -42,6 +43,7 @@ class RoomCallFactory {
     this.rosterChanges,
     this.openKeys = _openKeys,
     required this.connectSfu,
+    this.makeCapture,
     this.scheduler = const SystemRoomScheduler(),
     this.pollEvery = const Duration(seconds: 2),
   });
@@ -53,6 +55,10 @@ class RoomCallFactory {
   final Listenable? rosterChanges;
   final Future<WebRtcFrameKeys> Function() openKeys;
   final SfuConnection Function(WebRtcFrameKeys keys) connectSfu;
+
+  /// The platform's camera and screen capture for one call; null means voice
+  /// only.
+  final RoomCapture Function()? makeCapture;
   final RoomScheduler scheduler;
   final Duration pollEvery;
 
@@ -84,9 +90,12 @@ class RoomCallFactory {
       selfAccountId: selfAccountId,
       selfDeviceId: selfDeviceId,
     );
-    final media =
-        RoomMediaSession(engine: engine, keys: keys, sfu: connectSfu(keys))
-          ..start();
+    final media = RoomMediaSession(
+      engine: engine,
+      keys: keys,
+      sfu: connectSfu(keys),
+      capture: makeCapture?.call() ?? const NoRoomCapture(),
+    )..start();
 
     // Null (the L1 judgment not loaded yet) reads as its own roster, so the
     // engine refreshes once it loads.

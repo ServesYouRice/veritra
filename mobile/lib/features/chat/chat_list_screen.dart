@@ -14,6 +14,7 @@ import '../../ui/photo_avatar.dart';
 import '../../ui/reauthenticate.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
@@ -96,33 +97,45 @@ class ChatListScreen extends StatelessWidget {
         // is worth here.
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
+        // One line that ellipsizes, so the title never runs over the words
+        // in the bar (U11).
         title: Text(
           archived ? context.l10n.w8ArchivedChats : context.l10n.navChats,
           style: theme.textTheme.displaySmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: <Widget>[
           // New chat lives in the bar (U28) so nothing floats over a row. It
           // is the one filled control here: Bone rations its accent to the
-          // primary action, active nav, unread count and focus ring.
+          // primary action, active nav, unread count and focus ring. The
+          // embedded list sits in a 360 dp pane, so it keeps icons only.
           if (!archived)
-            IconButton.filled(
-                tooltip: context.l10n.chatListNewChat,
+            BarAction(
+                label: context.l10n.chatListNewChat,
+                filled: true,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => _startChat(context),
-                icon: const Icon(Icons.add_comment_outlined)),
+                icon: Icons.add_comment_outlined),
           if (!archived)
-            IconButton(
-                tooltip: context.l10n.w8ArchivedChats,
+            BarAction(
+                label: context.l10n.w8ArchivedChats,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => Navigator.of(context).push(
                     sharedAxisRoute<void>((_) => ChatListScreen(
                         state: state, embedded: embedded, archived: true))),
-                icon: const Icon(Icons.archive_outlined)),
+                icon: Icons.archive_outlined),
           if (!archived && state.historyOnlyConversations.isNotEmpty)
-            IconButton(
-                tooltip: context.l10n.k2HistoryOnlyTitle,
+            BarAction(
+                label: context.l10n.k2HistoryOnlyTitle,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => Navigator.of(context).push(
                     sharedAxisRoute<void>(
                         (_) => CopiedHistoryListScreen(state: state))),
-                icon: const Icon(Icons.history)),
+                icon: Icons.history),
           RefreshAction(onRefresh: state.refreshConversations),
           if (!archived)
             IconButton(
@@ -209,6 +222,7 @@ class ChatListScreen extends StatelessWidget {
                     // hero tag is an assertion, not a nicer animation.
                     hero: !embedded,
                     previews: state,
+                    swipeOpensActions: true,
                     onActions: () => _showRowActions(context, conversation),
                     onTap: () {
                       state.selectAndPrepare(conversation.id);
@@ -321,6 +335,21 @@ class ChatListScreen extends StatelessWidget {
               leading: const Icon(Icons.info_outline),
               title: Text(context.l10n.chatListDetails),
               onTap: () => Navigator.of(sheetContext).pop('details'),
+            ),
+            // U19: said once here, not on each action.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+                BoneSpacing.gutter,
+                BoneSpacing.md,
+              ),
+              child: Text(
+                context.l10n.w8ChatActionsLocalNote,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
             ),
           ],
         ),
@@ -632,11 +661,16 @@ class _ConversationTile extends StatelessWidget {
     this.muted = false,
     this.selected = false,
     this.hero = false,
+    this.swipeOpensActions = false,
   });
 
   final Conversation conversation;
   final ProfileService? profiles;
   final bool showProfileName;
+
+  /// U36: a swipe in either direction opens the same menu as a long press.
+  /// The row never leaves the list; the menu's own choices change it.
+  final bool swipeOpensActions;
 
   /// Where this row reads the last message from (U12), or null for a row that
   /// never quotes one, such as a request.
@@ -662,7 +696,7 @@ class _ConversationTile extends StatelessWidget {
         profiles: showProfileName ? profiles : null);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
-    return MergeSemantics(
+    final row = MergeSemantics(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1),
         child: Material(
@@ -741,13 +775,18 @@ class _ConversationTile extends StatelessWidget {
                                 const SizedBox(width: BoneSpacing.sm),
                                 // Compact on screen, spoken in full: `1d`
                                 // should not be read out as "one dee".
-                                StatusPill(
-                                  icon: Icons.timer_outlined,
-                                  label: retentionChipLabel(l10n, retention),
-                                  uppercase: false,
-                                  semanticsLabel:
-                                      l10n.chatListDisappearingAfter(
-                                    retentionLabel(l10n, retention),
+                                // Flexible so the pill and the preview
+                                // share a narrow 112dp slot at 200% text
+                                // instead of overflowing it.
+                                Flexible(
+                                  child: StatusPill(
+                                    icon: Icons.timer_outlined,
+                                    label: retentionChipLabel(l10n, retention),
+                                    uppercase: false,
+                                    semanticsLabel:
+                                        l10n.chatListDisappearingAfter(
+                                      retentionLabel(l10n, retention),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -796,6 +835,18 @@ class _ConversationTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (!swipeOpensActions) return row;
+    // Swipe either way opens the actions; the row stays (confirmDismiss is
+    // false), so nothing is removed by a swipe.
+    return Dismissible(
+      key: ValueKey<String>('chat-row-${conversation.id}'),
+      confirmDismiss: (_) async {
+        onActions();
+        return false;
+      },
+      background: const SizedBox.shrink(),
+      child: row,
     );
   }
 }
@@ -978,7 +1029,8 @@ Widget conversationAvatar(
           ? Text(
               initials,
               style: TextStyle(
-                fontSize: radius * 0.62,
+                // Never under 12: the top-bar avatar is small (radius 17).
+                fontSize: radius * 0.62 < 12 ? 12 : radius * 0.62,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
                 color: colors.glyph,

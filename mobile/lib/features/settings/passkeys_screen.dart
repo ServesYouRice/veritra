@@ -44,8 +44,9 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
     final added = await state.addPasskey(name);
     if (!mounted) return;
     if (added) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l10n.passkeysAdded)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.passkeysAdded)));
     }
   }
 
@@ -72,8 +73,9 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
     if (!await confirmPasswordForRecentAuth(context, widget.state)) return;
     if (!mounted) return;
     if (await widget.state.removePasskey(passkey.id) && mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l10n.passkeyRemoved)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.passkeyRemoved)));
     }
   }
 
@@ -132,9 +134,12 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
                   if (error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: BoneSpacing.md),
-                      child: Text(error,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
+                      child: Text(
+                        error,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
                     ),
                   if (state.passkeysLoaded && state.passkeyList.isEmpty)
                     Text(l10n.passkeysEmpty),
@@ -145,20 +150,34 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
                       title: Text(passkey.name),
                       // U37: one fact per row: when it was last used, or
                       // when it was added if it never has been.
-                      subtitle: Text(passkey.lastUsedAt != null
-                          ? l10n.passkeyLastUsed(formatDateTime(
-                              context, passkey.lastUsedAt!.toLocal()))
-                          : l10n.passkeyCreated(formatDateTime(
-                              context, passkey.createdAt.toLocal()))),
+                      subtitle: Text(
+                        passkey.lastUsedAt != null
+                            ? l10n.passkeyLastUsed(
+                                formatDateTime(
+                                  context,
+                                  passkey.lastUsedAt!.toLocal(),
+                                ),
+                              )
+                            : l10n.passkeyCreated(
+                                formatDateTime(
+                                  context,
+                                  passkey.createdAt.toLocal(),
+                                ),
+                              ),
+                      ),
                       trailing: PopupMenuButton<String>(
                         onSelected: (value) => value == 'rename'
                             ? _rename(passkey)
                             : _remove(passkey),
                         itemBuilder: (_) => <PopupMenuEntry<String>>[
                           PopupMenuItem<String>(
-                              value: 'rename', child: Text(l10n.passkeyRename)),
+                            value: 'rename',
+                            child: Text(l10n.passkeyRename),
+                          ),
                           PopupMenuItem<String>(
-                              value: 'remove', child: Text(l10n.passkeyRemove)),
+                            value: 'remove',
+                            child: Text(l10n.passkeyRemove),
+                          ),
                         ],
                       ),
                     ),

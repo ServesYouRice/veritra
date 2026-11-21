@@ -146,11 +146,11 @@ func validCallMetadata(raw json.RawMessage) bool {
 func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	// ?scan=bounded opts in to the scan budget and the scan position
-	// (D92, TASK-209). Without it the response is the legacy one.
-	bounded := r.URL.Query().Get("scan") == "bounded"
+	// The scan budget and the scan position always apply (D92, D134,
+	// TASK-209): a request without ?scan=bounded is served the same bounded
+	// page, so no caller can start an unbounded scan of the hidden tail.
 	sealed := a.noteSealedReader(r, principal)
-	page, err := a.Store.ListSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, after, limit, storage.SyncReadOptions{Bounded: bounded, Sealed: sealed})
+	page, err := a.Store.ListSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, after, limit, storage.SyncReadOptions{Bounded: true, Sealed: sealed})
 	if err != nil {
 		if errors.Is(err, storage.ErrSyncCursorExpired) {
 			epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)
@@ -168,28 +168,22 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 		return
 	}
 	events := page.Events
-	body := map[string]interface{}{"events": events}
-	if bounded {
-		// The bounds walk each conversation's edges, which costs a hidden
-		// run's length per page. The bounded client reads them only from a
-		// 409, so a 200 carries the epoch alone.
-		epoch, err := a.Store.SyncEpoch(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "sync_events_failed")
-			return
-		}
-		body["sync_epoch"] = epoch
-		body["scanned_through"] = page.ScannedThrough
-		body["scan_truncated"] = page.Truncated
-	} else {
-		epoch, oldest, latest, err := a.Store.SyncBounds(r.Context(), principal.AccountID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "sync_events_failed")
-			return
-		}
-		body["sync_epoch"] = epoch
-		body["oldest_event_id"] = oldest
-		body["latest_event_id"] = latest
+	if events == nil {
+		events = []domain.SyncEvent{}
+	}
+	// The bounds walk each conversation's edges, which costs a hidden run's
+	// length per page. A client reads them from a 409 only, so a 200 carries
+	// the epoch alone.
+	epoch, err := a.Store.SyncEpoch(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sync_events_failed")
+		return
+	}
+	body := map[string]interface{}{
+		"events":          events,
+		"sync_epoch":      epoch,
+		"scanned_through": page.ScannedThrough,
+		"scan_truncated":  page.Truncated,
 	}
 	// Only reads here; a delivery that has to be written happens after the
 	// response, off this goroutine.
@@ -328,13 +322,7 @@ func (a *API) syncWebSocket(w http.ResponseWriter, r *http.Request) {
 	// registration or this read sees the deleted session.
 	if err := a.recheckSession(r, principal); err != nil {
 		a.Hub.Unregister(client)
-		if errors.Is(err, storage.ErrUnauthorized) {
-			refuseUnauthenticated(w, r)
-			return
-		}
-		a.warn("websocket_session_recheck_failed", "err", err)
-		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, "session_check_unavailable")
+		a.refuseSessionLookup(w, r, err)
 		return
 	}
 	_ = realtime.ServeWebSocket(w, r, client, principal.ExpiresAt, func() { a.Hub.Unregister(client) })

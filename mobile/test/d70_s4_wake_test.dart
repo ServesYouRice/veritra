@@ -21,54 +21,73 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a wake hands a re-add Welcome of a left chat to the foreground',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(_session);
-    await store.saveCryptoState(
+  test(
+    'a wake hands a re-add Welcome of a left chat to the foreground',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(_session);
+      await store.saveCryptoState(
         StoredCryptoState(
-            counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-        0);
-    await store.saveSetting(
+          counter: 1,
+          stateKey: List.filled(32, 1),
+          sealedState: [1],
+        ),
+        0,
+      );
+      await store.saveSetting(
         'mls.left_conversations',
         jsonEncode(<String, Object?>{
           'scope': '${canonicalizeServerOrigin(_origin)}\u0000alice\u0000phone',
           'ids': <String>['conv'],
-        }));
-    final api = _FakeApi()..events.add(_welcome(1));
-    final crypto = _FakeCrypto(store);
-    final state = AppState(
+        }),
+      );
+      final api = _FakeApi()..events.add(_welcome(1));
+      final crypto = _FakeCrypto(store);
+      final state = AppState(
         apiClientFactory: (_) => api,
         cryptoService: crypto,
         localStore: store,
         pushService: DisabledMobilePushService(),
-        syncServiceFactory: (_, __) => _QuietSync());
-    addTearDown(state.dispose);
-    state.handleAppLifecycleState(AppLifecycleState.detached);
-    final runner = BackgroundWakeRunner(
+        syncServiceFactory: (_, __) => _QuietSync(),
+      );
+      addTearDown(state.dispose);
+      state.handleAppLifecycleState(AppLifecycleState.detached);
+      final runner = BackgroundWakeRunner(
         profile: 'demo',
         bridge: _FakeBridge(),
         restoreExisting: state.restoreForBackgroundWake,
         catchUp: state.catchUpForBackgroundWake,
-        mayStart: () => !state.foregroundActive);
+        mayStart: () => !state.foregroundActive,
+      );
 
-    final outcome = await runner.run(WakePermit(
-        permit: 'permit-1',
-        profile: 'demo',
-        wakeGeneration: 1,
-        budgetMs: 20000,
-        deadlineEpochMs: DateTime.now().millisecondsSinceEpoch + 20000));
-    expect(outcome, isNot(WakeOutcome.committed));
-    expect(await store.loadSyncCursor(), 0);
-    expect(crypto.processed, isEmpty);
-    expect(crypto.deleted, isEmpty);
-    expect(await store.loadSetting('mls.left_conversations'), contains('conv'));
-  });
+      final outcome = await runner.run(
+        WakePermit(
+          permit: 'permit-1',
+          profile: 'demo',
+          wakeGeneration: 1,
+          budgetMs: 20000,
+          deadlineEpochMs: DateTime.now().millisecondsSinceEpoch + 20000,
+        ),
+      );
+      expect(outcome, isNot(WakeOutcome.committed));
+      expect(await store.loadSyncCursor(), 0);
+      expect(crypto.processed, isEmpty);
+      expect(crypto.deleted, isEmpty);
+      expect(
+        await store.loadSetting('mls.left_conversations'),
+        contains('conv'),
+      );
+    },
+  );
 }
 
 const _origin = 'https://example.test';
 const _session = Session(
-    baseUrl: _origin, token: 'token', accountId: 'alice', deviceId: 'phone');
+  baseUrl: _origin,
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'phone',
+);
 
 SyncEvent _welcome(int id) => SyncEvent(
       id: id,
@@ -84,7 +103,9 @@ class _FakeBridge extends PlatformWakeWorkerBridge {
       const WakePermitStatus(true, 20000);
   @override
   Future<WakeNoticeResult> presentGenericNotice(
-          WakePermit permit, String noticeId) async =>
+    WakePermit permit,
+    String noticeId,
+  ) async =>
       WakeNoticeResult.shown;
 }
 
@@ -108,20 +129,27 @@ class _FakeApi extends ApiClient with LegacySyncPageFake {
   @override
   void close() {}
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       events.where((e) => e.id > after).take(limit).toList();
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       [
         for (final e in events)
-          if (e.id > after) _mls(e)
+          if (e.id > after) _mls(e),
       ].take(limit).toList();
   @override
-  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
-      _mls(events.firstWhere(
-          (e) => (e.payload as Map)['mls_message_id'] == messageId));
+  Future<MlsMessage> mlsMessage(String token, String messageId) async => _mls(
+        events.firstWhere(
+            (e) => (e.payload as Map)['mls_message_id'] == messageId),
+      );
   @override
   Future<List<BlockedAccount>> listBlocks(String token) async => const [];
   @override
@@ -145,14 +173,18 @@ class _FakeCrypto
   set conversationAuthority(ConversationAuthority authority) {}
 
   @override
-  Future<void> activateExistingSessionBounded(Session session,
-      {required void Function() checkCanCommit}) async {
+  Future<void> activateExistingSessionBounded(
+    Session session, {
+    required void Function() checkCanCommit,
+  }) async {
     checkCanCommit();
   }
 
   @override
-  Future<void> processMlsMessageBounded(MlsMessage message,
-      {required void Function() checkCanCommit}) async {
+  Future<void> processMlsMessageBounded(
+    MlsMessage message, {
+    required void Function() checkCanCommit,
+  }) async {
     processed.add(message.id);
   }
 

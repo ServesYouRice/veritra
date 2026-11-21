@@ -2210,6 +2210,38 @@ pub unsafe extern "C" fn pm_crypto_c7_verify(
     })
 }
 
+/// ABI 27 (W12): strict Ed25519 verification of the Windows update feed:
+/// `"veritra-update-feed-v1" | message` under the 32-byte update public key
+/// and a 64-byte signature (`crate::update_feed`). Returns `PM_CRYPTO_OK` and
+/// writes 1 to `out_valid` for a valid signature, 0 for an invalid one (a
+/// malformed key included). A key that is not 32 bytes, a signature that is
+/// not 64 bytes, or a message that is empty or over 64 KiB is
+/// `PM_CRYPTO_INVALID_ARGUMENT`, and `out_valid` is not written. Verify only:
+/// the library never signs under this domain.
+///
+/// # Safety
+/// Every slice must be readable and `out_valid` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_update_feed_verify(
+    public_key: PmByteSlice,
+    message: PmByteSlice,
+    signature: PmByteSlice,
+    out_valid: *mut u8,
+) -> i32 {
+    ffi_call(|| {
+        if out_valid.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let public_key = unsafe { borrowed(public_key, crate::update_feed::PUBLIC_KEY_BYTES)? };
+        let message = unsafe { borrowed(message, crate::update_feed::MAX_MESSAGE_BYTES)? };
+        let signature = unsafe { borrowed(signature, crate::update_feed::SIGNATURE_BYTES)? };
+        let valid = crate::update_feed::verify(public_key, message, signature)
+            .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        unsafe { out_valid.write(u8::from(valid)) };
+        Ok(())
+    })
+}
+
 /// ABI 22 (B6): the 32-byte media key `K(s,t)` of the call group's current
 /// epoch for the sender device `account_id`/`device_id` (its leaf is found
 /// from the tree) and stream slot `stream` (0 voice, 1 camera, 2 screen,
@@ -2508,6 +2540,10 @@ mod c4_tests;
 #[cfg(test)]
 #[path = "ffi/l2_frank_tests.rs"]
 mod l2_frank_tests;
+
+#[cfg(test)]
+#[path = "ffi/update_feed_tests.rs"]
+mod update_feed_tests;
 
 #[cfg(test)]
 mod tests {

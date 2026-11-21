@@ -71,24 +71,31 @@ class MessageRequestScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(l10n.requestSharedTitle,
-                    style: theme.textTheme.titleSmall),
+                Text(
+                  l10n.requestSharedTitle,
+                  style: theme.textTheme.titleSmall,
+                ),
                 const SizedBox(height: BoneSpacing.sm),
                 Text(l10n.requestSharedNow, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: BoneSpacing.xs),
-                Text(l10n.requestSharedAccept,
-                    style: theme.textTheme.bodyMedium),
+                Text(
+                  l10n.requestSharedAccept,
+                  style: theme.textTheme.bodyMedium,
+                ),
                 const SizedBox(height: BoneSpacing.xs),
-                Text(l10n.requestSharedDelete,
-                    style: theme.textTheme.bodyMedium),
+                Text(
+                  l10n.requestSharedDelete,
+                  style: theme.textTheme.bodyMedium,
+                ),
               ],
             ),
           ),
           const SizedBox(height: BoneSpacing.xl),
           FilledButton(
             onPressed: () async {
-              final accepted =
-                  await state.acceptMessageRequest(conversation.id);
+              final accepted = await state.acceptMessageRequest(
+                conversation.id,
+              );
               if (accepted && popOnResult && context.mounted) {
                 Navigator.of(context).pop(true);
               }
@@ -145,8 +152,9 @@ class MessageRequestScreen extends StatelessWidget {
     }
     final error = state.errorFor(Ops.members) ?? state.errorFor(Ops.blocks);
     if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 }

@@ -26,7 +26,7 @@ Rounds 6, 7 and 8 are on `main` after their PRs merge. Counters: crypto ABI 26 (
   - Dev databases that ran a pre-merge sealed branch must be wiped (0090/0091 checksums changed).
 
 ## Still open from round 7
-- **B6:** camera, screen share, S1, S7, Android foreground service, iOS extension, `call_id` extension, restricting `pm_crypto_group_b6_media_key` to call groups. Residuals: a server-driven remote unmute can bypass the user's mute; a call commit keeping a parent-removed member is not refused.
+- **B6:** S1, S7, `call_id` extension, restricting `pm_crypto_group_b6_media_key` to call groups. Camera, screen share and the Android foreground service are built for demo builds (round 9; Kotlin not compiled yet, simulcast off until S1, screen audio not built); iOS sends no screen share by O6, so no extension. Residuals: a server-driven remote unmute can bypass the user's mute; a call commit keeping a parent-removed member is not refused.
 - **C4 residual:** another device of the leaving account can void a real leave.
 - **K1:** the Kotlin and Swift second-copy code was never compiled.
 - **L2-1:** an ABI 22 core reading padded blobs is untested.

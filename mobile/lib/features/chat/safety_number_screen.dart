@@ -166,7 +166,10 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     if (mounted) setState(() => _working = true);
     try {
       final stored = await widget.state.markPeerVerifiedIfMatches(
-          widget.conversation.id, peer, comparedCode);
+        widget.conversation.id,
+        peer,
+        comparedCode,
+      );
       return stored ? _Saved.saved : _Saved.numberChanged;
     } catch (_) {
       return _Saved.failed;
@@ -200,8 +203,10 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     if (scanned == null || !mounted) return;
     final bool matches;
     try {
-      matches =
-          await widget.state.safetyCodeMatches(widget.conversation.id, scanned);
+      matches = await widget.state.safetyCodeMatches(
+        widget.conversation.id,
+        scanned,
+      );
     } catch (_) {
       _showMessage((l10n) => l10n.safetyReadFailed);
       return;
@@ -237,8 +242,9 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   /// Shows [text] unless the screen is gone; the strings are read only then.
   void _showMessage(String Function(AppLocalizations l10n) text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(text(context.l10n))));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(text(context.l10n))));
   }
 
   @override
@@ -365,7 +371,10 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
   /// Side by side: this code for them to scan, then theirs to scan here.
   /// Without a camera (desktop), the numbers are compared by eye.
   List<Widget> _together(
-      BuildContext context, ConversationSafetyNumber safety, bool canScan) {
+    BuildContext context,
+    ConversationSafetyNumber safety,
+    bool canScan,
+  ) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     return <Widget>[
@@ -482,7 +491,9 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
 List<String> safetyDigitGroups(String digits) => <String>[
       for (var start = 0; start < digits.length; start += 5)
         digits.substring(
-            start, start + 5 < digits.length ? start + 5 : digits.length),
+          start,
+          start + 5 < digits.length ? start + 5 : digits.length,
+        ),
     ];
 
 /// The groups as a fixed grid, four a row: sixty digits are always three rows
@@ -518,14 +529,16 @@ class SafetyDigitsGrid extends StatelessWidget {
                       ? Padding(
                           // Groups never touch, even when they shrink.
                           padding: const EdgeInsets.symmetric(
-                              horizontal: BoneSpacing.xs),
+                            horizontal: BoneSpacing.xs,
+                          ),
                           child: Center(
                             child: FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text(
                                 groups[row * columns + column],
                                 key: ValueKey<String>(
-                                    'safety-group-${row * columns + column}'),
+                                  'safety-group-${row * columns + column}',
+                                ),
                                 maxLines: 1,
                                 softWrap: false,
                                 style: style,

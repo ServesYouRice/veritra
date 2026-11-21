@@ -111,12 +111,14 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			writeError(w, http.StatusBadRequest, "invalid_channel_kind")
 			return
 		}
-		channel, conversation, err := a.Store.CreateChannelWithConversation(r.Context(), parts[0], req.Kind, principal.AccountID)
+		channel, conversation, skipped, err := a.Store.CreateChannelSkippingFullMembers(r.Context(), parts[0], req.Kind, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"channel": channel, "conversation": conversation})
+		// D134: skipped_members counts community members left out because they
+		// are at the conversation limit; it names none of them.
+		writeJSON(w, http.StatusCreated, map[string]interface{}{"channel": channel, "conversation": conversation, "skipped_members": skipped})
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found")
@@ -331,14 +333,16 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 			writeError(w, http.StatusBadRequest, "invalid_role")
 			return
 		}
-		eventID, err := a.Store.ManageConversationMember(r.Context(), conversationID, principal.AccountID, req.AccountID, req.Role)
+		// The stored role can differ from the requested one: a member joining a
+		// legacy channel late takes its community role (D134).
+		eventID, role, err := a.Store.ManageConversationMemberRole(r.Context(), conversationID, principal.AccountID, req.AccountID, req.Role)
 		if err != nil {
 			handleStorageError(w, err)
 			return
 		}
-		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": req.Role, "mls_coordination": "pending"}
+		payload := map[string]string{"conversation_id": conversationID, "account_id": req.AccountID, "role": role, "mls_coordination": "pending"}
 		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: "membership.updated", ID: eventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
-		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": req.Role})
+		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.added", map[string]string{"conversation_id": conversationID, "role": role})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_updated", "mls_coordination": "pending"})
 	case parts[1] == "messages" && r.Method == http.MethodGet:
 		limit := normalizeLimit(messageQueryLimit(r), 100, 200)

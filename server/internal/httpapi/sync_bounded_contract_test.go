@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// TASK-209 contract: GET /api/v1/sync/events?scan=bounded adds
-// scanned_through and scan_truncated and leaves the bounds out of a 200
-// (they are read from a 409 only). Without scan=bounded the response is the
-// legacy one: the bounds, no scan fields.
+// TASK-209 / D134 contract: GET /api/v1/sync/events is always bounded. A 200
+// carries events, sync_epoch, scanned_through and scan_truncated and leaves
+// the bounds out (they are read from a 409 only). ?scan=bounded is accepted
+// and changes nothing, so a request without it gets the same page.
 func TestSyncEventsBoundedContract(t *testing.T) {
 	_, handler, token, _ := newTestAppWithOwner(t)
 	conversationID := createConversation(t, handler, token)
@@ -27,26 +27,23 @@ func TestSyncEventsBoundedContract(t *testing.T) {
 		}
 		return raw
 	}
-	legacy := fields("/api/v1/sync/events?after=0&limit=200")
-	for _, name := range []string{"events", "sync_epoch", "oldest_event_id", "latest_event_id"} {
-		if _, ok := legacy[name]; !ok {
-			t.Fatalf("legacy response lost %s", name)
-		}
-	}
-	for _, name := range []string{"scanned_through", "scan_truncated"} {
-		if _, ok := legacy[name]; ok {
-			t.Fatalf("legacy response grew %s", name)
-		}
-	}
+	plain := fields("/api/v1/sync/events?after=0&limit=200")
 	bounded := fields("/api/v1/sync/events?after=0&limit=200&scan=bounded")
-	for _, name := range []string{"events", "sync_epoch", "scanned_through", "scan_truncated"} {
-		if _, ok := bounded[name]; !ok {
-			t.Fatalf("bounded response lacks %s", name)
+	for name, response := range map[string]map[string]json.RawMessage{"without scan=bounded": plain, "with scan=bounded": bounded} {
+		for _, field := range []string{"events", "sync_epoch", "scanned_through", "scan_truncated"} {
+			if _, ok := response[field]; !ok {
+				t.Fatalf("%s: response lacks %s", name, field)
+			}
+		}
+		for _, field := range []string{"oldest_event_id", "latest_event_id"} {
+			if _, ok := response[field]; ok {
+				t.Fatalf("%s: a 200 carries %s", name, field)
+			}
 		}
 	}
-	for _, name := range []string{"oldest_event_id", "latest_event_id"} {
-		if _, ok := bounded[name]; ok {
-			t.Fatalf("bounded 200 carries %s", name)
+	for _, field := range []string{"events", "sync_epoch", "scanned_through", "scan_truncated"} {
+		if string(plain[field]) != string(bounded[field]) {
+			t.Fatalf("%s differs with the opt-in: %s vs %s", field, plain[field], bounded[field])
 		}
 	}
 	if string(bounded["scan_truncated"]) != "false" {
@@ -65,6 +62,17 @@ func TestSyncEventsBoundedContract(t *testing.T) {
 	past := fields("/api/v1/sync/events?after=999999&scan=bounded")
 	if string(past["scanned_through"]) != "999999" {
 		t.Fatalf("scanned_through past the end = %s", past["scanned_through"])
+	}
+	// A cursor past every event id is a 200 with no events, never a 409, and
+	// a read from 0 still returns everything.
+	if string(past["events"]) != "[]" {
+		t.Fatalf("events past the end = %s", past["events"])
+	}
+	var all []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(fields("/api/v1/sync/events?after=0&limit=200")["events"], &all); err != nil || len(all) == 0 {
+		t.Fatalf("read from 0 = %v, %v", all, err)
 	}
 }
 

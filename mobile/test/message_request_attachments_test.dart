@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -27,8 +28,13 @@ void main() {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
 
-  Matcher refusedWith(String text) => throwsA(isA<StateError>()
-      .having((error) => error.message, 'message', contains(text)));
+  Matcher refusedWith(String text) => throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(text),
+        ),
+      );
 
   AttachmentEntry entry(Map<String, Object?> manifest) => AttachmentEntry(
         id: 'att',
@@ -39,50 +45,63 @@ void main() {
         manifest: manifest,
       );
 
-  test('a request refuses attachments; after acceptance the manifest decides',
-      () async {
-    final api = _Api();
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => _FakeSync(),
-      attachmentService: _FakeAttachmentCrypto(directory),
-    )
-      ..api = api
-      ..session = const Session(
-        baseUrl: 'https://localhost:8080',
-        token: 'token',
-        accountId: 'acct_me',
-        deviceId: 'dev_me',
+  test(
+    'a request refuses attachments; after acceptance the manifest decides',
+    () async {
+      final api = _Api();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => _FakeSync(),
+        attachmentService: _FakeAttachmentCrypto(directory),
+      )
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_me',
+          deviceId: 'dev_me',
+        );
+      addTearDown(state.dispose);
+      await state.refreshConversations();
+      expect(state.isMessageRequestId('new'), isTrue);
+
+      final matching = entry(<String, Object?>{'conversation_id': 'new'});
+      final other = entry(<String, Object?>{'conversation_id': 'other'});
+      final empty = entry(const <String, Object?>{});
+
+      // While a request, the gate refuses even a matching manifest.
+      await expectLater(
+        state.loadAttachment(matching, conversationId: 'new'),
+        refusedWith('wait until the request is accepted'),
       );
-    addTearDown(state.dispose);
-    await state.refreshConversations();
-    expect(state.isMessageRequestId('new'), isTrue);
 
-    final matching = entry(<String, Object?>{'conversation_id': 'new'});
-    final other = entry(<String, Object?>{'conversation_id': 'other'});
-    final empty = entry(const <String, Object?>{});
+      expect(await state.acceptMessageRequest('new'), isTrue);
+      expect(state.isMessageRequestId('new'), isFalse);
 
-    // While a request, the gate refuses even a matching manifest.
-    await expectLater(state.loadAttachment(matching, conversationId: 'new'),
-        refusedWith('wait until the request is accepted'));
+      // Past the gate, only the manifest binding refuses these.
+      await expectLater(
+        state.loadAttachment(other, conversationId: 'new'),
+        refusedWith('belongs to another conversation'),
+      );
+      await expectLater(
+        state.loadAttachment(empty, conversationId: 'new'),
+        refusedWith('belongs to another conversation'),
+      );
+      expect(api.downloads, 0);
 
-    expect(await state.acceptMessageRequest('new'), isTrue);
-    expect(state.isMessageRequestId('new'), isFalse);
-
-    // Past the gate, only the manifest binding refuses these.
-    await expectLater(state.loadAttachment(other, conversationId: 'new'),
-        refusedWith('belongs to another conversation'));
-    await expectLater(state.loadAttachment(empty, conversationId: 'new'),
-        refusedWith('belongs to another conversation'));
-    expect(api.downloads, 0);
-
-    // And a matching manifest now loads.
-    expect(await state.loadAttachment(matching, conversationId: 'new'),
-        <int>[104, 101, 108, 108, 111]);
-    expect(api.downloads, 1);
-  });
+      // And a matching manifest now loads.
+      expect(await state.loadAttachment(matching, conversationId: 'new'), <int>[
+        104,
+        101,
+        108,
+        108,
+        111,
+      ]);
+      expect(api.downloads, 1);
+    },
+  );
 }
 
 class _Api extends ApiClient {
@@ -105,7 +124,9 @@ class _Api extends ApiClient {
 
   @override
   Future<Stream<List<int>>> downloadEncryptedAttachment(
-      String token, String attachmentId) async {
+    String token,
+    String attachmentId,
+  ) async {
     downloads++;
     return Stream<List<int>>.value(<int>[1, 2, 3, 4]);
   }
@@ -127,6 +148,14 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
     AttachmentCancellationToken? cancellation,
   }) =>
       File(destinationPath).writeAsString('hello');
+
+  @override
+  Future<Uint8List> decryptBytes({
+    required String ciphertextPath,
+    required Map<String, Object?> manifest,
+    AttachmentCancellationToken? cancellation,
+  }) async =>
+      Uint8List.fromList(<int>[104, 101, 108, 108, 111]);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

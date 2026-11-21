@@ -204,6 +204,10 @@ func TestInviteDeviceAndEncryptedEnvelopeFlow(t *testing.T) {
 	if bytes.Contains(onDisk, []byte(sentinel)) {
 		t.Fatal("the member's raw password reached the database files")
 	}
+	// The invite code went to the creator once; storage holds only its hash.
+	if bytes.Contains(onDisk, []byte(invite.Code)) {
+		t.Fatal("the raw invite code reached the database files")
+	}
 }
 
 // onDiskBytes is the main database file with its write-ahead log and
@@ -1009,7 +1013,7 @@ func TestDMUniquenessAndGroupMemberLifecycle(t *testing.T) {
 	}
 }
 
-func TestClaimConversationKeyPackagesUsesMigratedMembershipsOnce(t *testing.T) {
+func TestClaimDeviceKeyPackagesUsesMigratedMembershipsOnce(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
@@ -1034,12 +1038,16 @@ func TestClaimConversationKeyPackagesUsesMigratedMembershipsOnce(t *testing.T) {
 		t.Fatalf("create conversation: %v", err)
 	}
 
-	packages, err := store.ClaimConversationKeyPackages(ctx, conversation.ID, outsider.Account.ID, outsider.Device.ID)
+	packages, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, outsider.Account.ID, outsider.Device.ID, []string{member.Device.ID})
 	if !errors.Is(err, ErrNotMember) || len(packages) != 0 {
 		t.Fatalf("non-member claim packages=%#v err=%v want no packages and %v", packages, err, ErrNotMember)
 	}
 
-	packages, err = store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID)
+	// The requester's own device is never a target.
+	if _, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID, []string{owner.Device.ID}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("claim of the requester's own device err=%v want %v", err, ErrInvalidInput)
+	}
+	packages, err = store.ClaimDeviceKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID, []string{member.Device.ID})
 	if err != nil {
 		t.Fatalf("member claim from migrated database: %v", err)
 	}
@@ -1053,9 +1061,9 @@ func TestClaimConversationKeyPackagesUsesMigratedMembershipsOnce(t *testing.T) {
 		t.Fatal("requester device package must be excluded")
 	}
 
-	packages, err = store.ClaimConversationKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID)
-	if !errors.Is(err, ErrKeyPackageUnavailable) || len(packages) != 0 {
-		t.Fatalf("repeated claim packages=%#v err=%v want no packages and %v", packages, err, ErrKeyPackageUnavailable)
+	packages, err = store.ClaimDeviceKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID, []string{member.Device.ID})
+	if err != nil || len(packages) != 0 {
+		t.Fatalf("repeated claim packages=%#v err=%v want the device skipped", packages, err)
 	}
 	var ownerClaims int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NOT NULL`, owner.Device.ID).Scan(&ownerClaims); err != nil {

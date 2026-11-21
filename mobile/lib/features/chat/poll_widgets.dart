@@ -47,8 +47,9 @@ class PollCard extends StatelessWidget {
         const SizedBox(height: 2),
         Text(
           poll.multipleChoice ? l10n.pollChooseSeveral : l10n.pollChooseOne,
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: BoneSpacing.xs),
         for (var index = 0; index < poll.options.length; index++)
@@ -56,34 +57,39 @@ class PollCard extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           l10n.pollVoteTotal(voters.toString()),
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         if (poll.closed)
           Text(
             l10n.pollClosedNotice,
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         if (close != null)
           Align(
             alignment: AlignmentDirectional.centerStart,
-            child: TextButton(
-              onPressed: close,
-              child: Text(l10n.pollClose),
-            ),
+            child: TextButton(onPressed: close, child: Text(l10n.pollClose)),
           ),
         Text(
           l10n.pollVisibleNotice,
-          style: theme.textTheme.labelSmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
   }
 
   Widget _option(
-      BuildContext context, int index, int count, int voters, List<int> own) {
+    BuildContext context,
+    int index,
+    int count,
+    int voters,
+    List<int> own,
+  ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final chosen = own.contains(index);
@@ -96,7 +102,7 @@ class PollCard extends StatelessWidget {
                   ? (chosen
                       ? <int>[
                           for (final i in own)
-                            if (i != index) i
+                            if (i != index) i,
                         ]
                       : <int>[...own, index])
                   : (chosen ? const <int>[] : <int>[index]);
@@ -122,8 +128,10 @@ class PollCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(poll.options[index],
-                      style: theme.textTheme.bodyMedium),
+                  child: Text(
+                    poll.options[index],
+                    style: theme.textTheme.bodyMedium,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Text(count.toString(), style: theme.textTheme.labelMedium),
@@ -240,8 +248,9 @@ class _PollComposerDialogState extends State<_PollComposerDialog> {
                           final removed = _options[index];
                           setState(() => _options.removeAt(index));
                           // Disposed after the field using it is gone.
-                          WidgetsBinding.instance
-                              .addPostFrameCallback((_) => removed.dispose());
+                          WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => removed.dispose(),
+                          );
                         },
                       ),
                   ],

@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/core/roles/posting_verdict.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/c7_two_part.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -12,6 +14,7 @@ import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
 import 'native_test_env.dart';
+import 'private_channel_picks.dart';
 
 // C7 step 4 (docs/designs/C7-channel-history.md, "Core idea"): the two-part
 // send and receive through real OpenMLS devices and NativeCryptoService.
@@ -25,7 +28,19 @@ const _conversation = 'conv_private_c7';
 
 /// A private channel's own group in the C0 layout.
 class _PrivateGroup
-    implements ConversationAuthority, ConversationCommunitySource {
+    implements
+        ConversationAuthority,
+        ConversationCommunitySource,
+        VerifiedRoleSource {
+  // C3: the community's record names alice owner, so her adds are hers to
+  // make (docs/crypto.md, "C3 private channel membership").
+  @override
+  GovernanceState? governanceOf(String conversationId) =>
+      GovernanceState.genesis('acct_alice');
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) =>
+      false;
+
   @override
   String? conversationKind(String conversationId) => 'community_channel';
   @override
@@ -57,23 +72,28 @@ void main() {
       client.service.conversationAuthority = _PrivateGroup();
       client.service.c7SealedBodies = true;
     }
+    await pickForPrivateChannel(alice.store, _conversation, [bob.accountId]);
     await alice.service.initializeConversation(
-        _conversation, <DeviceKeyPackage>[await bob.keyPackage()]);
+      _conversation,
+      <DeviceKeyPackage>[await bob.keyPackage()],
+    );
     final item = (await alice.store.pendingMlsMessages()).single;
     final bundle = MlsCommitBundle.decode(item.payload);
     await alice.service.completeCommitBundle(item);
-    await bob.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: _conversation,
-      senderAccountId: alice.accountId,
-      senderDeviceId: alice.deviceId,
-      kind: 'welcome',
-      payload: bundle.welcome,
-      idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
-      syncEventId: bob.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-      recipientDeviceId: bob.deviceId,
-    ));
+    await bob.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_${++_serverIds}',
+        conversationId: _conversation,
+        senderAccountId: alice.accountId,
+        senderDeviceId: alice.deviceId,
+        kind: 'welcome',
+        payload: bundle.welcome,
+        idempotencyKey: '${item.idempotencyKey}:welcome:${bob.deviceId}',
+        syncEventId: bob.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+        recipientDeviceId: bob.deviceId,
+      ),
+    );
     return (alice, bob);
   }
 
@@ -90,48 +110,63 @@ void main() {
     expect(body.length, greaterThan(124));
     expect((sent.cryptoMetadata as Map)['channel_id'], _channel);
     final opened = await bob.service.processApplicationMessage(
-        bob.envelopeFrom(alice, sent), bob.nextEvent());
+      bob.envelopeFrom(alice, sent),
+      bob.nextEvent(),
+    );
     expect(opened, isNotNull);
     final received = await rows(bob);
     expect(received.single.kind, 'text');
     expect(received.single.senderAccountId, 'acct_alice');
   }, skip: skip);
 
-  test('a stripped or damaged body is an invalid row and sync goes on',
-      () async {
-    final (alice, bob) = await start();
-    final stripped = await alice.send('one');
-    final damaged = await alice.send('two');
-    final fine = await alice.send('three');
-    expect(
+  test(
+    'a stripped or damaged body is an invalid row and sync goes on',
+    () async {
+      final (alice, bob) = await start();
+      final stripped = await alice.send('one');
+      final damaged = await alice.send('two');
+      final fine = await alice.send('three');
+      expect(
         await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, stripped, body: const <int>[]),
-            bob.nextEvent()),
-        isNull);
-    final flipped = List<int>.of(damaged.sealedBody!)..[200] ^= 1;
-    expect(
+          bob.envelopeFrom(alice, stripped, body: const <int>[]),
+          bob.nextEvent(),
+        ),
+        isNull,
+      );
+      final flipped = List<int>.of(damaged.sealedBody!)..[200] ^= 1;
+      expect(
         await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, damaged, body: flipped), bob.nextEvent()),
-        isNull);
-    // The ratchet moved for both: the next message opens.
-    expect(
+          bob.envelopeFrom(alice, damaged, body: flipped),
+          bob.nextEvent(),
+        ),
+        isNull,
+      );
+      // The ratchet moved for both: the next message opens.
+      expect(
         await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, fine), bob.nextEvent()),
-        isNotNull);
-    final kinds = (await rows(bob)).map((r) => r.kind).toList();
-    expect(kinds.where((k) => k == 'invalid'), hasLength(2));
-    expect(kinds.where((k) => k == 'text'), hasLength(1));
-  }, skip: skip);
+          bob.envelopeFrom(alice, fine),
+          bob.nextEvent(),
+        ),
+        isNotNull,
+      );
+      final kinds = (await rows(bob)).map((r) => r.kind).toList();
+      expect(kinds.where((k) => k == 'invalid'), hasLength(2));
+      expect(kinds.where((k) => k == 'text'), hasLength(1));
+    },
+    skip: skip,
+  );
 
   test('a body swapped from another message never opens', () async {
     final (alice, bob) = await start();
     final first = await alice.send('first');
     final second = await alice.send('second');
     expect(
-        await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, first, body: second.sealedBody),
-            bob.nextEvent()),
-        isNull);
+      await bob.service.processApplicationMessage(
+        bob.envelopeFrom(alice, first, body: second.sealedBody),
+        bob.nextEvent(),
+      ),
+      isNull,
+    );
     expect((await rows(bob)).single.kind, 'invalid');
   }, skip: skip);
 
@@ -141,28 +176,37 @@ void main() {
     // The server sees no channel keys and serves it as group-level, where
     // only history_sync and its request may be.
     final metadata = Map<String, Object?>.of(
-        (sent.cryptoMetadata as Map).cast<String, Object?>())
-      ..remove('channel_id');
+      (sent.cryptoMetadata as Map).cast<String, Object?>(),
+    )..remove('channel_id');
     expect(
-        await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, sent, metadata: metadata), bob.nextEvent()),
-        isNull);
+      await bob.service.processApplicationMessage(
+        bob.envelopeFrom(alice, sent, metadata: metadata),
+        bob.nextEvent(),
+      ),
+      isNull,
+    );
     expect((await rows(bob)).single.kind, 'invalid');
   }, skip: skip);
 
-  test('a reference never parses as a VAP1, and C7 off sends one part',
-      () async {
-    final (alice, bob) = await start();
-    alice.service.c7SealedBodies = false;
-    final sent = await alice.send('plain');
-    expect(sent.sealedBody, isNull);
-    expect(parseC7Reference(sent.ciphertext), isNull);
-    expect(
+  test(
+    'a reference never parses as a VAP1, and C7 off sends one part',
+    () async {
+      final (alice, bob) = await start();
+      alice.service.c7SealedBodies = false;
+      final sent = await alice.send('plain');
+      expect(sent.sealedBody, isNull);
+      expect(parseC7Reference(sent.ciphertext), isNull);
+      expect(
         await bob.service.processApplicationMessage(
-            bob.envelopeFrom(alice, sent), bob.nextEvent()),
-        isNotNull);
-    expect((await rows(bob)).single.kind, 'text');
-  }, skip: skip);
+          bob.envelopeFrom(alice, sent),
+          bob.nextEvent(),
+        ),
+        isNotNull,
+      );
+      expect((await rows(bob)).single.kind, 'text');
+    },
+    skip: skip,
+  );
 }
 
 Session _session(String accountId, String deviceId) => Session(
@@ -182,16 +226,23 @@ class _Client {
   int events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final local = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: local);
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
+    final service = TestNativeCryptoService(
+      bindings: bindings,
+      localStore: local,
+    );
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
     await service.activateSession(_session(accountId, deviceId));
     return _Client(service, local, accountId, deviceId);
   }
@@ -210,15 +261,22 @@ class _Client {
 
   Future<MessageEnvelope> send(String text) async {
     final envelope = await service.encryptPayload(
-        _conversation, AppPayloadType.text, <String, Object?>{'text': text});
+      _conversation,
+      AppPayloadType.text,
+      <String, Object?>{'text': text},
+    );
     await store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;
   }
 
   /// What the server serves: the envelope with its sealed body (or [body]
   /// in its place) and its clear metadata (or [metadata]).
-  ReceivedMessageEnvelope envelopeFrom(_Client from, MessageEnvelope sent,
-          {List<int>? body, Map<String, Object?>? metadata}) =>
+  ReceivedMessageEnvelope envelopeFrom(
+    _Client from,
+    MessageEnvelope sent, {
+    List<int>? body,
+    Map<String, Object?>? metadata,
+  }) =>
       ReceivedMessageEnvelope(
         id: 'srv_${++_serverIds}',
         conversationId: sent.conversationId,

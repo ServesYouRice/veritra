@@ -15,6 +15,8 @@ class RecoveryKeyPromptBanner extends StatelessWidget {
 
   final AppState state;
 
+  static bool active(AppState state) => state.k1ShouldOfferRecoveryKey;
+
   @override
   Widget build(BuildContext context) {
     return ListenableSelector<bool>(
@@ -43,14 +45,18 @@ class RecoveryKeyPromptBanner extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Icon(Icons.key_outlined,
-                        size: 18, color: scheme.onSecondaryContainer),
+                    Icon(
+                      Icons.key_outlined,
+                      size: 18,
+                      color: scheme.onSecondaryContainer,
+                    ),
                     const SizedBox(width: BoneSpacing.md),
                     Expanded(
                       child: Text(
                         l10n.autoBackupPromptMessage,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: scheme.onSecondaryContainer),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSecondaryContainer,
+                        ),
                       ),
                     ),
                   ],

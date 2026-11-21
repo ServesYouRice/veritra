@@ -28,17 +28,30 @@ class ProfileView {
 
 /// The server calls the service makes, with the session token already bound.
 abstract interface class ProfileApi {
-  Future<ProfileFetch> fetch(String kind, String subjectId,
-      {int? ifNoneMatchVersion});
-  Future<int> put(String kind, String subjectId, Uint8List blob,
-      {required String keyId, int? ifMatchVersion});
-  Future<List<ProfileVersion>> versions(
-      {List<String> accountIds, List<String> conversationIds});
+  Future<ProfileFetch> fetch(
+    String kind,
+    String subjectId, {
+    int? ifNoneMatchVersion,
+  });
+  Future<int> put(
+    String kind,
+    String subjectId,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  });
+  Future<List<ProfileVersion>> versions({
+    List<String> accountIds,
+    List<String> conversationIds,
+  });
 }
 
 /// Sends a hidden key message into one conversation. True once it is queued.
 typedef ProfileKeySender = Future<bool> Function(
-    String conversationId, AppPayloadType type, Map<String, Object?> body);
+  String conversationId,
+  AppPayloadType type,
+  Map<String, Object?> body,
+);
 
 /// Another device of this account wrote the record under a key this device
 /// does not hold yet. The edit is not applied; try again once the key
@@ -174,18 +187,27 @@ class ProfileService extends ChangeNotifier {
   /// device holds no key for keeps what is cached (S9). Returns true when the
   /// server answered (including 404 or not-modified); false on network or
   /// server failure.
-  Future<bool> refresh(String kind, String subjectId,
-          {bool keyArrived = false}) =>
+  Future<bool> refresh(
+    String kind,
+    String subjectId, {
+    bool keyArrived = false,
+  }) =>
       _serial(() => _refresh(kind, subjectId, keyArrived: keyArrived));
 
-  Future<bool> _refresh(String kind, String subjectId,
-      {required bool keyArrived}) async {
+  Future<bool> _refresh(
+    String kind,
+    String subjectId, {
+    required bool keyArrived,
+  }) async {
     final cached = await store.loadProfile(kind, subjectId);
     final haveRecord = cached != null && !cached.isPlaceholder;
     final ProfileFetch served;
     try {
-      served = await api.fetch(kind, subjectId,
-          ifNoneMatchVersion: haveRecord ? cached.serverVersion : null);
+      served = await api.fetch(
+        kind,
+        subjectId,
+        ifNoneMatchVersion: haveRecord ? cached.serverVersion : null,
+      );
     } on ApiException catch (e) {
       if (e.kind == ApiErrorKind.notFound) return true;
       return false;
@@ -231,36 +253,44 @@ class ProfileService extends ChangeNotifier {
       // member or the server could otherwise make everyone drop the key.
       return true;
     }
-    final saved = await store.saveProfile(StoredProfile(
-      kind: kind,
-      subjectId: subjectId,
-      serverVersion: served.version,
-      keyId: served.keyId,
-      revision: record.revision,
-      name: record.name,
-      photoPng: record.photo?.png,
-      fetchedAt: _now,
-      versionFloor: cached?.versionFloor ?? 0,
-    ));
+    final saved = await store.saveProfile(
+      StoredProfile(
+        kind: kind,
+        subjectId: subjectId,
+        serverVersion: served.version,
+        keyId: served.keyId,
+        revision: record.revision,
+        name: record.name,
+        photoPng: record.photo?.png,
+        fetchedAt: _now,
+        versionFloor: cached?.versionFloor ?? 0,
+      ),
+    );
     if (!saved) return true;
     if (kind == profileSubjectConversation && keyArrived) {
       await _dropOtherGroupKeys(subjectId, keys, served.keyId, served.keyId);
     }
-    _profiles[_id(kind, subjectId)] =
-        (await store.loadProfile(kind, subjectId))!;
+    _profiles[_id(kind, subjectId)] = (await store.loadProfile(
+      kind,
+      subjectId,
+    ))!;
     _changed();
     return true;
   }
 
   Future<void> _dropOtherGroupKeys(
-      String conversationId,
-      List<StoredProfileKey> keys,
-      String? servedKeyId,
-      String? cachedKeyId) async {
+    String conversationId,
+    List<StoredProfileKey> keys,
+    String? servedKeyId,
+    String? cachedKeyId,
+  ) async {
     for (final key in keys) {
       if (key.keyId != servedKeyId && key.keyId != cachedKeyId) {
         await store.deleteProfileKey(
-            profileSubjectConversation, conversationId, key.keyId);
+          profileSubjectConversation,
+          conversationId,
+          key.keyId,
+        );
       }
     }
   }
@@ -349,10 +379,14 @@ class ProfileService extends ChangeNotifier {
       _serial(() => _publish(profileSubjectAccount, accountId, name, photo));
 
   /// Sets a group's name and photo (null clears each).
-  Future<void> saveGroupProfile(String conversationId,
-          {String? name, ProfilePhoto? photo}) =>
-      _serial(() =>
-          _publish(profileSubjectConversation, conversationId, name, photo));
+  Future<void> saveGroupProfile(
+    String conversationId, {
+    String? name,
+    ProfilePhoto? photo,
+  }) =>
+      _serial(
+        () => _publish(profileSubjectConversation, conversationId, name, photo),
+      );
 
   String _keyStateName(String kind, String subjectId) =>
       kind == profileSubjectAccount
@@ -371,8 +405,9 @@ class ProfileService extends ChangeNotifier {
       final match = keys.where((k) => k.keyId == cached.keyId).firstOrNull;
       if (match != null) return match;
     }
-    final recorded =
-        await store.loadProfileState(_keyStateName(kind, subjectId));
+    final recorded = await store.loadProfileState(
+      _keyStateName(kind, subjectId),
+    );
     return keys.where((k) => k.keyId == recorded).firstOrNull;
   }
 
@@ -384,7 +419,11 @@ class ProfileService extends ChangeNotifier {
       (await _currentKey(profileSubjectAccount, accountId))?.keyId;
 
   Future<void> _publish(
-      String kind, String subjectId, String? name, ProfilePhoto? photo) async {
+    String kind,
+    String subjectId,
+    String? name,
+    ProfilePhoto? photo,
+  ) async {
     final trimmed = name?.trim();
     if (trimmed != null &&
         trimmed.isNotEmpty &&
@@ -405,11 +444,12 @@ class ProfileService extends ChangeNotifier {
         final fresh = codec.newKey();
         final id = ProfileRecordCodec.keyId(fresh);
         key = StoredProfileKey(
-            kind: kind,
-            subjectId: subjectId,
-            keyId: id,
-            key: fresh,
-            receivedAt: _now);
+          kind: kind,
+          subjectId: subjectId,
+          keyId: id,
+          key: fresh,
+          receivedAt: _now,
+        );
         rotated = true;
       } else {
         key = existing;
@@ -428,13 +468,16 @@ class ProfileService extends ChangeNotifier {
       // The key is stored before the upload, so a crash after the server
       // accepts the record cannot lose the only copy.
       if (rotated) {
-        await store.saveProfileKey(ProfileKeyEffect(
+        await store.saveProfileKey(
+          ProfileKeyEffect(
             kind: kind,
             subjectId: subjectId,
             key: key.key,
             keyId: key.keyId,
             version: 0,
-            receivedAt: key.receivedAt));
+            receivedAt: key.receivedAt,
+          ),
+        );
       }
       // Written before the upload: if the answer is lost or the app stops, the
       // key is still announced by the write that finds it in place.
@@ -442,8 +485,13 @@ class ProfileService extends ChangeNotifier {
       if (rotated) await store.saveProfileState(marker, '1');
       final int stored;
       try {
-        stored = await api.put(kind, subjectId, blob,
-            keyId: key.keyId, ifMatchVersion: version == 0 ? null : version);
+        stored = await api.put(
+          kind,
+          subjectId,
+          blob,
+          keyId: key.keyId,
+          ifMatchVersion: version == 0 ? null : version,
+        );
       } on ApiException catch (error) {
         if (error.kind != ApiErrorKind.conflict) rethrow;
         // Another device won the race. Read what it wrote; retry once only
@@ -475,8 +523,10 @@ class ProfileService extends ChangeNotifier {
         versionFloor: cached?.versionFloor ?? 0,
       );
       await store.saveProfile(profile);
-      _profiles[_id(kind, subjectId)] =
-          (await store.loadProfile(kind, subjectId))!;
+      _profiles[_id(kind, subjectId)] = (await store.loadProfile(
+        kind,
+        subjectId,
+      ))!;
       await store.saveProfileState(_keyStateName(kind, subjectId), key.keyId);
       final announce = rotated || await store.loadProfileState(marker) != null;
       if (announce) {
@@ -487,7 +537,9 @@ class ProfileService extends ChangeNotifier {
           await _queueAccountKey(key.keyId);
         } else {
           await store.saveProfileState(
-              _deliverName(true, subjectId), key.keyId);
+            _deliverName(true, subjectId),
+            key.keyId,
+          );
         }
       }
       _changed();
@@ -506,14 +558,15 @@ class ProfileService extends ChangeNotifier {
 
   /// A key to give to a conversation that is new to this device (created or
   /// joined): the account key goes in once, if this account has one.
-  Future<void> onConversationAvailable(String conversationId) =>
-      _serial(() async {
-        final keyId = await _ownKeyIdNow();
-        if (keyId == null) return;
-        await store.saveProfileState(
-            _deliverName(false, conversationId), keyId);
-        unawaited(_deliver().catchError((Object _) {}));
-      });
+  Future<void> onConversationAvailable(String conversationId) => _serial(
+        () async {
+          final keyId = await _ownKeyIdNow();
+          if (keyId == null) return;
+          await store.saveProfileState(
+              _deliverName(false, conversationId), keyId);
+          unawaited(_deliver().catchError((Object _) {}));
+        },
+      );
 
   /// Conversations this device has not handed the account key to yet get it
   /// once. A conversation seen before is left alone (the sidecar on posts
@@ -590,7 +643,10 @@ class ProfileService extends ChangeNotifier {
       }
       final kind = isGroup ? profileSubjectConversation : profileSubjectAccount;
       final subject = isGroup ? conversationId : accountId;
-      final key = (await store.loadProfileKeys(kind, subject))
+      final key = (await store.loadProfileKeys(
+        kind,
+        subject,
+      ))
           .where((k) => k.keyId == entry.value)
           .firstOrNull;
       if (key == null) {
@@ -598,17 +654,17 @@ class ProfileService extends ChangeNotifier {
         continue;
       }
       final body = profileKeyBody(
-          key: key.key,
-          keyId: key.keyId,
-          version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId));
+        key: key.key,
+        keyId: key.keyId,
+        version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId),
+      );
       bool sent;
       try {
         sent = await sendKey(
-            conversationId,
-            isGroup
-                ? AppPayloadType.groupProfileKey
-                : AppPayloadType.profileKey,
-            body);
+          conversationId,
+          isGroup ? AppPayloadType.groupProfileKey : AppPayloadType.profileKey,
+          body,
+        );
       } on Object {
         sent = false;
       }
@@ -639,21 +695,30 @@ class ProfileService extends ChangeNotifier {
     final ownKeyId = await _ownKeyIdNow();
     final own = ownKeyId == null
         ? null
-        : (await store.loadProfileKeys(profileSubjectAccount, accountId))
+        : (await store.loadProfileKeys(
+            profileSubjectAccount,
+            accountId,
+          ))
             .where((k) => k.keyId == ownKeyId)
             .firstOrNull;
     if (own != null) {
       out[profileKeyBodyName] = profileKeyBody(
-          key: own.key,
-          keyId: own.keyId,
-          version: versionOf(profileSubjectAccount, accountId));
+        key: own.key,
+        keyId: own.keyId,
+        version: versionOf(profileSubjectAccount, accountId),
+      );
     }
     if (await store.loadProfileState('$_sidecarPrefix$conversationId') == '1') {
-      final group =
-          await _currentKey(profileSubjectConversation, conversationId);
+      final group = await _currentKey(
+        profileSubjectConversation,
+        conversationId,
+      );
       if (group != null) {
-        out[groupProfileKeyBodyName] =
-            profileKeyBody(key: group.key, keyId: group.keyId, version: 0);
+        out[groupProfileKeyBodyName] = profileKeyBody(
+          key: group.key,
+          keyId: group.keyId,
+          version: 0,
+        );
       }
     }
     return out;
@@ -690,8 +755,10 @@ class ProfileService extends ChangeNotifier {
   Future<void> _resetAudience() async {
     final current = coMemberAccountIds();
     // Not known: start the audience again from the next full picture.
-    await store.saveProfileState(_ownAudience,
-        current == null ? null : jsonEncode(current.toList()..sort()));
+    await store.saveProfileState(
+      _ownAudience,
+      current == null ? null : jsonEncode(current.toList()..sort()),
+    );
   }
 
   /// The audience is every account that shared a conversation with this one
@@ -714,7 +781,9 @@ class ProfileService extends ChangeNotifier {
         final next = audience.union(current);
         if (next.length != audience.length || raw == null) {
           await store.saveProfileState(
-              _ownAudience, jsonEncode(next.toList()..sort()));
+            _ownAudience,
+            jsonEncode(next.toList()..sort()),
+          );
         }
       });
 

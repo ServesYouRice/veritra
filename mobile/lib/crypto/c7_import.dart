@@ -47,9 +47,11 @@ List<C7Named> c7MergeNamed(Iterable<C7Named> found) {
   final out = <C7Named>[];
   for (final item in found) {
     final known = out
-        .where((n) =>
-            n.gen.epoch == item.gen.epoch &&
-            c7SameBytes(n.gen.key!, item.gen.key!))
+        .where(
+          (n) =>
+              n.gen.epoch == item.gen.epoch &&
+              c7SameBytes(n.gen.key!, item.gen.key!),
+        )
         .firstOrNull;
     if (known == null) {
       out.add((gen: item.gen, senders: <String>{...item.senders}));
@@ -69,10 +71,13 @@ List<C7Named> c7MergeNamed(Iterable<C7Named> found) {
 /// other sender's wrap. [previousOf] gives the generations stored slots
 /// name before one.
 List<C7Gen> c7FairCandidates(
-    List<C7Named> first, List<C7Named> Function(C7Gen gen) previousOf) {
+  List<C7Named> first,
+  List<C7Named> Function(C7Gen gen) previousOf,
+) {
   final out = <C7Gen>[];
   bool taken(C7Gen gen) => out.any(
-      (held) => held.epoch == gen.epoch && c7SameBytes(held.key!, gen.key!));
+        (held) => held.epoch == gen.epoch && c7SameBytes(held.key!, gen.key!),
+      );
   var step = first;
   while (step.isNotEmpty && out.length < c7WalkCandidateLimit) {
     final bySender = <String, List<C7Gen>>{};
@@ -168,7 +173,8 @@ List<C7Gen> c7FairCandidates(
       C7GenerationEntry? entry;
       try {
         entry = C7GenerationEntry.decode(
-            Uint8List.sublistView(plain, c7RecordBytes, c7SlotPlainBytes));
+          Uint8List.sublistView(plain, c7RecordBytes, c7SlotPlainBytes),
+        );
       } on FormatException {
         entry = null;
       }
@@ -232,7 +238,9 @@ final class C7ImportState {
         candidates = Map<String, List<C7Gen>>.unmodifiable(candidates);
 
   static final C7ImportState empty = C7ImportState(
-      cursors: const <String, String?>{}, keys: const <C7FormerKey>[]);
+    cursors: const <String, String?>{},
+    keys: const <C7FormerKey>[],
+  );
 
   /// By channel id (`''` for the group-level stream).
   final Map<String, String?> cursors;
@@ -247,7 +255,11 @@ final class C7ImportState {
         'cursors': cursors,
         'keys': <Object?>[
           for (final key in keys)
-            <Object?>[key.deviceId, key.accountId, base64Encode(key.signingKey)]
+            <Object?>[
+              key.deviceId,
+              key.accountId,
+              base64Encode(key.signingKey)
+            ],
         ],
         if (candidates.isNotEmpty)
           'candidates': <String, Object?>{
@@ -280,7 +292,7 @@ final class C7ImportState {
               in ((map['candidates'] as Map?) ?? const <String, Object?>{})
                   .entries)
             entry.key as String: <C7Gen>[
-              for (final gen in entry.value as List) C7Gen.fromJson(gen)
+              for (final gen in entry.value as List) C7Gen.fromJson(gen),
             ],
         },
       );

@@ -42,26 +42,31 @@ PendingAccountRecovery _claim({bool needsLogin = false}) =>
         sealedState: _root,
         changes: [
           CryptoRecordChange(
-              kind: cryptoRecordKindDevice,
-              recordId: const [],
-              generation: 1,
-              sealed: utf8.encode('device-record')),
+            kind: cryptoRecordKindDevice,
+            recordId: const [],
+            generation: 1,
+            sealed: utf8.encode('device-record'),
+          ),
           CryptoRecordChange(
-              kind: cryptoRecordKindKeyPackage,
-              recordId: const [9, 8, 7],
-              generation: 1,
-              sealed: _recordSealed),
+            kind: cryptoRecordKindKeyPackage,
+            recordId: const [9, 8, 7],
+            generation: 1,
+            sealed: _recordSealed,
+          ),
           const CryptoRecordChange(
-              kind: cryptoRecordKindGroup,
-              recordId: [1, 2],
-              generation: 1,
-              sealed: null),
+            kind: cryptoRecordKindGroup,
+            recordId: [1, 2],
+            generation: 1,
+            sealed: null,
+          ),
         ],
       ),
     );
 
 void _expectSameClaim(
-    PendingAccountRecovery? actual, PendingAccountRecovery e) {
+  PendingAccountRecovery? actual,
+  PendingAccountRecovery e,
+) {
   expect(actual, isNotNull);
   final a = actual!;
   expect(a.origin, e.origin);
@@ -107,10 +112,11 @@ PendingEnrollment? _enrollment(PendingEnrollmentRow? row) {
             changes: [
               for (final r in state.records)
                 CryptoRecordChange(
-                    kind: r.kind,
-                    recordId: r.recordId,
-                    generation: r.generation,
-                    sealed: r.sealed),
+                  kind: r.kind,
+                  recordId: r.recordId,
+                  generation: r.generation,
+                  sealed: r.sealed,
+                ),
             ],
           ),
   );
@@ -146,7 +152,11 @@ Future<void> _schema16(File file, {String? legacy}) async {
   final db = EncryptedLocalDatabase(NativeDatabase(file));
   await db.writeSessionJson(_sessionJson);
   await db.writeCryptoState(
-      counter: 4, stateKey: List.filled(32, 1), sealedState: [5], cursor: 8);
+    counter: 4,
+    stateKey: List.filled(32, 1),
+    sealedState: [5],
+    cursor: 8,
+  );
   if (legacy != null) await db.writeMetadata(_legacyName, legacy);
   await db.writeMetadata('setting:k0.recovery_follow_up', 'kept');
   await stripPendingEnrollmentSchema(db);
@@ -155,8 +165,9 @@ Future<void> _schema16(File file, {String? legacy}) async {
 }
 
 Future<int> _version(EncryptedLocalDatabase db) async =>
-    (await db.customSelect('PRAGMA user_version').getSingle())
-        .read<int>('user_version');
+    (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+      'user_version',
+    );
 
 bool _containsBytes(List<int> haystack, List<int> needle) {
   outer:
@@ -176,8 +187,10 @@ void main() {
     test('a fresh database has the pending-enrollment tables', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion,
-          greaterThanOrEqualTo(17));
+      expect(
+        EncryptedLocalDatabase.currentSchemaVersion,
+        greaterThanOrEqualTo(17),
+      );
       expect(await db.readPendingEnrollment(), isNull);
       expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
@@ -210,7 +223,9 @@ void main() {
         expect(row?.accountId, claim.accountId);
         expect(row?.deviceId, claim.deviceId);
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(_enrollment(row)), claim);
+          PendingAccountRecovery.fromEnrollment(_enrollment(row)),
+          claim,
+        );
         expect(await db.readMetadata(_legacyName), isNull);
         expect(await db.readMetadata('setting:k0.recovery_follow_up'), 'kept');
         expect((await db.readCryptoState())?.counter, 4);
@@ -223,8 +238,9 @@ void main() {
       'garbage': '{"v":1,"claim_token":"$_claimToken"',
       'another version': jsonEncode({'v': 2, 'claim_token': _claimToken}),
       'a claim missing its state': jsonEncode(
-          Map<String, Object?>.from(jsonDecode(_claim().encode()) as Map)
-            ..remove('mls')),
+        Map<String, Object?>.from(jsonDecode(_claim().encode()) as Map)
+          ..remove('mls'),
+      ),
     };
     for (final entry in unreadable.entries) {
       test('16 to 17 drops ${entry.key} and still opens', () async {
@@ -263,13 +279,18 @@ void main() {
         try {
           expect(raw.select('PRAGMA user_version').single['user_version'], 16);
           expect(
-              raw.select("SELECT name FROM sqlite_master WHERE type='table' "
-                  "AND name LIKE 'local_pending_enrollment%'"),
-              isEmpty);
+            raw.select(
+              "SELECT name FROM sqlite_master WHERE type='table' "
+              "AND name LIKE 'local_pending_enrollment%'",
+            ),
+            isEmpty,
+          );
           expect(
-              raw.select('SELECT value FROM local_metadata WHERE name = ?',
-                  [_legacyName]).single['value'],
-              legacy);
+            raw.select('SELECT value FROM local_metadata WHERE name = ?', [
+              _legacyName,
+            ]).single['value'],
+            legacy,
+          );
         } finally {
           raw.close();
         }
@@ -277,9 +298,11 @@ void main() {
         final db = EncryptedLocalDatabase(NativeDatabase(file));
         addTearDown(db.close);
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(
-                _enrollment(await db.readPendingEnrollment())),
-            claim);
+          PendingAccountRecovery.fromEnrollment(
+            _enrollment(await db.readPendingEnrollment()),
+          ),
+          claim,
+        );
         expect(await db.readMetadata(_legacyName), isNull);
         expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
       });
@@ -304,37 +327,41 @@ void main() {
         final db = EncryptedLocalDatabase(NativeDatabase(file));
         addTearDown(db.close);
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(
-                _enrollment(await db.readPendingEnrollment())),
-            PendingAccountRecovery(
-              origin: 'https://chat.example.org',
-              username: 'alice',
-              accountId: 'acct_me',
-              deviceId: 'dev_new',
-              deviceName: 'Phone',
-              requestId: 'arr_1',
-              claimToken: _claimToken,
-              deviceSecret: _deviceSecret,
-              readyAt: DateTime.utc(2099, 11, 8, 12, 30),
-              needsLogin: needsLogin,
-              mlsState: StoredCryptoState(
-                counter: 1,
-                stateKey: List.filled(32, 1),
-                sealedState: utf8.encode('root-v1-fixture'),
-                changes: [
-                  CryptoRecordChange(
-                      kind: 1,
-                      recordId: const [],
-                      generation: 1,
-                      sealed: utf8.encode('device-record-v1')),
-                  const CryptoRecordChange(
-                      kind: 2,
-                      recordId: [9, 8, 7],
-                      generation: 1,
-                      sealed: null),
-                ],
-              ),
-            ));
+          PendingAccountRecovery.fromEnrollment(
+            _enrollment(await db.readPendingEnrollment()),
+          ),
+          PendingAccountRecovery(
+            origin: 'https://chat.example.org',
+            username: 'alice',
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            deviceName: 'Phone',
+            requestId: 'arr_1',
+            claimToken: _claimToken,
+            deviceSecret: _deviceSecret,
+            readyAt: DateTime.utc(2099, 11, 8, 12, 30),
+            needsLogin: needsLogin,
+            mlsState: StoredCryptoState(
+              counter: 1,
+              stateKey: List.filled(32, 1),
+              sealedState: utf8.encode('root-v1-fixture'),
+              changes: [
+                CryptoRecordChange(
+                  kind: 1,
+                  recordId: const [],
+                  generation: 1,
+                  sealed: utf8.encode('device-record-v1'),
+                ),
+                const CryptoRecordChange(
+                  kind: 2,
+                  recordId: [9, 8, 7],
+                  generation: 1,
+                  sealed: null,
+                ),
+              ],
+            ),
+          ),
+        );
         expect(await db.readMetadata(_legacyName), isNull);
       });
     }
@@ -353,9 +380,11 @@ void main() {
       db = EncryptedLocalDatabase(NativeDatabase(file));
       addTearDown(db.close);
       _expectSameClaim(
-          PendingAccountRecovery.fromEnrollment(
-              _enrollment(await db.readPendingEnrollment())),
-          claim);
+        PendingAccountRecovery.fromEnrollment(
+          _enrollment(await db.readPendingEnrollment()),
+        ),
+        claim,
+      );
       expect(await db.readMetadata(_legacyName), isNull);
       expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
@@ -370,9 +399,11 @@ void main() {
       db = EncryptedLocalDatabase(NativeDatabase(file));
       addTearDown(db.close);
       _expectSameClaim(
-          PendingAccountRecovery.fromEnrollment(
-              _enrollment(await db.readPendingEnrollment())),
-          claim);
+        PendingAccountRecovery.fromEnrollment(
+          _enrollment(await db.readPendingEnrollment()),
+        ),
+        claim,
+      );
     });
 
     test('a row prints its kind only', () {
@@ -392,10 +423,11 @@ void main() {
       final file = await _tempFile();
       var db = EncryptedLocalDatabase(NativeDatabase(file));
       await db.writeCryptoState(
-          counter: 2,
-          stateKey: List.filled(32, 1),
-          sealedState: [5],
-          cursor: 1);
+        counter: 2,
+        stateKey: List.filled(32, 1),
+        sealedState: [5],
+        cursor: 1,
+      );
       await stripCryptoRecordsSchema(db);
       await db.customStatement('PRAGMA user_version = 15');
       await db.close();
@@ -418,14 +450,17 @@ void main() {
       await db.writePendingEnrollment(_row(claim));
     });
 
-    test('an identity change keeps the claim (its activation may follow)',
-        () async {
-      await db.writeSessionJson(
+    test(
+      'an identity change keeps the claim (its activation may follow)',
+      () async {
+        await db.writeSessionJson(
           '{"base_url":"https://chat.example.org","token":"t2",'
           '"account_id":"acct_me","device_id":"dev_new"}',
-          clearIdentityState: true);
-      expect(await db.readPendingEnrollment(), isNotNull);
-    });
+          clearIdentityState: true,
+        );
+        expect(await db.readPendingEnrollment(), isNotNull);
+      },
+    );
 
     test('a cached clear keeps the claim', () async {
       await db.clearCachedState();
@@ -436,10 +471,11 @@ void main() {
       await db.clearAll();
       expect(await db.readPendingEnrollment(), isNull);
       expect(
-          await db
-              .customSelect('SELECT * FROM local_pending_enrollment_records')
-              .get(),
-          isEmpty);
+        await db
+            .customSelect('SELECT * FROM local_pending_enrollment_records')
+            .get(),
+        isEmpty,
+      );
     });
   });
 
@@ -478,79 +514,102 @@ void main() {
         final claim = _claim();
         await store.savePendingEnrollment(claim.toEnrollment());
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(
-                await store.loadPendingEnrollment()),
-            claim);
+          PendingAccountRecovery.fromEnrollment(
+            await store.loadPendingEnrollment(),
+          ),
+          claim,
+        );
         final later = claim.copyWith(needsLogin: true);
         await store.savePendingEnrollment(later.toEnrollment());
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(
-                await store.loadPendingEnrollment()),
-            later);
+          PendingAccountRecovery.fromEnrollment(
+            await store.loadPendingEnrollment(),
+          ),
+          later,
+        );
       });
 
       test('refuses a second enrollment and a changed identity', () async {
         final claim = _claim();
         await store.savePendingEnrollment(claim.toEnrollment());
         final other = PendingEnrollment(
-            kind: PendingEnrollment.kindDeviceLinkV3,
-            origin: claim.origin,
-            accountId: claim.accountId,
-            deviceId: claim.deviceId,
-            payloadJson: '{}');
-        await expectLater(store.savePendingEnrollment(other),
-            throwsA(isA<PendingEnrollmentConflict>()));
+          kind: PendingEnrollment.kindDeviceLinkV3,
+          origin: claim.origin,
+          accountId: claim.accountId,
+          deviceId: claim.deviceId,
+          payloadJson: '{}',
+        );
+        await expectLater(
+          store.savePendingEnrollment(other),
+          throwsA(isA<PendingEnrollmentConflict>()),
+        );
         final otherDevice = PendingEnrollment(
-            kind: PendingEnrollment.kindAccountRecovery,
-            origin: claim.origin,
-            accountId: claim.accountId,
-            deviceId: 'dev_other',
-            payloadJson: claim.encodePayload(),
-            state: claim.mlsState);
-        await expectLater(store.savePendingEnrollment(otherDevice),
-            throwsA(isA<PendingEnrollmentConflict>()));
+          kind: PendingEnrollment.kindAccountRecovery,
+          origin: claim.origin,
+          accountId: claim.accountId,
+          deviceId: 'dev_other',
+          payloadJson: claim.encodePayload(),
+          state: claim.mlsState,
+        );
+        await expectLater(
+          store.savePendingEnrollment(otherDevice),
+          throwsA(isA<PendingEnrollmentConflict>()),
+        );
         final regenerated = PendingEnrollment(
-            kind: PendingEnrollment.kindAccountRecovery,
-            origin: claim.origin,
-            accountId: claim.accountId,
-            deviceId: claim.deviceId,
-            payloadJson: claim.encodePayload(),
-            state: StoredCryptoState(
-                counter: 1,
-                stateKey: List.filled(32, 3),
-                sealedState: claim.mlsState.sealedState));
-        await expectLater(store.savePendingEnrollment(regenerated),
-            throwsA(isA<PendingEnrollmentConflict>()));
+          kind: PendingEnrollment.kindAccountRecovery,
+          origin: claim.origin,
+          accountId: claim.accountId,
+          deviceId: claim.deviceId,
+          payloadJson: claim.encodePayload(),
+          state: StoredCryptoState(
+            counter: 1,
+            stateKey: List.filled(32, 3),
+            sealedState: claim.mlsState.sealedState,
+          ),
+        );
+        await expectLater(
+          store.savePendingEnrollment(regenerated),
+          throwsA(isA<PendingEnrollmentConflict>()),
+        );
         _expectSameClaim(
-            PendingAccountRecovery.fromEnrollment(
-                await store.loadPendingEnrollment()),
-            claim);
+          PendingAccountRecovery.fromEnrollment(
+            await store.loadPendingEnrollment(),
+          ),
+          claim,
+        );
       });
 
       test('a K2 reservation gets its identity once, then keeps it', () async {
         const reservation = PendingEnrollment(
-            kind: PendingEnrollment.kindDeviceLinkV3,
-            origin: 'https://chat.example.org',
-            accountId: 'acct_me',
-            deviceId: 'dev_new',
-            payloadJson: '{"stage":"reserved"}');
+          kind: PendingEnrollment.kindDeviceLinkV3,
+          origin: 'https://chat.example.org',
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          payloadJson: '{"stage":"reserved"}',
+        );
         await store.savePendingEnrollment(reservation);
         expect((await store.loadPendingEnrollment())?.state, isNull);
         final sealed = _claim().mlsState;
-        await store.savePendingEnrollment(PendingEnrollment(
+        await store.savePendingEnrollment(
+          PendingEnrollment(
             kind: reservation.kind,
             origin: reservation.origin,
             accountId: reservation.accountId,
             deviceId: reservation.deviceId,
             payloadJson: '{"stage":"claim_frozen"}',
-            state: sealed));
+            state: sealed,
+          ),
+        );
         // A later write without a state keeps the stored identity.
-        await store.savePendingEnrollment(PendingEnrollment(
+        await store.savePendingEnrollment(
+          PendingEnrollment(
             kind: reservation.kind,
             origin: reservation.origin,
             accountId: reservation.accountId,
             deviceId: reservation.deviceId,
-            payloadJson: '{"stage":"claimed"}'));
+            payloadJson: '{"stage":"claimed"}',
+          ),
+        );
         final loaded = await store.loadPendingEnrollment();
         expect(loaded?.payloadJson, '{"stage":"claimed"}');
         expect(loaded?.state?.stateKey, sealed.stateKey);
@@ -562,20 +621,26 @@ void main() {
         final claim = _claim();
         await store.savePendingEnrollment(claim.toEnrollment());
         expect(
-            await store.deletePendingEnrollment(
-                kind: PendingEnrollment.kindDeviceLinkV3),
-            isFalse);
+          await store.deletePendingEnrollment(
+            kind: PendingEnrollment.kindDeviceLinkV3,
+          ),
+          isFalse,
+        );
         expect(
-            await store.deletePendingEnrollment(
-                kind: PendingEnrollment.kindAccountRecovery,
-                deviceId: 'dev_other'),
-            isFalse);
+          await store.deletePendingEnrollment(
+            kind: PendingEnrollment.kindAccountRecovery,
+            deviceId: 'dev_other',
+          ),
+          isFalse,
+        );
         expect(await store.loadPendingEnrollment(), isNotNull);
         expect(
-            await store.deletePendingEnrollment(
-                kind: PendingEnrollment.kindAccountRecovery,
-                deviceId: claim.deviceId),
-            isTrue);
+          await store.deletePendingEnrollment(
+            kind: PendingEnrollment.kindAccountRecovery,
+            deviceId: claim.deviceId,
+          ),
+          isTrue,
+        );
         expect(await store.loadPendingEnrollment(), isNull);
 
         await store.savePendingEnrollment(claim.toEnrollment());
@@ -584,63 +649,80 @@ void main() {
       });
 
       test('a session change to another device keeps it', () async {
-        await store.saveSession(const Session(
+        await store.saveSession(
+          const Session(
             baseUrl: 'https://chat.example.org',
             token: 'tok',
             accountId: 'acct_me',
-            deviceId: 'dev_old'));
+            deviceId: 'dev_old',
+          ),
+        );
         await store.savePendingEnrollment(_claim().toEnrollment());
-        await store.saveSession(const Session(
+        await store.saveSession(
+          const Session(
             baseUrl: 'https://chat.example.org',
             token: 'tok2',
             accountId: 'acct_me',
-            deviceId: 'dev_new'));
+            deviceId: 'dev_new',
+          ),
+        );
         expect(await store.loadPendingEnrollment(), isNotNull);
       });
     });
   }
 
-  test('neither a backup nor a history snapshot carries it (D71, D73)',
-      () async {
-    final store = await stores['sqlite']!();
-    await store.saveSession(const Session(
-        baseUrl: 'https://chat.example.org',
-        token: 'tok',
-        accountId: 'acct_me',
-        deviceId: 'dev_old',
-        username: 'alice',
-        deviceSecret: 'old-secret'));
-    await store.saveCryptoState(
+  test(
+    'neither a backup nor a history snapshot carries it (D71, D73)',
+    () async {
+      final store = await stores['sqlite']!();
+      await store.saveSession(
+        const Session(
+          baseUrl: 'https://chat.example.org',
+          token: 'tok',
+          accountId: 'acct_me',
+          deviceId: 'dev_old',
+          username: 'alice',
+          deviceSecret: 'old-secret',
+        ),
+      );
+      await store.saveCryptoState(
         StoredCryptoState(
-            counter: 1,
-            stateKey: List<int>.filled(32, 1),
-            sealedState: utf8.encode('device-state')),
-        0);
-    await store.saveSnapshot(
+          counter: 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: utf8.encode('device-state'),
+        ),
+        0,
+      );
+      await store.saveSnapshot(
         <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
         const <String, List<ReceivedMessageEnvelope>>{},
-        0);
-    await store.savePendingEnrollment(_claim().toEnrollment());
-    expect(await store.loadPendingEnrollment(), isNotNull);
+        0,
+      );
+      await store.savePendingEnrollment(_claim().toEnrollment());
+      expect(await store.loadPendingEnrollment(), isNotNull);
 
-    final history = await store.exportHistorySnapshot();
-    for (final forbidden in <List<int>>[
-      utf8.encode(_claimToken),
-      utf8.encode(_deviceSecret),
-      utf8.encode('dev_new'),
-      utf8.encode('arr_1'),
-      utf8.encode(base64Encode(_stateKey)),
-      _stateKey,
-      _root,
-      utf8.encode(base64Encode(_root)),
-      _recordSealed,
-      utf8.encode(base64Encode(_recordSealed)),
-    ]) {
-      expect(_containsBytes(history, forbidden), isFalse,
-          reason: 'history: ${utf8.decode(forbidden, allowMalformed: true)}');
-    }
-    expect(utf8.decode(history), contains('acct_me'));
-  });
+      final history = await store.exportHistorySnapshot();
+      for (final forbidden in <List<int>>[
+        utf8.encode(_claimToken),
+        utf8.encode(_deviceSecret),
+        utf8.encode('dev_new'),
+        utf8.encode('arr_1'),
+        utf8.encode(base64Encode(_stateKey)),
+        _stateKey,
+        _root,
+        utf8.encode(base64Encode(_root)),
+        _recordSealed,
+        utf8.encode(base64Encode(_recordSealed)),
+      ]) {
+        expect(
+          _containsBytes(history, forbidden),
+          isFalse,
+          reason: 'history: ${utf8.decode(forbidden, allowMalformed: true)}',
+        );
+      }
+      expect(utf8.decode(history), contains('acct_me'));
+    },
+  );
 }
 
 PendingEnrollmentRow _row(PendingAccountRecovery claim) {

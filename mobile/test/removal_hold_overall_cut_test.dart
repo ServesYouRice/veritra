@@ -25,9 +25,9 @@ void main() {
   // with a removal over its own per-conversation cap.
   Future<_Harness> appliedHoldBesideBigGroup({bool? listCut}) async {
     final h = await _Harness.start(
-        pendingRemovals: {'conv_a'},
-        fakes: (api, crypto) =>
-            crypto.stageFailures.addAll({'conv_a', 'conv_b'}));
+      pendingRemovals: {'conv_a'},
+      fakes: (api, crypto) => crypto.stageFailures.addAll({'conv_a', 'conv_b'}),
+    );
     addTearDown(h.state.dispose);
     await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
     h.api
@@ -58,26 +58,33 @@ void main() {
     expect(h.state.sendHeldForRemoval('conv_a'), isTrue);
   });
 
-  test('without the flag, an all-truncated read still releases nothing',
-      () async {
-    // An older server: no response-level flag, every listed item truncated.
-    final h = await appliedHoldBesideBigGroup();
-    final reads = h.api.pendingChangeCalls;
-    await h.frames(const Duration(milliseconds: 400));
-    expect(h.api.pendingChangeCalls, greaterThan(reads + 1));
-    expect(h.state.sendHeldForRemoval('conv_a'), isTrue,
-        reason: 'fail closed when the server does not say');
-  });
+  test(
+    'without the flag, an all-truncated read still releases nothing',
+    () async {
+      // An older server: no response-level flag, every listed item truncated.
+      final h = await appliedHoldBesideBigGroup();
+      final reads = h.api.pendingChangeCalls;
+      await h.frames(const Duration(milliseconds: 400));
+      expect(h.api.pendingChangeCalls, greaterThan(reads + 1));
+      expect(
+        h.state.sendHeldForRemoval('conv_a'),
+        isTrue,
+        reason: 'fail closed when the server does not say',
+      );
+    },
+  );
 
   test('an unreadable epoch keeps only its own hold', () async {
     final h = await _Harness.start(
-        pendingRemovals: {'conv_a', 'conv_b'},
-        fakes: (api, crypto) =>
-            crypto.stageFailures.addAll({'conv_a', 'conv_b'}));
+      pendingRemovals: {'conv_a', 'conv_b'},
+      fakes: (api, crypto) => crypto.stageFailures.addAll({'conv_a', 'conv_b'}),
+    );
     addTearDown(h.state.dispose);
-    await _waitFor(() =>
-        h.state.sendHeldForRemoval('conv_a') &&
-        h.state.sendHeldForRemoval('conv_b'));
+    await _waitFor(
+      () =>
+          h.state.sendHeldForRemoval('conv_a') &&
+          h.state.sendHeldForRemoval('conv_b'),
+    );
     // Both removals were committed elsewhere and applied here, but conv_a's
     // group state cannot be read; it comes first in the release loop.
     h.api
@@ -155,8 +162,10 @@ class _Harness {
 
 Future<void> _network() => Future<void>.delayed(Duration.zero);
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -210,7 +219,9 @@ class _Api extends ApiClient with LegacySyncPageFake {
   final Map<String, Set<String>> members = <String, Set<String>>{};
 
   Set<String> membersOf(String conversationId) => members.putIfAbsent(
-      conversationId, () => <String>{'acct_me', _bob.accountId});
+        conversationId,
+        () => <String>{'acct_me', _bob.accountId},
+      );
 
   int epochOf(String conversationId) => serverEpochs[conversationId] ?? 3;
 
@@ -222,7 +233,10 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<int?> removeConversationMember(
-      String token, String conversationId, String accountId) async {
+    String token,
+    String conversationId,
+    String accountId,
+  ) async {
     await _network();
     if (accountId == 'me') {
       members.remove(conversationId);
@@ -236,7 +250,9 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     await _network();
     return <ConversationMember>[
       for (final account in membersOf(conversationId))
@@ -258,8 +274,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <String, Object?>{'enabled': false};
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-      {int after = 0, int limit = 100}) async {
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
     await _network();
     if (fetchSteps.isNotEmpty) fetchSteps.removeAt(0)();
     return const <SyncEvent>[];
@@ -368,27 +387,29 @@ class _Crypto implements MlsConversationCryptoService {
     }
     staged++;
     final counter = (await store.loadCryptoState())?.counter ?? 0;
-    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-      expectedCounter: counter,
-      expectedCursor: await store.loadSyncCursor(),
-      state: StoredCryptoState(
-        counter: counter + 1,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: const <int>[1],
-      ),
-      messages: <PendingMlsMessage>[
-        PendingMlsMessage(
-          idempotencyKey: 'bundle_$staged',
-          conversationId: conversationId,
-          kind: MlsCommitBundle.kind,
-          payload: MlsCommitBundle(
-            epoch: epochOf(conversationId),
-            commit: const <int>[1],
-            removed: removes,
-          ).encode(),
+    await store.commitOutgoingMlsTransition(
+      OutgoingMlsStateTransition(
+        expectedCounter: counter,
+        expectedCursor: await store.loadSyncCursor(),
+        state: StoredCryptoState(
+          counter: counter + 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: const <int>[1],
         ),
-      ],
-    ));
+        messages: <PendingMlsMessage>[
+          PendingMlsMessage(
+            idempotencyKey: 'bundle_$staged',
+            conversationId: conversationId,
+            kind: MlsCommitBundle.kind,
+            payload: MlsCommitBundle(
+              epoch: epochOf(conversationId),
+              commit: const <int>[1],
+              removed: removes,
+            ).encode(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

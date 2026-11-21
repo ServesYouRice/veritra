@@ -95,14 +95,15 @@ Widget veritraTestApp({
 
 /// A state with no session, so the shell shows the connect screen.
 AppState disconnectedState() {
-  return _FixtureState(_FixtureApi())..lifecycle = SessionLifecycle.ready;
+  return _FixtureState(FixtureApi())..lifecycle = SessionLifecycle.ready;
 }
 
 /// A signed-in state with a few conversations and decrypted history for
 /// [chatConversationId], including one message whose sender could not be
 /// verified.
-Future<AppState> connectedState() async {
-  final api = _FixtureApi()
+Future<AppState> connectedState({FixtureApi? api}) async {
+  api ??= FixtureApi();
+  api
     ..envelopes = <ReceivedMessageEnvelope>[
       // Newest first, as the server pages them. Each matches a local
       // record below by sender device and idempotency key.
@@ -198,40 +199,55 @@ Future<AppState> connectedState() async {
     );
   }
 
-  await store.commitMlsTransition(MlsStateTransition(
-    messageId: 'event:1',
-    conversationId: chatConversationId,
-    expectedCounter: 1,
-    expectedCursor: 0,
-    state: StoredCryptoState(
-      counter: 2,
-      stateKey: List<int>.filled(32, 1),
-      sealedState: <int>[2],
+  await store.commitMlsTransition(
+    MlsStateTransition(
+      messageId: 'event:1',
+      conversationId: chatConversationId,
+      expectedCounter: 1,
+      expectedCursor: 0,
+      state: StoredCryptoState(
+        counter: 2,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: <int>[2],
+      ),
+      cursor: 1,
+      messageEffects: <MessageEffect>[
+        text(
+          'm1',
+          'acct_alice',
+          'Morning! Is the new server up yet?',
+          at(9, 0),
+        ),
+        text(
+          'm2',
+          'acct_owner',
+          'Yes, it finished the restore test overnight.',
+          at(9, 3),
+        ),
+        const InsertMessageEffect(
+          key: 'dev_unknown:m3',
+          conversationId: chatConversationId,
+          senderAccountId: 'acct_alice',
+          senderDeviceId: 'dev_unknown',
+          kind: LocalMessageKind.unverifiable,
+          createdAt: 1741943100000, // 2025-03-14 09:05 UTC
+          state: LocalMessageState.received,
+        ),
+        text(
+          'm4',
+          'acct_alice',
+          'Great. I will move the group over today.',
+          at(9, 12),
+        ),
+        ReactionEffect(
+          targetKey: 'dev_alice:m4',
+          reactorAccountId: 'acct_owner',
+          reaction: '👍',
+          at: at(9, 13),
+        ),
+      ],
     ),
-    cursor: 1,
-    messageEffects: <MessageEffect>[
-      text('m1', 'acct_alice', 'Morning! Is the new server up yet?', at(9, 0)),
-      text('m2', 'acct_owner', 'Yes, it finished the restore test overnight.',
-          at(9, 3)),
-      const InsertMessageEffect(
-        key: 'dev_unknown:m3',
-        conversationId: chatConversationId,
-        senderAccountId: 'acct_alice',
-        senderDeviceId: 'dev_unknown',
-        kind: LocalMessageKind.unverifiable,
-        createdAt: 1741943100000, // 2025-03-14 09:05 UTC
-        state: LocalMessageState.received,
-      ),
-      text('m4', 'acct_alice', 'Great. I will move the group over today.',
-          at(9, 12)),
-      ReactionEffect(
-        targetKey: 'dev_alice:m4',
-        reactorAccountId: 'acct_owner',
-        reaction: '👍',
-        at: at(9, 13),
-      ),
-    ],
-  ));
+  );
   await state.refreshHistory(chatConversationId);
   return state;
 }
@@ -272,8 +288,9 @@ class _FixtureState extends AppState {
 }
 
 /// Answers every call the fixture screens make without touching the network.
-class _FixtureApi extends ApiClient {
-  _FixtureApi() : super(baseUrl: 'https://chat.example.org');
+/// Public so the screen photographs (test/screen_photos) can extend it.
+class FixtureApi extends ApiClient {
+  FixtureApi({super.httpClient}) : super(baseUrl: 'https://chat.example.org');
 
   List<ReceivedMessageEnvelope> envelopes = <ReceivedMessageEnvelope>[];
 
@@ -303,7 +320,9 @@ class _FixtureApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const ConversationMute(muted: false);
 
   @override

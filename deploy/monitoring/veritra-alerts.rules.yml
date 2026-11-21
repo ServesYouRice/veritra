@@ -1,0 +1,236 @@
+# Veritra alert rules as a plain Prometheus rule file, for any Prometheus
+# (Compose or systemd with a local Prometheus, Grafana Cloud / Mimir through
+# `mimirtool rules load`). They read only the server's own private /metrics
+# (job="veritra-metrics") and `up`, so they work without kube-state-metrics,
+# node-exporter or kubelet volume stats. Platform signals (a failed backup
+# copy or off-host drill, the host disk, certificates, OOM kills) belong to
+# whoever runs the platform; the owner's cluster defines them in its infra
+# repository (docs/operations.md, "Kubernetes (k3s)").
+#
+# Every series is per instance; none carries a user, account, conversation,
+# device, token or endpoint label. Thresholds follow the capacity contract in
+# docs/operations.md; ratio alerts need a minimum request rate so a quiet
+# instance does not page on one error. server/internal/app/alert_rules_test.go
+# checks that every veritra_* series here is exported and every alert has a
+# runbook; `promtool test rules veritra-alerts.test.yml` tests the rules.
+groups:
+  - name: veritra-backup
+    rules:
+      - alert: VeritraBackupStale
+        # Daily job at 03:15 UTC that may run up to 3 hours: 26 h leaves room.
+        expr: veritra_backup_last_success_age_seconds > 93600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: No verified Veritra backup in the last 26 hours.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+      - alert: VeritraBackupNeverSucceeded
+        # -1 means no verified backup has ever been recorded.
+        expr: veritra_backup_last_success_age_seconds == -1
+        for: 26h
+        labels:
+          severity: critical
+        annotations:
+          summary: Veritra has never recorded a verified backup.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+      - alert: VeritraBackupFailing
+        expr: veritra_backup_consecutive_failures >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: The last {{ $value }} Veritra backup run(s) failed.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+      - alert: VeritraLocalRestoreDrillFailed
+        # The drill every scheduled backup runs, or `verify-backup` run
+        # against the server's data directory.
+        expr: veritra_backup_last_restore_drill_success == 0 and veritra_backup_last_restore_drill_timestamp_seconds > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: The last restore drill of a Veritra backup failed.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+  - name: veritra-server
+    rules:
+      - alert: VeritraServerDown
+        expr: up{job="veritra-metrics"} == 0 or absent(up{job="veritra-metrics"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The Veritra metrics target is down or missing.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#monitoring-and-alerts
+      - alert: VeritraServerRestarting
+        expr: changes(veritra_process_start_time_seconds[1h]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: The Veritra server started more than 3 times in an hour.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraMemoryHigh
+        # 80% of the 1 GiB limit the shipped Compose and systemd profiles set;
+        # change it with the limit (the owner's cluster sets 512 MiB).
+        expr: veritra_go_memory_bytes > 0.8 * 1024 * 1024 * 1024
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The Veritra server holds more than 80% of its memory limit.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraHTTPErrorsHigh
+        expr: |
+          sum(rate(veritra_http_responses_total{status_class="5xx"}[10m])) / sum(rate(veritra_http_requests_total[10m])) > 0.02
+            and sum(rate(veritra_http_requests_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 2% of Veritra requests fail with a server error.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraLatencyHigh
+        # Interactive routes only: send, sync, conversation list and history.
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(veritra_http_request_duration_seconds_bucket{route=~"POST /api/v1/messages/envelopes|GET /api/v1/sync/events|GET /api/v1/conversations|/api/v1/conversations/"}[15m]))) > 0.5
+            and sum(rate(veritra_http_request_duration_seconds_count{route=~"POST /api/v1/messages/envelopes|GET /api/v1/sync/events|GET /api/v1/conversations|/api/v1/conversations/"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Interactive Veritra requests take over 500 ms at p99.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraWriterSaturated
+        # More than half a request waiting for the single SQLite writer on
+        # average, or p99 writer wait above 100 ms.
+        expr: |
+          rate(veritra_sqlite_pool_wait_seconds_total{pool="writer"}[10m]) > 0.5
+            or (histogram_quantile(0.99, rate(veritra_sqlite_writer_acquire_duration_seconds_bucket[10m])) > 0.1
+              and rate(veritra_sqlite_writer_acquire_duration_seconds_count[10m]) > 0.1)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Requests queue for the Veritra SQLite writer.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraRateLimitStorm
+        # Usually a wrong PRIVATE_MESSENGER_TRUSTED_PROXIES: every client then
+        # shares one limit.
+        expr: |
+          sum(rate(veritra_rate_limit_rejections_total[15m])) / sum(rate(veritra_http_requests_total[15m])) > 0.05
+            and sum(rate(veritra_http_requests_total[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of Veritra requests are rate limited.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+  - name: veritra-queues
+    rules:
+      - alert: VeritraPushFailing
+        expr: |
+          sum by (provider) (increase(veritra_push_deliveries_total{result="failed"}[15m]))
+            / sum by (provider) (increase(veritra_push_deliveries_total{result="attempted"}[15m])) > 0.5
+            and sum by (provider) (increase(veritra_push_deliveries_total{result="attempted"}[15m])) >= 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Most {{ $labels.provider }} push wakes fail.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraPushBacklogStalled
+        # The oldest wake job is over 15 minutes old and nothing was
+        # delivered through that provider meanwhile.
+        expr: |
+          (time() - veritra_push_backlog_oldest_job_timestamp_seconds > 900 and veritra_push_backlog_oldest_job_timestamp_seconds > 0)
+            and on (provider) sum by (provider) (increase(veritra_push_deliveries_total{result="delivered"}[15m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.provider }} push wakes are queued but none are delivered.'
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraRetentionBacklogHigh
+        # Above the 1,200-row target through two 6-hour sweeps.
+        expr: veritra_retention_backlog_rows > 1200
+        for: 13h
+        labels:
+          severity: warning
+        annotations:
+          summary: Expired Veritra content is not draining.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraRetentionStalled
+        expr: time() - veritra_retention_last_sweep_timestamp_seconds > 7 * 3600 or veritra_retention_oldest_age_seconds > 13 * 3600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The Veritra retention sweep has not finished in 7 hours or leaves rows behind.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+  - name: veritra-admission
+    rules:
+      - alert: VeritraDataDiskNearWriteGuard
+        # Twice the 2 GiB write guard below, so there is time to act before
+        # writes are refused. On a shared disk (k3s local-path) this is
+        # everyone's free space.
+        expr: veritra_storage_filesystem_avail_bytes < 4 * 1024 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Less than 4 GiB free on the Veritra {{ $labels.volume }} file system; writes stop below 2 GiB.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - alert: VeritraWritesRefusedLowDisk
+        # Below the smaller of 5% and 2 GiB free the server refuses new
+        # messages and uploads with 507 so SQLite and the backups keep room.
+        # VeritraDataDiskLow fires first on small volumes.
+        expr: veritra_admission_low_disk == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: Veritra is refusing writes because its disk is almost full.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - alert: VeritraWriteBudgetRefusals
+        # An account keeps exceeding its fan-out or stored-bytes budget.
+        expr: sum by (limit) (rate(veritra_admission_rejections_total{limit=~"deliveries|write_bytes"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Writes are refused by the per-account {{ $labels.limit }} budget.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+      - alert: VeritraStorageQuotaRefusals
+        expr: sum by (limit) (increase(veritra_admission_rejections_total{limit=~"storage|blobs"}[1h])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Uploads are refused by the {{ $labels.limit }} quota.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#admission-limits
+  - name: veritra-storage
+    rules:
+      - alert: VeritraDataDiskLow
+        # The server's own view of the file systems holding the database and
+        # blobs (64 MiB granularity); works without node-exporter.
+        expr: veritra_storage_filesystem_avail_bytes / veritra_storage_filesystem_size_bytes < 0.10
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Less than 10% free on the Veritra {{ $labels.volume }} file system.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraDataDiskFillsSoon
+        # A 24 h window so the nightly backup's jump does not trigger it.
+        expr: predict_linear(veritra_storage_filesystem_avail_bytes[24h], 3 * 86400) < 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: The Veritra {{ $labels.volume }} file system fills within 3 days at the current rate.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks
+      - alert: VeritraWALLarge
+        # A long read that blocks SQLite checkpoints lets the WAL grow.
+        expr: veritra_storage_bytes{component="wal"} > 256 * 1024 * 1024
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The Veritra SQLite WAL is over 256 MiB.
+          runbook_url: https://github.com/ServesYouRice/veritra/blob/main/docs/operations.md#capacity-alerts-and-runbooks

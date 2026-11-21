@@ -13,8 +13,9 @@ const int _previewLength = 100;
 
 /// Bidirectional overrides and isolates. A sender could use them to make a
 /// preview read in another order than the chat shows it.
-final RegExp _bidiControls =
-    RegExp(r'[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]');
+final RegExp _bidiControls = RegExp(
+  r'[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]',
+);
 
 /// "sender: first words" for a chat row (U12), or null when the row falls back
 /// to its kind line. [row] comes from the local store only (`chatPreviewFor`).
@@ -46,8 +47,10 @@ String? chatPreviewLine(
           ? l10n.w8HiddenSpoiler
           : _firstWords(row.body!);
     case LocalMessageKind.attachment:
-      final entries = AttachmentEntry.listFromBody(row.body,
-          conversationId: row.conversationId);
+      final entries = AttachmentEntry.listFromBody(
+        row.body,
+        conversationId: row.conversationId,
+      );
       body = entries.isEmpty
           ? l10n.chatAttachment
           : entries.first.isVoiceNote
@@ -82,7 +85,10 @@ String _firstWords(String text) {
 /// A person's name as shared with this device, else the username of the member
 /// record, else the short account ID. Only the local row names the sender.
 String _senderName(
-    AppState state, Conversation conversation, LocalMessage row) {
+  AppState state,
+  Conversation conversation,
+  LocalMessage row,
+) {
   final shared = state.profileNameOf(row.senderAccountId);
   if (shared != null && shared.isNotEmpty) return shared;
   final username = state

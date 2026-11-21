@@ -89,7 +89,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'blob_not_found': ApiErrorKind.notFound,
   'message_expired': ApiErrorKind.notFound,
   'no_push_subscription': ApiErrorKind.notFound,
-  'key_package_unavailable': ApiErrorKind.notFound,
   'invalid_invite': ApiErrorKind.notFound,
   'invalid_device_link': ApiErrorKind.notFound,
   // Conflict.
@@ -202,6 +201,9 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
   'report_inbox_unavailable': ApiErrorKind.conflict,
   'report_inbox_changed': ApiErrorKind.conflict,
+  // Another device of the account published or replaced the report key
+  // since this device read it (compare-and-swap on the key PUT).
+  'report_key_changed': ApiErrorKind.conflict,
   'already_reported': ApiErrorKind.conflict,
   'report_limit_reached': ApiErrorKind.rateLimited,
   'invalid_public_key': ApiErrorKind.invalidRequest,
@@ -218,7 +220,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'typing_rate_limited': ApiErrorKind.rateLimited,
   'realtime_connection_limit': ApiErrorKind.rateLimited,
   'key_package_quota_exceeded': ApiErrorKind.rateLimited,
-  'key_package_claim_limit': ApiErrorKind.rateLimited,
   'mls_self_update_limit': ApiErrorKind.rateLimited,
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
@@ -497,12 +498,16 @@ class ApiResponseException implements FormatException {
 
 /// A resumed download asked for a byte range and the server (or a proxy in
 /// front of it) answered 200 with the whole object, which starts at byte 0.
-/// Those bytes must never be appended at the saved offset.
+/// Those bytes must never be appended at the saved offset; the body is
+/// discarded unread.
 ///
 /// It is an [ApiException] with status 416, the answer a server gives when
-/// it cannot serve the requested range, so existing handling of a rejected
-/// range applies: the saved prefix is dropped and the next attempt downloads
-/// from the start.
+/// it cannot serve the requested range. No app path resumes a download
+/// since K1-6 removed the old recovery flow: `recoverEncryptedBackup` with a
+/// start offset has no caller, and the K1 header peek (`downloadBackup`
+/// with a range) refuses a 200 as a malformed answer instead. A resume added
+/// later must treat this like a 416: drop the saved prefix and download
+/// again from byte 0.
 class RangeNotHonoredException extends ApiException {
   RangeNotHonoredException() : super(416);
 }

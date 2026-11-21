@@ -103,63 +103,65 @@ void main() {
     expect(await File(destPath).exists(), isFalse);
   });
 
-  test('encryptFile rejects size, context, and pre-cancellation bounds',
-      () async {
-    final service = AttachmentCryptoService(_DummyBindings());
-    final empty = File('${tempDir.path}/empty.bin');
-    await empty.create();
-    await expectLater(
-      service.encryptFile(
-        sourcePath: empty.path,
-        conversationId: 'conv',
-        attachmentActionId: 'action',
-        fileName: 'empty.bin',
-        mediaType: 'application/octet-stream',
-      ),
-      throwsA(isA<FileSystemException>()),
-    );
+  test(
+    'encryptFile rejects size, context, and pre-cancellation bounds',
+    () async {
+      final service = AttachmentCryptoService(_DummyBindings());
+      final empty = File('${tempDir.path}/empty.bin');
+      await empty.create();
+      await expectLater(
+        service.encryptFile(
+          sourcePath: empty.path,
+          conversationId: 'conv',
+          attachmentActionId: 'action',
+          fileName: 'empty.bin',
+          mediaType: 'application/octet-stream',
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
 
-    final oversized = File('${tempDir.path}/oversized.bin');
-    final oversizedHandle = await oversized.open(mode: FileMode.write);
-    await oversizedHandle.truncate(maxPlaintextAttachmentBytes + 1);
-    await oversizedHandle.close();
-    await expectLater(
-      service.encryptFile(
-        sourcePath: oversized.path,
-        conversationId: 'conv',
-        attachmentActionId: 'action',
-        fileName: 'oversized.bin',
-        mediaType: 'application/octet-stream',
-      ),
-      throwsA(isA<FileSystemException>()),
-    );
+      final oversized = File('${tempDir.path}/oversized.bin');
+      final oversizedHandle = await oversized.open(mode: FileMode.write);
+      await oversizedHandle.truncate(maxPlaintextAttachmentBytes + 1);
+      await oversizedHandle.close();
+      await expectLater(
+        service.encryptFile(
+          sourcePath: oversized.path,
+          conversationId: 'conv',
+          attachmentActionId: 'action',
+          fileName: 'oversized.bin',
+          mediaType: 'application/octet-stream',
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
 
-    final source = File('${tempDir.path}/source.bin');
-    await source.writeAsBytes([1]);
-    await expectLater(
-      service.encryptFile(
-        sourcePath: source.path,
-        conversationId: 'conv\u0000ambiguous',
-        attachmentActionId: 'action',
-        fileName: 'source.bin',
-        mediaType: 'application/octet-stream',
-      ),
-      throwsA(isA<FormatException>()),
-    );
-    final cancelled = AttachmentCancellationToken()..cancel();
-    await expectLater(
-      service.encryptFile(
-        sourcePath: source.path,
-        conversationId: 'conv',
-        attachmentActionId: 'action',
-        fileName: 'source.bin',
-        mediaType: 'application/octet-stream',
-        cancellation: cancelled,
-      ),
-      throwsA(isA<FileSystemException>()),
-    );
-    expect(await _attachmentArtifacts(tempDir), isEmpty);
-  });
+      final source = File('${tempDir.path}/source.bin');
+      await source.writeAsBytes([1]);
+      await expectLater(
+        service.encryptFile(
+          sourcePath: source.path,
+          conversationId: 'conv\u0000ambiguous',
+          attachmentActionId: 'action',
+          fileName: 'source.bin',
+          mediaType: 'application/octet-stream',
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      final cancelled = AttachmentCancellationToken()..cancel();
+      await expectLater(
+        service.encryptFile(
+          sourcePath: source.path,
+          conversationId: 'conv',
+          attachmentActionId: 'action',
+          fileName: 'source.bin',
+          mediaType: 'application/octet-stream',
+          cancellation: cancelled,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await _attachmentArtifacts(tempDir), isEmpty);
+    },
+  );
 
   group('padding buckets', () {
     // Signal's formula, PaddingInputStream.getPaddedSize.
@@ -216,10 +218,14 @@ void main() {
       expect(paddedAttachmentSize(limit, limit: limit), limit);
       // Over the cap: unpadded, and refused by the size checks as before.
       expect(paddedAttachmentSize(limit + 5, limit: limit), limit + 5);
-      expect(paddedAttachmentSize(maxPlaintextAttachmentBytes - 1),
-          maxPlaintextAttachmentBytes);
-      expect(paddedAttachmentSize(1000, limit: 2 * maxPlaintextAttachmentBytes),
-          paddedAttachmentSize(1000));
+      expect(
+        paddedAttachmentSize(maxPlaintextAttachmentBytes - 1),
+        maxPlaintextAttachmentBytes,
+      );
+      expect(
+        paddedAttachmentSize(1000, limit: 2 * maxPlaintextAttachmentBytes),
+        paddedAttachmentSize(1000),
+      );
     });
   });
 
@@ -231,86 +237,93 @@ void main() {
     setUp(() {
       if (nativeSkip != false) return;
       service = AttachmentCryptoService(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
     });
 
-    test('round-trips one byte and the one-MiB boundaries canonically',
-        () async {
-      for (final size in <int>[
-        1,
-        attachmentChunkSize - 1,
-        attachmentChunkSize,
-        attachmentChunkSize + 1,
-      ]) {
-        final sourceFile = File('${tempDir.path}/source_$size.bin');
-        final plaintext = _patternBytes(size);
-        await sourceFile.writeAsBytes(plaintext);
-        final destFile = File('${tempDir.path}/decrypted_$size.bin');
+    test(
+      'round-trips one byte and the one-MiB boundaries canonically',
+      () async {
+        for (final size in <int>[
+          1,
+          attachmentChunkSize - 1,
+          attachmentChunkSize,
+          attachmentChunkSize + 1,
+        ]) {
+          final sourceFile = File('${tempDir.path}/source_$size.bin');
+          final plaintext = _patternBytes(size);
+          await sourceFile.writeAsBytes(plaintext);
+          final destFile = File('${tempDir.path}/decrypted_$size.bin');
+
+          final encrypted = await service.encryptFile(
+            sourcePath: sourceFile.path,
+            conversationId: 'conv_boundary',
+            attachmentActionId: 'action_$size',
+            fileName: 'source_$size.bin',
+            mediaType: 'application/octet-stream',
+          );
+          final padded = paddedAttachmentSize(size);
+          final expectedChunks =
+              (padded + attachmentChunkSize - 1) ~/ attachmentChunkSize;
+          expect(encrypted.manifest['version'], 2);
+          expect(encrypted.manifest['algorithm'], 'AES-256-GCM-chunked');
+          expect(encrypted.manifest['chunk_size'], attachmentChunkSize);
+          expect(encrypted.manifest['chunk_count'], expectedChunks);
+          expect(encrypted.manifest['plaintext_size'], size);
+          expect(encrypted.manifest['padded_size'], padded);
+          expect(encrypted.ciphertextLength, padded + expectedChunks * 20);
+
+          await service.decryptFile(
+            ciphertextPath: encrypted.ciphertextPath,
+            destinationPath: destFile.path,
+            manifest: encrypted.manifest,
+          );
+          expect(await destFile.readAsBytes(), plaintext);
+          await encrypted.cleanup();
+        }
+      },
+      skip: nativeSkip,
+    );
+
+    test(
+      'tampered ciphertext fails decryption and leaves no destination or part file',
+      () async {
+        final sourceFile = File('${tempDir.path}/tamper_source.bin');
+        await sourceFile.writeAsBytes(List.generate(100, (i) => i % 256));
+        final destFile = File('${tempDir.path}/tamper_dest.bin');
 
         final encrypted = await service.encryptFile(
           sourcePath: sourceFile.path,
-          conversationId: 'conv_boundary',
-          attachmentActionId: 'action_$size',
-          fileName: 'source_$size.bin',
+          conversationId: 'conv_tamper',
+          attachmentActionId: 'action_tamper',
+          fileName: 'tamper.bin',
           mediaType: 'application/octet-stream',
         );
-        final padded = paddedAttachmentSize(size);
-        final expectedChunks =
-            (padded + attachmentChunkSize - 1) ~/ attachmentChunkSize;
-        expect(encrypted.manifest['version'], 2);
-        expect(encrypted.manifest['algorithm'], 'AES-256-GCM-chunked');
-        expect(encrypted.manifest['chunk_size'], attachmentChunkSize);
-        expect(encrypted.manifest['chunk_count'], expectedChunks);
-        expect(encrypted.manifest['plaintext_size'], size);
-        expect(encrypted.manifest['padded_size'], padded);
-        expect(encrypted.ciphertextLength, padded + expectedChunks * 20);
 
-        await service.decryptFile(
-          ciphertextPath: encrypted.ciphertextPath,
-          destinationPath: destFile.path,
-          manifest: encrypted.manifest,
+        final ciphertextBytes = await File(
+          encrypted.ciphertextPath,
+        ).readAsBytes();
+        // Tamper one byte in the payload
+        ciphertextBytes[ciphertextBytes.length - 1] ^= 0xFF;
+        final tamperedFile = File('${tempDir.path}/tampered.ciphertext');
+        await tamperedFile.writeAsBytes(ciphertextBytes);
+
+        await expectLater(
+          service.decryptFile(
+            ciphertextPath: tamperedFile.path,
+            destinationPath: destFile.path,
+            manifest: encrypted.manifest,
+          ),
+          throwsA(isA<NativeCryptoException>()),
         );
-        expect(await destFile.readAsBytes(), plaintext);
+
+        expect(await destFile.exists(), isFalse);
+        expect(await File('${destFile.path}.part').exists(), isFalse);
+
         await encrypted.cleanup();
-      }
-    }, skip: nativeSkip);
-
-    test(
-        'tampered ciphertext fails decryption and leaves no destination or part file',
-        () async {
-      final sourceFile = File('${tempDir.path}/tamper_source.bin');
-      await sourceFile.writeAsBytes(List.generate(100, (i) => i % 256));
-      final destFile = File('${tempDir.path}/tamper_dest.bin');
-
-      final encrypted = await service.encryptFile(
-        sourcePath: sourceFile.path,
-        conversationId: 'conv_tamper',
-        attachmentActionId: 'action_tamper',
-        fileName: 'tamper.bin',
-        mediaType: 'application/octet-stream',
-      );
-
-      final ciphertextBytes =
-          await File(encrypted.ciphertextPath).readAsBytes();
-      // Tamper one byte in the payload
-      ciphertextBytes[ciphertextBytes.length - 1] ^= 0xFF;
-      final tamperedFile = File('${tempDir.path}/tampered.ciphertext');
-      await tamperedFile.writeAsBytes(ciphertextBytes);
-
-      await expectLater(
-        service.decryptFile(
-          ciphertextPath: tamperedFile.path,
-          destinationPath: destFile.path,
-          manifest: encrypted.manifest,
-        ),
-        throwsA(isA<NativeCryptoException>()),
-      );
-
-      expect(await destFile.exists(), isFalse);
-      expect(await File('${destFile.path}.part').exists(), isFalse);
-
-      await encrypted.cleanup();
-    }, skip: nativeSkip);
+      },
+      skip: nativeSkip,
+    );
 
     test('wrong key, conversation, and action fail authentication', () async {
       final sourceFile = File('${tempDir.path}/context_source.bin');
@@ -376,49 +389,55 @@ void main() {
       await encrypted.cleanup();
     }, skip: nativeSkip);
 
-    test('truncation, extension, and non-canonical headers fail framing',
-        () async {
-      final encrypted = await _encryptBytes(
-        service,
-        tempDir,
-        'framing',
-        [1, 2, 3, 4, 5],
-      );
-      final ciphertext = await File(encrypted.ciphertextPath).readAsBytes();
-      final badHeader = Uint8List.fromList(ciphertext);
-      ByteData.sublistView(badHeader).setUint32(0, 22, Endian.big);
-      final variants = <List<int>>[
-        ciphertext.sublist(0, ciphertext.length - 1),
-        <int>[...ciphertext, 0],
-        badHeader,
-      ];
-      for (var index = 0; index < variants.length; index++) {
-        final badFile = File('${tempDir.path}/bad_framing_$index.bin');
-        await badFile.writeAsBytes(variants[index]);
-        final destination = '${tempDir.path}/framing_dest_$index.bin';
-        await expectLater(
-          service.decryptFile(
-            ciphertextPath: badFile.path,
-            destinationPath: destination,
-            manifest: encrypted.manifest,
-          ),
-          throwsA(isA<FormatException>()),
-        );
-        expect(await File(destination).exists(), isFalse);
-        expect(await File('$destination.part').exists(), isFalse);
-      }
-      await encrypted.cleanup();
-    }, skip: nativeSkip);
+    test(
+      'truncation, extension, and non-canonical headers fail framing',
+      () async {
+        final encrypted = await _encryptBytes(service, tempDir, 'framing', [
+          1,
+          2,
+          3,
+          4,
+          5,
+        ]);
+        final ciphertext = await File(encrypted.ciphertextPath).readAsBytes();
+        final badHeader = Uint8List.fromList(ciphertext);
+        ByteData.sublistView(badHeader).setUint32(0, 22, Endian.big);
+        final variants = <List<int>>[
+          ciphertext.sublist(0, ciphertext.length - 1),
+          <int>[...ciphertext, 0],
+          badHeader,
+        ];
+        for (var index = 0; index < variants.length; index++) {
+          final badFile = File('${tempDir.path}/bad_framing_$index.bin');
+          await badFile.writeAsBytes(variants[index]);
+          final destination = '${tempDir.path}/framing_dest_$index.bin';
+          await expectLater(
+            service.decryptFile(
+              ciphertextPath: badFile.path,
+              destinationPath: destination,
+              manifest: encrypted.manifest,
+            ),
+            throwsA(isA<FormatException>()),
+          );
+          expect(await File(destination).exists(), isFalse);
+          expect(await File('$destination.part').exists(), isFalse);
+        }
+        await encrypted.cleanup();
+      },
+      skip: nativeSkip,
+    );
 
     test('cancellation cleans only files owned by the operation', () async {
       final source = File('${tempDir.path}/cancel_source.bin');
       await source.writeAsBytes(_patternBytes(attachmentChunkSize + 1));
       final encryptToken = AttachmentCancellationToken();
-      final cancellingEncrypt = AttachmentCryptoService(_CancellingBindings(
-        delegate: service.bindings,
-        token: encryptToken,
-        cancelOnEncrypt: true,
-      ));
+      final cancellingEncrypt = AttachmentCryptoService(
+        _CancellingBindings(
+          delegate: service.bindings,
+          token: encryptToken,
+          cancelOnEncrypt: true,
+        ),
+      );
       await expectLater(
         cancellingEncrypt.encryptFile(
           sourcePath: source.path,
@@ -439,11 +458,13 @@ void main() {
         _patternBytes(attachmentChunkSize + 1),
       );
       final decryptToken = AttachmentCancellationToken();
-      final cancellingDecrypt = AttachmentCryptoService(_CancellingBindings(
-        delegate: service.bindings,
-        token: decryptToken,
-        cancelOnDecrypt: true,
-      ));
+      final cancellingDecrypt = AttachmentCryptoService(
+        _CancellingBindings(
+          delegate: service.bindings,
+          token: decryptToken,
+          cancelOnDecrypt: true,
+        ),
+      );
       final destination = '${tempDir.path}/cancel_dest.bin';
       await expectLater(
         cancellingDecrypt.decryptFile(
@@ -457,10 +478,12 @@ void main() {
       expect(await File(destination).exists(), isFalse);
       expect(await File('$destination.part').exists(), isFalse);
 
-      final publicationDestination =
-          File('${tempDir.path}/publication_cancel_dest.bin');
-      final publicationToken =
-          _CancelWhenDestinationExists(publicationDestination);
+      final publicationDestination = File(
+        '${tempDir.path}/publication_cancel_dest.bin',
+      );
+      final publicationToken = _CancelWhenDestinationExists(
+        publicationDestination,
+      );
       await expectLater(
         service.decryptFile(
           ciphertextPath: encrypted.ciphertextPath,
@@ -479,12 +502,13 @@ void main() {
     }, skip: nativeSkip);
 
     test('pre-existing destination and part files are preserved', () async {
-      final encrypted = await _encryptBytes(
-        service,
-        tempDir,
-        'existing',
-        [1, 2, 3, 4, 5],
-      );
+      final encrypted = await _encryptBytes(service, tempDir, 'existing', [
+        1,
+        2,
+        3,
+        4,
+        5,
+      ]);
       final destination = File('${tempDir.path}/existing_dest.bin');
       await destination.writeAsBytes([9, 8, 7]);
       await expectLater(
@@ -518,16 +542,28 @@ void main() {
       final lengths = <int>[];
       for (final size in <int>[1, 300, 540, 541]) {
         final encrypted = await _encryptBytes(
-            service, tempDir, 'bucket_$size', _patternBytes(size));
+          service,
+          tempDir,
+          'bucket_$size',
+          _patternBytes(size),
+        );
         lengths.add(encrypted.ciphertextLength);
         await encrypted.cleanup();
       }
       expect(lengths.toSet(), {541 + 20});
 
       final a = await _encryptBytes(
-          service, tempDir, 'bucket_a', _patternBytes(100000));
+        service,
+        tempDir,
+        'bucket_a',
+        _patternBytes(100000),
+      );
       final b = await _encryptBytes(
-          service, tempDir, 'bucket_b', _patternBytes(100001));
+        service,
+        tempDir,
+        'bucket_b',
+        _patternBytes(100001),
+      );
       expect(a.ciphertextLength, b.ciphertextLength);
       expect(a.ciphertextLength, paddedAttachmentSize(100000) + 20);
       await a.cleanup();
@@ -543,8 +579,12 @@ void main() {
         attachmentChunkSize + 1,
       ]) {
         final plaintext = _patternBytes(size);
-        final encrypted =
-            await _encryptBytes(service, tempDir, 'exact_$size', plaintext);
+        final encrypted = await _encryptBytes(
+          service,
+          tempDir,
+          'exact_$size',
+          plaintext,
+        );
         expect(encrypted.manifest['padded_size'], paddedAttachmentSize(size));
         final dest = File('${tempDir.path}/exact_dest_$size.bin');
         await service.decryptFile(
@@ -555,8 +595,9 @@ void main() {
         expect(await dest.readAsBytes(), plaintext);
         expect(
           await service.decryptBytes(
-              ciphertextPath: encrypted.ciphertextPath,
-              manifest: encrypted.manifest),
+            ciphertextPath: encrypted.ciphertextPath,
+            manifest: encrypted.manifest,
+          ),
           plaintext,
         );
         await encrypted.cleanup();
@@ -573,8 +614,9 @@ void main() {
       expect(forwarded.ciphertextLength, paddedAttachmentSize(70000) + 20);
       expect(
         await service.decryptBytes(
-            ciphertextPath: forwarded.ciphertextPath,
-            manifest: forwarded.manifest),
+          ciphertextPath: forwarded.ciphertextPath,
+          manifest: forwarded.manifest,
+        ),
         bytes,
       );
       await forwarded.cleanup();
@@ -598,12 +640,15 @@ void main() {
       );
       expect(encrypted.manifest['padded_size'], limit);
       // server/internal/config/limits.go MaxAttachmentCiphertext(limit).
-      expect(encrypted.ciphertextLength,
-          lessThanOrEqualTo(limit + (limit ~/ attachmentChunkSize) * 20));
+      expect(
+        encrypted.ciphertextLength,
+        lessThanOrEqualTo(limit + (limit ~/ attachmentChunkSize) * 20),
+      );
       expect(
         await service.decryptBytes(
-            ciphertextPath: encrypted.ciphertextPath,
-            manifest: encrypted.manifest),
+          ciphertextPath: encrypted.ciphertextPath,
+          manifest: encrypted.manifest,
+        ),
         plaintext,
       );
       await encrypted.cleanup();
@@ -614,7 +659,11 @@ void main() {
       for (final size in <int>[5, attachmentChunkSize + 7]) {
         final plaintext = _patternBytes(size);
         final v1 = await _writeManifestV1(
-            service.bindings, tempDir, 'v1_$size', plaintext);
+          service.bindings,
+          tempDir,
+          'v1_$size',
+          plaintext,
+        );
         expect(v1.manifest.containsKey('padded_size'), isFalse);
         final dest = File('${tempDir.path}/v1_dest_$size.bin');
         await service.decryptFile(
@@ -625,7 +674,9 @@ void main() {
         expect(await dest.readAsBytes(), plaintext);
         expect(
           await service.decryptBytes(
-              ciphertextPath: v1.path, manifest: v1.manifest),
+            ciphertextPath: v1.path,
+            manifest: v1.manifest,
+          ),
           plaintext,
         );
       }
@@ -634,7 +685,11 @@ void main() {
     test('non-zero padding fails closed', () async {
       // A version 2 file whose padding is not zero, sealed with a valid key.
       final v1 = await _writeManifestV1(
-          service.bindings, tempDir, 'dirty', _patternBytes(600));
+        service.bindings,
+        tempDir,
+        'dirty',
+        _patternBytes(600),
+      );
       final manifest = <String, Object?>{
         ...v1.manifest,
         'version': 2,
@@ -644,7 +699,10 @@ void main() {
       final dest = '${tempDir.path}/dirty_dest.bin';
       await expectLater(
         service.decryptFile(
-            ciphertextPath: v1.path, destinationPath: dest, manifest: manifest),
+          ciphertextPath: v1.path,
+          destinationPath: dest,
+          manifest: manifest,
+        ),
         throwsA(isA<FormatException>()),
       );
       expect(await File(dest).exists(), isFalse);
@@ -707,9 +765,13 @@ Future<({String path, Map<String, Object?> manifest})> _writeManifestV1(
       context: context,
       plaintext: plaintext.sublist(offset, end),
     );
-    out.add((ByteData(4)..setUint32(0, sealed.length, Endian.big))
-        .buffer
-        .asUint8List());
+    out.add(
+      (ByteData(
+        4,
+      )..setUint32(0, sealed.length, Endian.big))
+          .buffer
+          .asUint8List(),
+    );
     out.add(sealed);
     offset = end;
     chunks++;

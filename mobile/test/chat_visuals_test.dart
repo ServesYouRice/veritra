@@ -239,8 +239,10 @@ void main() {
         // Body text, muted text (meta line, reply preview, placeholders) and
         // the accent used by links and mentions all read on the fill.
         expect(contrastRatio(scheme.onSurface, own), greaterThanOrEqualTo(4.5));
-        expect(contrastRatio(scheme.onSurfaceVariant, own),
-            greaterThanOrEqualTo(4.5));
+        expect(
+          contrastRatio(scheme.onSurfaceVariant, own),
+          greaterThanOrEqualTo(4.5),
+        );
         expect(contrastRatio(scheme.primary, own), greaterThanOrEqualTo(4.5));
         // The read tick is a glyph, so 3:1.
         expect(contrastRatio(scheme.primary, own), greaterThanOrEqualTo(3));
@@ -252,10 +254,14 @@ void main() {
         veritraLightTheme(),
         veritraDarkTheme(),
       ]) {
-        expect(BoneColors.ownBubble(theme.brightness),
-            isNot(theme.colorScheme.surfaceContainerLow));
-        expect(BoneColors.ownBubble(theme.brightness),
-            isNot(theme.colorScheme.surfaceContainerHigh));
+        expect(
+          BoneColors.ownBubble(theme.brightness),
+          isNot(theme.colorScheme.surfaceContainerLow),
+        );
+        expect(
+          BoneColors.ownBubble(theme.brightness),
+          isNot(theme.colorScheme.surfaceContainerHigh),
+        );
       }
     });
   });
@@ -276,11 +282,16 @@ void main() {
           for (final surface in <Color>[
             scheme.surfaceContainerLow,
             scheme.surface,
-            compositeColor(scheme.primary.withValues(alpha: 0.14),
-                scheme.surfaceContainerLow),
+            compositeColor(
+              scheme.primary.withValues(alpha: 0.14),
+              scheme.surfaceContainerLow,
+            ),
           ]) {
-            expect(contrastRatio(color, surface), greaterThanOrEqualTo(4.5),
-                reason: '$color on $surface');
+            expect(
+              contrastRatio(color, surface),
+              greaterThanOrEqualTo(4.5),
+              reason: '$color on $surface',
+            );
           }
         }
         expect(palette.toSet(), hasLength(6));
@@ -293,8 +304,10 @@ void main() {
         for (var i = 0; i < 300; i++) senderColorSlot('acct_$i'),
       };
       expect(slots, hasLength(6));
-      expect(senderNameColor('acct_alice', Brightness.dark),
-          isNot(senderNameColor('acct_alice', Brightness.light)));
+      expect(
+        senderNameColor('acct_alice', Brightness.dark),
+        isNot(senderNameColor('acct_alice', Brightness.light)),
+      );
     });
   });
 

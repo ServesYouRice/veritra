@@ -67,6 +67,8 @@ import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
+import 'roles/private_channel_membership.dart';
+import 'roles/record_timeout_gap.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -123,10 +125,13 @@ part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_l1_joins.dart';
+part 'app_state_l1_holds.dart';
 part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
 part 'app_state_previews.dart';
+part 'app_state_private_channels.dart';
+part 'app_state_posting.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -243,6 +248,10 @@ enum PushState {
 
 class Ops {
   static const send = 'send';
+
+  /// D134: Retry or Discard of a paused conversation's stuck encryption
+  /// update. Apart from [send], so the composer stays as it is.
+  static const mlsUpdate = 'mls_update';
   static const attachment = 'attachment';
   static const pushTest = 'push_test';
   static const members = 'members';
@@ -280,6 +289,22 @@ class Ops {
 }
 
 enum RequestBucket { chat, request, hidden }
+
+/// D134: the control message that pauses a conversation, as the last MLS
+/// outbox pass found it: its key, and whether the person may discard it.
+typedef PausedMlsUpdate = ({String idempotencyKey, bool discardable});
+
+/// D134: what [AppState.discardMlsUpdate] did.
+enum MlsUpdateDiscard {
+  /// Nothing: the update was no longer the one shown, or it was refused.
+  notDone,
+
+  /// The update was dropped.
+  discarded,
+
+  /// The update was dropped, and with it a role change, which is not made.
+  roleChangeNotMade,
+}
 
 /// Why the stored message-request state is not in use: the read failed
 /// (tried again later) or the value could not be decoded.
@@ -468,6 +493,12 @@ class AppState extends ChangeNotifier
   // locally when records are created from this device.
   List<Community> communities = <Community>[];
   Map<String, List<Channel>> channelsByCommunity = <String, List<Channel>>{};
+
+  /// C1 v3: communities the server lists but [refreshCommunities] hides
+  /// because their shared group is not the one a verified invitation pinned.
+  /// Hidden is not gone: nothing that cleans up after a left community runs
+  /// for them.
+  Set<String> inviteAnchorHiddenCommunities = <String>{};
   List<Invite> invites = <Invite>[];
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
@@ -586,6 +617,22 @@ class AppState extends ChangeNotifier
   /// `u12.chat_previews`. Defaults to true.
   bool showChatPreviews = true;
 
+  /// Whether calls may connect directly (D56/D134). Off by default: calls
+  /// relay through TURN and the other side never sees this device's network
+  /// address. Stored under `d134.direct_calls`.
+  bool allowDirectCalls = false;
+
+  /// Whether a community invitation from someone this account shares no
+  /// group or conversation with is refused (owner decision 2026-11-21). Off
+  /// by default. Stored per server and account
+  /// (`loadCommunityInvitesSharedOnly`).
+  bool communityInvitesSharedOnly = false;
+
+  /// A new join request is waiting for this account as an owner or admin
+  /// (`account.join_request`, owner decision 2026-11-21). The event names no
+  /// one: the notice says only "New join request".
+  bool joinRequestNotice = false;
+
   /// The message each chat row quotes, by conversation. `source` is the
   /// history it was taken from (null: read straight from the local store), so
   /// a newer history is noticed by identity.
@@ -607,8 +654,9 @@ class AppState extends ChangeNotifier
   LinkPreviewMode linkPreviewMode = LinkPreviewMode.allowListed;
 
   /// Replaceable in tests; the default builds previews over HTTPS.
-  LinkPreviewService linkPreviews =
-      LinkPreviewService(thumbnailEncoder: encodePngThumbnail);
+  LinkPreviewService linkPreviews = LinkPreviewService(
+    thumbnailEncoder: encodePngThumbnail,
+  );
   final Set<String> _previewPending = <String>{};
   @override
   String? roleOf(String conversationId, String accountId) {
@@ -616,10 +664,9 @@ class AppState extends ChangeNotifier
     // only for a group without one.
     final record = governanceOf(conversationId);
     if (record != null) return record.roleOf(accountId).name;
-    final memberRole = membersFor(conversationId)
-        .where((m) => m.accountId == accountId)
-        .firstOrNull
-        ?.role;
+    final memberRole = membersFor(
+      conversationId,
+    ).where((m) => m.accountId == accountId).firstOrNull?.role;
     if (memberRole != null) return memberRole;
     final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
     if (conv != null) {
@@ -654,8 +701,9 @@ class AppState extends ChangeNotifier
     }
     try {
       // A community channel is judged by its shared group's record (C0).
-      return cryptoService
-          .governanceOf(recordGroupFor(conversationId) ?? conversationId);
+      return cryptoService.governanceOf(
+        recordGroupFor(conversationId) ?? conversationId,
+      );
     } catch (_) {
       return null;
     }
@@ -796,18 +844,28 @@ class AppState extends ChangeNotifier
   List<LocalPin> pinsFor(String id) {
     final channel = selectedChannelFor(id);
     return (_pins[id] ?? const <LocalPin>[])
-        .where((p) =>
-            p.expiresAt > DateTime.now().millisecondsSinceEpoch &&
-            (channel == null || p.channelId == channel))
+        .where(
+          (p) =>
+              p.expiresAt > DateTime.now().millisecondsSinceEpoch &&
+              (channel == null || p.channelId == channel),
+        )
         .toList();
   }
 
   bool canPinMessages(String id) => pinAllowed(
-      kind: conversationKind(id), role: roleOf(id, session?.accountId ?? ''));
+        kind: conversationKind(id),
+        role: roleOf(id, session?.accountId ?? ''),
+      );
 
   Future<void> setMentionsInMutedChats(bool value) async {
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
+    notifyListeners();
+  }
+
+  Future<void> setAllowDirectCalls(bool value) async {
+    allowDirectCalls = value;
+    await localStore.saveSetting(directCallsSetting, '$value');
     notifyListeners();
   }
 
@@ -842,18 +900,24 @@ class AppState extends ChangeNotifier
 
   Future<void> setConversationArchived(String id, bool archived) async {
     final old = conversationPrefs[id];
-    await _saveConversationPref(LocalConversationPref(
+    await _saveConversationPref(
+      LocalConversationPref(
         conversationId: id,
         archivedAt: archived ? DateTime.now().millisecondsSinceEpoch : null,
-        pinnedAt: old?.pinnedAt));
+        pinnedAt: old?.pinnedAt,
+      ),
+    );
   }
 
   Future<void> setChatPinned(String id, bool pinned) async {
     final old = conversationPrefs[id];
-    await _saveConversationPref(LocalConversationPref(
+    await _saveConversationPref(
+      LocalConversationPref(
         conversationId: id,
         archivedAt: old?.archivedAt,
-        pinnedAt: pinned ? DateTime.now().millisecondsSinceEpoch : null));
+        pinnedAt: pinned ? DateTime.now().millisecondsSinceEpoch : null,
+      ),
+    );
   }
 
   Future<void> _saveConversationPref(LocalConversationPref pref) async {
@@ -864,18 +928,87 @@ class AppState extends ChangeNotifier
 
   Future<void> toggleMessageStar(LocalMessage message) async {
     await localStore.setStarred(
-        message.key, !starredMessages.contains(message.key));
+      message.key,
+      !starredMessages.contains(message.key),
+    );
     starredMessages = await localStore.loadStarred();
     notifyListeners();
   }
 
-  Future<void> deleteMessageForMe(LocalMessage message) async {
-    await localStore.hideMessage(message.conversationId, message.key);
+  /// How long the chat offers Undo after "Delete for me" (U16, D133).
+  static const deleteForMeUndoShown = Duration(seconds: 8);
+
+  /// When a hide becomes final if the chat's Undo snackbar never reported
+  /// closing. Normally its closing makes the hide final first.
+  @visibleForTesting
+  Duration deleteForMeUndoWindow = const Duration(seconds: 10);
+
+  /// Hides whose Undo is still offered, by message key, each with the timer
+  /// that makes it final.
+  final Map<String, Timer> _undoableHides = <String, Timer>{};
+
+  /// "Delete for me" (U16, D133): the message leaves every view at once and
+  /// is deleted for good when the Undo window closes ([finishDeleteForMe]),
+  /// or on the next start if the app is stopped first. Returns whether it
+  /// was hidden.
+  Future<bool> deleteMessageForMe(LocalMessage message) async {
+    final hidden =
+        await localStore.hideMessage(message.conversationId, message.key);
+    if (hidden) {
+      final key = message.key;
+      _undoableHides.remove(key)?.cancel();
+      _undoableHides[key] =
+          Timer(deleteForMeUndoWindow, () => unawaited(finishDeleteForMe(key)));
+    }
     await refreshHistory(message.conversationId);
+    return hidden;
   }
 
-  Future<void> _ensureConversationAuthority(String id,
-      {ApiClient? client}) async {
+  /// Undo for [deleteMessageForMe] while its window is open. Returns false
+  /// when the window has closed or the message changed in the meantime (an
+  /// edit, a delete for everyone, an expiry): it then stays deleted.
+  Future<bool> undoDeleteForMe(LocalMessage message) async {
+    final timer = _undoableHides.remove(message.key);
+    if (timer == null) return false;
+    timer.cancel();
+    var restored = false;
+    try {
+      restored = await localStore.unhideMessage(message.key);
+    } catch (_) {
+      // It stays hidden; the next start makes the hide final.
+    }
+    _previewMemo.remove(message.conversationId);
+    await refreshHistory(message.conversationId);
+    return restored;
+  }
+
+  /// Closes the Undo window of [key]: the hide becomes final now.
+  Future<void> finishDeleteForMe(String key) async {
+    _undoableHides.remove(key)?.cancel();
+    try {
+      await localStore.finishHiddenMessages(only: {key});
+    } catch (_) {
+      // The message stays hidden; the next start finishes it.
+    }
+  }
+
+  /// Makes every open Undo window final (a session ends or the app closes).
+  /// Best effort: the next start finishes whatever this misses.
+  void _finishUndoableHides() {
+    if (_undoableHides.isEmpty) return;
+    final keys = _undoableHides.keys.toSet();
+    for (final timer in _undoableHides.values) {
+      timer.cancel();
+    }
+    _undoableHides.clear();
+    unawaited(
+        localStore.finishHiddenMessages(only: keys).catchError((Object _) {}));
+  }
+
+  Future<void> _ensureConversationAuthority(
+    String id, {
+    ApiClient? client,
+  }) async {
     if (cryptoService is! ConversationAuthorityConsumer) return;
     if (membersByConversation.containsKey(id)) return;
     final current = session;
@@ -907,6 +1040,10 @@ class AppState extends ChangeNotifier
   RecoveryKeyStatus? recoveryKeyStatus;
   PendingAccountRecovery? pendingAccountRecovery;
   RecoveryFollowUpStep? recoveryFollowUp;
+  // U23: whether this device's follow-up began with the restore step, as
+  // stored when the recovery finished; null when nothing was stored (a
+  // follow-up begun by an earlier build).
+  bool? _recoveryFollowUpWithRestore;
   String? _passwordLeakDay;
   // K0 step 8: whether this device came from a completed recovery, and the
   // conversations it was last found to have no MLS group for.
@@ -1000,10 +1137,14 @@ class AppState extends ChangeNotifier
   /// running across sign-out: the working directory belongs to the device,
   /// not the account, and files left from before a sign-out are exactly what
   /// it removes.
-  void startAttachmentOrphanSweep() {
+  void startAttachmentOrphanSweep({
+    Future<void> Function(Duration minAge)? alsoSweep,
+  }) {
     final service = attachmentService;
     if (service == null || _disposed || _orphanSweeper != null) return;
-    _orphanSweeper = AttachmentOrphanSweeper(service.workingDirectory)..start();
+    _orphanSweeper =
+        AttachmentOrphanSweeper(service.workingDirectory, alsoSweep: alsoSweep)
+          ..start();
   }
 
   // D52 bounded background work (phones). Off unless the demo entry point
@@ -1154,7 +1295,10 @@ class AppState extends ChangeNotifier
 
   /// Records the failure of the C7 import [id] after [wait].
   void _c7ImportFailed(
-      String id, ({int failures, DateTime nextAt})? wait, Object err) {
+    String id,
+    ({int failures, DateTime nextAt})? wait,
+    Object err,
+  ) {
     final failures = (wait?.failures ?? 0) + 1;
     final Duration delay;
     if (err is ApiException &&
@@ -1186,11 +1330,18 @@ class AppState extends ChangeNotifier
   }
 
   int _catchUpRetryAttempt = 0;
-  final Set<String> _failedMlsConversations = <String>{};
+
+  /// Conversations paused by a control message that failed for good (I34),
+  /// each with that message's key and whether it may be discarded (D134).
+  final Map<String, PausedMlsUpdate> _failedMlsConversations =
+      <String, PausedMlsUpdate>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
 
   /// L1 complete-adds audit and incomplete-join clocks (app_state_l1_joins).
   final _L1JoinAudit _l1Joins = _L1JoinAudit();
+
+  /// L1 approval holds as shown in chats (app_state_l1_holds).
+  final _L1HoldState _l1Holds = _L1HoldState();
 
   /// How often one held group is audited for approved devices that are not
   /// leaves when the server reports no change for it (L1).
@@ -1259,8 +1410,9 @@ class AppState extends ChangeNotifier
   /// The group-call room engine (B6), set by the demo host like
   /// [callController]; null otherwise, so release builds show no group-call
   /// controls. The factory builds the engine for one conversation.
-  final ValueNotifier<RoomSession?> roomSession =
-      ValueNotifier<RoomSession?>(null);
+  final ValueNotifier<RoomSession?> roomSession = ValueNotifier<RoomSession?>(
+    null,
+  );
 
   @override
   void notifyListeners() {
@@ -1701,7 +1853,7 @@ class AppState extends ChangeNotifier
         if (!live.contains(c.id) &&
             (c.communityId == null ||
                 (communitiesLoaded && !joined.contains(c.communityId))))
-          c
+          c,
     ]..sort((a, b) => (a.title ?? '').compareTo(b.title ?? ''));
   }
 
@@ -1721,8 +1873,10 @@ class AppState extends ChangeNotifier
   /// first. Read from this device's encrypted store only: nothing is
   /// fetched, sent, downloaded or looked up. Expired, hidden and deleted
   /// rows are left out.
-  Future<List<LocalMessage>> historyOnlyMessages(String conversationId,
-      {DateTime? now}) async {
+  Future<List<LocalMessage>> historyOnlyMessages(
+    String conversationId, {
+    DateTime? now,
+  }) async {
     if (!isHistoryOnly(conversationId)) return const [];
     final at = (now ?? DateTime.now()).millisecondsSinceEpoch;
     final rows = await localStore.loadMessages(conversationId);
@@ -1732,13 +1886,13 @@ class AppState extends ChangeNotifier
         if (const {
               LocalMessageKind.text,
               LocalMessageKind.attachment,
-              LocalMessageKind.unsupported
+              LocalMessageKind.unsupported,
             }.contains(m.kind) &&
             m.hiddenAt == null &&
             m.deletedAt == null &&
             m.senderHidden != true &&
             (m.expiresAt == null || m.expiresAt! > at))
-          m
+          m,
     ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
@@ -1772,18 +1926,22 @@ class AppState extends ChangeNotifier
     // cannot tell who sent a sealed one; the app hides those itself, by the
     // sender MLS named.
     final all = _timelineForConversation(conversationId)
-        .where((envelope) =>
-            !(envelope.sealed && isBlocked(envelope.senderAccountId)))
+        .where(
+          (envelope) =>
+              !(envelope.sealed && isBlocked(envelope.senderAccountId)),
+        )
         .toList(growable: false);
     final channel = _selectedChannels[conversationId];
     if (channel == null) return all;
     // A shared group holds every open channel; the chat shows one of them.
     final history = historyFor(conversationId);
     return all
-        .where((envelope) =>
-            (history.forEnvelope(envelope)?.channelId ??
-                _metadataChannel(envelope.cryptoMetadata)) ==
-            channel)
+        .where(
+          (envelope) =>
+              (history.forEnvelope(envelope)?.channelId ??
+                  _metadataChannel(envelope.cryptoMetadata)) ==
+              channel,
+        )
         .toList(growable: false);
   }
 
@@ -1792,7 +1950,8 @@ class AppState extends ChangeNotifier
       metadata is Map ? metadata['channel_id'] as String? : null;
 
   List<ReceivedMessageEnvelope> _timelineForConversation(
-      String conversationId) {
+    String conversationId,
+  ) {
     final envelopes = messagesFor(conversationId);
     if (_mlsCrypto == null) return envelopes;
     final history = historyFor(conversationId);
@@ -1816,7 +1975,9 @@ class AppState extends ChangeNotifier
       if (expired(local)) continue;
       byKey[local?.key ??
           ConversationHistory.keyOf(
-              envelope.senderDeviceId, envelope.idempotencyKey)] = envelope;
+            envelope.senderDeviceId,
+            envelope.idempotencyKey,
+          )] = envelope;
     }
     for (final local in history.messages) {
       if (local.kind == LocalMessageKind.action ||
@@ -1835,18 +1996,21 @@ class AppState extends ChangeNotifier
             : local.key,
         ciphertext: const <int>[],
         cryptoProtocol: 'local-history',
-        createdAt:
-            DateTime.fromMillisecondsSinceEpoch(local.createdAt, isUtc: true),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+          local.createdAt,
+          isUtc: true,
+        ),
       );
     }
     return byKey.values.toList()
       ..sort((left, right) {
         final leftLocal = history.forEnvelope(left);
         final rightLocal = history.forEnvelope(right);
-        final byCreatedAt = (rightLocal?.createdAt ??
-                right.createdAt.millisecondsSinceEpoch)
-            .compareTo(
-                leftLocal?.createdAt ?? left.createdAt.millisecondsSinceEpoch);
+        final byCreatedAt =
+            (rightLocal?.createdAt ?? right.createdAt.millisecondsSinceEpoch)
+                .compareTo(
+          leftLocal?.createdAt ?? left.createdAt.millisecondsSinceEpoch,
+        );
         return byCreatedAt != 0
             ? byCreatedAt
             : (rightLocal?.key ?? right.id)
@@ -1861,10 +2025,12 @@ class AppState extends ChangeNotifier
   List<MessageEnvelope> pendingFor(String conversationId) {
     final channel = _selectedChannels[conversationId];
     return pendingOutbox
-        .where((envelope) =>
-            envelope.conversationId == conversationId &&
-            (channel == null ||
-                _metadataChannel(envelope.cryptoMetadata) == channel))
+        .where(
+          (envelope) =>
+              envelope.conversationId == conversationId &&
+              (channel == null ||
+                  _metadataChannel(envelope.cryptoMetadata) == channel),
+        )
         .toList(growable: false);
   }
 
@@ -1877,8 +2043,11 @@ class AppState extends ChangeNotifier
   void _setOutboxRecords(List<PendingEnvelopeRecord> records) {
     _outboxRecords
       ..clear()
-      ..addEntries(records
-          .map((record) => MapEntry(record.envelope.idempotencyKey, record)));
+      ..addEntries(
+        records.map(
+          (record) => MapEntry(record.envelope.idempotencyKey, record),
+        ),
+      );
     pendingOutbox =
         records.map((record) => record.envelope).toList(growable: false);
   }
@@ -1914,9 +2083,7 @@ class AppState extends ChangeNotifier
       return const SetupProbeResult(state: SetupProbeState.invalidOrigin);
     }
     if (!config.transport.allows(origin)) {
-      return const SetupProbeResult(
-        state: SetupProbeState.insecureTransport,
-      );
+      return const SetupProbeResult(state: SetupProbeState.insecureTransport);
     }
 
     ApiClient? client;
@@ -2042,6 +2209,17 @@ class AppState extends ChangeNotifier
         // failed, and the timer retries. Never a reason for recovery mode.
         _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
       }
+      // U16: a "Delete for me" whose Undo window was open when the app
+      // stopped is final now. Its row has been hidden and scrubbed since the
+      // tap; this deletes what was kept aside for Undo. A window still open
+      // in this run is left alone.
+      try {
+        await localStore.finishHiddenMessages(
+            except: _undoableHides.keys.toSet());
+      } catch (_) {
+        // Best effort: nothing kept aside is ever shown, and the next start
+        // tries again.
+      }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         await _loadPendingAccountRecovery();
@@ -2086,16 +2264,20 @@ class AppState extends ChangeNotifier
         ..addAll(await localStore.loadConversationMutes());
       conversationPrefs = {
         for (final p in await localStore.loadConversationPrefs())
-          p.conversationId: p
+          p.conversationId: p,
       };
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
-          await localStore.loadSetting('b2.link_preview'));
+        await localStore.loadSetting('b2.link_preview'),
+      );
       screenGuardChats =
           await localStore.loadSetting('screen_guard_chats') != 'false';
       showChatPreviews =
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
+      allowDirectCalls =
+          await localStore.loadSetting(directCallsSetting) == 'true';
+      await loadCommunityInvitesSharedOnly();
       _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
@@ -2119,9 +2301,10 @@ class AppState extends ChangeNotifier
       } on ApiException catch (err) {
         if (err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+          );
           return;
         }
         // Keep the encrypted cache available while offline.
@@ -2233,8 +2416,11 @@ class AppState extends ChangeNotifier
   /// then starts empty and must be linked again.
   Future<void> resetUnreadableLocalData({required bool confirmed}) async {
     if (!confirmed) {
-      throw ArgumentError.value(confirmed, 'confirmed',
-          'resetting local data needs explicit confirmation');
+      throw ArgumentError.value(
+        confirmed,
+        'confirmed',
+        'resetting local data needs explicit confirmation',
+      );
     }
     if (lifecycle != SessionLifecycle.recoveryRequired || !canResetLocalData) {
       return;
@@ -2260,15 +2446,20 @@ class AppState extends ChangeNotifier
     });
   }
 
-  Future<void> createOwner(String baseUrl, String username, String password,
-      String setupToken) async {
+  Future<void> createOwner(
+    String baseUrl,
+    String username,
+    String password,
+    String setupToken,
+  ) async {
     await _run(() async {
       _replaceApi(baseUrl);
       final enrollment = await api!.reserveOwnerEnrollment(
         setupToken: setupToken,
       );
-      final credential =
-          await cryptoService.createEnrollmentCredential(enrollment);
+      final credential = await cryptoService.createEnrollmentCredential(
+        enrollment,
+      );
       Uint8List? genesis;
       final created = await api!.createOwner(
         username: username,
@@ -2328,7 +2519,9 @@ class AppState extends ChangeNotifier
   /// the device identity stored before it, [hadMlsState] whether MLS state
   /// existed before the answer was saved.
   Future<void> _finishDeviceSignIn(
-      Session localSession, bool hadMlsState) async {
+    Session localSession,
+    bool hadMlsState,
+  ) async {
     {
       final signedIn = session!;
       session = null;
@@ -2392,7 +2585,9 @@ class AppState extends ChangeNotifier
   /// throws: a failure keeps the last good list and records a safe message
   /// under [Ops.conversations]; calling it again is the retry.
   Future<void> refreshConversations() => _refreshContained(
-      Ops.conversations, () => _refreshConversations(notify: true));
+        Ops.conversations,
+        () => _refreshConversations(notify: true),
+      );
 
   /// Like [refreshConversations], for the device list ([Ops.devices]).
   Future<void> refreshDevices() =>
@@ -2418,9 +2613,10 @@ class AppState extends ChangeNotifier
         await _enqueueSessionTransition(() async {
           if (!identical(session, current)) return;
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+          );
         });
       }
       _opErrors[op] = describeError(err, l10n);
@@ -2460,6 +2656,15 @@ class AppState extends ChangeNotifier
       return;
     }
     final generation = _sessionGeneration;
+    // The ids this device held a code for before asking: only those may be
+    // forgotten below, so an invite created while the list was on its way
+    // keeps its code.
+    Set<String> known = const <String>{};
+    try {
+      known = await _updateInviteCodes((codes) => codes.keys.toSet());
+    } catch (_) {
+      // Unreadable local copies: the list still loads, without codes.
+    }
     List<Invite>? list;
     try {
       list = await client.listInvites(current.token);
@@ -2469,7 +2674,24 @@ class AppState extends ChangeNotifier
     // A reply for a session that has since ended or been replaced is
     // dropped whole, success or failure.
     if (!_refreshOwned(current, generation)) return;
-    if (list != null) invites = list;
+    if (list != null) {
+      final listed = list;
+      List<Invite> merged;
+      try {
+        merged = await _updateInviteCodes((codes) {
+          // Gone from the server (turned off, used up or expired): its
+          // code can never register again, so this device forgets it.
+          final live = <String>{for (final invite in listed) invite.id};
+          codes
+              .removeWhere((id, _) => known.contains(id) && !live.contains(id));
+          return _withLocalInviteCodes(listed, codes);
+        });
+      } catch (_) {
+        merged = _withLocalInviteCodes(listed, const <String, String>{});
+      }
+      if (!_refreshOwned(current, generation)) return;
+      invites = merged;
+    }
     invitesLoadFailed = list == null;
     invitesLoaded = true;
     notifyListeners();
@@ -2513,13 +2735,19 @@ class AppState extends ChangeNotifier
         _refreshOwned(current, generation);
     try {
       final list = await client.listCommunities(current.token);
+      // C1 v3: read before the channels, so the commit below stays as it was.
+      // A pin that cannot be read keeps the locally known list (the catch
+      // below), as a list the server cannot send does.
+      final pins = await _communityInviteAnchorsOf(list);
       final channels = <String, List<Channel>>{};
       final creationAccess = <String, bool>{};
       for (final community in list) {
         if (!active()) return;
         try {
-          channels[community.id] =
-              await client.listChannels(current.token, community.id);
+          channels[community.id] = await client.listChannels(
+            current.token,
+            community.id,
+          );
         } catch (_) {
           if (!active()) return;
           channels[community.id] =
@@ -2527,19 +2755,44 @@ class AppState extends ChangeNotifier
         }
         if (!active()) return;
         try {
-          final members =
-              await client.communityMembers(current.token, community.id);
-          creationAccess[community.id] = members.any((member) =>
-              member.accountId == current.accountId &&
-              (member.role == 'owner' || member.role == 'admin'));
+          final members = await client.communityMembers(
+            current.token,
+            community.id,
+          );
+          creationAccess[community.id] = members.any(
+            (member) =>
+                member.accountId == current.accountId &&
+                (member.role == 'owner' || member.role == 'admin'),
+          );
         } catch (_) {
           // Unknown rights hide the entry; refresh can try again later.
         }
       }
+      // C1 v3: a community a verified invitation pinned to a shared group
+      // is shown only while the server names that same group.
+      final kept = <Community>[
+        for (final community in list)
+          if (MembershipActions._communityKeepsInviteAnchor(
+            community,
+            channels[community.id] ?? const <Channel>[],
+            pins[community.id],
+          ))
+            community,
+      ];
       if (!active()) return;
-      communities = list;
-      channelsByCommunity = channels;
+      inviteAnchorHiddenCommunities = <String>{
+        for (final community in list)
+          if (!kept.contains(community)) community.id,
+      };
+      communities = kept;
+      channelsByCommunity = <String, List<Channel>>{
+        for (final community in kept)
+          community.id: channels[community.id] ?? const <Channel>[],
+      };
       _channelCreationAccess.addAll(creationAccess);
+      // C3: a private channel's group stays one here, whatever the server
+      // labels it later.
+      await _pinRoutedPrivateChannels();
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
     }
@@ -2569,6 +2822,7 @@ class AppState extends ChangeNotifier
     final String? previewMode;
     final String? screenGuardPref;
     final String? previewsPref;
+    final String? directCallsPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
@@ -2576,6 +2830,7 @@ class AppState extends ChangeNotifier
       previewMode = await localStore.loadSetting('b2.link_preview');
       screenGuardPref = await localStore.loadSetting('screen_guard_chats');
       previewsPref = await localStore.loadSetting(_chatPreviewsSetting);
+      directCallsPref = await localStore.loadSetting(directCallsSetting);
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -2591,6 +2846,7 @@ class AppState extends ChangeNotifier
     linkPreviewMode = linkPreviewModeFromName(previewMode);
     screenGuardChats = screenGuardPref != 'false';
     showChatPreviews = previewsPref != 'false';
+    allowDirectCalls = directCallsPref == 'true';
     _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
@@ -2624,8 +2880,10 @@ class AppState extends ChangeNotifier
     }
   }
 
-  Future<void> _fetchMessages(String conversationId,
-      {bool persist = true}) async {
+  Future<void> _fetchMessages(
+    String conversationId, {
+    bool persist = true,
+  }) async {
     final current = session;
     final client = api;
     if (current == null || client == null) {
@@ -2639,10 +2897,12 @@ class AppState extends ChangeNotifier
         const <ReceivedMessageEnvelope>[];
     final fresh = page.messages.map((message) => message.id).toSet();
     final older = existing
-        .where((message) =>
-            !fresh.contains(message.id) &&
-            page.nextBefore != null &&
-            _isOlderThanPage(message, page.messages))
+        .where(
+          (message) =>
+              !fresh.contains(message.id) &&
+              page.nextBefore != null &&
+              _isOlderThanPage(message, page.messages),
+        )
         .toList(growable: false);
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
       ...messagesByConversation,
@@ -2756,8 +3016,10 @@ class AppState extends ChangeNotifier
   /// The existing DM with [accountId], if the conversation list already
   /// names that peer. Returns null when no DM is known locally.
   Conversation? existingDmWith(String accountId) => conversations
-      .where((conversation) =>
-          conversation.isDm && conversation.peerAccountId == accountId)
+      .where(
+        (conversation) =>
+            conversation.isDm && conversation.peerAccountId == accountId,
+      )
       .firstOrNull;
 
   /// Creates a DM, group, or community channel conversation and selects it.
@@ -2827,13 +3089,17 @@ class AppState extends ChangeNotifier
       if (encryptedName && conversation.isGroup) {
         // Not awaited: the name appears when the upload is accepted, and a
         // key message that cannot be queued yet is retried by the service.
-        unawaited(profiles!
-            .saveGroupProfile(conversation.id, name: groupName)
-            .catchError((Object _) {}));
+        unawaited(
+          profiles!
+              .saveGroupProfile(conversation.id, name: groupName)
+              .catchError((Object _) {}),
+        );
       }
       selectedConversationId = conversation.id;
       messagesByConversation.putIfAbsent(
-          conversation.id, () => <ReceivedMessageEnvelope>[]);
+        conversation.id,
+        () => <ReceivedMessageEnvelope>[],
+      );
     });
     return error == null ? created : null;
   }
@@ -2847,8 +3113,9 @@ class AppState extends ChangeNotifier
     await _run(() async {
       _replaceApi(baseUrl);
       final enrollment = await api!.reserveRegistrationEnrollment(inviteCode);
-      final credential =
-          await cryptoService.createEnrollmentCredential(enrollment);
+      final credential = await cryptoService.createEnrollmentCredential(
+        enrollment,
+      );
       Uint8List? genesis;
       final created = await api!.register(
         inviteCode: inviteCode,
@@ -2883,12 +3150,23 @@ class AppState extends ChangeNotifier
       if (current == null || client == null) {
         return;
       }
-      created = await client.createInvite(
+      final invite = await client.createInvite(
         current.token,
         maxUses: maxUses,
         expiresAt: expiresAt,
       );
-      invites = <Invite>[created!, ...invites];
+      created = invite;
+      // The only time the server hands out the code: keep it on this device
+      // so the invite can be shared again after a restart.
+      if (invite.code.isNotEmpty) {
+        try {
+          await _updateInviteCodes((codes) => codes[invite.id] = invite.code);
+        } catch (_) {
+          // Shown for now all the same; after a restart it reads "Can't be
+          // shared again".
+        }
+      }
+      invites = <Invite>[invite, ...invites];
     });
     return error == null ? created : null;
   }
@@ -2902,8 +3180,66 @@ class AppState extends ChangeNotifier
       }
       await client.revokeInvite(current.token, inviteId);
       invites = invites.where((invite) => invite.id != inviteId).toList();
+      try {
+        await _updateInviteCodes((codes) => codes.remove(inviteId));
+      } catch (_) {
+        // Forgotten at the next refresh, which no longer lists it.
+      }
     });
   }
+
+  /// Local setting holding the codes of the registration invites this device
+  /// created, as a JSON object from invite id to code. The server keeps only
+  /// a hash of each code, so this encrypted local copy is the one way to
+  /// share an invite again. Codes are bearer credentials: never logged.
+  static const String inviteCodesSetting = 'invites.codes';
+
+  Future<void> _inviteCodesQueue = Future<void>.value();
+
+  /// Runs [change] on the stored invite codes, one change at a time, and
+  /// saves them when [change] altered them.
+  Future<T> _updateInviteCodes<T>(
+      T Function(Map<String, String> codes) change) {
+    final run = _inviteCodesQueue.then((_) async {
+      final codes = <String, String>{};
+      final raw = await localStore.loadSetting(inviteCodesSetting);
+      Object? decoded;
+      try {
+        decoded = raw == null ? null : jsonDecode(raw);
+      } on FormatException {
+        // Unreadable: start again, overwritten by the next change.
+      }
+      if (decoded is Map) {
+        for (final entry in decoded.entries) {
+          if (entry.key is String && entry.value is String) {
+            codes[entry.key as String] = entry.value as String;
+          }
+        }
+      }
+      final before = Map<String, String>.of(codes);
+      final result = change(codes);
+      if (!mapEquals(before, codes)) {
+        await localStore.saveSetting(inviteCodesSetting, jsonEncode(codes));
+      }
+      return result;
+    });
+    _inviteCodesQueue = run.then((_) {}, onError: (Object _) {});
+    return run;
+  }
+
+  /// [listed] with each invite's code from [codes] when this device has one,
+  /// else the code the server sent (older servers), else none.
+  static List<Invite> _withLocalInviteCodes(
+    List<Invite> listed,
+    Map<String, String> codes,
+  ) =>
+      <Invite>[
+        for (final invite in listed)
+          switch (codes[invite.id]) {
+            final code? when code.isNotEmpty => invite.withCode(code),
+            _ => invite,
+          },
+      ];
 
   Future<Community?> createCommunity(String name) async {
     Community? created;
@@ -2947,11 +3283,20 @@ class AppState extends ChangeNotifier
     return error == null ? created : null;
   }
 
+  /// How many community members the last [createChannel] left out because
+  /// they are in too many chats (D134); 0 when it failed or left none out.
+  int lastChannelSkippedMembers = 0;
+
   /// Creates a channel and its backing conversation in one server transaction.
-  Future<Channel?> createChannel(String communityId, String name,
-      {String? kind, bool fullHistory = false}) async {
+  Future<Channel?> createChannel(
+    String communityId,
+    String name, {
+    String? kind,
+    bool fullHistory = false,
+  }) async {
     ({Channel channel, bool shared})? made;
     Channel? created;
+    lastChannelSkippedMembers = 0;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2959,8 +3304,10 @@ class AppState extends ChangeNotifier
         return;
       }
       if (!canCreateChannel(communityId)) {
-        throw ApiException(403,
-            '{"error":"forbidden","message":"Only admins can create channels"}');
+        throw ApiException(
+          403,
+          '{"error":"forbidden","message":"Only admins can create channels"}',
+        );
       }
       final sharedLayout = communities
               .where((community) => community.id == communityId)
@@ -2974,11 +3321,21 @@ class AppState extends ChangeNotifier
         kind: kind ?? (sharedLayout ? 'open' : 'private'),
       );
       created = creation.channel;
+      // D134: the left-out members are not in the server roster, so the MLS
+      // group set up below never gets their devices; an admin adds them
+      // later through the channel's members.
+      lastChannelSkippedMembers = creation.skippedMembers;
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
-        await _setUpConversationGroup(creation.conversation.id,
-            kind: creation.conversation.kind);
+        // C3: its creator's devices only; picked members join by commit.
+        if (creation.channel.kind == 'private' && creation.channel.isRouted) {
+          await _pinPrivateChannelGroup(creation.conversation.id);
+        }
+        await _setUpConversationGroup(
+          creation.conversation.id,
+          kind: creation.conversation.kind,
+        );
       }
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
@@ -2988,8 +3345,9 @@ class AppState extends ChangeNotifier
         ],
       };
       // The shared group keeps the entry the list already has for it.
-      final known =
-          conversations.any((item) => item.id == creation.conversation.id);
+      final known = conversations.any(
+        (item) => item.id == creation.conversation.id,
+      );
       if (!inSharedGroup || !known) {
         conversations = <Conversation>[
           creation.conversation,
@@ -3005,6 +3363,7 @@ class AppState extends ChangeNotifier
       }
       await loadMessages(creation.conversation.id);
     });
+    if (error != null) lastChannelSkippedMembers = 0;
     // C3: the encrypted channel record, and for an open channel the
     // community record that lists it. Outside `_run` (see createCommunity).
     final routed = made;
@@ -3017,10 +3376,17 @@ class AppState extends ChangeNotifier
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
         if (routed.shared) await publishCommunityInfo(communityId);
-        // C4: an announcement channel is restricted in the record too.
+        // C4: an announcement channel is restricted in the record too,
+        // retried on later sync passes until it lands (C2).
         if (routed.shared && routed.channel.kind == 'announcement') {
+          await _rememberAnnouncementRecord(
+            routed.channel.conversationId!,
+            routed.channel.id,
+          );
           await _recordAnnouncementChannel(
-              routed.channel.conversationId!, routed.channel.id);
+            routed.channel.conversationId!,
+            routed.channel.id,
+          );
         }
       }());
     }
@@ -3046,12 +3412,23 @@ class AppState extends ChangeNotifier
       // a group device, and here there is none: the add would wait forever.
       final refusal = await _noPeerRefusal(conversationId);
       if (refusal != null) throw UserFacingException(refusal);
-      await client.addConversationMember(
-        current.token,
-        conversationId,
-        accountId,
-        role: role,
-      );
+      // C3: in a private channel, only an account this user picked joins
+      // by this device's commit (the server's list only proposes).
+      final picked = await _isPrivateChannelGroup(conversationId);
+      if (picked) await _pickPrivateChannelMember(conversationId, accountId);
+      try {
+        await client.addConversationMember(
+          current.token,
+          conversationId,
+          accountId,
+          role: role,
+        );
+      } catch (_) {
+        if (picked) {
+          await _unpickPrivateChannelMember(conversationId, accountId);
+        }
+        rethrow;
+      }
       added = true;
       // Their devices join the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
@@ -3071,8 +3448,10 @@ class AppState extends ChangeNotifier
       if (current == null || client == null) {
         return;
       }
-      final members =
-          await client.conversationMembers(current.token, conversationId);
+      final members = await client.conversationMembers(
+        current.token,
+        conversationId,
+      );
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
         conversationId: members,
@@ -3118,7 +3497,9 @@ class AppState extends ChangeNotifier
   /// sends wait for the removal commit (D68) and reconcile stages it (card
   /// I51). Also used for each channel when a community removes a member.
   Future<void> _afterMemberRemoved(
-      String conversationId, String accountId) async {
+    String conversationId,
+    String accountId,
+  ) async {
     // D68: hold sends until the removal commit is applied. Reconcile
     // releases the hold; without MLS nothing would, and nothing is
     // encrypted to a group either. The session queue keeps sends out
@@ -3139,7 +3520,9 @@ class AppState extends ChangeNotifier
       if (generation == _sessionGeneration && (local != null || unreadable)) {
         final epoch = local?.epoch ?? 0;
         final hold = _removalHolds.putIfAbsent(
-            conversationId, () => _RemovalHold(epoch: epoch));
+          conversationId,
+          () => _RemovalHold(epoch: epoch),
+        );
         hold
           ..seq = ++_removalHoldSeq
           // A read before this removal proves nothing about its commit.
@@ -3190,7 +3573,10 @@ class AppState extends ChangeNotifier
           'me',
         );
         await _dropLeftConversationLocally(
-            current, conversationId, leaveEventId);
+          current,
+          conversationId,
+          leaveEventId,
+        );
         await _leaveWentThrough(group);
       });
     } finally {
@@ -3233,9 +3619,11 @@ class AppState extends ChangeNotifier
     };
     _historyCursors.remove(conversationId);
     _mutes.remove(conversationId);
-    unawaited(localStore
-        .saveConversationMute(conversationId, muted: false)
-        .catchError((Object _) {}));
+    unawaited(
+      localStore
+          .saveConversationMute(conversationId, muted: false)
+          .catchError((Object _) {}),
+    );
     composerDrafts.remove(conversationId);
     if (selectedConversationId == conversationId) {
       selectedConversationId = null;
@@ -3252,7 +3640,10 @@ class AppState extends ChangeNotifier
   /// durable, so a restart still drops the group. A local failure here does
   /// not undo or fail the leave.
   Future<void> _afterLeftConversation(
-      Session current, String conversationId, int? leaveEventId) async {
+    Session current,
+    String conversationId,
+    int? leaveEventId,
+  ) async {
     try {
       for (final record in await localStore.pendingEnvelopeRecords()) {
         if (record.envelope.conversationId == conversationId) {
@@ -3268,7 +3659,9 @@ class AppState extends ChangeNotifier
     await _noteLeaveFloor(current, conversationId, leaveEventId);
     try {
       await _changeLeftConversations(
-          current, (ids) => <String>{...ids, conversationId});
+        current,
+        (ids) => <String>{...ids, conversationId},
+      );
     } catch (_) {
       // Not noted: the group stays until a removal commit or the user
       // leaves again. Nothing is weaker for it.
@@ -3307,25 +3700,30 @@ class AppState extends ChangeNotifier
   /// One read-modify-write of [owner]'s record; they never interleave.
   /// Returns the set as stored.
   Future<Set<String>> _changeLeftConversations(
-      Session owner, Set<String> Function(Set<String> ids) change) {
+    Session owner,
+    Set<String> Function(Set<String> ids) change,
+  ) {
     final done = _leftConversationsLock.then((_) async {
       final current = await _readLeftConversations(owner);
       final next = change(current);
       if (!setEquals(current, next)) {
         await localStore.saveSetting(
-            _leftConversationsSetting,
-            jsonEncode(<String, Object?>{
-              'scope': _keyPackageScope(owner),
-              // The newest leaves are kept at the cap.
-              'ids': next
-                  .skip(max(0, next.length - _leftConversationsCap))
-                  .toList(growable: false),
-            }));
+          _leftConversationsSetting,
+          jsonEncode(<String, Object?>{
+            'scope': _keyPackageScope(owner),
+            // The newest leaves are kept at the cap.
+            'ids': next
+                .skip(max(0, next.length - _leftConversationsCap))
+                .toList(growable: false),
+          }),
+        );
       }
       return next;
     });
-    _leftConversationsLock =
-        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _leftConversationsLock = done.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
     return done;
   }
 
@@ -3376,7 +3774,9 @@ class AppState extends ChangeNotifier
   /// A floor at or below the committed sync cursor is dropped: a pass skips
   /// every event at or below the cursor, so it can no longer matter.
   Future<void> _changeLeftFloors(
-      Session owner, void Function(Map<String, int> floors) change) {
+    Session owner,
+    void Function(Map<String, int> floors) change,
+  ) {
     final done = _leftFloorsLock.then((_) async {
       final current = await _readLeftFloors(owner);
       final cursor = await localStore.loadSyncCursor();
@@ -3392,17 +3792,20 @@ class AppState extends ChangeNotifier
             .toList(growable: false)
             .skip(max(0, next.length - _leftConversationsCap));
         await localStore.saveSetting(
-            _leftFloorsSetting,
-            jsonEncode(<String, Object?>{
-              'scope': _keyPackageScope(owner),
-              'floors': <String, int>{
-                for (final entry in keep) entry.key: entry.value,
-              },
-            }));
+          _leftFloorsSetting,
+          jsonEncode(<String, Object?>{
+            'scope': _keyPackageScope(owner),
+            'floors': <String, int>{
+              for (final entry in keep) entry.key: entry.value,
+            },
+          }),
+        );
       }
     });
-    _leftFloorsLock =
-        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _leftFloorsLock = done.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
     return done;
   }
 
@@ -3422,7 +3825,10 @@ class AppState extends ChangeNotifier
   /// events it has yet to fetch). Best effort, like the note: a failure
   /// leaves the leave as it was.
   Future<void> _noteLeaveFloor(
-      Session current, String conversationId, int? leaveEventId) async {
+    Session current,
+    String conversationId,
+    int? leaveEventId,
+  ) async {
     try {
       int floor;
       if (leaveEventId != null && leaveEventId > 0) {
@@ -3460,21 +3866,26 @@ class AppState extends ChangeNotifier
   /// joined, as for a Welcome the device cannot open (D74). The key package
   /// it used is still replaced. Returns whether it was skipped.
   Future<bool> _skipWelcomeBeforeLeave(
-      Session current, SyncEvent event, MlsMessage message,
-      {required WakeRunContext? wake,
-      required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
-          failure}) async {
+    Session current,
+    SyncEvent event,
+    MlsMessage message, {
+    required WakeRunContext? wake,
+    required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
+        failure,
+  }) async {
     try {
       final floor = (await _readLeftFloors(current))[message.conversationId];
       if (floor == null || event.id > floor) return false;
       await _oweKeyPackages(current, 1, welcome: message.id);
-      await localStore.commitSyncEvent(SyncEventCommit(
-        eventKey: 'sync:${event.id}',
-        conversationId: message.conversationId,
-        expectedCursor: await localStore.loadSyncCursor(),
-        cursor: event.id,
-        checkCanCommit: wake?.checkCanCommit,
-      ));
+      await localStore.commitSyncEvent(
+        SyncEventCommit(
+          eventKey: 'sync:${event.id}',
+          conversationId: message.conversationId,
+          expectedCursor: await localStore.loadSyncCursor(),
+          cursor: event.id,
+          checkCanCommit: wake?.checkCanCommit,
+        ),
+      );
     } on WakeWorkCancelled {
       rethrow;
     } catch (err) {
@@ -3496,7 +3907,9 @@ class AppState extends ChangeNotifier
   /// conversation is being applied meanwhile. Best effort: a failure keeps
   /// the note for the next pass and never stops sync.
   Future<void> _dropLeftConversations(
-      Session current, int ownerGeneration) async {
+    Session current,
+    int ownerGeneration,
+  ) async {
     final Object? mls = _mlsCrypto;
     if (mls is! MlsStateMaintenanceCryptoService) return;
     final Set<String> left;
@@ -3510,14 +3923,18 @@ class AppState extends ChangeNotifier
       try {
         await mls.deleteConversationState(conversationId);
         await _changeLeftConversations(
-            current, (ids) => ids.difference(<String>{conversationId}));
+          current,
+          (ids) => ids.difference(<String>{conversationId}),
+        );
         // The group is gone, and the server sends nothing more for it: a
         // pause of the conversation (C1 P1) has nothing left to hold.
         await _dropConversationPause(conversationId);
       } catch (err) {
         // Body-free: no conversation id.
-        developer.log('mls_left_group_drop_failed ${err.runtimeType}',
-            name: 'veritra.sync');
+        developer.log(
+          'mls_left_group_drop_failed ${err.runtimeType}',
+          name: 'veritra.sync',
+        );
       }
     }
   }
@@ -3528,10 +3945,13 @@ class AppState extends ChangeNotifier
   /// only by that drop, never by a join (a D74 Welcome joins nothing). A
   /// failed drop stops sync at this event with Retry, as a storage failure;
   /// a background pass hands the event to the foreground.
-  Future<void> _dropLeftBeforeWelcome(Session current, String conversationId,
-      {required WakeRunContext? wake,
-      required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
-          failure}) async {
+  Future<void> _dropLeftBeforeWelcome(
+    Session current,
+    String conversationId, {
+    required WakeRunContext? wake,
+    required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
+        failure,
+  }) async {
     final Object? mls = _mlsCrypto;
     if (mls is! MlsStateMaintenanceCryptoService) return;
     try {
@@ -3541,7 +3961,9 @@ class AppState extends ChangeNotifier
       if (wake != null) throw const WakeWorkCancelled();
       await mls.deleteConversationState(conversationId);
       await _changeLeftConversations(
-          current, (ids) => ids.difference(<String>{conversationId}));
+        current,
+        (ids) => ids.difference(<String>{conversationId}),
+      );
     } on WakeWorkCancelled {
       rethrow;
     } catch (err) {
@@ -3567,8 +3989,10 @@ class AppState extends ChangeNotifier
     try {
       await mls.pruneExpiredKeyPackages(now);
     } catch (err) {
-      developer.log('mls_key_package_prune_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'mls_key_package_prune_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 
@@ -3657,12 +4081,16 @@ class AppState extends ChangeNotifier
 
   Future<bool> setConversationMuted(String conversationId, bool muted) =>
       setConversationMute(
-          conversationId, muted ? MuteDuration.always : MuteDuration.off);
+        conversationId,
+        muted ? MuteDuration.always : MuteDuration.off,
+      );
 
   /// Mutes push for [duration] (or unmutes with [MuteDuration.off]). The
   /// server ends a timed mute by itself, and so does this device.
   Future<bool> setConversationMute(
-      String conversationId, MuteDuration duration) {
+    String conversationId,
+    MuteDuration duration,
+  ) {
     return _runScoped(Ops.mute, () async {
       final current = session;
       final client = api;
@@ -3695,10 +4123,15 @@ class AppState extends ChangeNotifier
         ? (_mutes[conversationId], true)
         : (null, false);
     if (before != after) {
-      unawaited(localStore
-          .saveConversationMute(conversationId,
-              muted: mute.muted, until: mute.until)
-          .catchError((Object _) {}));
+      unawaited(
+        localStore
+            .saveConversationMute(
+              conversationId,
+              muted: mute.muted,
+              until: mute.until,
+            )
+            .catchError((Object _) {}),
+      );
       _armMuteTimer();
       notifyListeners();
     }
@@ -3722,7 +4155,8 @@ class AppState extends ChangeNotifier
     _muteTimer = Timer(delay, () {
       _muteTimer = null;
       _mutes.removeWhere(
-          (_, until) => until != null && !until.isAfter(DateTime.now()));
+        (_, until) => until != null && !until.isAfter(DateTime.now()),
+      );
       _armMuteTimer();
       notifyListeners();
     });
@@ -3825,6 +4259,8 @@ class AppState extends ChangeNotifier
         conversationId,
         policy,
       );
+      // C2: owed to the record until a sync pass finds it written.
+      await _rememberPostingRecord(conversationId, policy == 'admins');
       conversations = [
         for (final c in conversations)
           if (c.id == updated.id)
@@ -3842,7 +4278,8 @@ class AppState extends ChangeNotifier
   /// The server's metadata search: accounts by exact username or ID only
   /// (communities and channels are searched on the device,
   /// [searchCommunityNamesLocally]). The search screen sends only a query
-  /// that could be an account ([mayMatchAccount]).
+  /// that clearly names a person ([accountLookupQuery]), never a bare word
+  /// that could be a community's name.
   Future<List<MetadataSearchResult>> searchMetadata(String query) async {
     final current = session;
     final client = api;
@@ -3970,9 +4407,10 @@ class AppState extends ChangeNotifier
         await _enqueueSessionTransition(() async {
           if (!owns()) return;
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+          );
           error = describeError(err, l10n);
         });
       } else if (owns()) {
@@ -3990,7 +4428,10 @@ class AppState extends ChangeNotifier
   /// every await, before its result is used: an export whose session ended
   /// returns null, and the finally removes its '.part' file.
   Future<String?> _writeAccountExport(
-      ApiClient client, String token, bool Function() owns) async {
+    ApiClient client,
+    String token,
+    bool Function() owns,
+  ) async {
     final directory = await getApplicationDocumentsDirectory();
     if (!owns()) return null;
     final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
@@ -4097,11 +4538,19 @@ class AppState extends ChangeNotifier
   Future<bool> sendMessageTo(String conversationId, String plaintext) {
     final body = _composedBody(conversationId, plaintext);
     if (!_wantsLinkPreview(body)) {
-      return _sendPayload(conversationId, AppPayloadType.text, body,
-          draftText: plaintext);
+      return _sendPayload(
+        conversationId,
+        AppPayloadType.text,
+        body,
+        draftText: plaintext,
+      );
     }
     return _sendWithLinkPreview(
-        conversationId, AppPayloadType.text, body, plaintext);
+      conversationId,
+      AppPayloadType.text,
+      body,
+      plaintext,
+    );
   }
 
   /// Whether an outgoing body may get a link preview (B2): the setting is
@@ -4119,16 +4568,22 @@ class AppState extends ChangeNotifier
   /// see or fetch the link. Any failure sends the body unchanged. A second
   /// send for the same conversation while this one is still building is
   /// refused, so a repeated tap cannot send the same text twice.
-  Future<bool> _sendWithLinkPreview(String conversationId, AppPayloadType type,
-      Map<String, Object?> body, String draftText) async {
+  Future<bool> _sendWithLinkPreview(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body,
+    String draftText,
+  ) async {
     final owner = session;
     final generation = _sessionGeneration;
     if (owner == null || !_previewPending.add(conversationId)) return false;
     notifyListeners();
     var sendable = body;
     try {
-      final preview =
-          await linkPreviews.build(body['text'] as String, linkPreviewMode);
+      final preview = await linkPreviews.build(
+        body['text'] as String,
+        linkPreviewMode,
+      );
       if (preview != null) sendable = bodyWithLinkPreview(body, preview);
     } catch (_) {
       // No preview: the message goes out as written.
@@ -4141,48 +4596,67 @@ class AppState extends ChangeNotifier
     return _sendPayload(conversationId, type, sendable, draftText: draftText);
   }
 
-  Map<String, Object?> _composedBody(String id, String text) =>
-      composeMessage(text, accountsByUsername: {
-        for (final m in membersFor(id))
-          if (m.username != null) m.username!: m.accountId
-      });
+  Map<String, Object?> _composedBody(String id, String text) => composeMessage(
+        text,
+        accountsByUsername: {
+          for (final m in membersFor(id))
+            if (m.username != null) m.username!: m.accountId,
+        },
+      );
 
   /// Replies to the message with local history key [targetKey] (D22).
   Future<bool> replyTo(String conversationId, String targetKey, String text) {
     final body = <String, Object?>{
       ..._composedBody(conversationId, text),
-      'reply_to_id': targetKey
+      'reply_to_id': targetKey,
     };
     if (!_wantsLinkPreview(body)) {
-      return _sendPayload(conversationId, AppPayloadType.reply, body,
-          draftText: text);
+      return _sendPayload(
+        conversationId,
+        AppPayloadType.reply,
+        body,
+        draftText: text,
+      );
     }
     return _sendWithLinkPreview(
-        conversationId, AppPayloadType.reply, body, text);
+      conversationId,
+      AppPayloadType.reply,
+      body,
+      text,
+    );
   }
 
   /// Replaces the text of one of this account's own messages.
   Future<bool> editMessage(
-          String conversationId, String targetKey, String text) =>
+    String conversationId,
+    String targetKey,
+    String text,
+  ) =>
       _sendPayload(conversationId, AppPayloadType.edit, <String, Object?>{
         'message_id': targetKey,
-        ..._composedBody(conversationId, text)
+        ..._composedBody(conversationId, text),
       });
 
-  Future<bool> pinMessage(String conversationId, String targetKey,
-      {required bool pinned, int durationSeconds = 604800}) async {
+  Future<bool> pinMessage(
+    String conversationId,
+    String targetKey, {
+    required bool pinned,
+    int durationSeconds = 604800,
+  }) async {
     await _ensureConversationAuthority(conversationId);
     if (!canPinMessages(conversationId)) return false;
     return _sendPayload(conversationId, AppPayloadType.pin, {
       'message_id': targetKey,
       'pinned': pinned,
-      if (pinned) 'duration_seconds': durationSeconds
+      if (pinned) 'duration_seconds': durationSeconds,
     });
   }
 
   /// A forward is a fresh send, with no source identity or mention metadata.
   Future<bool> forwardMessage(
-      LocalMessage source, List<String> destinations) async {
+    LocalMessage source,
+    List<String> destinations,
+  ) async {
     final owner = session;
     final generation = _sessionGeneration;
     if (owner == null || !_syncOwnerActive(owner, generation)) return false;
@@ -4192,8 +4666,10 @@ class AppState extends ChangeNotifier
         live.hiddenAt != null ||
         (live.expiresAt != null &&
             live.expiresAt! <= DateTime.now().millisecondsSinceEpoch) ||
-        !const [LocalMessageKind.text, LocalMessageKind.attachment]
-            .contains(live.kind)) return false;
+        !const [
+          LocalMessageKind.text,
+          LocalMessageKind.attachment,
+        ].contains(live.kind)) return false;
     final targets = destinations.toSet();
     final hops = live.forwardHops ?? 0;
     if (targets.isEmpty || targets.length > (hops >= 5 ? 1 : 5)) return false;
@@ -4212,29 +4688,35 @@ class AppState extends ChangeNotifier
           if (!await _sendPayload(id, AppPayloadType.text, {
             'text': live.body ?? '',
             if (format['entities'] != null) 'entities': format['entities'],
-            'forwarded': {'hops': nextHops}
+            'forwarded': {'hops': nextHops},
           })) return false;
         } else {
-          final attachments = AttachmentEntry.listFromBody(live.body,
-              conversationId: live.conversationId);
+          final attachments = AttachmentEntry.listFromBody(
+            live.body,
+            conversationId: live.conversationId,
+          );
           if (attachments.isEmpty || attachmentService == null) return false;
           for (final attachment in attachments) {
             if (!_syncOwnerActive(owner, generation)) return false;
-            final plaintext = await loadAttachment(attachment,
-                conversationId: live.conversationId, memoryOnly: true);
+            final plaintext = await loadAttachment(
+              attachment,
+              conversationId: live.conversationId,
+            );
             try {
               if (!_syncOwnerActive(owner, generation)) return false;
-              if (!await _sendEncryptedAttachment(id,
-                  fileName: attachment.fileName,
-                  forwardedHops: nextHops,
-                  prepare: (service, name, paddingLimit) =>
-                      service.encryptBytes(
-                          plaintext: plaintext,
-                          conversationId: id,
-                          attachmentActionId: _randomHexId(),
-                          fileName: name,
-                          mediaType: attachment.mediaType,
-                          paddingLimit: paddingLimit))) return false;
+              if (!await _sendEncryptedAttachment(
+                id,
+                fileName: attachment.fileName,
+                forwardedHops: nextHops,
+                prepare: (service, name, paddingLimit) => service.encryptBytes(
+                  plaintext: plaintext,
+                  conversationId: id,
+                  attachmentActionId: _randomHexId(),
+                  fileName: name,
+                  mediaType: attachment.mediaType,
+                  paddingLimit: paddingLimit,
+                ),
+              )) return false;
             } finally {
               plaintext.fillRange(0, plaintext.length, 0);
             }
@@ -4255,8 +4737,11 @@ class AppState extends ChangeNotifier
   /// on, a community post is also marked `history_hidden`, so newcomers
   /// never fetch it (design decision 7).
   Future<bool> deleteMessage(String conversationId, String targetKey) async {
-    final sent = await _sendPayload(conversationId, AppPayloadType.delete,
-        <String, Object?>{'message_id': targetKey});
+    final sent = await _sendPayload(
+      conversationId,
+      AppPayloadType.delete,
+      <String, Object?>{'message_id': targetKey},
+    );
     if (sent) await _hideFromHistory(conversationId, targetKey);
     return sent;
   }
@@ -4276,30 +4761,40 @@ class AppState extends ChangeNotifier
     }
     final kind = conversationKind(conversationId);
     if (kind != 'community_shared' && kind != 'community_channel') return;
-    final serverId =
-        historyFor(conversationId).forKey(targetKey)?.serverMessageId;
+    final serverId = historyFor(
+      conversationId,
+    ).forKey(targetKey)?.serverMessageId;
     if (serverId == null) return;
     try {
       await client.hideHistoryMessage(token, serverId);
     } catch (err) {
-      developer.log('c7_history_hide_failed ${err.runtimeType}',
-          name: 'veritra.sync');
+      developer.log(
+        'c7_history_hide_failed ${err.runtimeType}',
+        name: 'veritra.sync',
+      );
     }
   }
 
   /// Sets this account's reaction on a message; an empty [reaction] clears it.
   Future<bool> react(
-          String conversationId, String targetKey, String reaction) =>
-      _sendPayload(conversationId, AppPayloadType.reaction,
-          <String, Object?>{'message_id': targetKey, 'reaction': reaction});
+    String conversationId,
+    String targetKey,
+    String reaction,
+  ) =>
+      _sendPayload(conversationId, AppPayloadType.reaction, <String, Object?>{
+        'message_id': targetKey,
+        'reaction': reaction,
+      });
 
   /// Sends a poll (B3). The question and options travel inside the MLS
   /// payload; the server sees only ciphertext. False when the poll breaks
   /// the limits in `crypto/poll.dart` or the send is refused.
-  Future<bool> sendPoll(String conversationId,
-      {required String question,
-      required List<String> options,
-      required bool multipleChoice}) {
+  Future<bool> sendPoll(
+    String conversationId, {
+    required String question,
+    required List<String> options,
+    required bool multipleChoice,
+  }) {
     final body = <String, Object?>{
       'question': question.trim(),
       'options': [for (final option in options) option.trim()],
@@ -4312,7 +4807,10 @@ class AppState extends ChangeNotifier
   /// Sets this account's vote on a poll; an empty [choices] takes it back. A
   /// vote the poll would not accept is not sent.
   Future<bool> votePoll(
-      String conversationId, String pollKey, List<int> choices) {
+    String conversationId,
+    String pollKey,
+    List<int> choices,
+  ) {
     final poll = historyFor(conversationId).forKey(pollKey);
     final account = session?.accountId;
     if (account == null ||
@@ -4323,8 +4821,11 @@ class AppState extends ChangeNotifier
         applyPollVote(poll.body, account, choices) == null) {
       return Future<bool>.value(false);
     }
-    return _sendPayload(conversationId, AppPayloadType.pollVote,
-        <String, Object?>{'message_id': pollKey, 'choices': choices});
+    return _sendPayload(
+      conversationId,
+      AppPayloadType.pollVote,
+      <String, Object?>{'message_id': pollKey, 'choices': choices},
+    );
   }
 
   /// Closes a poll this account sent; later votes are ignored. False when the
@@ -4341,8 +4842,11 @@ class AppState extends ChangeNotifier
         applyPollClose(poll.body) == null) {
       return Future<bool>.value(false);
     }
-    return _sendPayload(conversationId, AppPayloadType.pollClose,
-        <String, Object?>{'message_id': pollKey});
+    return _sendPayload(
+      conversationId,
+      AppPayloadType.pollClose,
+      <String, Object?>{'message_id': pollKey},
+    );
   }
 
   /// Encrypts the file at [path] on this device, uploads only its
@@ -4357,24 +4861,31 @@ class AppState extends ChangeNotifier
     AttachmentCancellationToken? cancellation,
     int? forwardedHops,
   }) =>
-      _sendEncryptedAttachment(conversationId,
-          fileName: fileName,
-          forwardedHops: forwardedHops,
-          prepare: (service, name, paddingLimit) => service.encryptFile(
-              sourcePath: path,
-              conversationId: conversationId,
-              attachmentActionId: _randomHexId(),
-              fileName: name,
-              mediaType: attachmentMediaType(name, mediaType),
-              cancellation: cancellation,
-              paddingLimit: paddingLimit));
+      _sendEncryptedAttachment(
+        conversationId,
+        fileName: fileName,
+        forwardedHops: forwardedHops,
+        prepare: (service, name, paddingLimit) => service.encryptFile(
+          sourcePath: path,
+          conversationId: conversationId,
+          attachmentActionId: _randomHexId(),
+          fileName: name,
+          mediaType: attachmentMediaType(name, mediaType),
+          cancellation: cancellation,
+          paddingLimit: paddingLimit,
+        ),
+      );
 
-  Future<bool> _sendEncryptedAttachment(String conversationId,
-      {required String fileName,
-      int? forwardedHops,
-      required Future<PreparedEncryptedAttachment> Function(
-              AttachmentCryptoService service, String name, int paddingLimit)
-          prepare}) async {
+  Future<bool> _sendEncryptedAttachment(
+    String conversationId, {
+    required String fileName,
+    int? forwardedHops,
+    required Future<PreparedEncryptedAttachment> Function(
+      AttachmentCryptoService service,
+      String name,
+      int paddingLimit,
+    ) prepare,
+  }) async {
     // Upload can take long; the channel is the one open when the send began.
     final channelId = _selectedChannels[conversationId];
     final service = attachmentService;
@@ -4442,16 +4953,44 @@ class AppState extends ChangeNotifier
   }
 
   /// Downloads one attachment's ciphertext to a temporary file and decrypts
-  /// it. By default it decrypts to a temporary plaintext file and reads that
-  /// back. With [memoryOnly] (used by forwarding) it decrypts straight to
-  /// bytes and creates no plaintext file. Both temporary files are deleted
-  /// in `finally`, best effort: a crash or kill before then can leave them
-  /// in the working directory.
+  /// it straight to bytes (D134): no plaintext file is ever created. The
+  /// ciphertext temporary file is deleted in `finally`, best effort: a crash
+  /// or kill before then can leave it in the working directory, where the
+  /// hourly sweep removes it. The caller wipes the bytes when done.
   Future<Uint8List> loadAttachment(
     AttachmentEntry entry, {
     required String conversationId,
-    bool memoryOnly = false,
-  }) async {
+  }) =>
+      _withAttachmentCiphertext(
+        entry,
+        conversationId,
+        (service, ciphertext) => service.decryptBytes(
+            ciphertextPath: ciphertext.path, manifest: entry.manifest),
+      );
+
+  /// Decrypts one attachment straight into [destinationPath], which must not
+  /// exist yet, without holding the whole plaintext in memory. For a big
+  /// file that another viewer needs as a file (D134).
+  Future<void> decryptAttachmentToFile(
+    AttachmentEntry entry,
+    String destinationPath, {
+    required String conversationId,
+  }) =>
+      _withAttachmentCiphertext(
+        entry,
+        conversationId,
+        (service, ciphertext) => service.decryptFile(
+          ciphertextPath: ciphertext.path,
+          destinationPath: destinationPath,
+          manifest: entry.manifest,
+        ),
+      );
+
+  Future<T> _withAttachmentCiphertext<T>(
+    AttachmentEntry entry,
+    String conversationId,
+    Future<T> Function(AttachmentCryptoService service, File ciphertext) use,
+  ) async {
     final service = attachmentService;
     final current = session;
     final client = api;
@@ -4467,13 +5006,13 @@ class AppState extends ChangeNotifier
       throw StateError('attachments wait until the request is accepted');
     }
     final directory = await service.workingDirectory();
-    final base = '${directory.path}${Platform.pathSeparator}'
-        '.veritra-attachment-${_randomHexId()}';
-    final ciphertext = File('$base.ciphertext');
-    final plaintext = File('$base.plaintext');
+    final ciphertext = File('${directory.path}${Platform.pathSeparator}'
+        '.veritra-attachment-${_randomHexId()}.ciphertext');
     try {
-      final stream =
-          await client.downloadEncryptedAttachment(current.token, entry.id);
+      final stream = await client.downloadEncryptedAttachment(
+        current.token,
+        entry.id,
+      );
       final sink = ciphertext.openWrite();
       var received = 0;
       try {
@@ -4490,22 +5029,12 @@ class AppState extends ChangeNotifier
       if (received != entry.ciphertextSize) {
         throw const FormatException('attachment is smaller than announced');
       }
-      if (memoryOnly)
-        return await service.decryptBytes(
-            ciphertextPath: ciphertext.path, manifest: entry.manifest);
-      await service.decryptFile(
-        ciphertextPath: ciphertext.path,
-        destinationPath: plaintext.path,
-        manifest: entry.manifest,
-      );
-      return await plaintext.readAsBytes();
+      return await use(service, ciphertext);
     } finally {
-      for (final file in <File>[ciphertext, plaintext]) {
-        try {
-          if (await file.exists()) await file.delete();
-        } on FileSystemException {
-          // Best effort: the temporary directory is cleared by the system.
-        }
+      try {
+        if (await ciphertext.exists()) await ciphertext.delete();
+      } on FileSystemException {
+        // Best effort: the sweep removes it later.
       }
     }
   }
@@ -4560,14 +5089,19 @@ class AppState extends ChangeNotifier
     final conversationId = channel.conversationId;
     if (c7 == null || conversationId == null) return;
     try {
-      await c7.c7ProposeRecord(conversationId, channel.id,
-          full: full,
-          create: true,
-          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      await c7.c7ProposeRecord(
+        conversationId,
+        channel.id,
+        full: full,
+        create: true,
+        layoutGeneration: _c7LayoutGeneration(conversationId, channel.id),
+      );
       unawaited(_flushOutbox());
     } catch (err) {
-      developer.log('c7_create_record_failed ${err.runtimeType}',
-          name: 'private_messenger.c7');
+      developer.log(
+        'c7_create_record_failed ${err.runtimeType}',
+        name: 'private_messenger.c7',
+      );
     }
   }
 
@@ -4585,22 +5119,34 @@ class AppState extends ChangeNotifier
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       try {
         if (due is C7DueRepropose) {
-          await c7.c7ProposeRecord(due.conversationId, due.channelId,
-              full: due.full,
-              layoutGeneration:
-                  _c7LayoutGeneration(due.conversationId, due.channelId));
+          await c7.c7ProposeRecord(
+            due.conversationId,
+            due.channelId,
+            full: due.full,
+            layoutGeneration: _c7LayoutGeneration(
+              due.conversationId,
+              due.channelId,
+            ),
+          );
           queued = true;
         } else if (due is C7DueMove) {
           // C3 conversion: the `move` record this device owes.
-          queued = await c7.c7ProposeMove(due,
-                      layoutGeneration: _c7LayoutGeneration(
-                          due.conversationId, due.channelId)) !=
+          queued = await c7.c7ProposeMove(
+                    due,
+                    layoutGeneration: _c7LayoutGeneration(
+                      due.conversationId,
+                      due.channelId,
+                    ),
+                  ) !=
                   null ||
               queued;
         } else {
           if (due is C7DueSync &&
               await _c7SyncDelivered(
-                  current, due.conversationId, due.forEpoch)) {
+                current,
+                due.conversationId,
+                due.forEpoch,
+              )) {
             // Owner answer Q3: the newcomers already have it; members never
             // receive a history_sync, so the server says so instead.
             await c7.c7SyncDelivered(due.conversationId, due.forEpoch);
@@ -4625,8 +5171,10 @@ class AppState extends ChangeNotifier
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
         _c7ImportFailed(id, wait, err);
-        developer.log('c7_import_failed ${err.runtimeType}',
-            name: 'private_messenger.c7');
+        developer.log(
+          'c7_import_failed ${err.runtimeType}',
+          name: 'private_messenger.c7',
+        );
       }
     }
     // C3 conversion: the earlier posts a move's wrap opens, fetched from
@@ -4643,8 +5191,10 @@ class AppState extends ChangeNotifier
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
         _c7ImportFailed(id, wait, err);
-        developer.log('c7_moved_import_failed ${err.runtimeType}',
-            name: 'private_messenger.c7');
+        developer.log(
+          'c7_moved_import_failed ${err.runtimeType}',
+          name: 'private_messenger.c7',
+        );
       }
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -4668,12 +5218,18 @@ class AppState extends ChangeNotifier
   /// no request reopened. Unknown (offline, an older server) counts as no:
   /// the send that follows is refused if one arrived meanwhile.
   Future<bool> _c7SyncDelivered(
-      Session current, String conversationId, int forEpoch) async {
+    Session current,
+    String conversationId,
+    int forEpoch,
+  ) async {
     final client = api;
     if (client == null) return false;
     try {
       return await client.historySyncDelivered(
-          current.token, conversationId, forEpoch);
+        current.token,
+        conversationId,
+        forEpoch,
+      );
     } on Object {
       return false;
     }
@@ -4694,8 +5250,12 @@ class AppState extends ChangeNotifier
   /// of the data, never on what opens, so the requests are the same in
   /// every mode. A malformed row is skipped.
   Future<C7HistoryPage> _c7FetchPage(
-      Session current, String conversationId, String? channelId,
-      {String? before, C7Move? moved}) async {
+    Session current,
+    String conversationId,
+    String? channelId, {
+    String? before,
+    C7Move? moved,
+  }) async {
     final client = api;
     if (client == null) throw StateError('no server');
     final rows = <C7HistoryRow>[];
@@ -4705,11 +5265,21 @@ class AppState extends ChangeNotifier
     while (true) {
       final want = min(c7HistoryRequestLimit, c7FirstPagePosts - count);
       final batch = moved == null
-          ? await client.historyBodies(current.token, conversationId,
-              channelId: channelId, beforeId: cursor, limit: want)
+          ? await client.historyBodies(
+              current.token,
+              conversationId,
+              channelId: channelId,
+              beforeId: cursor,
+              limit: want,
+            )
           : await client.movedHistoryBodies(
-              current.token, moved.channelId, moved.fromConversationId,
-              group: channelId == null, beforeId: cursor, limit: want);
+              current.token,
+              moved.channelId,
+              moved.fromConversationId,
+              group: channelId == null,
+              beforeId: cursor,
+              limit: want,
+            );
       for (final raw in batch) {
         count++;
         final id = raw['message_id'];
@@ -4732,7 +5302,10 @@ class AppState extends ChangeNotifier
   /// The import at join: the first page of the group-level stream and of
   /// every channel, and the former-member keys, in one import.
   Future<void> _c7ImportFirst(
-      Session current, C7HistoryService c7, String conversationId) async {
+    Session current,
+    C7HistoryService c7,
+    String conversationId,
+  ) async {
     final client = api;
     if (client == null) return;
     final groupLevel = await _c7FetchPage(current, conversationId, null);
@@ -4741,12 +5314,18 @@ class AppState extends ChangeNotifier
       channels[channel] = await _c7FetchPage(current, conversationId, channel);
     }
     final former = <C7FormerKey>[
-      for (final raw
-          in await client.formerMemberKeys(current.token, conversationId))
+      for (final raw in await client.formerMemberKeys(
+        current.token,
+        conversationId,
+      ))
         if (C7FormerKey.tryParse(raw) case final key?) key,
     ];
-    await c7.c7ImportHistory(conversationId,
-        groupLevel: groupLevel, channels: channels, formerKeys: former);
+    await c7.c7ImportHistory(
+      conversationId,
+      groupLevel: groupLevel,
+      channels: channels,
+      formerKeys: former,
+    );
     if (_history.containsKey(conversationId)) {
       await refreshHistory(conversationId);
     }
@@ -4756,20 +5335,34 @@ class AppState extends ChangeNotifier
   /// and group-level stream, and the keys of the devices that posted there,
   /// in one import into the new conversation.
   Future<void> _c7ImportMovedPosts(
-      Session current, C7HistoryService c7, C7Move move) async {
+    Session current,
+    C7HistoryService c7,
+    C7Move move,
+  ) async {
     final client = api;
     if (client == null) return;
     final from = move.fromConversationId;
     final groupLevel = await _c7FetchPage(current, from, null, moved: move);
-    final channel =
-        await _c7FetchPage(current, from, move.channelId, moved: move);
+    final channel = await _c7FetchPage(
+      current,
+      from,
+      move.channelId,
+      moved: move,
+    );
     final keys = <C7FormerKey>[
-      for (final raw
-          in await client.movedMemberKeys(current.token, move.channelId, from))
+      for (final raw in await client.movedMemberKeys(
+        current.token,
+        move.channelId,
+        from,
+      ))
         if (C7FormerKey.tryParse(raw) case final key?) key,
     ];
-    await c7.c7ImportMoved(move,
-        channel: channel, groupLevel: groupLevel, keys: keys);
+    await c7.c7ImportMoved(
+      move,
+      channel: channel,
+      groupLevel: groupLevel,
+      keys: keys,
+    );
     if (_history.containsKey(move.toConversationId)) {
       await refreshHistory(move.toConversationId);
     }
@@ -4778,7 +5371,9 @@ class AppState extends ChangeNotifier
   /// Rereads the paging cursors for [ids]. Former-member marks are on the
   /// rows themselves (local schema 42).
   Future<void> _c7RefreshImport(
-      C7HistoryService c7, Iterable<String> ids) async {
+    C7HistoryService c7,
+    Iterable<String> ids,
+  ) async {
     final earlier = <String, Map<String, String>>{..._c7Earlier};
     for (final id in ids) {
       earlier[id] = <String, String>{
@@ -4821,12 +5416,18 @@ class AppState extends ChangeNotifier
     _loadingOlder.add(conversationId);
     notifyListeners();
     try {
-      final page =
-          await _c7FetchPage(current, conversationId, channel, before: cursor);
-      await c7.c7ImportHistory(conversationId,
-          groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
-          channels: <String, C7HistoryPage>{channel: page},
-          first: false);
+      final page = await _c7FetchPage(
+        current,
+        conversationId,
+        channel,
+        before: cursor,
+      );
+      await c7.c7ImportHistory(
+        conversationId,
+        groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        channels: <String, C7HistoryPage>{channel: page},
+        first: false,
+      );
       await _c7RefreshImport(c7, <String>[conversationId]);
       await refreshHistory(conversationId);
     } catch (err) {
@@ -4854,11 +5455,12 @@ class AppState extends ChangeNotifier
     if (at == null || _disposed) return;
     final wait = at.difference(DateTime.now().toUtc());
     _c7Timer = Timer(
-        (wait.isNegative ? Duration.zero : wait) + const Duration(seconds: 1),
-        () {
-      _c7Timer = null;
-      unawaited(_catchUpSyncEvents());
-    });
+      (wait.isNegative ? Duration.zero : wait) + const Duration(seconds: 1),
+      () {
+        _c7Timer = null;
+        unawaited(_catchUpSyncEvents());
+      },
+    );
   }
 
   /// The system line for a record message (decision 1): `true` when it
@@ -4887,10 +5489,13 @@ class AppState extends ChangeNotifier
     await _run(() async {
       final view = await c7.c7ChannelView(conversationId, channel.id);
       if (view == null) return;
-      await c7.c7ProposeRecord(conversationId, channel.id,
-          full: full,
-          create: !view.recorded,
-          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      await c7.c7ProposeRecord(
+        conversationId,
+        channel.id,
+        full: full,
+        create: !view.recorded,
+        layoutGeneration: _c7LayoutGeneration(conversationId, channel.id),
+      );
       sent = true;
     });
     if (sent) unawaited(_flushOutbox());
@@ -4990,7 +5595,9 @@ class AppState extends ChangeNotifier
     // chat for another channel cannot redirect a send already made. A shared
     // group without a usable channel sends nothing.
     final route = _channelRouteFor(
-        conversationId, channelId ?? _selectedChannels[conversationId]);
+      conversationId,
+      channelId ?? _selectedChannels[conversationId],
+    );
     if (route == null && _isSharedGroup(conversationId)) return false;
     final routeChannelId = channelId ?? _selectedChannels[conversationId];
     if (restrictedPostTypes.contains(type) &&
@@ -5015,8 +5622,15 @@ class AppState extends ChangeNotifier
           return false;
         }
         final sent = await _sendPayloadOnce(
-            owner, ownerGeneration, conversationId, type, body,
-            attachmentRefs: attachmentRefs, draftText: draftText, route: route);
+          owner,
+          ownerGeneration,
+          conversationId,
+          type,
+          body,
+          attachmentRefs: attachmentRefs,
+          draftText: draftText,
+          route: route,
+        );
         if (sent != null) return sent;
         wait = true;
       }
@@ -5032,7 +5646,10 @@ class AppState extends ChangeNotifier
   /// session ended meanwhile; a paused conversation ends the wait too, and
   /// the send then reports the pause.
   Future<bool> _awaitRemovalHold(
-      String conversationId, Session owner, int ownerGeneration) async {
+    String conversationId,
+    Session owner,
+    int ownerGeneration,
+  ) async {
     while (true) {
       if (_disposed || !_syncOwnerActive(owner, ownerGeneration)) return false;
       // A paused or departed conversation ends the wait; the attempt then
@@ -5113,8 +5730,9 @@ class AppState extends ChangeNotifier
     if (owner == null || _removalHoldsLoaded == generation) return;
     String? stored;
     try {
-      stored = await localStore
-          .loadSetting(_removalHoldsSetting(owner.deviceId ?? ''));
+      stored = await localStore.loadSetting(
+        _removalHoldsSetting(owner.deviceId ?? ''),
+      );
     } catch (_) {
       return;
     }
@@ -5226,8 +5844,10 @@ class AppState extends ChangeNotifier
           // still looked at, and the pass still asks for a follow-up.
           if (!_syncOwnerActive(current, generation)) return;
           // Body-free: no conversation, device or crypto text.
-          developer.log('mls_removal_hold_epoch_failed ${err.runtimeType}',
-              name: 'veritra.sync');
+          developer.log(
+            'mls_removal_hold_epoch_failed ${err.runtimeType}',
+            name: 'veritra.sync',
+          );
           continue;
         }
         if (local == null) {
@@ -5238,10 +5858,13 @@ class AppState extends ChangeNotifier
           release = true;
         } else if (hold.accounts.isNotEmpty) {
           try {
-            final members =
-                await client.conversationMembers(current.token, conversationId);
-            release = hold.accounts.every((account) =>
-                members.any((member) => member.accountId == account));
+            final members = await client.conversationMembers(
+              current.token,
+              conversationId,
+            );
+            release = hold.accounts.every(
+              (account) => members.any((member) => member.accountId == account),
+            );
           } catch (err) {
             if (err is ApiException && err.statusCode == 401) rethrow;
           }
@@ -5283,113 +5906,138 @@ class AppState extends ChangeNotifier
     // C3 info payloads are background work: their failures land under
     // their own op, never in the composer's send error.
     return _runScoped(
-        infoPayloadTypes.contains(type)
-            ? Ops.communityInfo
-            : reportKeyPayloadTypes.contains(type)
-                ? Ops.reportKeys
-                : Ops.send, () async {
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      final current = session;
-      final client = api;
-      final conversation =
-          conversations.where((item) => item.id == conversationId).firstOrNull;
-      if (current == null || client == null || conversation == null) {
-        return;
-      }
-      // K0 step 8: a recovered device that no one can add to this
-      // conversation sends nothing, not even the acceptance below.
-      final refusal = await _noPeerRefusal(conversation.id);
-      if (refusal != null) throw UserFacingException(refusal);
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      // Replying counts as accepting.
-      if (isMessageRequest(conversation)) {
-        await _acceptConversation(conversation);
-      }
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      if (!await localStore.hasOutboxCapacity()) {
-        throw const OutboxFullException();
-      }
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      if (mlsConversationFailed(conversation.id)) {
-        throw const ConversationPausedException();
-      }
-      if (conversationSyncPaused(conversation.id)) {
-        throw ConversationSyncPausedException(conversation.id);
-      }
-      final mls = _mlsCrypto;
-      // D68: checked again inside the queue, right before encryption.
-      if (mls != null && await _heldForRemoval(conversation.id)) {
-        held = true;
-        return;
-      }
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      // W11: this account's profile key (and the group's, once a commit has
-      // added devices) rides along with a post.
-      final sent = mls == null
-          ? body
-          : await _withProfileSidecars(conversation.id, type, body);
-      final carriesKeys = !identical(sent, body);
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      final MessageEnvelope encrypted;
-      // The sender's own expiry goes inside the encrypted payload (TASK-106)
-      // when the conversation has a disappearing timer and the service can
-      // carry it; otherwise the payload has none and receivers fall back to
-      // the server-stamped time.
-      final DateTime? senderExpiry = senderExpiryFor(
-          type, conversation.retentionSeconds, DateTime.now().toUtc());
-      final Object? expiringService = mls;
-      if (mls != null &&
-          senderExpiry != null &&
-          expiringService is ExpiringPayloadCryptoService) {
-        encrypted = await expiringService.encryptExpiringPayload(
-            conversation.id, type, sent,
+      infoPayloadTypes.contains(type)
+          ? Ops.communityInfo
+          : reportKeyPayloadTypes.contains(type)
+              ? Ops.reportKeys
+              : Ops.send,
+      // L1: a send the approval hold refused updates the chat's banner now.
+      () => _noticeApprovalHold(conversationId, () async {
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        final current = session;
+        final client = api;
+        final conversation = conversations
+            .where((item) => item.id == conversationId)
+            .firstOrNull;
+        if (current == null || client == null || conversation == null) {
+          return;
+        }
+        // K0 step 8: a recovered device that no one can add to this
+        // conversation sends nothing, not even the acceptance below.
+        final refusal = await _noPeerRefusal(conversation.id);
+        if (refusal != null) throw UserFacingException(refusal);
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        // Replying counts as accepting.
+        if (isMessageRequest(conversation)) {
+          await _acceptConversation(conversation);
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        if (!await localStore.hasOutboxCapacity()) {
+          throw const OutboxFullException();
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        if (mlsConversationFailed(conversation.id)) {
+          throw const ConversationPausedException();
+        }
+        if (conversationSyncPaused(conversation.id)) {
+          throw ConversationSyncPausedException(conversation.id);
+        }
+        final mls = _mlsCrypto;
+        // D68: checked again inside the queue, right before encryption.
+        if (mls != null && await _heldForRemoval(conversation.id)) {
+          held = true;
+          return;
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        // W11: this account's profile key (and the group's, once a commit has
+        // added devices) rides along with a post.
+        final sent = mls == null
+            ? body
+            : await _withProfileSidecars(conversation.id, type, body);
+        final carriesKeys = !identical(sent, body);
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        final MessageEnvelope encrypted;
+        // The sender's own expiry goes inside the encrypted payload (TASK-106)
+        // when the conversation has a disappearing timer and the service can
+        // carry it; otherwise the payload has none and receivers fall back to
+        // the server-stamped time.
+        final DateTime? senderExpiry = senderExpiryFor(
+          type,
+          conversation.retentionSeconds,
+          DateTime.now().toUtc(),
+        );
+        final Object? expiringService = mls;
+        if (mls != null &&
+            senderExpiry != null &&
+            expiringService is ExpiringPayloadCryptoService) {
+          encrypted = await expiringService.encryptExpiringPayload(
+            conversation.id,
+            type,
+            sent,
             expiresAt: senderExpiry,
             channelId: route?.channelId,
             layoutGeneration: route?.generation,
             attachmentRefs: attachmentRefs,
-            draftText: draftText);
-      } else if (mls != null && route != null) {
-        final Object service = mls;
-        if (service is! ChannelRoutedCryptoService) {
-          throw StateError('this crypto service cannot post into a channel');
-        }
-        encrypted = await service.encryptChannelPayload(
-            conversation.id, type, sent,
+            draftText: draftText,
+          );
+        } else if (mls != null && route != null) {
+          final Object service = mls;
+          if (service is! ChannelRoutedCryptoService) {
+            throw StateError('this crypto service cannot post into a channel');
+          }
+          encrypted = await service.encryptChannelPayload(
+            conversation.id,
+            type,
+            sent,
             channelId: route.channelId,
             layoutGeneration: route.generation,
             attachmentRefs: attachmentRefs,
-            draftText: draftText);
-      } else if (mls != null) {
-        encrypted = await mls.encryptPayload(conversation.id, type, sent,
-            attachmentRefs: attachmentRefs, draftText: draftText);
-      } else if (type == AppPayloadType.text) {
-        encrypted = await cryptoService.encrypt(
-            conversation.id, body['text'] as String);
-      } else {
-        throw StateError('Production MLS/OpenMLS encryption is not integrated');
-      }
-      if (!_syncOwnerActive(owner, ownerGeneration)) return;
-      await localStore.enqueueEnvelope(encrypted, draftText: draftText);
-      queued = true;
-      if (carriesKeys) {
-        unawaited(
-            profiles?.sidecarsSent(conversation.id).catchError((Object _) {}));
-      }
-      if (mls != null) await refreshHistory(conversation.id);
-      final record = (await localStore.pendingEnvelopeRecords())
-          .where((item) =>
-              item.envelope.idempotencyKey == encrypted.idempotencyKey)
-          .firstOrNull;
-      if (record != null) {
-        _outboxRecords[encrypted.idempotencyKey] = record;
-      }
-      pendingOutbox = <MessageEnvelope>[...pendingOutbox, encrypted];
-      _outboxStates[encrypted.idempotencyKey] = OutboxDeliveryState.sending;
-      notifyListeners();
-      // Durable acceptance is the send result. Network delivery is owned by
-      // the single retry worker, so a slow connection never holds the draft.
-      unawaited(_flushOutbox());
-    }).then((succeeded) => succeeded && held ? null : succeeded && queued);
+            draftText: draftText,
+          );
+        } else if (mls != null) {
+          encrypted = await mls.encryptPayload(
+            conversation.id,
+            type,
+            sent,
+            attachmentRefs: attachmentRefs,
+            draftText: draftText,
+          );
+        } else if (type == AppPayloadType.text) {
+          encrypted = await cryptoService.encrypt(
+            conversation.id,
+            body['text'] as String,
+          );
+        } else {
+          throw StateError(
+            'Production MLS/OpenMLS encryption is not integrated',
+          );
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        await localStore.enqueueEnvelope(encrypted, draftText: draftText);
+        queued = true;
+        if (carriesKeys) {
+          unawaited(
+            profiles?.sidecarsSent(conversation.id).catchError((Object _) {}),
+          );
+        }
+        if (mls != null) await refreshHistory(conversation.id);
+        final record = (await localStore.pendingEnvelopeRecords())
+            .where(
+              (item) =>
+                  item.envelope.idempotencyKey == encrypted.idempotencyKey,
+            )
+            .firstOrNull;
+        if (record != null) {
+          _outboxRecords[encrypted.idempotencyKey] = record;
+        }
+        pendingOutbox = <MessageEnvelope>[...pendingOutbox, encrypted];
+        _outboxStates[encrypted.idempotencyKey] = OutboxDeliveryState.sending;
+        notifyListeners();
+        // Durable acceptance is the send result. Network delivery is owned by
+        // the single retry worker, so a slow connection never holds the draft.
+        unawaited(_flushOutbox());
+      }),
+    ).then((succeeded) => succeeded && held ? null : succeeded && queued);
   }
 
   /// Marks [idempotencyKey] for an immediate retry and runs the delivery
@@ -5458,9 +6106,10 @@ class AppState extends ChangeNotifier
         throw UserFacingException(l10n.outboxSealedResendHeld);
       }
       final result = await reencryptSealedForResend(
-          crypto: cryptoService,
-          localStore: localStore,
-          sealed: record.envelope);
+        crypto: cryptoService,
+        localStore: localStore,
+        sealed: record.envelope,
+      );
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       switch (result) {
         case SealedResend.held:
@@ -5501,7 +6150,9 @@ class AppState extends ChangeNotifier
       // sign-out screen warned first.
       await _deleteReportSeed(current);
       final detached = await _clearLocalSession(
-          preserveDeviceIdentity: true, keepApiOpen: true);
+        preserveDeviceIdentity: true,
+        keepApiOpen: true,
+      );
       await _revokeAndClose(current, detached);
     });
   }
@@ -5546,8 +6197,11 @@ class AppState extends ChangeNotifier
       if (current == null || client == null || deviceSecret == null) {
         throw UserFacingException(l10n.errorRelinkRequired);
       }
-      final rotated =
-          await client.reauthenticate(current.token, password, deviceSecret);
+      final rotated = await client.reauthenticate(
+        current.token,
+        password,
+        deviceSecret,
+      );
       if (rotated != null && !identical(session, current)) {
         // The session ended or changed while the request was in flight; the
         // caller must not run a sensitive action on its behalf.
@@ -5605,7 +6259,8 @@ class AppState extends ChangeNotifier
   }
 
   Future<ConversationSafetyNumber> conversationSafetyNumber(
-      String conversationId) async {
+    String conversationId,
+  ) async {
     final mls = _mlsCrypto;
     if (mls == null) throw StateError('production MLS is unavailable');
     return mls.conversationSafetyNumber(conversationId);
@@ -5617,10 +6272,14 @@ class AppState extends ChangeNotifier
   static const _safetyNumberVersion = 2;
 
   Future<void> markPeerVerified(
-      String conversationId, String peerAccountId) async {
+    String conversationId,
+    String peerAccountId,
+  ) async {
     final safety = await conversationSafetyNumber(conversationId);
-    await localStore.savePeerVerification(conversationId, peerAccountId,
-        <int>[_safetyNumberVersion, ...safety.transcriptHash]);
+    await localStore.savePeerVerification(conversationId, peerAccountId, <int>[
+      _safetyNumberVersion,
+      ...safety.transcriptHash,
+    ]);
   }
 
   /// Stores a verification for the safety number whose code the person
@@ -5631,21 +6290,32 @@ class AppState extends ChangeNotifier
   /// be recorded as verified. Returns false, storing nothing, when the number
   /// is no longer the compared one; a failure to store throws.
   Future<bool> markPeerVerifiedIfMatches(
-      String conversationId, String peerAccountId, String comparedCode) async {
+    String conversationId,
+    String peerAccountId,
+    String comparedCode,
+  ) async {
     final current = await conversationSafetyNumber(conversationId);
     if (!_constantTimeBytesEqual(
-        utf8.encode(comparedCode.trim()), utf8.encode(current.qrPayload))) {
+      utf8.encode(comparedCode.trim()),
+      utf8.encode(current.qrPayload),
+    )) {
       return false;
     }
-    await localStore.savePeerVerification(conversationId, peerAccountId,
-        <int>[_safetyNumberVersion, ...current.transcriptHash]);
+    await localStore.savePeerVerification(conversationId, peerAccountId, <int>[
+      _safetyNumberVersion,
+      ...current.transcriptHash,
+    ]);
     return true;
   }
 
   Future<PeerVerificationStatus> peerVerificationStatus(
-      String conversationId, String peerAccountId) async {
-    final saved =
-        await localStore.loadPeerVerification(conversationId, peerAccountId);
+    String conversationId,
+    String peerAccountId,
+  ) async {
+    final saved = await localStore.loadPeerVerification(
+      conversationId,
+      peerAccountId,
+    );
     if (saved == null ||
         saved.length != 33 ||
         saved.first != _safetyNumberVersion) {
@@ -5662,7 +6332,9 @@ class AppState extends ChangeNotifier
   Future<bool> safetyCodeMatches(String conversationId, String scanned) async {
     final current = await conversationSafetyNumber(conversationId);
     return _constantTimeBytesEqual(
-        utf8.encode(scanned.trim()), utf8.encode(current.qrPayload));
+      utf8.encode(scanned.trim()),
+      utf8.encode(current.qrPayload),
+    );
   }
 
   /// Names the channel the chat for [conversationId] is showing, or clears it
@@ -5685,7 +6357,9 @@ class AppState extends ChangeNotifier
   /// conversation but a shared group, and for a shared group with no usable
   /// channel selected, where nothing may be sent.
   ({String channelId, int generation})? _channelRouteFor(
-      String conversationId, String? channelId) {
+    String conversationId,
+    String? channelId,
+  ) {
     final conversation =
         conversations.where((c) => c.id == conversationId).firstOrNull;
     final communityId = conversation?.communityId;
@@ -5696,10 +6370,12 @@ class AppState extends ChangeNotifier
       return null;
     }
     final channel = (channelsByCommunity[communityId] ?? const <Channel>[])
-        .where((c) =>
-            c.id == channelId &&
-            c.conversationId == conversationId &&
-            c.kind != 'private')
+        .where(
+          (c) =>
+              c.id == channelId &&
+              c.conversationId == conversationId &&
+              c.kind != 'private',
+        )
         .firstOrNull;
     final generation = channel?.layoutGeneration;
     if (channel == null || generation == null) return null;
@@ -5936,8 +6612,13 @@ class AppState extends ChangeNotifier
         sync = null;
         unawaited(opened.dispose().catchError((Object _) {}));
       }
-      await _abandonSyncStart(current, ownerGeneration, err,
-          lease: acquired, owner: installed);
+      await _abandonSyncStart(
+        current,
+        ownerGeneration,
+        err,
+        lease: acquired,
+        owner: installed,
+      );
       return;
     }
     unawaited(_catchUpSyncEvents());
@@ -6000,16 +6681,18 @@ class AppState extends ChangeNotifier
   void _restartSync(Session failed) {
     if (_syncRestartQueued) return;
     _syncRestartQueued = true;
-    unawaited(_enqueueSessionTransition(() async {
-      _syncRestartQueued = false;
-      if (_disposed ||
-          _syncOwner != null ||
-          !identical(_syncStartFailed, failed) ||
-          !_sameSession(failed)) {
-        return;
-      }
-      await _startSync();
-    }));
+    unawaited(
+      _enqueueSessionTransition(() async {
+        _syncRestartQueued = false;
+        if (_disposed ||
+            _syncOwner != null ||
+            !identical(_syncStartFailed, failed) ||
+            !_sameSession(failed)) {
+          return;
+        }
+        await _startSync();
+      }),
+    );
   }
 
   void _setConnectionStatus(ConnectionStatus status) {
@@ -6100,7 +6783,10 @@ class AppState extends ChangeNotifier
       if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       final instance = _pushInstance!;
       await pushService.register(
-          instance: instance, vapid: vapid, providers: providers);
+        instance: instance,
+        vapid: vapid,
+        providers: providers,
+      );
       if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
         try {
           await pushService
@@ -6201,9 +6887,10 @@ class AppState extends ChangeNotifier
       // A UnifiedPush failure means no distributor answered; anything else
       // is a provider refusal. Neither carries platform error text.
       _setPushState(
-          event.provider == 'webpush' || event.provider == 'unifiedpush'
-              ? PushState.noDistributor
-              : PushState.registrationFailed);
+        event.provider == 'webpush' || event.provider == 'unifiedpush'
+            ? PushState.noDistributor
+            : PushState.registrationFailed,
+      );
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
@@ -6221,34 +6908,52 @@ class AppState extends ChangeNotifier
   /// Registers [event] with the server and, only after that succeeded,
   /// acknowledges its native record. A failure leaves the record for the
   /// next startup or resume. Registering twice (live and pending) is safe.
-  Future<bool> _registerEndpoint(Session current, ApiClient client,
-      int ownerGeneration, PushEndpointEvent event) {
+  Future<bool> _registerEndpoint(
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+    PushEndpointEvent event,
+  ) {
     if (_pushLeaving || _disposed) return Future.value(false);
     final work = _registerEndpointRun(
-        current, client, ownerGeneration, _pushGeneration, event);
+      current,
+      client,
+      ownerGeneration,
+      _pushGeneration,
+      event,
+    );
     _pushRegistrations.add(work);
     unawaited(work.then((_) => _pushRegistrations.remove(work)));
     return work;
   }
 
-  Future<bool> _registerEndpointRun(Session current, ApiClient client,
-      int ownerGeneration, int pushGeneration, PushEndpointEvent event) async {
+  Future<bool> _registerEndpointRun(
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+    int pushGeneration,
+    PushEndpointEvent event,
+  ) async {
     try {
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
       final mode = phoneNoticesAllowed ? 'local_decrypt_v1' : null;
       final subscriptionId =
           (event.provider == 'webpush' || event.provider == 'unifiedpush')
-              ? await client.registerWebPush(current.token,
+              ? await client.registerWebPush(
+                  current.token,
                   provider: event.provider,
                   endpoint: event.endpoint,
                   publicKey: event.publicKey,
                   authSecret: event.authSecret,
-                  notificationMode: mode)
-              : await client.registerNativePush(current.token,
+                  notificationMode: mode,
+                )
+              : await client.registerNativePush(
+                  current.token,
                   provider: event.provider,
                   deviceToken: event.endpoint,
-                  notificationMode: mode);
+                  notificationMode: mode,
+                );
       if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
         // A server registration can commit after teardown started. Use a
         // fresh transport when the old runtime has already closed its own.
@@ -6286,7 +6991,10 @@ class AppState extends ChangeNotifier
   /// Pulls the native pending endpoint record. A record for another
   /// instance is stale and dropped without being uploaded.
   Future<void> _consumePendingEndpoint(
-      Session current, ApiClient client, int ownerGeneration) async {
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+  ) async {
     try {
       final pending = await pushService.pendingEndpoint();
       if (pending == null || !_syncOwnerActive(current, ownerGeneration)) {
@@ -6353,7 +7061,8 @@ class AppState extends ChangeNotifier
       if (_syncOwner == null || existing.token.isEmpty) return false;
       final generation = _sessionGeneration;
       wake.bindOwner(
-          () => !_isForeground && _syncOwnerActive(existing, generation));
+        () => !_isForeground && _syncOwnerActive(existing, generation),
+      );
       return true;
     }
     void fence() {
@@ -6381,8 +7090,10 @@ class AppState extends ChangeNotifier
     await wake.check(requireOwner: false);
     await _resumeDeviceListAnchor(restored);
     fence();
-    await crypto.activateExistingSessionBounded(restored,
-        checkCanCommit: fence);
+    await crypto.activateExistingSessionBounded(
+      restored,
+      checkCanCommit: fence,
+    );
     fence();
     await _clearDeviceListAnchorJournal(restored);
     fence();
@@ -6397,16 +7108,20 @@ class AppState extends ChangeNotifier
         ..addAll(await localStore.loadConversationMutes());
       conversationPrefs = {
         for (final p in await localStore.loadConversationPrefs())
-          p.conversationId: p
+          p.conversationId: p,
       };
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
-          await localStore.loadSetting('b2.link_preview'));
+        await localStore.loadSetting('b2.link_preview'),
+      );
       screenGuardChats =
           await localStore.loadSetting('screen_guard_chats') != 'false';
       showChatPreviews =
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
+      allowDirectCalls =
+          await localStore.loadSetting(directCallsSetting) == 'true';
+      await loadCommunityInvitesSharedOnly();
       _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
@@ -6433,7 +7148,8 @@ class AppState extends ChangeNotifier
         work: () => _runOwnedCatchUp(restored, generation),
       );
       wake.bindOwner(
-          () => !_isForeground && _syncOwnerActive(restored, generation));
+        () => !_isForeground && _syncOwnerActive(restored, generation),
+      );
       return true;
     } catch (_) {
       if (generation == _sessionGeneration && identical(session, restored)) {
@@ -6450,9 +7166,13 @@ class AppState extends ChangeNotifier
   /// client that the permit closes on cancellation. Only a complete pass with
   /// every notice decided durably lets native acknowledge the wake.
   Future<WakeCatchUpResult> catchUpForBackgroundWake(
-      WakeRunContext wake) async {
+    WakeRunContext wake,
+  ) async {
     const failed = WakeCatchUpResult(
-        caughtUp: false, decisionsDurable: false, changed: false);
+      caughtUp: false,
+      decisionsDurable: false,
+      changed: false,
+    );
     final current = session;
     final owner = _syncOwner;
     if (current == null ||
@@ -6477,9 +7197,10 @@ class AppState extends ChangeNotifier
       await wake.check();
       final notices = await _processPendingNotices(current, client, wake);
       return WakeCatchUpResult(
-          caughtUp: true,
-          decisionsDurable: notices.durable,
-          changed: after != before || notices.shown > 0);
+        caughtUp: true,
+        decisionsDurable: notices.durable,
+        changed: after != before || notices.shown > 0,
+      );
     } catch (_) {
       return failed;
     } finally {
@@ -6494,7 +7215,10 @@ class AppState extends ChangeNotifier
   }
 
   Future<NoticePassResult> _processPendingNotices(
-      Session current, ApiClient client, WakeRunContext wake) {
+    Session current,
+    ApiClient client,
+    WakeRunContext wake,
+  ) {
     return LocalNoticeProcessor(
       store: localStore,
       session: current,
@@ -6600,8 +7324,10 @@ class AppState extends ChangeNotifier
 
   /// The person is looking at the app: references captured for messages
   /// already committed must never become a late phone notice.
-  Future<void> _suppressForegroundNotices(Session current,
-      {bool always = false}) async {
+  Future<void> _suppressForegroundNotices(
+    Session current, {
+    bool always = false,
+  }) async {
     if (!always) {
       final capture = cryptoService;
       if (!_isForeground ||
@@ -6614,9 +7340,13 @@ class AppState extends ChangeNotifier
     if (account == null || device == null) return;
     try {
       await localStore.suppressNoticesThrough(
-          LocalNoticeOwner(
-              origin: current.baseUrl, accountId: account, deviceId: device),
-          await localStore.loadSyncCursor());
+        LocalNoticeOwner(
+          origin: current.baseUrl,
+          accountId: account,
+          deviceId: device,
+        ),
+        await localStore.loadSyncCursor(),
+      );
     } catch (_) {
       // Stale references are also pruned after the freshness window.
     }
@@ -6649,8 +7379,10 @@ class AppState extends ChangeNotifier
   bool _lifecycleGenerationActive(int generation) =>
       !_disposed && generation == _sessionGeneration;
 
-  Future<void> _acknowledgePendingWake(Session owner,
-      {int? ownerGeneration}) async {
+  Future<void> _acknowledgePendingWake(
+    Session owner, {
+    int? ownerGeneration,
+  }) async {
     if (!_isForeground ||
         !_sameSession(owner) ||
         (ownerGeneration != null &&
@@ -6700,8 +7432,11 @@ class AppState extends ChangeNotifier
   /// Takes the server subscription and the native registration down, trying
   /// each [attempts] times. Returns whether both are gone (true too when
   /// nothing was registered). The local push state is cleared either way.
-  Future<bool> _stopPushStrict(Session? current, ApiClient? client,
-      {required int attempts}) async {
+  Future<bool> _stopPushStrict(
+    Session? current,
+    ApiClient? client, {
+    required int attempts,
+  }) async {
     var gone = true;
     Future<bool> attempt(Future<void> Function() action) async {
       for (var i = 0; i < attempts; i++) {
@@ -6801,7 +7536,11 @@ class AppState extends ChangeNotifier
         // existed, becomes that conversation's pause when the server can
         // serve the event again. The cursor never passed it.
         if (await _pauseStoredRecovery(
-            stored, current, client, ownerGeneration)) {
+          stored,
+          current,
+          client,
+          ownerGeneration,
+        )) {
           await localStore.saveSyncRecovery(null);
           stored = null;
         }
@@ -6818,7 +7557,10 @@ class AppState extends ChangeNotifier
       // stop this one, or one bad read would block all sync.
       try {
         await _publishReceived(
-            <ReceivedMessageEnvelope>[], current, ownerGeneration);
+          <ReceivedMessageEnvelope>[],
+          current,
+          ownerGeneration,
+        );
       } catch (_) {}
       if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       if (wake == null) {
@@ -6917,13 +7659,15 @@ class AppState extends ChangeNotifier
           for (final event in projections) {
             if (!_syncOwnerActive(current, ownerGeneration)) return false;
             final expectedCursor = await localStore.loadSyncCursor();
-            await localStore.commitSyncEvent(SyncEventCommit(
-              eventKey: 'sync:${event.id}',
-              conversationId: event.conversationId ?? '',
-              expectedCursor: expectedCursor,
-              cursor: event.id,
-              checkCanCommit: wake?.checkCanCommit,
-            ));
+            await localStore.commitSyncEvent(
+              SyncEventCommit(
+                eventKey: 'sync:${event.id}',
+                conversationId: event.conversationId ?? '',
+                expectedCursor: expectedCursor,
+                cursor: event.id,
+                checkCanCommit: wake?.checkCanCommit,
+              ),
+            );
           }
           projections.clear();
           notifyListeners();
@@ -6948,15 +7692,21 @@ class AppState extends ChangeNotifier
             if (_isCryptoSyncEvent(event.type)) {
               if (!await commitProjections()) return;
               if (_mlsCrypto == null) {
-                throw SyncEventFailure(SyncFailureKind.cryptoUnavailable,
-                    eventId: event.id,
-                    eventType: event.type,
-                    conversationId: event.conversationId);
+                throw SyncEventFailure(
+                  SyncFailureKind.cryptoUnavailable,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId,
+                );
               }
               final ReceivedMessageEnvelope? envelope;
               try {
-                envelope = await _processCryptoSyncEvent(event, repair,
-                    wake: wake, client: client);
+                envelope = await _processCryptoSyncEvent(
+                  event,
+                  repair,
+                  wake: wake,
+                  client: client,
+                );
               } catch (err) {
                 // One conversation's failure pauses that conversation
                 // alone; anything that is not about one conversation stops
@@ -6966,7 +7716,11 @@ class AppState extends ChangeNotifier
                     err is! SyncEventFailure ||
                     !failurePausesConversation(err) ||
                     !await _pauseConversationAt(
-                        err, current, client, ownerGeneration)) {
+                      err,
+                      current,
+                      client,
+                      ownerGeneration,
+                    )) {
                   rethrow;
                 }
                 await _skipPausedEvent(event, wake);
@@ -6987,14 +7741,19 @@ class AppState extends ChangeNotifier
                   _failsClosedEvent(event.type)) {
                 if (!await commitProjections()) return;
                 final unsupported = SyncEventFailure(
-                    SyncFailureKind.unsupportedEvent,
-                    eventId: event.id,
-                    eventType: event.type,
-                    conversationId: event.conversationId);
+                  SyncFailureKind.unsupportedEvent,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: event.conversationId,
+                );
                 if (wake != null ||
                     !failurePausesConversation(unsupported) ||
                     !await _pauseConversationAt(
-                        unsupported, current, client, ownerGeneration)) {
+                      unsupported,
+                      current,
+                      client,
+                      ownerGeneration,
+                    )) {
                   throw unsupported;
                 }
                 await _skipPausedEvent(event, wake);
@@ -7081,6 +7840,8 @@ class AppState extends ChangeNotifier
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();
+          // C2: posting settings this device still owes the record.
+          await _retryPostingRecords();
           // C6: announce this moderator's report key where it is due. Not
           // awaited, like the C3 refresh: sending never holds up sync.
           unawaited(_announceReportKeys());
@@ -7096,6 +7857,13 @@ class AppState extends ChangeNotifier
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // L1: which accounts hold a chat, for its banner (local reads only).
+        try {
+          await _refreshApprovalHoldSummaries();
+        } catch (_) {
+          // Read again at the next pass or when the chat opens.
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // C7: history_sync duties, a newcomer's request and stale own
         // records are sent from the foreground only (outbound writes).
         if (wake == null) {
@@ -7104,8 +7872,10 @@ class AppState extends ChangeNotifier
           } catch (err) {
             // Retried on the next pass; it never blocks sync.
             if (err is ApiException && err.statusCode == 401) rethrow;
-            developer.log('c7_work_pass_failed ${err.runtimeType}',
-                name: 'private_messenger.c7');
+            developer.log(
+              'c7_work_pass_failed ${err.runtimeType}',
+              name: 'private_messenger.c7',
+            );
           }
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -7128,10 +7898,11 @@ class AppState extends ChangeNotifier
       if (err is ApiException && err.statusCode == 401) {
         try {
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true,
-              drainSyncOwner: false);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+            drainSyncOwner: false,
+          );
         } catch (_) {
           // Signing out failed in local storage. Callers do not await this
           // run, so nothing may escape it: stay offline and try again.
@@ -7172,7 +7943,8 @@ class AppState extends ChangeNotifier
       _setConnectionStatus(ConnectionStatus.offline);
       notifyListeners();
       _scheduleCatchUpRetry(
-          retryAfter: err is ApiException ? err.retryAfter : null);
+        retryAfter: err is ApiException ? err.retryAfter : null,
+      );
     } finally {
       // Review L1: a page that opened a sealed message and then threw or
       // returned early skipped its own clear; the pass clears it here.
@@ -7224,8 +7996,10 @@ class AppState extends ChangeNotifier
       return const SyncEventFailure(SyncFailureKind.cursorExpired);
     }
     if (_isDurableStorageError(err)) {
-      return SyncEventFailure(SyncFailureKind.localStorage,
-          damagedStorage: _isDamagedStorage(err));
+      return SyncEventFailure(
+        SyncFailureKind.localStorage,
+        damagedStorage: _isDamagedStorage(err),
+      );
     }
     // Anything else happened outside one event's processing (a page or a
     // projection refresh failed) and is retried on the next wake. Event
@@ -7295,8 +8069,12 @@ class AppState extends ChangeNotifier
   /// - the pause table is full.
   /// A connection problem while checking is rethrown: the event fails the
   /// same way on the next pass, which checks again.
-  Future<bool> _pauseConversationAt(SyncEventFailure failure, Session current,
-      ApiClient client, int ownerGeneration) async {
+  Future<bool> _pauseConversationAt(
+    SyncEventFailure failure,
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+  ) async {
     final conversationId = failure.conversationId;
     final eventId = failure.eventId;
     if (conversationId == null || eventId == null) return false;
@@ -7309,8 +8087,11 @@ class AppState extends ChangeNotifier
     final SyncEvent? served;
     try {
       final page = await client.conversationSyncPage(
-          current.token, conversationId,
-          after: eventId - 1, limit: 1);
+        current.token,
+        conversationId,
+        after: eventId - 1,
+        limit: 1,
+      );
       served = page.events.firstOrNull;
     } catch (err) {
       if (_isTransientSyncError(err) ||
@@ -7344,8 +8125,10 @@ class AppState extends ChangeNotifier
         conversationId: pause,
       };
       // Body-free: no conversation id, event or server text.
-      developer.log('sync_conversation_paused ${failure.kind.name}',
-          name: 'veritra.sync');
+      developer.log(
+        'sync_conversation_paused ${failure.kind.name}',
+        name: 'veritra.sync',
+      );
       notifyListeners();
     }
     return true;
@@ -7354,23 +8137,31 @@ class AppState extends ChangeNotifier
   /// Turns a global stop recorded for one conversation's event (before
   /// pauses existed) into that conversation's pause. False when it is not
   /// one, or when the pause is not safe (see [_pauseConversationAt]).
-  Future<bool> _pauseStoredRecovery(SyncRecovery stored, Session current,
-      ApiClient client, int ownerGeneration) async {
+  Future<bool> _pauseStoredRecovery(
+    SyncRecovery stored,
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+  ) async {
     final eventId = stored.eventId;
     if (eventId == null || stored.conversationId == null) return false;
     // The cursor never passed a stopped event.
     if (eventId <= await localStore.loadSyncCursor()) return false;
-    final failure = SyncEventFailure(stored.kind,
-        eventId: eventId,
-        eventType: stored.eventType,
-        conversationId: stored.conversationId);
+    final failure = SyncEventFailure(
+      stored.kind,
+      eventId: eventId,
+      eventType: stored.eventType,
+      conversationId: stored.conversationId,
+    );
     if (!failurePausesConversation(failure)) return false;
     return _pauseConversationAt(failure, current, client, ownerGeneration);
   }
 
   /// Loads the durable pauses into [conversationPauses].
   Future<void> _loadConversationPauses(
-      Session current, int ownerGeneration) async {
+    Session current,
+    int ownerGeneration,
+  ) async {
     final stored = await localStore.loadConversationPauses();
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     final loaded = <String, ConversationPause>{
@@ -7429,13 +8220,20 @@ class AppState extends ChangeNotifier
   }
 
   Future<void> _replayRequestedPauses(
-      Session current, ApiClient client, int ownerGeneration) async {
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+  ) async {
     while (_pauseReplayRequests.isNotEmpty) {
       final conversationId = _pauseReplayRequests.first;
       _pauseReplayRequests.remove(conversationId);
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       await _replayPausedConversation(
-          conversationId, current, client, ownerGeneration);
+        conversationId,
+        current,
+        client,
+        ownerGeneration,
+      );
     }
   }
 
@@ -7465,8 +8263,12 @@ class AppState extends ChangeNotifier
   /// reads the global stream, under the same lease and crypto queue. Only
   /// an explicit retry runs it: a failing event is never retried on every
   /// pass.
-  Future<void> _replayPausedConversation(String conversationId, Session current,
-      ApiClient client, int ownerGeneration) async {
+  Future<void> _replayPausedConversation(
+    String conversationId,
+    Session current,
+    ApiClient client,
+    int ownerGeneration,
+  ) async {
     final pause = await localStore.loadConversationPause(conversationId);
     if (pause == null || !pause.retryable) return;
     final generation = pause.generation;
@@ -7480,8 +8282,11 @@ class AppState extends ChangeNotifier
         final ConversationSyncPage syncPage;
         try {
           syncPage = await client.conversationSyncPage(
-              current.token, conversationId,
-              after: after, limit: pageSize);
+            current.token,
+            conversationId,
+            after: after,
+            limit: pageSize,
+          );
         } on ApiException catch (err) {
           if (err.statusCode == 403) {
             // No longer a member: the leave or removal settles the rest, and
@@ -7519,8 +8324,10 @@ class AppState extends ChangeNotifier
             // The server now serves another event under the id that
             // failed. The original failure stays recorded; replacing it
             // needs a reviewed repair path, not a silent retry.
-            developer.log('sync_conversation_replay_event_changed',
-                name: 'veritra.sync');
+            developer.log(
+              'sync_conversation_replay_event_changed',
+              name: 'veritra.sync',
+            );
             return;
           }
           final isCrypto = _isCryptoSyncEvent(event.type);
@@ -7534,13 +8341,19 @@ class AppState extends ChangeNotifier
           }
           try {
             if (unknownCrypto) {
-              throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-                  eventId: event.id,
-                  eventType: event.type,
-                  conversationId: conversationId);
+              throw SyncEventFailure(
+                SyncFailureKind.unsupportedEvent,
+                eventId: event.id,
+                eventType: event.type,
+                conversationId: conversationId,
+              );
             }
-            final envelope = await _processCryptoSyncEvent(event, repair,
-                wake: null, client: client);
+            final envelope = await _processCryptoSyncEvent(
+              event,
+              repair,
+              wake: null,
+              client: client,
+            );
             if (envelope != null) {
               received.add(envelope);
               if (received.length >= _receivedBatchLimit) {
@@ -7551,7 +8364,11 @@ class AppState extends ChangeNotifier
             if (err is! SyncEventFailure ||
                 !failurePausesConversation(err) ||
                 !await _pauseConversationAt(
-                    err, current, client, ownerGeneration)) {
+                  err,
+                  current,
+                  client,
+                  ownerGeneration,
+                )) {
               rethrow;
             }
             // Paused again, at this event. Whatever applied before it
@@ -7582,8 +8399,10 @@ class AppState extends ChangeNotifier
         if (events.isEmpty) break;
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
-      final cleared = await localStore.clearConversationPause(conversationId,
-          generation: generation);
+      final cleared = await localStore.clearConversationPause(
+        conversationId,
+        generation: generation,
+      );
       if (cleared && _syncOwnerActive(current, ownerGeneration)) {
         conversationPauses = <String, ConversationPause>{
           for (final entry in conversationPauses.entries)
@@ -7683,11 +8502,15 @@ class AppState extends ChangeNotifier
   /// none of its events after the leave, so the stopped one is not skipped
   /// on this device's word. The UI must get explicit confirmation first.
   /// Returns whether the conversation was left.
-  Future<bool> leaveConversationAfterSyncRecovery(
-      {required bool confirmed}) async {
+  Future<bool> leaveConversationAfterSyncRecovery({
+    required bool confirmed,
+  }) async {
     if (!confirmed) {
       throw ArgumentError.value(
-          confirmed, 'confirmed', 'leaving a conversation needs confirmation');
+        confirmed,
+        'confirmed',
+        'leaving a conversation needs confirmation',
+      );
     }
     final recovery = syncRecovery;
     final conversationId = recovery?.conversationId;
@@ -7719,8 +8542,11 @@ class AppState extends ChangeNotifier
   /// another device. The UI must get explicit confirmation first.
   Future<void> relinkAfterSyncRecovery({required bool confirmed}) async {
     if (!confirmed) {
-      throw ArgumentError.value(confirmed, 'confirmed',
-          'relinking deletes local history and needs confirmation');
+      throw ArgumentError.value(
+        confirmed,
+        'confirmed',
+        'relinking deletes local history and needs confirmation',
+      );
     }
     final requested = session;
     await _run(() async {
@@ -7922,7 +8748,8 @@ class AppState extends ChangeNotifier
             event.payload is Map) {
           try {
             final updated = Conversation.fromJson(
-                Map<String, Object?>.from(event.payload as Map));
+              Map<String, Object?>.from(event.payload as Map),
+            );
             conversations = <Conversation>[
               for (final c in conversations)
                 if (c.id == updated.id)
@@ -7948,8 +8775,11 @@ class AppState extends ChangeNotifier
       } else if (type != 'mls.revocation.pending' &&
           type != 'mls.revocation.completed' &&
           _failsClosedEvent(type)) {
-        throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
-            eventId: event.id, eventType: type);
+        throw SyncEventFailure(
+          SyncFailureKind.unsupportedEvent,
+          eventId: event.id,
+          eventType: type,
+        );
       }
     }
     if (devices) await _refreshDevices();
@@ -8090,10 +8920,11 @@ class AppState extends ChangeNotifier
     _history.remove(move.from);
     _history.remove(move.to);
     await _c7?.c7NoteMove(
-        channelId: move.channel,
-        fromConversationId: move.from,
-        toConversationId: move.to,
-        own: false);
+      channelId: move.channel,
+      fromConversationId: move.from,
+      toConversationId: move.to,
+      own: false,
+    );
     return true;
   }
 
@@ -8196,16 +9027,17 @@ class AppState extends ChangeNotifier
     }
     return (
       channel: Channel(
-          id: channelId,
-          communityId: community,
-          name: '',
-          kind: kind,
-          conversationId: from,
-          layoutGeneration: layout),
+        id: channelId,
+        communityId: community,
+        name: '',
+        kind: kind,
+        conversationId: from,
+        layoutGeneration: layout,
+      ),
       toPrivate: toPrivate,
       members: <String>[
         for (final member in members)
-          if (member is String) member
+          if (member is String) member,
       ],
       requestId: requestId,
     );
@@ -8216,7 +9048,10 @@ class AppState extends ChangeNotifier
   /// conversion (a re-tap after a lost answer) reuses it, so the server
   /// answers the move it already made instead of refusing a second one.
   Future<String?> _pendingConversionRequestId(
-      String channelId, String from, bool toPrivate) async {
+    String channelId,
+    String from,
+    bool toPrivate,
+  ) async {
     final entry = (await _pendingConversions())[channelId];
     if (entry is! Map) return null;
     final requestId = entry['request_id'];
@@ -8246,10 +9081,12 @@ class AppState extends ChangeNotifier
       await _savePendingConversion(channelId, null);
       return;
     }
-    await convertChannel(pending.channel,
-        toPrivate: pending.toPrivate,
-        members: pending.members,
-        requestId: pending.requestId);
+    await convertChannel(
+      pending.channel,
+      toPrivate: pending.toPrivate,
+      members: pending.members,
+      requestId: pending.requestId,
+    );
   }
 
   /// The readers of an open [channel] other than this account: the
@@ -8263,8 +9100,10 @@ class AppState extends ChangeNotifier
     if (current == null || client == null || conversationId == null) {
       return const <ConversationMember>[];
     }
-    final members =
-        await client.conversationMembers(current.token, conversationId);
+    final members = await client.conversationMembers(
+      current.token,
+      conversationId,
+    );
     return <ConversationMember>[
       for (final member in members)
         if (member.accountId != current.accountId) member,
@@ -8317,10 +9156,12 @@ class AppState extends ChangeNotifier
   /// this account never adopts it (review L-6 residual). It is kept with
   /// the pending conversion; when null, a pending conversion of the same
   /// channel and direction lends its id, else a new one is made.
-  Future<bool> convertChannel(Channel channel,
-      {required bool toPrivate,
-      List<String> members = const <String>[],
-      String? requestId}) async {
+  Future<bool> convertChannel(
+    Channel channel, {
+    required bool toPrivate,
+    List<String> members = const <String>[],
+    String? requestId,
+  }) async {
     final name = channelDisplayName(channel);
     final topic = channelTopic(channel) ?? '';
     final from = channel.conversationId;
@@ -8369,8 +9210,11 @@ class AppState extends ChangeNotifier
       final ({Map<String, Object?> move, Conversation conversation}) result;
       try {
         result = await client.moveChannel(
-            current.token, channel.id, toPrivate ? 'private' : 'open',
-            requestId: request);
+          current.token,
+          channel.id,
+          toPrivate ? 'private' : 'open',
+          requestId: request,
+        );
       } on ApiException catch (err) {
         // A refusal is final; a server error may have moved it.
         keepPending = err.statusCode >= 500;
@@ -8383,12 +9227,18 @@ class AppState extends ChangeNotifier
       final conversation = result.conversation;
       // Review M-A: the answer is this move, into the home its direction
       // allows, before anything here follows it.
-      final access =
-          _moveAnswerFits(channel, result.move, conversation, toPrivate);
+      final access = _moveAnswerFits(
+        channel,
+        result.move,
+        conversation,
+        toPrivate,
+      );
       if (access == null) {
         throw StateError('the server answered with a different move');
       }
       if (!conversation.isCommunityShared) {
+        // C3: going private, only the ticked readers join, by commit.
+        if (access == 'private') await _pinPrivateChannelGroup(conversation.id);
         await _setUpConversationGroup(conversation.id, kind: conversation.kind);
       }
       final layout = result.move['layout_generation'];
@@ -8421,20 +9271,28 @@ class AppState extends ChangeNotifier
       _history.remove(from);
       _history.remove(conversation.id);
       await _c7?.c7NoteMove(
-          channelId: channel.id,
-          fromConversationId: from,
-          toConversationId: conversation.id,
-          own: true);
+        channelId: channel.id,
+        fromConversationId: from,
+        toConversationId: conversation.id,
+        own: true,
+      );
       for (final account in adds) {
+        // C3: the admin's pick, so this device commits the add.
+        await _pickPrivateChannelMember(conversation.id, account);
         try {
           await client.addConversationMember(
-              current.token, conversation.id, account);
+            current.token,
+            conversation.id,
+            account,
+          );
         } on ApiException catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           // A lost session is _run's to handle.
           if (err.statusCode == 401) rethrow;
           addFailure ??= err;
           notAdded.add(account);
         } catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           addFailure ??= err;
           notAdded.add(account);
         }
@@ -8454,8 +9312,14 @@ class AppState extends ChangeNotifier
       await _savePendingConversion(channel.id, null);
     } else if (meanwhile) {
       // Its own move event came while the answer was awaited.
-      unawaited(convertChannel(channel,
-          toPrivate: toPrivate, members: members, requestId: sentRequest));
+      unawaited(
+        convertChannel(
+          channel,
+          toPrivate: toPrivate,
+          members: members,
+          requestId: sentRequest,
+        ),
+      );
     }
     if (error != null || next == null) return false;
     final failure = addFailure;
@@ -8466,8 +9330,13 @@ class AppState extends ChangeNotifier
     }
     unawaited(() async {
       if (name != null) {
-        await publishChannelInfo(next,
-            name: name, topic: topic, mint: toPrivate, rehome: true);
+        await publishChannelInfo(
+          next,
+          name: name,
+          topic: topic,
+          mint: toPrivate,
+          rehome: true,
+        );
       }
       await publishCommunityInfo(next.communityId);
       await refreshCommunities();
@@ -8485,8 +9354,12 @@ class AppState extends ChangeNotifier
   /// the same community for a private one. Null when it is not. An open
   /// channel keeps the posting mode the server restored (review L-8): its
   /// `to_access` is `open` or `announcement`.
-  String? _moveAnswerFits(Channel channel, Map<String, Object?> move,
-      Conversation conversation, bool toPrivate) {
+  String? _moveAnswerFits(
+    Channel channel,
+    Map<String, Object?> move,
+    Conversation conversation,
+    bool toPrivate,
+  ) {
     final shared = communities
         .where((c) => c.id == channel.communityId)
         .firstOrNull
@@ -8532,8 +9405,11 @@ class AppState extends ChangeNotifier
   }
 
   Future<ReceivedMessageEnvelope?> _processCryptoSyncEvent(
-      SyncEvent event, _SyncPageRepair repair,
-      {WakeRunContext? wake, required ApiClient client}) async {
+    SyncEvent event,
+    _SyncPageRepair repair, {
+    WakeRunContext? wake,
+    required ApiClient client,
+  }) async {
     final current = session;
     final infoGeneration = _sessionGeneration;
     final mls = _mlsCrypto;
@@ -8546,18 +9422,22 @@ class AppState extends ChangeNotifier
             ? mls
             : throw const WakeWorkCancelled();
     SyncEventFailure failure(SyncFailureKind kind, [Object? cause]) =>
-        SyncEventFailure(kind,
-            eventId: event.id,
-            eventType: event.type,
-            conversationId: event.conversationId,
-            damagedStorage: cause != null && _isDamagedStorage(cause));
+        SyncEventFailure(
+          kind,
+          eventId: event.id,
+          eventType: event.type,
+          conversationId: event.conversationId,
+          damagedStorage: cause != null && _isDamagedStorage(cause),
+        );
     // A record over its cap (D70) names the record's conversation, which
     // may not be the event's (a Welcome, the device record).
     SyncEventFailure recordLimit(CryptoRecordLimitExceeded err) =>
-        SyncEventFailure(SyncFailureKind.recordLimit,
-            eventId: event.id,
-            eventType: event.type,
-            conversationId: err.conversationId);
+        SyncEventFailure(
+          SyncFailureKind.recordLimit,
+          eventId: event.id,
+          eventType: event.type,
+          conversationId: err.conversationId,
+        );
     switch (event.type) {
       case 'mls.message.created':
         // Control messages are never skipped: missing, malformed or
@@ -8582,12 +9462,21 @@ class AppState extends ChangeNotifier
             (ownBundle.isUpdateOnly || ownBundle.removed.isNotEmpty);
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
-          if (await _skipWelcomeBeforeLeave(current, event, message,
-              wake: wake, failure: failure)) {
+          if (await _skipWelcomeBeforeLeave(
+            current,
+            event,
+            message,
+            wake: wake,
+            failure: failure,
+          )) {
             return null;
           }
-          await _dropLeftBeforeWelcome(current, message.conversationId,
-              wake: wake, failure: failure);
+          await _dropLeftBeforeWelcome(
+            current,
+            message.conversationId,
+            wake: wake,
+            failure: failure,
+          );
           // Write-ahead (TASK-028): a Welcome uses up one of this device's
           // published key packages, so its replacement is owed durably
           // before the Welcome commits. Counted once per Welcome; one that
@@ -8596,8 +9485,10 @@ class AppState extends ChangeNotifier
         }
         try {
           if (bounded != null) {
-            await bounded.processMlsMessageBounded(message,
-                checkCanCommit: wake!.checkCanCommit);
+            await bounded.processMlsMessageBounded(
+              message,
+              checkCanCommit: wake!.checkCanCommit,
+            );
           } else {
             await mls.processMlsMessage(message);
           }
@@ -8612,9 +9503,11 @@ class AppState extends ChangeNotifier
           if (err is GovernanceHeldException) {
             throw failure(SyncFailureKind.governanceHeld);
           }
-          throw failure(err is FormatException
-              ? SyncFailureKind.mlsControlMalformed
-              : SyncFailureKind.mlsState);
+          throw failure(
+            err is FormatException
+                ? SyncFailureKind.mlsControlMalformed
+                : SyncFailureKind.mlsState,
+          );
         }
         if (message.kind == 'commit' &&
             message.senderDeviceId != current.deviceId) {
@@ -8627,22 +9520,31 @@ class AppState extends ChangeNotifier
         }
         if (ownPathCommit) {
           await _noteSelfUpdate(
-              current,
-              (policy) => policy.recordPathCommit(
-                  message.conversationId, DateTime.now()));
+            current,
+            (policy) =>
+                policy.recordPathCommit(message.conversationId, DateTime.now()),
+          );
         }
         if (wake == null && ownBundle != null && ownBundle.added.isNotEmpty) {
-          unawaited(_trackBackground(() => _deliverInfoAfterAdd(
-              current, infoGeneration, message.conversationId)));
+          unawaited(
+            _trackBackground(
+              () => _deliverInfoAfterAdd(
+                current,
+                infoGeneration,
+                message.conversationId,
+              ),
+            ),
+          );
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
           // The leaf key came from a key package published earlier: update
           // it soon. Only noted here; staging waits for a foreground pass.
           await _noteSelfUpdate(
-              current,
-              (policy) =>
-                  policy.recordJoined(message.conversationId, DateTime.now()));
+            current,
+            (policy) =>
+                policy.recordJoined(message.conversationId, DateTime.now()),
+          );
           // K0 step 8: the conversation is no longer read-only.
           _grouplessChecked.add(message.conversationId);
           if (_grouplessConversations.remove(message.conversationId) &&
@@ -8701,16 +9603,21 @@ class AppState extends ChangeNotifier
             !conversations.any((c) => c.id == resolved.conversationId)) {
           await _refreshConversations(notify: false, persist: false);
         }
-        await _ensureConversationAuthority(resolved.conversationId,
-            client: client);
+        await _ensureConversationAuthority(
+          resolved.conversationId,
+          client: client,
+        );
         // A message this device can never decrypt does not throw: the
         // crypto service commits past it with a placeholder row (D54), and
         // the envelope is shown as that placeholder. What still throws here
         // is a malformed event or a local failure, and that stops sync.
         try {
           if (bounded != null) {
-            await bounded.processApplicationMessageBounded(resolved, event.id,
-                checkCanCommit: wake!.checkCanCommit);
+            await bounded.processApplicationMessageBounded(
+              resolved,
+              event.id,
+              checkCanCommit: wake!.checkCanCommit,
+            );
           } else {
             await mls.processApplicationMessage(resolved, event.id);
           }
@@ -8751,16 +9658,20 @@ class AppState extends ChangeNotifier
         final sealedCrypto = mls is SealedSendingCryptoService
             ? mls as SealedSendingCryptoService
             : throw failure(SyncFailureKind.applicationUndecryptable);
-        await _ensureConversationAuthority(inline.conversationId,
-            client: client);
+        await _ensureConversationAuthority(
+          inline.conversationId,
+          client: client,
+        );
         final ReceivedMessageEnvelope opened;
         try {
           // Review L1: durable before the open commits, so a kill before
           // the checkpoint leaves it to the next start.
           await _markSealedResidue();
           opened = await sealedCrypto.processSealedApplicationMessage(
-              inline, event.id,
-              checkCanCommit: wake?.checkCanCommit);
+            inline,
+            event.id,
+            checkCanCommit: wake?.checkCanCommit,
+          );
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
           if (_isDurableStorageError(err)) {
@@ -8778,10 +9689,12 @@ class AppState extends ChangeNotifier
         // This device's own post came back: it landed, whatever the
         // outbox last heard (a lost answer), so it leaves the outbox.
         if (opened.senderDeviceId == current.deviceId && wake == null) {
-          final queued = (await localStore.pendingEnvelopes()).where((item) =>
-              item.sealed &&
-              item.idempotencyKey == opened.idempotencyKey &&
-              item.conversationId == opened.conversationId);
+          final queued = (await localStore.pendingEnvelopes()).where(
+            (item) =>
+                item.sealed &&
+                item.idempotencyKey == opened.idempotencyKey &&
+                item.conversationId == opened.conversationId,
+          );
           if (queued.isNotEmpty) await _removeFromOutbox(queued.first);
         }
         return opened;
@@ -8804,8 +9717,11 @@ class AppState extends ChangeNotifier
         final Map<String, Object?>? signal;
         try {
           signal = bounded != null
-              ? await bounded.processCallSignalBounded(call, event.id,
-                  checkCanCommit: wake!.checkCanCommit)
+              ? await bounded.processCallSignalBounded(
+                  call,
+                  event.id,
+                  checkCanCommit: wake!.checkCanCommit,
+                )
               : await mls.processCallSignal(call, event.id);
         } catch (err) {
           if (_isTransientSyncError(err)) rethrow;
@@ -8848,7 +9764,10 @@ class AppState extends ChangeNotifier
   /// one. (One the crypto service can never decrypt does not fail: it is
   /// committed past with a placeholder, D54.)
   Future<void> _commitExpiredTombstone(
-      SyncEvent event, String targetId, WakeRunContext? wake) async {
+    SyncEvent event,
+    String targetId,
+    WakeRunContext? wake,
+  ) async {
     final cursor = await localStore.loadSyncCursor();
     final tombstone = SyncEventCommit(
       eventKey: 'expired:${event.id}:$targetId',
@@ -9047,17 +9966,23 @@ class AppState extends ChangeNotifier
         current != null &&
         current.deviceId != null &&
         current.deviceId!.isNotEmpty) {
-      await localStore.saveSession(Session(
-        baseUrl: current.baseUrl,
-        token: '',
-        accountId: current.accountId,
-        deviceId: current.deviceId,
-        username: current.username,
-        deviceSecret: current.deviceSecret,
-        role: current.role,
-      ));
+      await localStore.saveSession(
+        Session(
+          baseUrl: current.baseUrl,
+          token: '',
+          accountId: current.accountId,
+          deviceId: current.deviceId,
+          username: current.username,
+          deviceSecret: current.deviceSecret,
+          role: current.role,
+        ),
+      );
       await localStore.clearCachedState(
-          preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
+        preserveOutbox: preserveOutbox,
+        keepDrafts: keepDrafts,
+      );
+      // Invite codes are bearer credentials: they leave with the session.
+      await _updateInviteCodes((codes) => codes.clear());
     } else {
       await localStore.clear();
       // The MLS outbox went with the store; an item kept for a later
@@ -9076,10 +10001,11 @@ class AppState extends ChangeNotifier
   }
 
   /// Drops everything one session kept in memory: lists, flags, caches,
-  /// request decisions, retry state and timers. It makes no store call and
-  /// leaves [session], [api], [lifecycle] and [recoveryMessage] to the
-  /// caller. Shared by sign-out and the damaged-storage stop, so nothing of
-  /// one account carries over to the next (C-d0ba626ecdd7). The MLS
+  /// request decisions, retry state and timers. It leaves [session], [api],
+  /// [lifecycle] and [recoveryMessage] to the caller. Its one store call
+  /// finishes the open "Delete for me" Undo windows (U16), best effort.
+  /// Shared by sign-out and the damaged-storage stop, so nothing of one
+  /// account carries over to the next (C-d0ba626ecdd7). The MLS
   /// "accepted, unfinished" marks are not dropped here: they follow the
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
@@ -9096,20 +10022,26 @@ class AppState extends ChangeNotifier
       capture.noticeCaptureEnabled = false;
     }
     _cancelDraftTimers();
+    // U16: an open Undo window closes with the session it belongs to.
+    _finishUndoableHides();
     _activeChatViews = 0;
     _updateScreenGuard();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
+    inviteAnchorHiddenCommunities = <String>{};
     invitesLoaded = false;
     invitesLoadFailed = false;
     devicesLoaded = false;
     devices = <Device>[];
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
+    _recoveryFollowUpWithRestore = null;
     passkeyList = const <PasskeyRecord>[];
     passkeysLoaded = false;
     passkeyNotice = null;
+    joinRequestNotice = false;
+    communityInvitesSharedOnly = false;
     _ownPasskeyChanges.clear();
     _passwordLeakDay = null;
     _recoveredDevice = false;
@@ -9146,6 +10078,7 @@ class AppState extends ChangeNotifier
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _l1Joins.clear();
+    _l1Holds.clear();
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
@@ -9461,10 +10394,11 @@ class AppState extends ChangeNotifier
         await _recordOutboxFailure(envelope, err, record.attemptCount);
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true,
-              drainSyncOwner: false);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+            drainSyncOwner: false,
+          );
           break;
         }
       }
@@ -9482,8 +10416,12 @@ class AppState extends ChangeNotifier
   /// "couldn't send hidden": only the person's "Send normally"
   /// ([sendSealedNormally]) encrypts it again identified (owner decision
   /// 2026-11-12). Any other refusal fails the message.
-  Future<void> _postSealed(Session current, ApiClient client,
-          MessageEnvelope envelope, int ownerGeneration) =>
+  Future<void> _postSealed(
+    Session current,
+    ApiClient client,
+    MessageEnvelope envelope,
+    int ownerGeneration,
+  ) =>
       postSealedMessage(
         poster: _sealedPostClient(current.baseUrl),
         envelope: envelope,
@@ -9507,8 +10445,14 @@ class AppState extends ChangeNotifier
     final terminal = apiError != null &&
         <int>{400, 403, 404, 409, 413, 422, 507}.contains(apiError.statusCode);
     final retryable = (apiError != null &&
-            <int>{408, 429, 500, 502, 503, 504}
-                .contains(apiError.statusCode)) ||
+            <int>{
+              408,
+              429,
+              500,
+              502,
+              503,
+              504,
+            }.contains(apiError.statusCode)) ||
         error is SocketException ||
         error is TimeoutException ||
         error is HttpException;
@@ -9523,10 +10467,12 @@ class AppState extends ChangeNotifier
     final nextAttempt = retryable
         ? DateTime.now().toUtc().add(Duration(seconds: 1 << exponent))
         : null;
-    await localStore.recordOutboxFailure(envelope.idempotencyKey,
-        failureClass: failureClass,
-        terminal: terminal,
-        nextAttemptAt: nextAttempt);
+    await localStore.recordOutboxFailure(
+      envelope.idempotencyKey,
+      failureClass: failureClass,
+      terminal: terminal,
+      nextAttemptAt: nextAttempt,
+    );
     _outboxStates[envelope.idempotencyKey] = terminal
         ? OutboxDeliveryState.terminal
         : auth
@@ -9536,7 +10482,8 @@ class AppState extends ChangeNotifier
                 : OutboxDeliveryState.failed;
     final updated = (await localStore.pendingEnvelopeRecords())
         .where(
-            (item) => item.envelope.idempotencyKey == envelope.idempotencyKey)
+          (item) => item.envelope.idempotencyKey == envelope.idempotencyKey,
+        )
         .firstOrNull;
     if (updated != null) {
       _outboxRecords[envelope.idempotencyKey] = updated;
@@ -9604,11 +10551,13 @@ class AppState extends ChangeNotifier
   void _armOutboxRetry(Duration delay) {
     // Two schedulers may overlap their reads; only the last timer stays.
     _outboxRetryTimer?.cancel();
-    _outboxRetryTimer =
-        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
-      _outboxRetryTimer = null;
-      unawaited(_flushOutbox());
-    });
+    _outboxRetryTimer = Timer(
+      delay < _minimumRetryDelay ? _minimumRetryDelay : delay,
+      () {
+        _outboxRetryTimer = null;
+        unawaited(_flushOutbox());
+      },
+    );
   }
 
   /// Delivers MLS control messages (I34). One worker runs at a time; a call
@@ -9659,14 +10608,15 @@ class AppState extends ChangeNotifier
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     // Items settled some other way no longer need finishing.
     _mlsAcceptedUnfinished.removeWhere(
-        (key) => !messages.any((message) => message.idempotencyKey == key));
+      (key) => !messages.any((message) => message.idempotencyKey == key),
+    );
     final byConversation = <String, List<PendingMlsMessage>>{};
     for (final message in messages) {
       byConversation
           .putIfAbsent(message.conversationId, () => <PendingMlsMessage>[])
           .add(message);
     }
-    final failed = <String>{};
+    final failed = <String, PausedMlsUpdate>{};
     final now = DateTime.now().toUtc();
     for (final entry in byConversation.entries) {
       // A conversation paused by its own sync failure keeps its queued
@@ -9676,7 +10626,8 @@ class AppState extends ChangeNotifier
       for (final message in entry.value) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (message.terminal) {
-          failed.add(entry.key);
+          failed[entry.key] = await _pausedMlsUpdate(message);
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
           break;
         }
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
@@ -9708,10 +10659,11 @@ class AppState extends ChangeNotifier
           if (!_syncOwnerActive(current, ownerGeneration)) return;
           if (err is ApiException && err.statusCode == 401) {
             await _clearLocalSession(
-                preserveDeviceIdentity: true,
-                keepDrafts: true,
-                preserveOutbox: true,
-                drainSyncOwner: false);
+              preserveDeviceIdentity: true,
+              keepDrafts: true,
+              preserveOutbox: true,
+              drainSyncOwner: false,
+            );
             return;
           }
           final backoff = isBundle && err is ApiException
@@ -9723,8 +10675,9 @@ class AppState extends ChangeNotifier
             // conversation, and the policy waits before trying again.
             await _mlsCrypto?.abandonCommitBundle(message);
             if (!_syncOwnerActive(current, ownerGeneration)) return;
-            _selfUpdatePolicyFor(current)?.recordBackoff(
-                message.conversationId, DateTime.now(), backoff);
+            _selfUpdatePolicyFor(
+              current,
+            )?.recordBackoff(message.conversationId, DateTime.now(), backoff);
             await _saveSelfUpdates();
             if (err is ApiException && err.statusCode == 409) {
               _mlsReconcileRequested = true;
@@ -9751,7 +10704,10 @@ class AppState extends ChangeNotifier
             break;
           }
           final terminal = await _recordMlsOutboxFailure(message, err);
-          if (terminal) failed.add(entry.key);
+          if (terminal) {
+            failed[entry.key] = await _pausedMlsUpdate(message);
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
+          }
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -9775,8 +10731,15 @@ class AppState extends ChangeNotifier
           final bundle = MlsCommitBundle.decode(message.payload);
           if (bundle.added.isNotEmpty &&
               _syncOwnerActive(current, ownerGeneration)) {
-            unawaited(_trackBackground(() => _deliverInfoAfterAdd(
-                current, ownerGeneration, message.conversationId)));
+            unawaited(
+              _trackBackground(
+                () => _deliverInfoAfterAdd(
+                  current,
+                  ownerGeneration,
+                  message.conversationId,
+                ),
+              ),
+            );
           }
           // Sends held for this removal (D68) go once reconcile confirms it.
           if (bundle.removed.isNotEmpty &&
@@ -9787,14 +10750,15 @@ class AppState extends ChangeNotifier
           // A self-update, and any commit that removes someone, carries an
           // update path: this device's leaf key is fresh again.
           if (bundle.isUpdateOnly || bundle.removed.isNotEmpty) {
-            _selfUpdatePolicyFor(current)
-                ?.recordPathCommit(message.conversationId, DateTime.now());
+            _selfUpdatePolicyFor(
+              current,
+            )?.recordPathCommit(message.conversationId, DateTime.now());
             await _saveSelfUpdates();
           }
         }
       }
     }
-    if (!_sameSetOf(failed, _failedMlsConversations)) {
+    if (!mapEquals(failed, _failedMlsConversations)) {
       _failedMlsConversations
         ..clear()
         ..addAll(failed);
@@ -9845,8 +10809,11 @@ class AppState extends ChangeNotifier
     }
   }
 
-  Future<void> _reconcileMlsMembershipOnce(Session current, ApiClient client,
-      MlsConversationCryptoService mls) async {
+  Future<void> _reconcileMlsMembershipOnce(
+    Session current,
+    ApiClient client,
+    MlsConversationCryptoService mls,
+  ) async {
     final ownerGeneration = _sessionGeneration;
     // Holds set after this point are newer than the list (D68).
     final holdSeq = _removalHoldSeq;
@@ -9904,8 +10871,12 @@ class AppState extends ChangeNotifier
         if (discovery != null) {
           try {
             discovered = await _discoverApprovedAdds(
-                current, client, discovery, change.conversationId,
-                removing: {for (final ref in change.remove) ref.accountId});
+              current,
+              client,
+              discovery,
+              change.conversationId,
+              removing: {for (final ref in change.remove) ref.accountId},
+            );
             discoveryComplete = true;
             covered.add(change.conversationId);
           } catch (err) {
@@ -9927,21 +10898,29 @@ class AppState extends ChangeNotifier
         if (approvedAdds.isEmpty &&
             change.add.isNotEmpty &&
             change.remove.isEmpty) {
-          throw DeviceListNotApprovedException(
-              [for (final item in change.add) item.deviceId]);
+          throw DeviceListNotApprovedException([
+            for (final item in change.add) item.deviceId,
+          ]);
         }
         if (discovered != null && discoveryComplete) {
           // Only the tree resolves a gap, never a claimed package.
-          await _noteMissingJoins(change.conversationId,
-              AppStateL1Joins._gapAccounts(discovered), now);
+          await _noteMissingJoins(
+            change.conversationId,
+            AppStateL1Joins._gapAccounts(discovered),
+            now,
+          );
         }
         final adds = approvedAdds.isEmpty
             ? const <DeviceKeyPackage>[]
             : discovered != null
                 ? await _claimListedDevices(
-                    current, client, change.conversationId, discovered,
+                    current,
+                    client,
+                    change.conversationId,
+                    discovered,
                     stillOwner: () =>
-                        _syncOwnerActive(current, ownerGeneration))
+                        _syncOwnerActive(current, ownerGeneration),
+                  )
                 : await client.claimDeviceKeyPackages(
                     current.token,
                     change.conversationId,
@@ -9949,8 +10928,11 @@ class AppState extends ChangeNotifier
                   );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (adds.isEmpty && change.remove.isEmpty) continue;
-        await mls.stageMembershipChange(change.conversationId,
-            adds: adds, removes: change.remove);
+        await mls.stageMembershipChange(
+          change.conversationId,
+          adds: adds,
+          removes: change.remove,
+        );
         _mlsReconcileNow.remove(change.conversationId);
         staged = true;
       } catch (err) {
@@ -9963,21 +10945,27 @@ class AppState extends ChangeNotifier
         _mlsChangeFailed(change.conversationId, change.epoch);
         // Body-free: no conversation, device or server text.
         developer.log(
-            'mls_reconcile_conversation_failed '
-            '${err is ApiException ? err.statusCode : err.runtimeType}',
-            name: 'veritra.sync');
+          'mls_reconcile_conversation_failed '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync',
+        );
       }
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     _mlsPendingSeen.removeWhere((key, _) => !stillPending.contains(key));
-    _mlsReconcileNow.removeWhere((conversationId) =>
-        !changes.any((change) => change.conversationId == conversationId));
+    _mlsReconcileNow.removeWhere(
+      (conversationId) =>
+          !changes.any((change) => change.conversationId == conversationId),
+    );
     // A change the server no longer lists, or lists at another epoch, starts
     // afresh.
-    _mlsChangeRetries.removeWhere((conversationId, retry) => !changes.any(
+    _mlsChangeRetries.removeWhere(
+      (conversationId, retry) => !changes.any(
         (change) =>
             change.conversationId == conversationId &&
-            change.epoch == retry.epoch));
+            change.epoch == retry.epoch,
+      ),
+    );
     if (failed) _mlsReconcileRequested = true;
     try {
       await _updateRemovalHolds(changes, holdSeq, current, client, mls);
@@ -10011,33 +10999,45 @@ class AppState extends ChangeNotifier
   }
 
   Future<List<MlsDeviceRef>> _discoverApprovedAdds(
-      Session current,
-      ApiClient client,
-      ApprovedDeviceDiscoveryCryptoService discovery,
-      String conversationId,
-      {bool creating = false,
-      Set<String> removing = const <String>{}}) async {
-    final members =
-        await client.conversationMembers(current.token, conversationId);
+    Session current,
+    ApiClient client,
+    ApprovedDeviceDiscoveryCryptoService discovery,
+    String conversationId, {
+    bool creating = false,
+    Set<String> removing = const <String>{},
+  }) async {
+    final members = await client.conversationMembers(
+      current.token,
+      conversationId,
+    );
     final memberIds = {for (final member in members) member.accountId};
     // Accounts that already hold a leaf are examined as well (the native
     // call adds them), except one this change removes from the
     // conversation: a departing account never gains a device. A device
     // revoke keeps its account in the list, so its siblings still join.
-    final missing = await discovery.missingApprovedDevices(
-        creating ? null : conversationId, memberIds,
-        excluding: removing.difference(memberIds));
+    final listed = await discovery.missingApprovedDevices(
+      creating ? null : conversationId,
+      memberIds,
+      excluding: removing.difference(memberIds),
+    );
+    // C3: in a private channel's group, a server-proposed account nobody
+    // here picked is left out before a key package is claimed for it.
+    final missing = await _privateChannelRefs(conversationId, listed);
     // The server and native commit format cap each bundle at 256 changes.
     return missing.take(256).toList();
   }
 
   void _checkDiscoveredPackages(
-      List<MlsDeviceRef> requested, List<DeviceKeyPackage> packages) {
+    List<MlsDeviceRef> requested,
+    List<DeviceKeyPackage> packages,
+  ) {
     final expected = requested.toSet();
     final seen = <String>{};
     for (final package in packages) {
-      if (!expected.contains(
-              (accountId: package.accountId, deviceId: package.deviceId)) ||
+      if (!expected.contains((
+            accountId: package.accountId,
+            deviceId: package.deviceId,
+          )) ||
           !seen.add(package.deviceId)) {
         throw const FormatException('unexpected claimed device');
       }
@@ -10122,8 +11122,11 @@ class AppState extends ChangeNotifier
     final due = retry.due;
     if (due == null) return false;
     if (now.isBefore(due)) return true;
-    _mlsChangeRetries[conversationId] =
-        (epoch: retry.epoch, attempts: retry.attempts, due: null);
+    _mlsChangeRetries[conversationId] = (
+      epoch: retry.epoch,
+      attempts: retry.attempts,
+      due: null,
+    );
     return false;
   }
 
@@ -10172,32 +11175,34 @@ class AppState extends ChangeNotifier
     if (earliest == null) return;
     final generation = _sessionGeneration;
     final delay = earliest.difference(DateTime.now().toUtc());
-    _mlsRetryWake =
-        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
-      _mlsRetryWake = null;
-      if (_disposed) return;
-      if (!_syncOwnerActive(owner, generation)) {
-        // A rotated token or a sync restart keeps this device signed in:
-        // its backoffs are still in place (a session end clears them and
-        // cancels this timer), so the wake moves to the live owner instead
-        // of being lost.
-        final live = session;
-        if (live != null &&
-            live.baseUrl == owner.baseUrl &&
-            live.accountId == owner.accountId &&
-            live.deviceId == owner.deviceId) {
-          _armMlsRetryWake();
+    _mlsRetryWake = Timer(
+      delay < _minimumRetryDelay ? _minimumRetryDelay : delay,
+      () {
+        _mlsRetryWake = null;
+        if (_disposed) return;
+        if (!_syncOwnerActive(owner, generation)) {
+          // A rotated token or a sync restart keeps this device signed in:
+          // its backoffs are still in place (a session end clears them and
+          // cancels this timer), so the wake moves to the live owner instead
+          // of being lost.
+          final live = session;
+          if (live != null &&
+              live.baseUrl == owner.baseUrl &&
+              live.accountId == owner.accountId &&
+              live.deviceId == owner.deviceId) {
+            _armMlsRetryWake();
+          }
+          return;
         }
-        return;
-      }
-      // Hand every expired deadline to the catch-up below, so a pass that
-      // cannot reach the change (a failed fetch, say) does not re-fire the
-      // wake at once.
-      _consumeMlsRetryDeadlines(DateTime.now().toUtc());
-      _mlsReconcileRequested = true;
-      unawaited(_catchUpSyncEvents());
-      _armMlsRetryWake();
-    });
+        // Hand every expired deadline to the catch-up below, so a pass that
+        // cannot reach the change (a failed fetch, say) does not re-fire the
+        // wake at once.
+        _consumeMlsRetryDeadlines(DateTime.now().toUtc());
+        _mlsReconcileRequested = true;
+        unawaited(_catchUpSyncEvents());
+        _armMlsRetryWake();
+      },
+    );
   }
 
   Iterable<DateTime> _mlsRetryDeadlines() sync* {
@@ -10228,15 +11233,17 @@ class AppState extends ChangeNotifier
         _mlsChangeRetries[entry.key] = (
           epoch: entry.value.epoch,
           attempts: entry.value.attempts,
-          due: null
+          due: null,
         );
       }
     }
     for (final entry in _mlsStepRetries.entries.toList()) {
       final due = entry.value.due;
       if (due != null && !due.isAfter(now)) {
-        _mlsStepRetries[entry.key] =
-            (attempts: entry.value.attempts, due: null);
+        _mlsStepRetries[entry.key] = (
+          attempts: entry.value.attempts,
+          due: null,
+        );
       }
     }
   }
@@ -10269,12 +11276,14 @@ class AppState extends ChangeNotifier
   /// rejections are terminal, and so are local errors that cannot pass by
   /// themselves: an item that does not decode, a bad argument, a durable
   /// storage error (TASK-052). They pause the conversation, with the item
-  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
-  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// kept, until the person retries or discards it (D134, bug-hunt
+  /// Q-006). Connection problems, busy servers, a malformed
   /// response, transient storage errors and unknown errors retry with
   /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
-      PendingMlsMessage message, Object error) async {
+    PendingMlsMessage message,
+    Object error,
+  ) async {
     final apiError = error is ApiException ? error : null;
     final bool terminal;
     final String failureClass;
@@ -10331,17 +11340,22 @@ class AppState extends ChangeNotifier
   /// failed with [error]. Always a timed retry with the item's own backoff,
   /// never terminal: the group already moved on with it (TASK-030).
   Future<void> _recordMlsFinishFailure(
-      PendingMlsMessage message, Object error) async {
+    PendingMlsMessage message,
+    Object error,
+  ) async {
     // Body-free: no conversation, device or server text.
-    developer.log('mls_outbox_finish_failed ${error.runtimeType}',
-        name: 'veritra.sync');
+    developer.log(
+      'mls_outbox_finish_failed ${error.runtimeType}',
+      name: 'veritra.sync',
+    );
     final exponent = min(message.attemptCount, 8);
     await localStore.recordMlsOutboxFailure(
       message.idempotencyKey,
       failureClass: 'retryable:finish',
       terminal: false,
-      nextAttemptAt:
-          DateTime.now().toUtc().add(Duration(seconds: 1 << exponent)),
+      nextAttemptAt: DateTime.now().toUtc().add(
+            Duration(seconds: 1 << exponent),
+          ),
     );
   }
 
@@ -10405,25 +11419,232 @@ class AppState extends ChangeNotifier
   void _armMlsOutboxRetry(Duration delay) {
     // Two schedulers may overlap their reads; only the last timer stays.
     _mlsOutboxRetryTimer?.cancel();
-    _mlsOutboxRetryTimer =
-        Timer(delay < _minimumRetryDelay ? _minimumRetryDelay : delay, () {
-      _mlsOutboxRetryTimer = null;
-      unawaited(_flushMlsOutbox());
-    });
+    _mlsOutboxRetryTimer = Timer(
+      delay < _minimumRetryDelay ? _minimumRetryDelay : delay,
+      () {
+        _mlsOutboxRetryTimer = null;
+        unawaited(_flushMlsOutbox());
+      },
+    );
   }
 
-  /// Conversations whose MLS control message the server rejected (I34).
-  /// They stay paused, with the message kept, until the device recovers.
+  /// Conversations whose MLS control message failed for good (I34): the
+  /// server refused it, or this device could not send it. They stay paused,
+  /// with the message kept so nothing overtakes it, until the person picks
+  /// [retryMlsUpdate] or [discardMlsUpdate] (D134), or leaves the chat.
   bool mlsConversationFailed(String conversationId) =>
-      _failedMlsConversations.contains(conversationId);
+      _failedMlsConversations.containsKey(conversationId);
 
-  static bool _sameSetOf(Set<String> left, Set<String> right) =>
-      left.length == right.length && left.containsAll(right);
+  /// D134: the control message that pauses [conversationId], as the last
+  /// outbox pass found it; null when the conversation is not paused by one.
+  /// The chat offers Discard only when it is discardable, and hands its key
+  /// to [discardMlsUpdate].
+  PausedMlsUpdate? pausedMlsUpdate(String conversationId) =>
+      _failedMlsConversations[conversationId];
+
+  /// Marks [conversationIds] as paused by a failed control message, for
+  /// widget tests.
+  @visibleForTesting
+  void debugMlsConversationFailed(Set<String> conversationIds,
+      {bool discardable = true}) {
+    _failedMlsConversations
+      ..clear()
+      ..addAll(<String, PausedMlsUpdate>{
+        for (final id in conversationIds)
+          id: (idempotencyKey: 'paused_$id', discardable: discardable),
+      });
+    notifyListeners();
+  }
+
+  /// D134 (bug-hunt c6ed/Q-006): sends the control message that pauses
+  /// [conversationId] again, under its own idempotency key, so a server that
+  /// already took it answers with the original result. The terminal mark is
+  /// cleared inside the session queue, so a [discardMlsUpdate] queued behind
+  /// this finds the message in flight and leaves it alone. Completes after
+  /// the outbox pass that carries it; failing again pauses again. Runs as
+  /// [Ops.mlsUpdate], apart from the composer's [Ops.send].
+  Future<void> retryMlsUpdate(String conversationId) async {
+    final owner = session;
+    if (owner == null || _mlsCrypto == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var settle = false;
+    await _runScoped(Ops.mlsUpdate, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null) return;
+      await localStore.retryPendingMlsMessage(head.idempotencyKey);
+      settle = true;
+    });
+    if (settle && _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+  }
+
+  /// D134: drops the commit bundle [idempotencyKey] that pauses
+  /// [conversationId], the way a server refusal does (card I51). It acts
+  /// only while that bundle is still the conversation's terminal head, so
+  /// a double tap, or a tap on a notice drawn before an earlier discard,
+  /// never drops a later update the person has not seen.
+  ///
+  /// Safe for ordering: a terminal item was never accepted (the server
+  /// refused it, or it failed here before or at the request), its commit
+  /// was staged and never merged, and no later commit can be staged on top
+  /// of it, so this device stays at the group's epoch and every message
+  /// queued behind it stays valid. What it carried fares as after a
+  /// refusal: a membership change the server still lists is made again by
+  /// reconcile after its backoff, with sends held while it removes someone
+  /// (D68); a revocation is made again by its coordinator while the server
+  /// lists it pending; a self-update waits out its backoff; a role change
+  /// is not made, and the result says so, for the person to make it again.
+  ///
+  /// A group's first bundle (epoch 0) is refused: the server would never
+  /// learn of the group, reconcile could never add anyone to it, and a DM
+  /// would have no way back. Retry, or leaving the chat (D70), stays.
+  ///
+  /// Only a message still terminal inside the session queue is dropped,
+  /// never one a retry is sending. Completes after the outbox pass that
+  /// follows, which releases held messages. Runs as [Ops.mlsUpdate]; a
+  /// refusal is that op's error.
+  Future<MlsUpdateDiscard> discardMlsUpdate(
+      String conversationId, String idempotencyKey) async {
+    final owner = session;
+    final mls = _mlsCrypto;
+    if (owner == null || mls == null) return MlsUpdateDiscard.notDone;
+    final ownerGeneration = _sessionGeneration;
+    var outcome = MlsUpdateDiscard.notDone;
+    await _runScoped(Ops.mlsUpdate, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null || head.idempotencyKey != idempotencyKey) return;
+      // Only commit bundles are queued; their commit merges on acceptance.
+      // Any other kind cannot be shown to be unmerged here, so it stays,
+      // and leaving the chat (D70) is the way out. A group's first bundle
+      // stays too (above).
+      if (!await _mlsUpdateDiscardable(head)) {
+        throw UserFacingException(l10n.chatPausedDiscardRefused);
+      }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      final bundle = _decodedBundleOrNull(head);
+      if (bundle == null) {
+        // D68, failing closed: a bundle that no longer decodes may have
+        // removed someone. Hold sends until reconcile has looked again; a
+        // hold the server does not list is released after the next
+        // complete fetch.
+        await _loadRemovalHolds();
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        ({int epoch, bool pending})? local;
+        try {
+          local = await mls.groupEpoch(conversationId);
+        } catch (_) {
+          local = null;
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        _removalHolds.putIfAbsent(
+            conversationId, () => _RemovalHold(epoch: local?.epoch ?? 0))
+          ..seq = ++_removalHoldSeq
+          // A read before this discard proves nothing about it.
+          ..unlistedAt = null;
+        await _saveRemovalHolds();
+        _removalHoldsUpdated();
+      } else if (bundle.removed.isNotEmpty &&
+          bundle.revocationDeviceId == null) {
+        // D68: the removal stays open once its commit is dropped. Record
+        // the hold from the queued bundle first, so no send slips out
+        // before reconcile makes the removal again.
+        await _heldForRemoval(conversationId);
+      }
+      await mls.abandonCommitBundle(head);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // The same follow-up as a refusal: a self-update waits out its
+      // backoff; a membership change backs off and is reconciled again.
+      if (bundle != null && bundle.isUpdateOnly) {
+        _selfUpdatePolicyFor(owner)?.recordBackoff(
+            conversationId, DateTime.now(), MlsSelfUpdatePolicy.refusedBackoff);
+        await _saveSelfUpdates();
+      } else {
+        _mlsBundleRefused(head);
+        _mlsReconcileRequested = true;
+        unawaited(_catchUpSyncEvents());
+      }
+      outcome = bundle != null && bundle.roleChange
+          ? MlsUpdateDiscard.roleChangeNotMade
+          : MlsUpdateDiscard.discarded;
+    });
+    if (outcome != MlsUpdateDiscard.notDone &&
+        _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+    return outcome;
+  }
+
+  /// D134: [head], terminal, as the chat shows it: its key, and whether
+  /// [discardMlsUpdate] may drop it. Never throws, so one unreadable group
+  /// does not stop an outbox pass.
+  Future<PausedMlsUpdate> _pausedMlsUpdate(PendingMlsMessage head) async {
+    bool discardable;
+    try {
+      discardable = await _mlsUpdateDiscardable(head);
+    } catch (_) {
+      discardable = false;
+    }
+    return (idempotencyKey: head.idempotencyKey, discardable: discardable);
+  }
+
+  /// D134: whether the terminal [head] may be discarded: a commit bundle
+  /// not yet accepted, past the group's first (epoch 0) bundle. A bundle
+  /// that no longer decodes was staged at the group's current epoch (its
+  /// commit was never merged), so that epoch stands in for its own; with
+  /// no group here, or one that cannot be read, it stays. The outbox pass
+  /// and [discardMlsUpdate] both decide by this.
+  Future<bool> _mlsUpdateDiscardable(PendingMlsMessage head) async {
+    if (head.kind != MlsCommitBundle.kind ||
+        _mlsAcceptedUnfinished.contains(head.idempotencyKey)) {
+      return false;
+    }
+    final bundle = _decodedBundleOrNull(head);
+    if (bundle != null) return bundle.epoch > 0;
+    final mls = _mlsCrypto;
+    if (mls == null) return false;
+    final ({int epoch, bool pending})? local;
+    try {
+      local = await mls.groupEpoch(head.conversationId);
+    } catch (_) {
+      return false;
+    }
+    return local != null && local.epoch > 0;
+  }
+
+  /// The commit bundle [message] carries; null when it does not decode.
+  static MlsCommitBundle? _decodedBundleOrNull(PendingMlsMessage message) {
+    try {
+      return MlsCommitBundle.decode(message.payload);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The first queued control message of [conversationId] if it is the
+  /// terminal one that pauses it; null otherwise, or once [owner]'s session
+  /// ended. Read from the store inside the session queue.
+  Future<PendingMlsMessage?> _pausedMlsHead(
+      String conversationId, Session owner, int ownerGeneration) async {
+    if (!_syncOwnerActive(owner, ownerGeneration)) return null;
+    final head = (await localStore.pendingMlsMessages())
+        .where((message) => message.conversationId == conversationId)
+        .firstOrNull;
+    if (head == null ||
+        !head.terminal ||
+        _mlsAcceptedUnfinished.contains(head.idempotencyKey) ||
+        !_syncOwnerActive(owner, ownerGeneration)) {
+      return null;
+    }
+    return head;
+  }
 
   /// Creates the MLS group for a new conversation and sends each member's
   /// Welcome, so the composer works as soon as the conversation opens.
-  Future<void> _setUpConversationGroup(String conversationId,
-      {String? kind}) async {
+  Future<void> _setUpConversationGroup(
+    String conversationId, {
+    String? kind,
+  }) async {
     if (kind != null) _creatingKinds[conversationId] = kind;
     try {
       await _setUpConversationGroupOnce(conversationId);
@@ -10440,22 +11661,31 @@ class AppState extends ChangeNotifier
     final ownerGeneration = _sessionGeneration;
     final List<DeviceKeyPackage> packages;
     if (mls is ApprovedDeviceDiscoveryCryptoService) {
-      final requested = await _discoverApprovedAdds(current, client,
-          mls as ApprovedDeviceDiscoveryCryptoService, conversationId,
-          creating: true);
+      final requested = await _discoverApprovedAdds(
+        current,
+        client,
+        mls as ApprovedDeviceDiscoveryCryptoService,
+        conversationId,
+        creating: true,
+      );
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       packages = await _claimListedDevices(
-          current, client, conversationId, requested,
-          stillOwner: () => _syncOwnerActive(current, ownerGeneration));
+        current,
+        client,
+        conversationId,
+        requested,
+        stillOwner: () => _syncOwnerActive(current, ownerGeneration),
+      );
     } else {
-      packages = await client.claimConversationKeyPackages(
-          current.token, conversationId);
+      throw StateError('group creation needs approved-device discovery');
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     await mls.initializeConversation(conversationId, packages);
     // The creator's leaf key was made with the group.
-    await _noteSelfUpdate(current,
-        (policy) => policy.recordPathCommit(conversationId, DateTime.now()));
+    await _noteSelfUpdate(
+      current,
+      (policy) => policy.recordPathCommit(conversationId, DateTime.now()),
+    );
     await _saveSelfUpdates();
     await _flushMlsOutbox();
   }
@@ -10520,7 +11750,8 @@ class AppState extends ChangeNotifier
 
   /// The stored record when it belongs to [owner]'s identity, else null.
   Future<({int need, String? welcome})?> _readKeyPackageNeed(
-      Session owner) async {
+    Session owner,
+  ) async {
     final raw = await localStore.loadSetting(_keyPackageNeedSetting);
     if (raw == null || raw.isEmpty) return null;
     try {
@@ -10543,28 +11774,32 @@ class AppState extends ChangeNotifier
   /// leave it); they never interleave, so an increment and a decrement
   /// cannot lose each other. Returns what [owner] owes afterwards.
   Future<int> _changeKeyPackageNeed(
-      Session owner,
-      ({int need, String? welcome})? Function(
-              ({int need, String? welcome})? current)
-          change) {
+    Session owner,
+    ({int need, String? welcome})? Function(
+      ({int need, String? welcome})? current,
+    ) change,
+  ) {
     final done = _keyPackageNeedLock.then((_) async {
       final current = await _readKeyPackageNeed(owner);
       final next = change(current);
       final need = (next ?? current)?.need.clamp(0, _keyPackageBatchCap) ?? 0;
       if (next != null) {
         await localStore.saveSetting(
-            _keyPackageNeedSetting,
-            jsonEncode(<String, Object?>{
-              'scope': _keyPackageScope(owner),
-              'need': need,
-              if (next.welcome != null) 'welcome': next.welcome,
-            }));
+          _keyPackageNeedSetting,
+          jsonEncode(<String, Object?>{
+            'scope': _keyPackageScope(owner),
+            'need': need,
+            if (next.welcome != null) 'welcome': next.welcome,
+          }),
+        );
       }
       if (_sameSession(owner)) _keyPackagesOwed = need > 0;
       return need;
     });
-    _keyPackageNeedLock =
-        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _keyPackageNeedLock = done.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
     return done;
   }
 
@@ -10584,10 +11819,11 @@ class AppState extends ChangeNotifier
   /// Records [published] packages the server accepted for [owner].
   Future<int> _settleKeyPackages(Session owner, int published) =>
       _changeKeyPackageNeed(
-          owner,
-          (current) => current == null
-              ? null
-              : (need: current.need - published, welcome: current.welcome));
+        owner,
+        (current) => current == null
+            ? null
+            : (need: current.need - published, welcome: current.welcome),
+      );
 
   /// Written before a new device's session is saved, so even a crash right
   /// after the save leaves its first batch owed.
@@ -10620,16 +11856,22 @@ class AppState extends ChangeNotifier
     final now = DateTime.now();
     final at = _keyPackageRetryAt;
     if (at != null && now.isBefore(at)) return;
-    _keyPackageRetryAt = now
-        .add(Duration(minutes: min(60, 1 << min(_keyPackageRetryFailures, 6))));
-    unawaited(_publishOwedKeyPackages().then((_) {
-      if (_sameSession(current)) {
-        _keyPackageRetryFailures = 0;
-        _keyPackageRetryAt = null;
-      }
-    }, onError: (Object _) {
-      if (_sameSession(current)) _keyPackageRetryFailures++;
-    }));
+    _keyPackageRetryAt = now.add(
+      Duration(minutes: min(60, 1 << min(_keyPackageRetryFailures, 6))),
+    );
+    unawaited(
+      _publishOwedKeyPackages().then(
+        (_) {
+          if (_sameSession(current)) {
+            _keyPackageRetryFailures = 0;
+            _keyPackageRetryAt = null;
+          }
+        },
+        onError: (Object _) {
+          if (_sameSession(current)) _keyPackageRetryFailures++;
+        },
+      ),
+    );
   }
 
   /// Publishes one capped batch of what the current session owes and
@@ -10645,12 +11887,14 @@ class AppState extends ChangeNotifier
     final publish = _publishOwedKeyPackagesOnce(current);
     _keyPackagePublish = publish;
     _keyPackagePublishOwner = current;
-    unawaited(publish.then<void>((_) {}, onError: (Object _) {}).then((_) {
-      if (identical(_keyPackagePublish, publish)) {
-        _keyPackagePublish = null;
-        _keyPackagePublishOwner = null;
-      }
-    }));
+    unawaited(
+      publish.then<void>((_) {}, onError: (Object _) {}).then((_) {
+        if (identical(_keyPackagePublish, publish)) {
+          _keyPackagePublish = null;
+          _keyPackagePublishOwner = null;
+        }
+      }),
+    );
     return publish;
   }
 
@@ -10661,7 +11905,8 @@ class AppState extends ChangeNotifier
     final owed = await _changeKeyPackageNeed(current, (_) => null);
     if (owed <= 0 || !_sameSession(current)) return;
     final packages = await mls.createReplenishmentKeyPackages(
-        count: min(owed, _keyPackageBatchCap));
+      count: min(owed, _keyPackageBatchCap),
+    );
     // Generated for this session; never published for another.
     if (!_sameSession(current)) return;
     try {
@@ -10696,9 +11941,10 @@ class AppState extends ChangeNotifier
       if (err is ApiException && err.statusCode == 401) rethrow;
       // Body-free: no server text.
       developer.log(
-          'mls_revocations_unavailable '
-          '${err is ApiException ? err.statusCode : err.runtimeType}',
-          name: 'veritra.sync');
+        'mls_revocations_unavailable '
+        '${err is ApiException ? err.statusCode : err.runtimeType}',
+        name: 'veritra.sync',
+      );
       if (_syncOwnerActive(current, ownerGeneration)) {
         _mlsStepSettled('revocations', failed: true);
       }
@@ -10708,9 +11954,11 @@ class AppState extends ChangeNotifier
     var failed = false;
     _revocationPendingGroups
       ..clear()
-      ..addAll(revocations
-          .where((revocation) => revocation.state == 'pending')
-          .map((revocation) => revocation.conversationId));
+      ..addAll(
+        revocations
+            .where((revocation) => revocation.state == 'pending')
+            .map((revocation) => revocation.conversationId),
+      );
     for (final revocation in revocations) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       // Each revocation is handled on its own: one that cannot be committed
@@ -10733,9 +11981,11 @@ class AppState extends ChangeNotifier
             // the list above predates it: read the revocation again and
             // commit only if the server still waits for this device.
             final fresh = (await client.mlsRevocations(current.token))
-                .where((item) =>
-                    item.conversationId == revocation.conversationId &&
-                    item.revokedDeviceId == revocation.revokedDeviceId)
+                .where(
+                  (item) =>
+                      item.conversationId == revocation.conversationId &&
+                      item.revokedDeviceId == revocation.revokedDeviceId,
+                )
                 .firstOrNull;
             if (fresh == null ||
                 fresh.state != 'pending' ||
@@ -10765,9 +12015,10 @@ class AppState extends ChangeNotifier
         failed = true;
         // Body-free: no conversation, device or server text.
         developer.log(
-            'mls_revocation_failed '
-            '${err is ApiException ? err.statusCode : err.runtimeType}',
-            name: 'veritra.sync');
+          'mls_revocation_failed '
+          '${err is ApiException ? err.statusCode : err.runtimeType}',
+          name: 'veritra.sync',
+        );
       }
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -10785,7 +12036,9 @@ class AppState extends ChangeNotifier
   /// accepted bundle; dropping it would leave this device an epoch behind
   /// its own commit, so the same bundle is retried as sent.
   static Duration? _selfUpdateRefusal(
-      PendingMlsMessage message, ApiException err) {
+    PendingMlsMessage message,
+    ApiException err,
+  ) {
     final Duration backoff;
     switch ((err.statusCode, err.serverCode)) {
       // The server's budget; an operator may set it above the default.
@@ -10812,9 +12065,11 @@ class AppState extends ChangeNotifier
   Future<MlsCommitBundle?> _queuedCommitBundle(String idempotencyKey) async {
     try {
       final queued = (await localStore.pendingMlsMessages())
-          .where((item) =>
-              item.kind == MlsCommitBundle.kind &&
-              item.idempotencyKey == idempotencyKey)
+          .where(
+            (item) =>
+                item.kind == MlsCommitBundle.kind &&
+                item.idempotencyKey == idempotencyKey,
+          )
           .firstOrNull;
       return queued == null ? null : MlsCommitBundle.decode(queued.payload);
     } catch (_) {
@@ -10842,19 +12097,25 @@ class AppState extends ChangeNotifier
         deviceId == null) {
       return null;
     }
-    final raw = await localStore
-        .loadSetting('${MlsSelfUpdatePolicy.settingName}:$deviceId');
+    final raw = await localStore.loadSetting(
+      '${MlsSelfUpdatePolicy.settingName}:$deviceId',
+    );
     // Another load may have finished meanwhile; keep the first.
     return _selfUpdatePolicyFor(current) ??
-        (_selfUpdatePolicy = MlsSelfUpdatePolicy.decode(raw,
-            accountId: accountId, deviceId: deviceId));
+        (_selfUpdatePolicy = MlsSelfUpdatePolicy.decode(
+          raw,
+          accountId: accountId,
+          deviceId: deviceId,
+        ));
   }
 
   /// Records [change] in the policy of [current]'s device. Never throws: a
   /// lost note costs at most an early or late self-update, while a failure
   /// here would fail the sync step or group setup that already committed.
   Future<void> _noteSelfUpdate(
-      Session current, void Function(MlsSelfUpdatePolicy policy) change) async {
+    Session current,
+    void Function(MlsSelfUpdatePolicy policy) change,
+  ) async {
     try {
       final policy = await _selfUpdates(current);
       if (policy != null) change(policy);
@@ -10879,8 +12140,9 @@ class AppState extends ChangeNotifier
     policy.dirty = false;
     try {
       await localStore.saveSetting(
-          '${MlsSelfUpdatePolicy.settingName}:${policy.deviceId}',
-          policy.encode());
+        '${MlsSelfUpdatePolicy.settingName}:${policy.deviceId}',
+        policy.encode(),
+      );
     } catch (_) {
       policy.dirty = true;
     }
@@ -10947,7 +12209,7 @@ class AppState extends ChangeNotifier
         // C4: an update now would void the leave statement just sent.
         if (_leavingRecordGroups.contains(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
-            _failedMlsConversations.contains(conversationId) ||
+            _failedMlsConversations.containsKey(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {
           continue;
         }
@@ -10955,7 +12217,10 @@ class AppState extends ChangeNotifier
         if (local == null) {
           // No group on this device (yet): look again much later.
           policy.recordBackoff(
-              conversationId, now, MlsSelfUpdatePolicy.refusedBackoff);
+            conversationId,
+            now,
+            MlsSelfUpdatePolicy.refusedBackoff,
+          );
           continue;
         }
         if (local.pending) continue;
@@ -10973,10 +12238,15 @@ class AppState extends ChangeNotifier
           await crypto.stageSelfUpdate(conversationId);
         } catch (err) {
           policy.recordBackoff(
-              conversationId, now, MlsSelfUpdatePolicy.failureBackoff);
+            conversationId,
+            now,
+            MlsSelfUpdatePolicy.failureBackoff,
+          );
           // Body-free: no conversation, device or server text.
-          developer.log('mls_self_update_stage_failed ${err.runtimeType}',
-              name: 'veritra.sync');
+          developer.log(
+            'mls_self_update_stage_failed ${err.runtimeType}',
+            name: 'veritra.sync',
+          );
           continue;
         }
         _lastSelfUpdateStagedAt = now;
@@ -11013,8 +12283,9 @@ class AppState extends ChangeNotifier
   /// its group.
   Future<bool> _hasPendingMlsWork(String conversationId) async =>
       conversationSyncPaused(conversationId) ||
-      (await localStore.pendingMlsMessages())
-          .any((message) => message.conversationId == conversationId);
+      (await localStore.pendingMlsMessages()).any(
+        (message) => message.conversationId == conversationId,
+      );
 
   Future<void> _removeFromOutbox(MessageEnvelope envelope) async {
     await _removeFromOutboxByKey(envelope.idempotencyKey);
@@ -11055,16 +12326,20 @@ class AppState extends ChangeNotifier
     _sealedPost?.close();
     _sealedPost = null;
     final sealed = SealedSender(
-        origin: client.baseUrl,
-        localStore: localStore,
-        crypto: crypto,
-        loadFrankContext: () => _sealedFrankContext(client.baseUrl));
+      origin: client.baseUrl,
+      localStore: localStore,
+      crypto: crypto,
+      loadFrankContext: () => _sealedFrankContext(client.baseUrl),
+    );
     sealedSender = sealed;
     crypto.sealedTokenSource = sealed;
     // Settings warns about owner key differences recorded on earlier runs
     // before this run's first token pass.
-    unawaited(loadOwnerKeyReview()
-        .catchError((Object _) => const <OwnerKeyReviewItem>[]));
+    unawaited(
+      loadOwnerKeyReview().catchError(
+        (Object _) => const <OwnerKeyReviewItem>[],
+      ),
+    );
   }
 
   /// L2-3: the sealed sender key pinned for this server, for Settings.
@@ -11119,8 +12394,10 @@ class AppState extends ChangeNotifier
   Future<bool> rejectOwnerKey(OwnerKeyReviewItem item) =>
       _decideOwnerKey(item, accept: false);
 
-  Future<bool> _decideOwnerKey(OwnerKeyReviewItem item,
-      {required bool accept}) async {
+  Future<bool> _decideOwnerKey(
+    OwnerKeyReviewItem item, {
+    required bool accept,
+  }) async {
     final sealed = sealedSender;
     if (sealed == null) return false;
     final watch = OwnerKeyWatch(localStore, sealed.origin);
@@ -11139,7 +12416,9 @@ class AppState extends ChangeNotifier
   }
 
   static bool _sameOwnerKeyReview(
-      List<OwnerKeyReviewItem> a, List<OwnerKeyReviewItem> b) {
+    List<OwnerKeyReviewItem> a,
+    List<OwnerKeyReviewItem> b,
+  ) {
     if (a.length != b.length) return false;
     for (var index = 0; index < a.length; index++) {
       final x = a[index], y = b[index];
@@ -11187,9 +12466,10 @@ class AppState extends ChangeNotifier
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+          );
         }
         _opErrors[op] = describeError(err, l10n);
       } finally {
@@ -11219,9 +12499,10 @@ class AppState extends ChangeNotifier
             err.statusCode == 401 &&
             err.serverCode != 'invalid_credentials') {
           await _clearLocalSession(
-              preserveDeviceIdentity: true,
-              keepDrafts: true,
-              preserveOutbox: true);
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true,
+          );
         }
         error = describeError(err, l10n);
       } finally {
@@ -11256,10 +12537,12 @@ class AppState extends ChangeNotifier
       // Pending registrations may already have committed server-side.
       var drained = true;
       try {
-        await Future.wait(_pushStarts.toList())
-            .timeout(const Duration(seconds: 5));
-        drained = (await Future.wait(_pushRegistrations.toList())
-                .timeout(const Duration(seconds: 5)))
+        await Future.wait(
+          _pushStarts.toList(),
+        ).timeout(const Duration(seconds: 5));
+        drained = (await Future.wait(
+          _pushRegistrations.toList(),
+        ).timeout(const Duration(seconds: 5)))
             .every((gone) => gone);
       } catch (_) {
         drained = false;
@@ -11278,14 +12561,16 @@ class AppState extends ChangeNotifier
     _pushTeardownFailed = false;
     // Let old registrations remove their late subscriptions before a new
     // registration can reuse the same server-side subscription identity.
-    unawaited(Future.wait<void>([
-      ..._pushStarts,
-      for (final pending in _pushRegistrations) pending.then<void>((_) {}),
-    ]).then((_) {
-      if (session != null && !_disposed && !_pushLeaving) {
-        unawaited(_startPush());
-      }
-    }));
+    unawaited(
+      Future.wait<void>([
+        ..._pushStarts,
+        for (final pending in _pushRegistrations) pending.then<void>((_) {}),
+      ]).then((_) {
+        if (session != null && !_disposed && !_pushLeaving) {
+          unawaited(_startPush());
+        }
+      }),
+    );
   }
 
   /// Steps 4 and 6: stops sync, sockets and timers, advances the session
@@ -11297,8 +12582,10 @@ class AppState extends ChangeNotifier
     await _switchResourceClose;
     // A request that never answers must not hold the switch: the client was
     // closed above, and the generation fence drops anything that arrives.
-    await backgroundWorkIdle.timeout(const Duration(seconds: 5),
-        onTimeout: () {});
+    await backgroundWorkIdle.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {},
+    );
   }
 
   Future<void>? _switchResourceClose;
@@ -11307,6 +12594,7 @@ class AppState extends ChangeNotifier
   void dispose() {
     _disposed = true;
     _cancelOwnerCancelTimers();
+    _finishUndoableHides();
     _infoRotationTimer?.cancel();
     _infoRotationTimer = null;
     unawaited(screenGuard.setSecure(false));
@@ -11412,8 +12700,11 @@ class _SyncPageRepair {
     try {
       for (var round = 0; round < _maxBatchRequests; round++) {
         requests++;
-        final page =
-            await client.mlsMessages(token, after: after, limit: _batchLimit);
+        final page = await client.mlsMessages(
+          token,
+          after: after,
+          limit: _batchLimit,
+        );
         for (final message in page) {
           if (wanted[message.id] == message.syncEventId) {
             found[message.id] = message;
@@ -11443,14 +12734,19 @@ class _SyncPageRepair {
     try {
       return await client.mlsMessage(token, id);
     } catch (err) {
-      throw _classifyFetch(err, event,
-          missing: SyncFailureKind.mlsControlMissing,
-          malformed: SyncFailureKind.mlsControlMalformed);
+      throw _classifyFetch(
+        err,
+        event,
+        missing: SyncFailureKind.mlsControlMissing,
+        malformed: SyncFailureKind.mlsControlMalformed,
+      );
     }
   }
 
   Future<ReceivedMessageEnvelope?> _fetchEnvelope(
-      SyncEvent event, String id) async {
+    SyncEvent event,
+    String id,
+  ) async {
     requests++;
     try {
       return await client.message(token, id);
@@ -11460,9 +12756,12 @@ class _SyncPageRepair {
           err.serverCode == 'message_expired') {
         return null;
       }
-      throw _classifyFetch(err, event,
-          missing: SyncFailureKind.applicationMissing,
-          malformed: SyncFailureKind.applicationUndecryptable);
+      throw _classifyFetch(
+        err,
+        event,
+        missing: SyncFailureKind.applicationMissing,
+        malformed: SyncFailureKind.applicationUndecryptable,
+      );
     }
   }
 
@@ -11499,7 +12798,9 @@ extension FirstOrNull<T> on Iterable<T> {
 String _randomHexId() {
   final random = Random.secure();
   return List<String>.generate(
-      16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    16,
+    (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
 }
 
 /// One conversation's D68 send hold.
@@ -11510,7 +12811,8 @@ class _RemovalHold {
         epoch: json['epoch'] as int,
         listed: json['listed'] as bool? ?? true,
       )..accounts.addAll(
-          (json['accounts'] as List? ?? const <Object?>[]).cast<String>());
+          (json['accounts'] as List? ?? const <Object?>[]).cast<String>(),
+        );
 
   /// The epoch the removal was made or last listed at.
   int epoch;

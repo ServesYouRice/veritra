@@ -55,13 +55,21 @@ var profiles = map[string]profile{
 		CiphertextBytes: 1024, AttachmentBytes: 256 << 10, AttachmentEvery: 20, LargeEvery: 25, LargeBytes: 25 << 20},
 	"m": {Name: "m", Accounts: 250, DMs: 125, Groups: 75, GroupSize: 5, History: 100_000, Attachments: 1_000,
 		CiphertextBytes: 1024, AttachmentBytes: 256 << 10, AttachmentEvery: 20, LargeEvery: 25, LargeBytes: 25 << 20},
+	// c8 is one community-sized group of every account (package C8): no DMs
+	// and no attachments, so the run measures the fan-out of one busy group.
+	// -group-size resizes it (it also raises the account count to fit).
+	"c8": {Name: "c8", Accounts: 500, DMs: 0, Groups: 1, GroupSize: 500, History: 2_000,
+		CiphertextBytes: 1024},
 }
 
 const (
 	cryptoProtocol     = "mls10-openmls-v1"
 	attachmentMetadata = `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576}`
 	seedWorkers        = 8
-	readEvery          = 2 * time.Minute
+	// maxCreateMembers is how many other accounts one create-conversation
+	// request may name (the server refuses more than 100).
+	maxCreateMembers = 100
+	readEvery        = 2 * time.Minute
 	// maxSendsInFlight caps one device's concurrent arrivals (upload plus
 	// send). Arrivals over it are recorded as dropped sends, so a stalled
 	// server shows as failures instead of lowering the offered load.
@@ -397,6 +405,12 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 		for _, member := range conv.members[1:] {
 			others = append(others, w.devices[member].accountID)
 		}
+		// Creating a conversation names at most maxCreateMembers others; the
+		// rest of a larger group (package C8) join through the member route.
+		later := []string(nil)
+		if len(others) > maxCreateMembers {
+			others, later = others[:maxCreateMembers], others[maxCreateMembers:]
+		}
 		var created struct {
 			ID string `json:"id"`
 		}
@@ -410,6 +424,14 @@ func (w *world) seed(ctx context.Context, setupToken string, rng *mrand.Rand, pr
 			return err
 		}
 		conv.id = created.ID
+		for _, accountID := range later {
+			if err := retryRateLimited(ctx, func() error {
+				return expect(w.client.json(ctx, http.MethodPost, "/api/v1/conversations/"+created.ID+"/members", creator, "",
+					map[string]any{"account_id": accountID, "role": "member"}, nil, nil))
+			}); err != nil {
+				return fmt.Errorf("add member: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("conversations: %w", err)
@@ -815,8 +837,24 @@ func wake(ch chan<- struct{}) {
 
 type syncPage struct {
 	Events []syncEvent `json:"events"`
-	Latest int64       `json:"latest_event_id"`
+	// ScannedThrough and Truncated are the server's scan position (D134: the
+	// account stream is always bounded). A page can be empty and truncated, so
+	// the app, and so this client, pages on until neither holds.
+	ScannedThrough int64 `json:"scanned_through"`
+	Truncated      bool  `json:"scan_truncated"`
 }
+
+// next is the cursor after applying the page: the last event, or how far the
+// server looked when that is further (a hidden run is crossed once).
+func (p syncPage) next(cursor int64) int64 {
+	if n := len(p.Events); n > 0 {
+		cursor = max(cursor, p.Events[n-1].ID)
+	}
+	return max(cursor, p.ScannedThrough)
+}
+
+// more says the stream may hold more after this page.
+func (p syncPage) more() bool { return len(p.Events) > 0 || p.Truncated }
 
 // syncEvent is one /sync/events entry; a message event carries its
 // envelope.
@@ -855,26 +893,46 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 			}
 		}
 		if cursor < 0 {
-			// The request that sets the cursor is a measured sync too, so
-			// a client that cannot start shows up as failed syncs.
-			var page syncPage
-			_, err := w.timed(opSync, func() (int, error) {
-				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after=0&limit=1", dev, "", nil, &page, nil)
-				return status, expect(status, err, http.StatusOK)
-			})
-			if err != nil {
+			// A device with no cursor reads the stream to its end, as an app
+			// does, and counts none of it. Each request is a measured sync
+			// too, so a client that cannot start shows up as failed syncs.
+			var at int64
+			failed := false
+			for ctx.Err() == nil {
+				var page syncPage
+				_, err := w.timed(opSync, func() (int, error) {
+					status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(at, 10)+"&limit=200&scan=bounded", dev, "", nil, &page, nil)
+					return status, expect(status, err, http.StatusOK)
+				})
+				if err != nil {
+					failed = true
+					break
+				}
+				next := page.next(at)
+				if page.Truncated && next <= at {
+					// A truncated page that does not move the cursor would
+					// repeat forever.
+					failed = true
+					break
+				}
+				at = next
+				if !page.more() {
+					break
+				}
+			}
+			if failed || ctx.Err() != nil {
 				continue
 			}
-			cursor = page.Latest
+			cursor = at
 			seen = max(seen, cursor)
 		}
 		for ctx.Err() == nil {
 			var page syncPage
 			_, err := w.timed(op, func() (int, error) {
-				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(cursor, 10)+"&limit=200", dev, "", nil, &page, nil)
+				status, err := w.client.json(ctx, http.MethodGet, "/api/v1/sync/events?after="+strconv.FormatInt(cursor, 10)+"&limit=200&scan=bounded", dev, "", nil, &page, nil)
 				return status, expect(status, err, http.StatusOK)
 			})
-			if err != nil || len(page.Events) == 0 {
+			if err != nil {
 				break
 			}
 			now := time.Now()
@@ -889,7 +947,10 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 					w.queueDownloads(downloads, dev, envelope.AttachmentRefs, now)
 				}
 			}
-			cursor = page.Events[len(page.Events)-1].ID
+			cursor = page.next(cursor)
+			if !page.more() {
+				break
+			}
 		}
 	}
 }

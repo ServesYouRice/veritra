@@ -144,9 +144,7 @@ class SyncRecovery {
           SyncRecoveryChoice.relink,
         ];
       case SyncFailureKind.cursorExpired:
-        return const <SyncRecoveryChoice>[
-          SyncRecoveryChoice.relink,
-        ];
+        return const <SyncRecoveryChoice>[SyncRecoveryChoice.relink];
       case SyncFailureKind.localStorage:
         return const <SyncRecoveryChoice>[SyncRecoveryChoice.retry];
       case SyncFailureKind.recordLimit:

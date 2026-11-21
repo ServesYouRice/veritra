@@ -33,36 +33,208 @@ ReportRecipientKey _owner(String id, int fill, {int rev = 1}) =>
 
 void main() {
   group('report body', () {
-    test('round trips what a report reveals', () {
-      final body = ReportBody.fromReveal(_reveal());
+    test('round trips what a report reveals, with its reason (v3)', () {
+      final body = ReportBody.fromReveal(
+        _reveal(),
+        reason: ReportReason.childSafety,
+      );
       expect(body.senderDeviceId, 'dev_sender');
       expect(body.actionId, 'action1');
-      final decoded = ReportBody.decode(body.encode());
+      final encoded = body.encode();
+      final wire = jsonDecode(utf8.decode(encoded)) as Map;
+      expect(wire['v'], 3);
+      expect(wire['reason'], 6);
+      expect(wire, hasLength(8));
+      final decoded = ReportBody.decode(encoded);
       expect(decoded.envelopeId, 'msg_envelope_secret_id');
       expect(decoded.conversationId, 'conv_1');
       expect(decoded.senderDeviceId, 'dev_sender');
       expect(decoded.actionId, 'action1');
       expect(decoded.payload, _reveal().payload);
       expect(decoded.frankKey, _key(7));
+      expect(decoded.reason, ReportReason.childSafety);
+      expect(decoded.sealed, isFalse);
+    });
+
+    test('a sealed message round trips as v3 with the sealed pair', () {
+      for (final designation in <List<int>>[
+        const <int>[],
+        List<int>.filled(frankDesignationEntryBytes, 9),
+      ]) {
+        final body = ReportBody(
+          envelopeId: 'msg_1',
+          conversationId: 'conv_1',
+          senderDeviceId: 'dev_1',
+          actionId: 'a1',
+          payload: const [1, 2, 3],
+          frankKey: _key(1),
+          senderAccountId: 'acct_sender',
+          designation: designation,
+          reason: ReportReason.violence,
+        );
+        final encoded = body.encode();
+        final wire = jsonDecode(utf8.decode(encoded)) as Map;
+        expect(wire['v'], 3);
+        expect(wire, hasLength(10));
+        final decoded = ReportBody.decode(encoded);
+        expect(decoded.sealed, isTrue);
+        expect(decoded.senderAccountId, 'acct_sender');
+        expect(decoded.designation, designation);
+        expect(decoded.reason, ReportReason.violence);
+      }
+    });
+
+    test('every reason round trips, and none changes the size', () {
+      final lengths = <int>{};
+      for (final reason in ReportReason.values) {
+        final encoded = ReportBody.fromReveal(
+          _reveal(),
+          reason: reason,
+        ).encode();
+        lengths.add(encoded.length);
+        expect(ReportBody.decode(encoded).reason, reason);
+      }
+      // One digit per code: the sealed copy is the same size whatever the
+      // reason, so the server cannot tell reasons apart by length.
+      expect(lengths, hasLength(1));
+      expect(ReportReason.values.map((r) => r.code), [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+      ]);
+    });
+
+    test('the writer refuses a body without a reason', () {
+      // Never falls back to writing version 1 or 2.
+      final body = ReportBody(
+        envelopeId: 'msg_1',
+        conversationId: 'conv_1',
+        senderDeviceId: 'dev_1',
+        actionId: 'a1',
+        payload: const [1],
+        frankKey: _key(1),
+      );
+      expect(body.encode, throwsFormatException);
+    });
+
+    // Bodies exactly as the app wrote them before v3 (literal bytes, so no
+    // later encoder can stand in for them).
+    test('old bodies still open, with no reason', () {
+      const v1 = '{"v":1,"envelope_id":"msg_1","conversation_id":"conv_1",'
+          '"sender_device_id":"dev_1","action_id":"a1","payload":"AQID",'
+          '"frank_key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}';
+      const v2 = '{"v":2,"envelope_id":"msg_1","conversation_id":"conv_1",'
+          '"sender_device_id":"dev_1","action_id":"a1","payload":"AQID",'
+          '"frank_key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
+          '"sender_account_id":"acct_sender","designation":""}';
+      final one = ReportBody.decode(utf8.encode(v1));
+      expect(one.reason, isNull);
+      expect(one.sealed, isFalse);
+      expect(one.payload, [1, 2, 3]);
+      expect(one.frankKey, _key(1));
+      final two = ReportBody.decode(utf8.encode(v2));
+      expect(two.reason, isNull);
+      expect(two.sealed, isTrue);
+      expect(two.senderAccountId, 'acct_sender');
+      expect(two.designation, isEmpty);
+      // A reason has no place in an old body.
+      for (final old in [v1, v2]) {
+        final withReason = old.replaceFirst(
+          '"action_id"',
+          '"reason":1,'
+              '"action_id"',
+        );
+        expect(
+          () => ReportBody.decode(utf8.encode(withReason)),
+          throwsFormatException,
+        );
+      }
+    });
+
+    test('an unknown or malformed reason refuses the whole body', () {
+      Map<String, Object?> good() => {
+            'v': 3,
+            'envelope_id': 'msg_1',
+            'conversation_id': 'conv_1',
+            'sender_device_id': 'dev_1',
+            'action_id': 'a1',
+            'payload': base64Encode(const [1, 2, 3]),
+            'frank_key': base64Encode(_key(1)),
+            'reason': 9,
+          };
+      List<int> bytes(Map<String, Object?> m) => utf8.encode(jsonEncode(m));
+      expect(ReportBody.decode(bytes(good())).reason, ReportReason.other);
+      final cases = <String, Map<String, Object?>>{
+        'zero': {...good(), 'reason': 0},
+        'past the list': {...good(), 'reason': 10},
+        'negative': {...good(), 'reason': -1},
+        'a double': {...good(), 'reason': 3.0},
+        'a string code': {...good(), 'reason': '3'},
+        'a name': {...good(), 'reason': 'spam'},
+        'null': {...good(), 'reason': null},
+        'a list': {
+          ...good(),
+          'reason': [1],
+        },
+        'missing': (good()..remove('reason')),
+        'free text beside it': {...good(), 'reason_text': 'x'},
+        'half the sealed pair': {...good(), 'sender_account_id': 'acct_1'},
+        'the other half': {...good(), 'designation': ''},
+        'sealed pair with a stranger for designation': {
+          ...good(),
+          'sender_account_id': 'acct_1',
+          'x': '',
+        },
+        'a newer version': {...good(), 'v': 4},
+        'a version as a double': {...good(), 'v': 3.0},
+      };
+      for (final entry in cases.entries) {
+        expect(
+          () => ReportBody.decode(bytes(entry.value)),
+          throwsFormatException,
+          reason: entry.key,
+        );
+      }
+      // The code itself, outside a body.
+      for (final value in <Object?>[0, 10, 1.0, '1', null, true]) {
+        expect(
+          () => ReportReason.fromCode(value),
+          throwsFormatException,
+          reason: '$value',
+        );
+      }
     });
 
     test('never prints the message or its key', () {
-      expect(ReportBody.fromReveal(_reveal()).toString(),
-          isNot(contains('envelope')));
+      expect(
+        ReportBody.fromReveal(_reveal(), reason: ReportReason.spam).toString(),
+        isNot(contains('envelope')),
+      );
       expect(_reveal().toString(), isNot(contains('hi')));
     });
 
     test('a message key without a device or an action is refused', () {
       for (final key in ['nocolon', ':action', 'device:']) {
         expect(
-            () => ReportBody.fromReveal(FrankReveal(
-                messageKey: key,
-                conversationId: 'c',
-                envelopeId: 'e',
-                frankKey: _key(1),
-                payload: const [1])),
-            throwsFormatException,
-            reason: key);
+          () => ReportBody.fromReveal(
+            FrankReveal(
+              messageKey: key,
+              conversationId: 'c',
+              envelopeId: 'e',
+              frankKey: _key(1),
+              payload: const [1],
+            ),
+            reason: ReportReason.spam,
+          ),
+          throwsFormatException,
+          reason: key,
+        );
       }
     });
 
@@ -90,13 +262,15 @@ void main() {
         'empty payload': {...good(), 'payload': ''},
         'huge payload': {
           ...good(),
-          'payload': base64Encode(List<int>.filled(64 * 1024 + 1, 1))
+          'payload': base64Encode(List<int>.filled(64 * 1024 + 1, 1)),
         },
       };
       for (final entry in cases.entries) {
         expect(
-            () => ReportBody.decode(bytes(entry.value)), throwsFormatException,
-            reason: entry.key);
+          () => ReportBody.decode(bytes(entry.value)),
+          throwsFormatException,
+          reason: entry.key,
+        );
       }
       for (final raw in [
         <int>[],
@@ -112,10 +286,20 @@ void main() {
   group('unfranked policy (D95)', () {
     const accepting = FrankingPolicy();
     const refusing = FrankingPolicy(acceptUnfranked: false);
-    final text = DecodedAppPayload(DecryptedAppPayload(
-        type: AppPayloadType.text, actionId: 'a', body: const {'text': 'x'}));
-    final pin = DecodedAppPayload(DecryptedAppPayload(
-        type: AppPayloadType.pin, actionId: 'a', body: const {}));
+    final text = DecodedAppPayload(
+      DecryptedAppPayload(
+        type: AppPayloadType.text,
+        actionId: 'a',
+        body: const {'text': 'x'},
+      ),
+    );
+    final pin = DecodedAppPayload(
+      DecryptedAppPayload(
+        type: AppPayloadType.pin,
+        actionId: 'a',
+        body: const {},
+      ),
+    );
     const hiddenUnknown = UnsupportedAppPayload(rawJson: '{}', hidden: true);
     const visibleUnknown = UnsupportedAppPayload(rawJson: '{}', hidden: false);
 
@@ -160,10 +344,14 @@ void main() {
       expect(names.containsAll(FrankingPolicy.unfrankedPayloadTypes), isTrue);
       for (final type in c7PayloadTypes) {
         expect(
-            refusing.acceptsUnfranked(DecodedAppPayload(DecryptedAppPayload(
-                type: type, actionId: 'a', body: const {}))),
-            isTrue,
-            reason: type.name);
+          refusing.acceptsUnfranked(
+            DecodedAppPayload(
+              DecryptedAppPayload(type: type, actionId: 'a', body: const {}),
+            ),
+          ),
+          isTrue,
+          reason: type.name,
+        );
       }
     });
   });
@@ -182,16 +370,20 @@ void main() {
       final check = await pins.check([_owner('acct_a', 1)]);
       expect(check.recipients.single.status, ReportKeyStatus.unpinned);
       expect(check.allPinned, isFalse);
-      await expectLater(pins.requirePinned([_owner('acct_a', 1)]),
-          throwsA(isA<ReportKeyNotPinned>()));
+      await expectLater(
+        pins.requirePinned([_owner('acct_a', 1)]),
+        throwsA(isA<ReportKeyNotPinned>()),
+      );
       expect(await store.loadReportKeyPins(_origin), isEmpty);
     });
 
     test('pinning is explicit; then the same key is pinned', () async {
       await pins.pin(_owner('acct_a', 1));
       await pins.pin(_owner('acct_b', 2, rev: 3));
-      final check =
-          await pins.requirePinned([_owner('acct_a', 1), _owner('acct_b', 2)]);
+      final check = await pins.requirePinned([
+        _owner('acct_a', 1),
+        _owner('acct_b', 2),
+      ]);
       expect(check.allPinned, isTrue);
       expect(check.missing, isEmpty);
       final stored = (await store.loadReportKeyPin(_origin, 'acct_b'))!;
@@ -199,11 +391,14 @@ void main() {
       expect(stored.pinnedAt, now.millisecondsSinceEpoch);
       // A new revision of the same key is still the pinned key.
       expect(
-          (await pins.check([_owner('acct_a', 1, rev: 9)]))
-              .recipients
-              .single
-              .status,
-          ReportKeyStatus.pinned);
+        (await pins.check([
+          _owner('acct_a', 1, rev: 9),
+        ]))
+            .recipients
+            .single
+            .status,
+        ReportKeyStatus.pinned,
+      );
     });
 
     test('a substituted key is refused until it is pinned again', () async {
@@ -213,24 +408,34 @@ void main() {
       expect(check.recipients.single.status, ReportKeyStatus.changed);
       expect(check.recipients.single.pin!.publicKey, _key(1));
       await expectLater(
-          pins.requirePinned(changed), throwsA(isA<ReportKeyNotPinned>()));
+        pins.requirePinned(changed),
+        throwsA(isA<ReportKeyNotPinned>()),
+      );
       // The old pin is untouched by the refusal.
-      expect((await store.loadReportKeyPin(_origin, 'acct_a'))!.publicKey,
-          _key(1));
+      expect(
+        (await store.loadReportKeyPin(_origin, 'acct_a'))!.publicKey,
+        _key(1),
+      );
       await pins.pin(changed.single);
       expect((await pins.requirePinned(changed)).allPinned, isTrue);
     });
 
-    test('an owner the server lists that was never pinned blocks the report',
-        () async {
-      await pins.pin(_owner('acct_a', 1));
-      // A server that adds an owner key of its own.
-      final check =
-          await pins.check([_owner('acct_a', 1), _owner('acct_x', 8)]);
-      expect(check.allPinned, isFalse);
-      expect(check.recipients.map((r) => r.status),
-          [ReportKeyStatus.pinned, ReportKeyStatus.unpinned]);
-    });
+    test(
+      'an owner the server lists that was never pinned blocks the report',
+      () async {
+        await pins.pin(_owner('acct_a', 1));
+        // A server that adds an owner key of its own.
+        final check = await pins.check([
+          _owner('acct_a', 1),
+          _owner('acct_x', 8),
+        ]);
+        expect(check.allPinned, isFalse);
+        expect(check.recipients.map((r) => r.status), [
+          ReportKeyStatus.pinned,
+          ReportKeyStatus.unpinned,
+        ]);
+      },
+    );
 
     test('a pinned owner the server no longer lists is reported', () async {
       await pins.pin(_owner('acct_a', 1));
@@ -254,12 +459,16 @@ void main() {
       final other = ReportKeyPins(store, 'https://elsewhere.example.org');
       expect((await other.check([_owner('acct_a', 1)])).allPinned, isFalse);
       expect(
-          () => ReportKeyPins(store, 'not an origin'), throwsFormatException);
+        () => ReportKeyPins(store, 'not an origin'),
+        throwsFormatException,
+      );
     });
 
     test('the fingerprint is the key in groups of four', () {
       expect(
-          reportKeyFingerprint(_key(0xab)), List.filled(16, 'ABAB').join('-'));
+        reportKeyFingerprint(_key(0xab)),
+        List.filled(16, 'ABAB').join('-'),
+      );
       expect(reportKeyFingerprint(const [1, 2, 255]), '0102-FF');
     });
   });
@@ -270,106 +479,129 @@ void main() {
     setUp(() {
       bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       crypto = TestNativeCryptoService(
-          bindings: bindings, localStore: MemoryLocalStore());
+        bindings: bindings,
+        localStore: MemoryLocalStore(),
+      );
     });
 
     test(
-      'each owner opens only its copy, and the envelope id is not in the '
-      'clear',
-      () async {
-        final seeds = [
-          await crypto.generateReportKeySeed(),
-          await crypto.generateReportKeySeed(),
-        ];
-        final recipients = [
-          for (var i = 0; i < 2; i++)
-            ReportRecipientKey(
-                inboxId: 'acct_owner_$i',
-                publicKey: await crypto.reportPublicKey(seeds[i]),
-                keyRev: i + 1),
-        ];
-        final body = ReportBody.fromReveal(_reveal());
-        final copies = await sealReportCopies(
-          crypto: crypto,
-          inboxKind: reportInboxInstanceOwner,
-          recipients: recipients,
-          conversationId: 'conv_1',
-          reportId: 'rpt_00000000000000000000000000000001',
-          reporterAccountId: 'acct_reporter',
-          body: body,
+        'each owner opens only its copy, and the envelope id is not in the '
+        'clear', () async {
+      final seeds = [
+        await crypto.generateReportKeySeed(),
+        await crypto.generateReportKeySeed(),
+      ];
+      final recipients = [
+        for (var i = 0; i < 2; i++)
+          ReportRecipientKey(
+            inboxId: 'acct_owner_$i',
+            publicKey: await crypto.reportPublicKey(seeds[i]),
+            keyRev: i + 1,
+          ),
+      ];
+      final body = ReportBody.fromReveal(
+        _reveal(),
+        reason: ReportReason.childSafety,
+      );
+      final copies = await sealReportCopies(
+        crypto: crypto,
+        inboxKind: reportInboxInstanceOwner,
+        recipients: recipients,
+        conversationId: 'conv_1',
+        reportId: 'rpt_00000000000000000000000000000001',
+        reporterAccountId: 'acct_reporter',
+        body: body,
+      );
+      expect(copies, hasLength(2));
+      expect(copies.map((c) => c.inboxId), ['acct_owner_0', 'acct_owner_1']);
+      expect(copies.map((c) => c.keyRev), [1, 2]);
+      // Two seals of one body differ (fresh HPKE randomness).
+      expect(copies[0].sealed, isNot(copies[1].sealed));
+
+      Uint8List aadFor(int i, {String? reportId, String? reporter}) =>
+          reportAad(
+            inboxKind: reportInboxInstanceOwner,
+            inboxId: recipients[i].inboxId,
+            recipientKey: recipients[i].publicKey,
+            conversationId: 'conv_1',
+            reportId: reportId ?? 'rpt_00000000000000000000000000000001',
+            reporterAccountId: reporter ?? 'acct_reporter',
+          );
+
+      for (var i = 0; i < 2; i++) {
+        // What goes to the server, as JSON, holds no envelope id, text or
+        // key.
+        final wire = jsonEncode(copies[i].toJson());
+        expect(wire, isNot(contains('msg_envelope_secret_id')));
+        expect(wire, isNot(contains(base64Encode(_key(7)))));
+        expect(copies[i].toJson().keys, {
+          'inbox_id',
+          'key_rev',
+          'recipient_public_key',
+          'sealed',
+        });
+
+        final opened = await crypto.openReport(
+          seed: seeds[i],
+          aad: aadFor(i),
+          sealed: copies[i].sealed,
         );
-        expect(copies, hasLength(2));
-        expect(copies.map((c) => c.inboxId), ['acct_owner_0', 'acct_owner_1']);
-        expect(copies.map((c) => c.keyRev), [1, 2]);
-        // Two seals of one body differ (fresh HPKE randomness).
-        expect(copies[0].sealed, isNot(copies[1].sealed));
+        final decoded = ReportBody.decode(opened);
+        expect(decoded.envelopeId, 'msg_envelope_secret_id');
+        expect(decoded.frankKey, _key(7));
+        expect(decoded.payload, _reveal().payload);
+        expect(decoded.reason, ReportReason.childSafety);
 
-        Uint8List aadFor(int i, {String? reportId, String? reporter}) =>
-            reportAad(
-              inboxKind: reportInboxInstanceOwner,
-              inboxId: recipients[i].inboxId,
-              recipientKey: recipients[i].publicKey,
-              conversationId: 'conv_1',
-              reportId: reportId ?? 'rpt_00000000000000000000000000000001',
-              reporterAccountId: reporter ?? 'acct_reporter',
-            );
-
-        for (var i = 0; i < 2; i++) {
-          // What goes to the server, as JSON, holds no envelope id, text or
-          // key.
-          final wire = jsonEncode(copies[i].toJson());
-          expect(wire, isNot(contains('msg_envelope_secret_id')));
-          expect(wire, isNot(contains(base64Encode(_key(7)))));
-          expect(copies[i].toJson().keys,
-              {'inbox_id', 'key_rev', 'recipient_public_key', 'sealed'});
-
-          final opened = await crypto.openReport(
-              seed: seeds[i], aad: aadFor(i), sealed: copies[i].sealed);
-          final decoded = ReportBody.decode(opened);
-          expect(decoded.envelopeId, 'msg_envelope_secret_id');
-          expect(decoded.frankKey, _key(7));
-          expect(decoded.payload, _reveal().payload);
-
-          // Not another owner's key, not another report id, not another
-          // reporter, not the other owner's aad.
-          await expectLater(
-              crypto.openReport(
-                  seed: seeds[1 - i], aad: aadFor(i), sealed: copies[i].sealed),
-              throwsA(anything));
-          await expectLater(
-              crypto.openReport(
-                  seed: seeds[i],
-                  aad: aadFor(i,
-                      reportId: 'rpt_00000000000000000000000000000002'),
-                  sealed: copies[i].sealed),
-              throwsA(anything));
-          await expectLater(
-              crypto.openReport(
-                  seed: seeds[i],
-                  aad: aadFor(i, reporter: 'acct_other'),
-                  sealed: copies[i].sealed),
-              throwsA(anything));
-          await expectLater(
-              crypto.openReport(
-                  seed: seeds[i], aad: aadFor(1 - i), sealed: copies[i].sealed),
-              throwsA(anything));
-        }
-      },
-      skip: nativeCryptoSkip(),
-    );
+        // Not another owner's key, not another report id, not another
+        // reporter, not the other owner's aad.
+        await expectLater(
+          crypto.openReport(
+            seed: seeds[1 - i],
+            aad: aadFor(i),
+            sealed: copies[i].sealed,
+          ),
+          throwsA(anything),
+        );
+        await expectLater(
+          crypto.openReport(
+            seed: seeds[i],
+            aad: aadFor(i, reportId: 'rpt_00000000000000000000000000000002'),
+            sealed: copies[i].sealed,
+          ),
+          throwsA(anything),
+        );
+        await expectLater(
+          crypto.openReport(
+            seed: seeds[i],
+            aad: aadFor(i, reporter: 'acct_other'),
+            sealed: copies[i].sealed,
+          ),
+          throwsA(anything),
+        );
+        await expectLater(
+          crypto.openReport(
+            seed: seeds[i],
+            aad: aadFor(1 - i),
+            sealed: copies[i].sealed,
+          ),
+          throwsA(anything),
+        );
+      }
+    }, skip: nativeCryptoSkip());
 
     test('sealing to nobody is refused', () async {
       await expectLater(
-          sealReportCopies(
-            crypto: crypto,
-            inboxKind: reportInboxInstanceOwner,
-            recipients: const [],
-            conversationId: 'conv_1',
-            reportId: 'rpt_00000000000000000000000000000001',
-            reporterAccountId: 'acct_reporter',
-            body: ReportBody.fromReveal(_reveal()),
-          ),
-          throwsArgumentError);
+        sealReportCopies(
+          crypto: crypto,
+          inboxKind: reportInboxInstanceOwner,
+          recipients: const [],
+          conversationId: 'conv_1',
+          reportId: 'rpt_00000000000000000000000000000001',
+          reporterAccountId: 'acct_reporter',
+          body: ReportBody.fromReveal(_reveal(), reason: ReportReason.spam),
+        ),
+        throwsArgumentError,
+      );
     }, skip: nativeCryptoSkip());
   });
 }

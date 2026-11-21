@@ -18,14 +18,18 @@ import 'test_crypto_service.dart';
 const pkOrigin = 'https://chat.example.com';
 
 Map<String, Object?> pkFixture() => Map<String, Object?>.from(
-    jsonDecode(File('test/fixtures/api/v1/passkeys.json').readAsStringSync())
-        as Map);
+      jsonDecode(File('test/fixtures/api/v1/passkeys.json').readAsStringSync())
+          as Map,
+    );
 
 Map<String, Object?> pkMap(Object? value) =>
     Map<String, Object?>.from(value! as Map);
 
-const pkInfo =
-    PasskeyServerInfo(rpId: 'chat.example.com', android: true, apple: true);
+const pkInfo = PasskeyServerInfo(
+  rpId: 'chat.example.com',
+  android: true,
+  apple: true,
+);
 
 class FakePasskeys implements PasskeyClient {
   FakePasskeys({this.supported = true});
@@ -67,10 +71,12 @@ class PkApi extends ApiClient with LegacySyncPageFake {
       'apple': true,
     },
   };
-  Map<String, Object?> loginPublicKey =
-      pkMap(pkMap(pkFixture()['login_options'])['public_key']);
-  Map<String, Object?> registerPublicKey =
-      pkMap(pkMap(pkFixture()['register_options'])['public_key']);
+  Map<String, Object?> loginPublicKey = pkMap(
+    pkMap(pkFixture()['login_options'])['public_key'],
+  );
+  Map<String, Object?> registerPublicKey = pkMap(
+    pkMap(pkFixture()['register_options'])['public_key'],
+  );
   Object? loginFailure;
   Object? registerFailure;
   final List<String> trace = <String>[];
@@ -199,10 +205,12 @@ class PkApi extends ApiClient with LegacySyncPageFake {
   final disabledPush = <String>[];
 
   @override
-  Future<String> registerNativePush(String token,
-      {required String provider,
-      required String deviceToken,
-      String? notificationMode}) async {
+  Future<String> registerNativePush(
+    String token, {
+    required String provider,
+    required String deviceToken,
+    String? notificationMode,
+  }) async {
     pushRegisterRequests++;
     await registerPushGate?.future;
     return 'sub-late';
@@ -283,14 +291,16 @@ class PkHarness {
   late final AppState state;
 
   Future<void> enrolled({int cursor = 0}) async {
-    await store.saveSession(const Session(
-      baseUrl: pkOrigin,
-      token: '',
-      accountId: 'acct_owner',
-      deviceId: 'dev_owner',
-      username: 'owner',
-      deviceSecret: 'device-secret',
-    ));
+    await store.saveSession(
+      const Session(
+        baseUrl: pkOrigin,
+        token: '',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+        username: 'owner',
+        deviceSecret: 'device-secret',
+      ),
+    );
     if (cursor > 0) {
       // Existing MLS state, as login's cursor rule asks for.
       await store.saveCryptoState(

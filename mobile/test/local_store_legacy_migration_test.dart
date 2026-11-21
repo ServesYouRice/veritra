@@ -68,7 +68,7 @@ String _legacyRecord() => jsonEncode(<String, Object?>{
       },
       'snapshot': <String, Object?>{
         'conversations': <Object?>[
-          Conversation(id: 'conv_1', kind: 'dm').toJson(),
+          Conversation(id: 'conv_1', kind: 'dm').toJson()
         ],
         'messages': <String, Object?>{},
       },
@@ -96,82 +96,108 @@ void main() {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
 
-  SecureLocalStore storeWith(FlutterSecureStorage storage,
-          {bool misreportSession = false}) =>
+  SecureLocalStore storeWith(
+    FlutterSecureStorage storage, {
+    bool misreportSession = false,
+  }) =>
       SecureLocalStore(
         storage: storage,
         directoryProvider: () async => directory,
         databaseFactory: (file, keyHex) {
           final database = _WatchedDatabase(
-              openEncryptedLocalDatabase(file, keyHex).executor,
-              misreportSession: misreportSession);
+            openEncryptedLocalDatabase(file, keyHex).executor,
+            misreportSession: misreportSession,
+          );
           databases.add(database);
           return database;
         },
       );
 
   Matcher failure(LocalStoreFailureKind kind) =>
-      isA<LocalStoreUnavailableException>()
-          .having((error) => error.kind, 'kind', kind);
+      isA<LocalStoreUnavailableException>().having(
+        (error) => error.kind,
+        'kind',
+        kind,
+      );
 
-  test('a corrupt legacy record fails classified and closes the database',
-      () async {
-    FlutterSecureStorage.setMockInitialValues(
-        <String, String>{_legacyKey: '{not-json'});
-    final store = storeWith(plain);
-    await expectLater(store.loadSession(),
-        throwsA(failure(LocalStoreFailureKind.upgradeFailed)));
-    expect(databases.single.closed, isTrue);
-    // Nothing is deleted, and a retry runs the migration again.
-    expect(await plain.read(key: _legacyKey), '{not-json');
-    await expectLater(store.loadSession(),
-        throwsA(failure(LocalStoreFailureKind.upgradeFailed)));
-    expect(databases, hasLength(2));
-    expect(databases.every((database) => database.closed), isTrue);
-  });
+  test(
+    'a corrupt legacy record fails classified and closes the database',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        _legacyKey: '{not-json',
+      });
+      final store = storeWith(plain);
+      await expectLater(
+        store.loadSession(),
+        throwsA(failure(LocalStoreFailureKind.upgradeFailed)),
+      );
+      expect(databases.single.closed, isTrue);
+      // Nothing is deleted, and a retry runs the migration again.
+      expect(await plain.read(key: _legacyKey), '{not-json');
+      await expectLater(
+        store.loadSession(),
+        throwsA(failure(LocalStoreFailureKind.upgradeFailed)),
+      );
+      expect(databases, hasLength(2));
+      expect(databases.every((database) => database.closed), isTrue);
+    },
+  );
 
-  test('a failed migration check fails classified and keeps the record',
-      () async {
-    FlutterSecureStorage.setMockInitialValues(
-        <String, String>{_legacyKey: _legacyRecord()});
-    await expectLater(storeWith(plain, misreportSession: true).loadSession(),
-        throwsA(failure(LocalStoreFailureKind.upgradeFailed)));
-    expect(databases.single.closed, isTrue);
-    expect(await plain.read(key: _legacyKey), isNotNull);
+  test(
+    'a failed migration check fails classified and keeps the record',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        _legacyKey: _legacyRecord(),
+      });
+      await expectLater(
+        storeWith(plain, misreportSession: true).loadSession(),
+        throwsA(failure(LocalStoreFailureKind.upgradeFailed)),
+      );
+      expect(databases.single.closed, isTrue);
+      expect(await plain.read(key: _legacyKey), isNotNull);
 
-    // A later open whose check passes finishes the migration.
-    final store = storeWith(plain);
-    expect((await store.loadSession())?.deviceId, 'dev_1');
-    expect(await plain.read(key: _legacyKey), isNull);
-  });
+      // A later open whose check passes finishes the migration.
+      final store = storeWith(plain);
+      expect((await store.loadSession())?.deviceId, 'dev_1');
+      expect(await plain.read(key: _legacyKey), isNull);
+    },
+  );
 
-  test('an unreadable legacy record is a keystore failure, and retryable',
-      () async {
-    FlutterSecureStorage.setMockInitialValues(
-        <String, String>{_legacyKey: _legacyRecord()});
-    final storage = _ScriptedStorage()..failRead = (key) => key == _legacyKey;
-    final store = storeWith(storage);
-    await expectLater(store.loadSession(),
-        throwsA(failure(LocalStoreFailureKind.keyUnavailable)));
-    expect(databases.single.closed, isTrue);
+  test(
+    'an unreadable legacy record is a keystore failure, and retryable',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        _legacyKey: _legacyRecord(),
+      });
+      final storage = _ScriptedStorage()..failRead = (key) => key == _legacyKey;
+      final store = storeWith(storage);
+      await expectLater(
+        store.loadSession(),
+        throwsA(failure(LocalStoreFailureKind.keyUnavailable)),
+      );
+      expect(databases.single.closed, isTrue);
 
-    storage.failRead = (_) => false;
-    expect((await store.loadSession())?.deviceId, 'dev_1');
-    expect(await plain.read(key: _legacyKey), isNull);
-  });
+      storage.failRead = (_) => false;
+      expect((await store.loadSession())?.deviceId, 'dev_1');
+      expect(await plain.read(key: _legacyKey), isNull);
+    },
+  );
 
-  test('after the migration, an unreadable legacy entry does not block opening',
-      () async {
-    FlutterSecureStorage.setMockInitialValues(
-        <String, String>{_legacyKey: _legacyRecord()});
-    expect(await storeWith(plain).loadSyncCursor(), 17);
-    for (final database in databases) {
-      await database.close();
-    }
+  test(
+    'after the migration, an unreadable legacy entry does not block opening',
+    () async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        _legacyKey: _legacyRecord(),
+      });
+      expect(await storeWith(plain).loadSyncCursor(), 17);
+      for (final database in databases) {
+        await database.close();
+      }
 
-    final storage = _ScriptedStorage()..failRead = (key) => key == _legacyKey;
-    final store = storeWith(storage);
-    expect(await store.loadSyncCursor(), 17);
-    expect(databases.last.closed, isFalse);
-  });
+      final storage = _ScriptedStorage()..failRead = (key) => key == _legacyKey;
+      final store = storeWith(storage);
+      expect(await store.loadSyncCursor(), 17);
+      expect(databases.last.closed, isFalse);
+    },
+  );
 }

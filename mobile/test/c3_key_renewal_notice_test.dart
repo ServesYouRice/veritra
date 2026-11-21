@@ -28,12 +28,16 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const <ConversationMember>[];
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: false);
 
   @override
@@ -42,7 +46,10 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markRead(
-      String token, String conversationId, String messageId) async {}
+    String token,
+    String conversationId,
+    String messageId,
+  ) async {}
 }
 
 class _Sync implements SyncService {
@@ -57,8 +64,9 @@ class _Sync implements SyncService {
 }
 
 void main() {
-  testWidgets('a channel with no admin to renew its key shows a notice',
-      (tester) async {
+  testWidgets('a channel with no admin to renew its key shows a notice', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final api = _Api();
@@ -79,9 +87,11 @@ void main() {
       ..conversations = <Conversation>[
         Conversation(id: 'conv_private', kind: 'community_channel'),
       ];
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(state: state, conversationId: 'conv_private'),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(state: state, conversationId: 'conv_private'),
+      ),
+    );
     await tester.pumpAndSettle();
     final notice = AppLocalizationsEn().chatKeyRenewalNoAdmin;
     expect(find.text(notice), findsNothing);

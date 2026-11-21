@@ -9,6 +9,12 @@ part of 'app_state.dart';
 /// Settings in the encrypted local metadata. None is in a backup (D71). The
 /// waiting claim itself is the device's pending enrollment (schema 17).
 const String _recoveryFollowUpSetting = 'k0.recovery_follow_up';
+
+/// U23: whether the follow-up began with the restore step, scoped to the
+/// account and device like the follow-up ('1' or '0'). A separate setting,
+/// so the follow-up's own three-part value stays readable by earlier builds
+/// (a fourth part would make them drop the follow-up and open the chats).
+const String _recoveryFollowUpRestoreSetting = 'k0.recovery_follow_up_restore';
 const String _passwordLeakSetting = 'k0.password_leak_day';
 const String _passwordLeakDismissedSetting = 'k0.password_leak_dismissed';
 
@@ -39,6 +45,24 @@ enum RecoveryFollowUpStep { restore, recoveryKey, password }
 /// simply fail (the error is then under [Ops.recoveryKey] or
 /// [Ops.accountRecovery]).
 enum RecoveryActionResult { done, needsRecentAuth, alreadyEnded, failed }
+
+/// U37: what "Check my key" found for a key the person saved earlier.
+enum SavedRecoveryKeyCheck {
+  /// The typed key is the account's current recovery key. It says nothing
+  /// about the password or the server address a recovery also needs.
+  current,
+
+  /// A valid recovery key, but not the account's current one: most likely
+  /// an older key that was replaced since.
+  notCurrent,
+
+  /// Not a recovery key at all: a typo, or a character missing or extra.
+  notAKey,
+
+  /// No answer: the server could not be reached just now, recovery is off,
+  /// the account has no key, or this build cannot check.
+  unknown,
+}
 
 /// A newly generated recovery key while it is shown and confirmed. [dispose]
 /// wipes the entropy; the display string cannot be wiped and is dropped
@@ -83,15 +107,18 @@ extension AccountRecoveryActions on AppState {
   // ---------------------------------------------------------------- R3 ---
 
   /// Reads the account's recovery key status. It never throws: a failure
-  /// keeps the last status.
-  Future<void> refreshRecoveryKeyStatus() async {
+  /// keeps the last status. Returns whether [recoveryKeyStatus] now holds a
+  /// status read just now for the signed-in session.
+  Future<bool> refreshRecoveryKeyStatus() async {
     final current = session;
     final client = api;
-    if (current == null || client == null || current.token.isEmpty) return;
+    if (current == null || client == null || current.token.isEmpty) {
+      return false;
+    }
     final generation = _sessionGeneration;
     try {
       final status = await client.recoveryKeyStatus(current.token);
-      if (!_refreshOwned(current, generation)) return;
+      if (!_refreshOwned(current, generation)) return false;
       recoveryKeyStatus = status;
       notifyListeners();
       // A server with recovery off cannot take a new key; the password
@@ -100,8 +127,10 @@ extension AccountRecoveryActions on AppState {
           recoveryFollowUp == RecoveryFollowUpStep.recoveryKey) {
         await _saveRecoveryFollowUp(RecoveryFollowUpStep.password);
       }
+      return true;
     } catch (_) {
       // Offline or an older server: the settings tile says it is unknown.
+      return false;
     }
   }
 
@@ -114,13 +143,54 @@ extension AccountRecoveryActions on AppState {
     await _saveRecoveryFollowUp(RecoveryFollowUpStep.recoveryKey);
   }
 
+  /// U23: whether this follow-up has the restore step. It is fixed when the
+  /// recovery finishes, so the step counter does not change under the user
+  /// when [k1RestoreSupported] differs later (another build after an update).
+  /// A follow-up from an earlier build, which stored nothing, falls back to
+  /// what this build offers.
+  bool get recoveryFollowUpIncludesRestore =>
+      recoveryFollowUp == RecoveryFollowUpStep.restore ||
+      (_recoveryFollowUpWithRestore ?? k1RestoreSupported);
+
+  /// U23: whether the follow-up may go back from the recovery key step to
+  /// the restore step. Only there: before the key is replaced nothing
+  /// one-time has happened, so the restore can still be done or skipped
+  /// again. The restore step is the first (what came before it, the
+  /// recovery itself, cannot be undone), and the password step comes after
+  /// the key was replaced on the server and wiped here: going back from it
+  /// could only mean replacing the key again. This build must also be able
+  /// to restore, or going back would lead nowhere.
+  bool get canGoBackToRecoveryRestore =>
+      recoveryFollowUp == RecoveryFollowUpStep.recoveryKey &&
+      recoveryFollowUpIncludesRestore &&
+      k1RestoreSupported &&
+      !isBusy(Ops.recoveryKey);
+
+  /// U23: goes back from the recovery key step to the restore step, when
+  /// [canGoBackToRecoveryRestore]. It waits behind a key save in flight and
+  /// checks again, so a save that finished moves on to the password and is
+  /// never followed by a second key. Returns whether it went back.
+  Future<bool> backToRecoveryRestoreStep() async {
+    final current = session;
+    if (current == null) return false;
+    var moved = false;
+    await _enqueueSessionTransition(() async {
+      if (!identical(session, current) || !canGoBackToRecoveryRestore) return;
+      await _saveRecoveryFollowUp(RecoveryFollowUpStep.restore);
+      moved = true;
+    });
+    return moved;
+  }
+
   /// A fresh recovery key to show. The caller disposes it.
   Future<RecoveryKeyDraft> createRecoveryKeyDraft() async {
     final crypto = _recoveryCrypto;
     final entropy = await crypto.generateRecoveryKey();
     try {
       return RecoveryKeyDraft._(
-          entropy, await crypto.encodeRecoveryKey(entropy));
+        entropy,
+        await crypto.encodeRecoveryKey(entropy),
+      );
     } catch (_) {
       entropy.fillRange(0, entropy.length, 0);
       rethrow;
@@ -133,8 +203,9 @@ extension AccountRecoveryActions on AppState {
     if (draft._disposed) return false;
     final Uint8List decoded;
     try {
-      decoded = await _recoveryCrypto
-          .decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      decoded = await _recoveryCrypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typed),
+      );
     } catch (_) {
       return false;
     }
@@ -143,6 +214,59 @@ extension AccountRecoveryActions on AppState {
     } finally {
       decoded.fillRange(0, decoded.length, 0);
     }
+  }
+
+  /// U37: "Check my key" for a key saved earlier. [typed] is decoded and
+  /// its key id derived on this device, then compared in constant time with
+  /// the id of the account's current key from a status read made now. The
+  /// key and anything derived from it never leave the device, so the server
+  /// gains no way to test guesses; and the id was already the device's to
+  /// read. A status kept from earlier is never used: the key may have been
+  /// replaced from another device since, and a wrong "this is your key"
+  /// could make someone throw away the paper that works. The device's K1
+  /// copy of the key id goes stale the same way, so it is not used either.
+  Future<SavedRecoveryKeyCheck> checkSavedRecoveryKey(String typed) async {
+    final current = session;
+    if (current == null || !recoveryAvailable) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final crypto = _recoveryCrypto;
+    if (!await refreshRecoveryKeyStatus() || !identical(session, current)) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final status = recoveryKeyStatus;
+    final accountRkId = status?.rkId;
+    if (status == null ||
+        !status.available ||
+        !status.configured ||
+        accountRkId == null) {
+      return SavedRecoveryKeyCheck.unknown;
+    }
+    final Uint8List entropy;
+    try {
+      entropy = await crypto.decodeRecoveryKey(
+        normalizeRecoveryKeyInput(typed),
+      );
+    } catch (_) {
+      return SavedRecoveryKeyCheck.notAKey;
+    }
+    final bool same;
+    try {
+      final values = await crypto.deriveRecoveryKey(entropy);
+      try {
+        same = _constantTimeBytesEqual(values.rkId, accountRkId);
+      } finally {
+        values.rkPub.fillRange(0, values.rkPub.length, 0);
+      }
+    } catch (_) {
+      return SavedRecoveryKeyCheck.unknown;
+    } finally {
+      entropy.fillRange(0, entropy.length, 0);
+    }
+    if (!identical(session, current)) return SavedRecoveryKeyCheck.unknown;
+    return same
+        ? SavedRecoveryKeyCheck.current
+        : SavedRecoveryKeyCheck.notCurrent;
   }
 
   /// Sets [draft] as the account's recovery key, replacing any earlier one
@@ -158,10 +282,19 @@ extension AccountRecoveryActions on AppState {
       if (current == null || client == null || draft._disposed) {
         throw UserFacingException(l10n.errorRelinkRequired);
       }
+      // U23: Back ran first (it was queued before this save) and the
+      // follow-up is on the restore step again. The save must not replace
+      // the key behind a screen that no longer shows it.
+      if (recoveryFollowUp == RecoveryFollowUpStep.restore) {
+        throw UserFacingException(l10n.recoveryKeyStepMovedBack);
+      }
       final values = await _recoveryCrypto.deriveRecoveryKey(draft._entropy);
       try {
-        final status =
-            await _putRecoveryKeyWithDeviceList(client, current, values);
+        final status = await _putRecoveryKeyWithDeviceList(
+          client,
+          current,
+          values,
+        );
         if (!identical(session, current)) return;
         recoveryKeyStatus = status;
         // K1: the key was typed on this device, so it keeps rk_pub and
@@ -193,7 +326,8 @@ extension AccountRecoveryActions on AppState {
   /// Cancels a waiting recovery of this account from this signed-in device
   /// (needs recent auth).
   Future<RecoveryActionResult> cancelAccountRecoveryRequest(
-      String requestId) async {
+    String requestId,
+  ) async {
     var needsRecentAuth = false;
     var alreadyEnded = false;
     final ok = await _runScoped(Ops.accountRecovery, () async {
@@ -223,10 +357,11 @@ extension AccountRecoveryActions on AppState {
       final status = recoveryKeyStatus;
       if (status != null && status.pending?.id == requestId) {
         recoveryKeyStatus = RecoveryKeyStatus(
-            available: status.available,
-            configured: status.configured,
-            setAt: status.setAt,
-            publicOrigin: status.publicOrigin);
+          available: status.available,
+          configured: status.configured,
+          setAt: status.setAt,
+          publicOrigin: status.publicOrigin,
+        );
       }
       if (alreadyEnded) {
         await refreshRecoveryKeyStatus();
@@ -249,7 +384,9 @@ extension AccountRecoveryActions on AppState {
     if (current == null) return;
     try {
       await localStore.saveSetting(
-          _passwordLeakDismissedSetting, '${_leakScope(current)}$day');
+        _passwordLeakDismissedSetting,
+        '${_leakScope(current)}$day',
+      );
     } catch (_) {
       // Shown again after a restart; harmless.
     }
@@ -291,8 +428,9 @@ extension AccountRecoveryActions on AppState {
         }
         final Uint8List entropy;
         try {
-          entropy = await crypto
-              .decodeRecoveryKey(normalizeRecoveryKeyInput(recoveryKey));
+          entropy = await crypto.decodeRecoveryKey(
+            normalizeRecoveryKeyInput(recoveryKey),
+          );
         } catch (_) {
           throw UserFacingException(l10n.recoveryKeyUnreadable);
         }
@@ -307,8 +445,9 @@ extension AccountRecoveryActions on AppState {
           final reservation =
               await client.reserveAccountRecovery(username.trim());
           enrolling = true;
-          final credential =
-              await cryptoService.createEnrollmentCredential(reservation);
+          final credential = await cryptoService.createEnrollmentCredential(
+            reservation,
+          );
           final signature = await crypto.signRecoveryProof(
             entropy: entropy,
             challenge: reservation.challenge,
@@ -415,8 +554,9 @@ extension AccountRecoveryActions on AppState {
     notifyListeners();
     try {
       await localStore.deletePendingEnrollment(
-          kind: PendingEnrollment.kindAccountRecovery,
-          deviceId: pending?.deviceId);
+        kind: PendingEnrollment.kindAccountRecovery,
+        deviceId: pending?.deviceId,
+      );
     } catch (_) {}
     if (cryptoService case final RecoveryCryptoService crypto) {
       try {
@@ -464,7 +604,9 @@ extension AccountRecoveryActions on AppState {
     final AccountRecoveryStatus status;
     try {
       status = await client.accountRecoveryStatus(
-          pending.requestId, pending.claimToken);
+        pending.requestId,
+        pending.claimToken,
+      );
     } on ApiException catch (err) {
       final code = err.serverCode;
       if (err.statusCode == 410 ||
@@ -528,20 +670,28 @@ extension AccountRecoveryActions on AppState {
   /// The forced follow-up is stored first, so no restart opens the chats
   /// before it is done.
   Future<void> _finishRecoveredSession(
-      PendingAccountRecovery pending, Session recovered) async {
+    PendingAccountRecovery pending,
+    Session recovered,
+  ) async {
     if (canonicalizeServerOrigin(recovered.baseUrl) != pending.origin ||
         recovered.accountId != pending.accountId ||
         recovered.deviceId != pending.deviceId ||
         recovered.token.isEmpty) {
       throw StateError('Recovery identity was substituted');
     }
+    // The restore flag first: a stop between the two leaves a flag no
+    // follow-up reads, never a follow-up without its flag.
+    await _saveRecoveryFollowUpRestore(k1RestoreSupported, recovered);
     await _saveRecoveryFollowUp(
-        k1RestoreSupported
-            ? RecoveryFollowUpStep.restore
-            : RecoveryFollowUpStep.recoveryKey,
-        owner: recovered);
-    await localStore.saveSetting(_recoveredDeviceSetting,
-        '${recovered.accountId}\u0000${recovered.deviceId}');
+      k1RestoreSupported
+          ? RecoveryFollowUpStep.restore
+          : RecoveryFollowUpStep.recoveryKey,
+      owner: recovered,
+    );
+    await localStore.saveSetting(
+      _recoveredDeviceSetting,
+      '${recovered.accountId}\u0000${recovered.deviceId}',
+    );
     _recoveredDevice = true;
     await _recoveryCrypto.resumePendingEnrollment(
       accountId: pending.accountId,
@@ -555,8 +705,9 @@ extension AccountRecoveryActions on AppState {
     _recoveryPollTimer = null;
     pendingAccountRecovery = null;
     await localStore.deletePendingEnrollment(
-        kind: PendingEnrollment.kindAccountRecovery,
-        deviceId: pending.deviceId);
+      kind: PendingEnrollment.kindAccountRecovery,
+      deviceId: pending.deviceId,
+    );
     await _finishSignIn(() async {
       // L1: the version that replaces the lost devices with this one,
       // signed with the recovery key's list signer, before anything else.
@@ -618,8 +769,9 @@ extension AccountRecoveryActions on AppState {
     final claim = PendingAccountRecovery.fromEnrollment(stored);
     if (claim == null) {
       await localStore.deletePendingEnrollment(
-          kind: PendingEnrollment.kindAccountRecovery,
-          deviceId: stored.deviceId);
+        kind: PendingEnrollment.kindAccountRecovery,
+        deviceId: stored.deviceId,
+      );
     }
     return (claim: claim, otherKind: false);
   }
@@ -632,7 +784,8 @@ extension AccountRecoveryActions on AppState {
     final PendingAccountRecovery? pending;
     try {
       pending = PendingAccountRecovery.fromEnrollment(
-          await localStore.loadPendingEnrollment());
+        await localStore.loadPendingEnrollment(),
+      );
     } catch (_) {
       return;
     }
@@ -653,8 +806,9 @@ extension AccountRecoveryActions on AppState {
       await _activateRecoveredIdentity(restored, pending, saveSession: false);
     }
     await localStore.deletePendingEnrollment(
-        kind: PendingEnrollment.kindAccountRecovery,
-        deviceId: pending.deviceId);
+      kind: PendingEnrollment.kindAccountRecovery,
+      deviceId: pending.deviceId,
+    );
   }
 
   /// Stores [recovered] with the pending identity [resumePendingEnrollment]
@@ -663,12 +817,16 @@ extension AccountRecoveryActions on AppState {
   /// change can never reactivate the frozen state (finding 4). A crypto
   /// service without that step (test fakes) takes the older steps.
   Future<void> _activateRecoveredIdentity(
-      Session recovered, PendingAccountRecovery pending,
-      {required bool saveSession}) async {
+    Session recovered,
+    PendingAccountRecovery pending, {
+    required bool saveSession,
+  }) async {
     if (cryptoService case final EnrollmentPromotionCryptoService promoter) {
-      await promoter.promotePendingEnrollment(recovered,
-          kind: PendingEnrollment.kindAccountRecovery,
-          promotionId: pending.requestId);
+      await promoter.promotePendingEnrollment(
+        recovered,
+        kind: PendingEnrollment.kindAccountRecovery,
+        promotionId: pending.requestId,
+      );
       return;
     }
     if (saveSession) await localStore.saveSession(recovered);
@@ -688,10 +846,19 @@ extension AccountRecoveryActions on AppState {
     try {
       recoveryFollowUp = _decodeFollowUp(
           await localStore.loadSetting(_recoveryFollowUpSetting), current);
+      _recoveryFollowUpWithRestore = recoveryFollowUp == null
+          ? null
+          : _decodeFollowUpRestore(
+              await localStore.loadSetting(_recoveryFollowUpRestoreSetting),
+              current);
       final day = _scopedLeakDay(
-          await localStore.loadSetting(_passwordLeakSetting), current);
+        await localStore.loadSetting(_passwordLeakSetting),
+        current,
+      );
       final dismissed = _scopedLeakDay(
-          await localStore.loadSetting(_passwordLeakDismissedSetting), current);
+        await localStore.loadSetting(_passwordLeakDismissedSetting),
+        current,
+      );
       _passwordLeakDay = _currentLeakDay(day, dismissed);
     } catch (_) {
       // Unreadable settings: nothing to show.
@@ -723,14 +890,37 @@ extension AccountRecoveryActions on AppState {
     return null;
   }
 
+  bool? _decodeFollowUpRestore(String? raw, Session current) {
+    if (raw == null || raw.isEmpty) return null;
+    final parts = raw.split('\u0000');
+    if (parts.length != 3 ||
+        parts[0] != current.accountId ||
+        parts[1] != current.deviceId) {
+      return null;
+    }
+    return switch (parts[2]) { '1' => true, '0' => false, _ => null };
+  }
+
+  Future<void> _saveRecoveryFollowUpRestore(
+      bool withRestore, Session owner) async {
+    final flag = withRestore ? '1' : '0';
+    await localStore.saveSetting(_recoveryFollowUpRestoreSetting,
+        '${owner.accountId}\u0000${owner.deviceId}\u0000$flag');
+    _recoveryFollowUpWithRestore = withRestore;
+  }
+
   Future<void> _saveRecoveryFollowUp(RecoveryFollowUpStep? step,
       {Session? owner}) async {
     final current = owner ?? session;
     if (step == null || current == null) {
       await localStore.saveSetting(_recoveryFollowUpSetting, '');
+      await localStore.saveSetting(_recoveryFollowUpRestoreSetting, '');
+      _recoveryFollowUpWithRestore = null;
     } else {
-      await localStore.saveSetting(_recoveryFollowUpSetting,
-          '${current.accountId}\u0000${current.deviceId}\u0000${step.name}');
+      await localStore.saveSetting(
+        _recoveryFollowUpSetting,
+        '${current.accountId}\u0000${current.deviceId}\u0000${step.name}',
+      );
     }
     recoveryFollowUp = step;
     notifyListeners();
@@ -768,11 +958,15 @@ extension AccountRecoveryActions on AppState {
     if (owner == null) return;
     try {
       final dismissed = _scopedLeakDay(
-          await localStore.loadSetting(_passwordLeakDismissedSetting), owner);
+        await localStore.loadSetting(_passwordLeakDismissedSetting),
+        owner,
+      );
       final current = _currentLeakDay(day, dismissed);
       if (current == null || !identical(session, owner)) return;
       await localStore.saveSetting(
-          _passwordLeakSetting, '${_leakScope(owner)}$current');
+        _passwordLeakSetting,
+        '${_leakScope(owner)}$current',
+      );
       _passwordLeakDay = current;
     } catch (_) {
       return;
@@ -795,6 +989,14 @@ extension AccountRecoveryActions on AppState {
     final type = event.type;
     if (type == 'account.password_leak_suspected') {
       unawaited(_notePasswordLeak(event));
+      return false;
+    }
+    if (type == joinRequestNoticeEventType) {
+      // C1: a request waits for this owner or admin. Content-free.
+      if (!joinRequestNotice) {
+        joinRequestNotice = true;
+        notifyListeners();
+      }
       return false;
     }
     if (type == 'account.passkey_added' || type == 'account.passkey_removed') {
@@ -936,8 +1138,10 @@ extension AccountRecoveryActions on AppState {
   /// Reads which of [conversationIds] this recovered device holds no group
   /// for, and redraws when that changed. Only conversations not read before
   /// are read, unless [force]: a Welcome clears the mark by itself.
-  Future<void> _refreshGroupless(Iterable<String> conversationIds,
-      {bool force = false}) async {
+  Future<void> _refreshGroupless(
+    Iterable<String> conversationIds, {
+    bool force = false,
+  }) async {
     final mls = _mlsCrypto;
     final owner = session;
     final generation = _sessionGeneration;

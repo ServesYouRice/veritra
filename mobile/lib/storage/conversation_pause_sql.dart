@@ -10,16 +10,17 @@ part of 'encrypted_database.dart';
 extension ConversationPauseSql on EncryptedLocalDatabase {
   Future<void> _createConversationPauses() async {
     await customStatement(
-        'CREATE TABLE IF NOT EXISTS local_conversation_pauses ('
-        'conversation_id TEXT PRIMARY KEY NOT NULL '
-        'CHECK(length(conversation_id) BETWEEN 1 AND 128), '
-        'resume_after INTEGER NOT NULL CHECK(resume_after >= 0), '
-        'failed_event_id INTEGER NOT NULL CHECK(failed_event_id > 0), '
-        'failed_event_type TEXT CHECK(failed_event_type IS NULL OR '
-        'length(failed_event_type) <= $maxPausedEventTypeLength), '
-        'failed_ref TEXT, '
-        'kind TEXT NOT NULL, recorded_at INTEGER NOT NULL, '
-        'generation INTEGER NOT NULL CHECK(generation >= 1))');
+      'CREATE TABLE IF NOT EXISTS local_conversation_pauses ('
+      'conversation_id TEXT PRIMARY KEY NOT NULL '
+      'CHECK(length(conversation_id) BETWEEN 1 AND 128), '
+      'resume_after INTEGER NOT NULL CHECK(resume_after >= 0), '
+      'failed_event_id INTEGER NOT NULL CHECK(failed_event_id > 0), '
+      'failed_event_type TEXT CHECK(failed_event_type IS NULL OR '
+      'length(failed_event_type) <= $maxPausedEventTypeLength), '
+      'failed_ref TEXT, '
+      'kind TEXT NOT NULL, recorded_at INTEGER NOT NULL, '
+      'generation INTEGER NOT NULL CHECK(generation >= 1))',
+    );
   }
 
   Future<void> _clearConversationPauses() =>
@@ -47,8 +48,9 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
 
   Future<ConversationPause?> _pauseRow(String conversationId) async {
     final row = await customSelect(
-        'SELECT * FROM local_conversation_pauses WHERE conversation_id = ?',
-        variables: [Variable.withString(conversationId)]).getSingleOrNull();
+      'SELECT * FROM local_conversation_pauses WHERE conversation_id = ?',
+      variables: [Variable.withString(conversationId)],
+    ).getSingleOrNull();
     return row == null ? null : _pauseFromRow(row);
   }
 
@@ -56,8 +58,8 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
 
   Future<List<ConversationPause>> readConversationPauses() async {
     final rows = await customSelect(
-            'SELECT * FROM local_conversation_pauses ORDER BY conversation_id')
-        .get();
+      'SELECT * FROM local_conversation_pauses ORDER BY conversation_id',
+    ).get();
     return rows.map(_pauseFromRow).toList(growable: false);
   }
 
@@ -89,41 +91,43 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
         final existing = await _pauseRow(conversationId);
         if (existing == null) {
           final count = await customSelect(
-                  'SELECT COUNT(*) AS n FROM local_conversation_pauses')
-              .getSingle();
+            'SELECT COUNT(*) AS n FROM local_conversation_pauses',
+          ).getSingle();
           if (count.read<int>('n') >= maxConversationPauses) {
             throw const ConversationPauseLimitReached();
           }
           await customStatement(
-              'INSERT INTO local_conversation_pauses (conversation_id, '
-              'resume_after, failed_event_id, failed_event_type, failed_ref, '
-              'kind, recorded_at, generation) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
-              [
-                conversationId,
-                failedEventId - 1,
-                failedEventId,
-                failedEventType,
-                failedRef,
-                kind.name,
-                now,
-              ]);
+            'INSERT INTO local_conversation_pauses (conversation_id, '
+            'resume_after, failed_event_id, failed_event_type, failed_ref, '
+            'kind, recorded_at, generation) VALUES (?, ?, ?, ?, ?, ?, ?, 1)',
+            [
+              conversationId,
+              failedEventId - 1,
+              failedEventId,
+              failedEventType,
+              failedRef,
+              kind.name,
+              now,
+            ],
+          );
         } else {
           if (failedEventId <= existing.resumeAfter) {
             throw StateError('pause failure is behind the replayed events');
           }
           await customStatement(
-              'UPDATE local_conversation_pauses SET failed_event_id = ?, '
-              'failed_event_type = ?, failed_ref = ?, kind = ?, '
-              'recorded_at = ?, generation = generation + 1 '
-              'WHERE conversation_id = ?',
-              [
-                failedEventId,
-                failedEventType,
-                failedRef,
-                kind.name,
-                now,
-                conversationId,
-              ]);
+            'UPDATE local_conversation_pauses SET failed_event_id = ?, '
+            'failed_event_type = ?, failed_ref = ?, kind = ?, '
+            'recorded_at = ?, generation = generation + 1 '
+            'WHERE conversation_id = ?',
+            [
+              failedEventId,
+              failedEventType,
+              failedRef,
+              kind.name,
+              now,
+              conversationId,
+            ],
+          );
         }
         checkCanCommit?.call();
         return (await _pauseRow(conversationId))!;
@@ -147,8 +151,9 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
         if (pause == null) {
           throw StateError('conversation is not paused');
         }
-        final previousCursor = await (select(localSyncStates)
-              ..where((table) => table.singleton.equals(1)))
+        final previousCursor = await (select(
+          localSyncStates,
+        )..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
         if ((previousCursor?.cursor ?? 0) != expectedCursor ||
             eventId <= expectedCursor ||
@@ -158,7 +163,9 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
         checkCanCommit?.call();
         await into(localSyncStates).insertOnConflictUpdate(
           LocalSyncStatesCompanion.insert(
-              singleton: const Value(1), cursor: Value(eventId)),
+            singleton: const Value(1),
+            cursor: Value(eventId),
+          ),
         );
         checkCanCommit?.call();
       });
@@ -181,8 +188,9 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
           return false;
         }
         await customStatement(
-            'DELETE FROM local_conversation_pauses WHERE conversation_id = ?',
-            [conversationId]);
+          'DELETE FROM local_conversation_pauses WHERE conversation_id = ?',
+          [conversationId],
+        );
         checkCanCommit?.call();
         return true;
       });
@@ -192,7 +200,8 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
   /// state, so nothing is encrypted or staged for a paused conversation
   /// even if the pause landed after the caller checked.
   Future<void> _assertConversationNotPausedInTransaction(
-      String conversationId) async {
+    String conversationId,
+  ) async {
     final pause = await _pauseRow(conversationId);
     if (pause != null) throw ConversationSyncPausedException(conversationId);
   }
@@ -202,7 +211,10 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
   /// replayed and at or below the global cursor [cursor] (a replay never
   /// reaches past what the global stream has already passed).
   Future<void> _assertReplayInTransaction(
-      String conversationId, int eventId, int cursor) async {
+    String conversationId,
+    int eventId,
+    int cursor,
+  ) async {
     final pause = await _pauseRow(conversationId);
     if (pause == null || eventId <= pause.resumeAfter || eventId > cursor) {
       throw StateError('stale or incomplete MLS state transition');
@@ -210,10 +222,13 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
   }
 
   Future<void> _advancePauseResumeInTransaction(
-      String conversationId, int eventId) {
+    String conversationId,
+    int eventId,
+  ) {
     return customStatement(
-        'UPDATE local_conversation_pauses SET resume_after = ? '
-        'WHERE conversation_id = ? AND resume_after < ?',
-        [eventId, conversationId, eventId]);
+      'UPDATE local_conversation_pauses SET resume_after = ? '
+      'WHERE conversation_id = ? AND resume_after < ?',
+      [eventId, conversationId, eventId],
+    );
   }
 }

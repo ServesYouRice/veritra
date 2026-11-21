@@ -18,6 +18,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -28,25 +29,32 @@ void main() {
 
   group('a refused membership bundle', () {
     for (final status in <int>[422, 403, 400]) {
-      test('$status: is not claimed or restaged again before its backoff',
-          () async {
-        final h = await _Harness.start(
-            refuse: () => ApiException(status, '{"error":"invalid_input"}'));
-        await _waitFor(() => h.api.bundles.isNotEmpty);
-        // Sync frames keep asking for catch-ups, as on a busy connection.
-        await h.frames(const Duration(milliseconds: 2500));
-        // Default backoff: attempts at 0 s, 1 s, 3 s. One of slack for timing.
-        expect(h.api.claims.length, inInclusiveRange(1, 3));
-        expect(h.api.bundles.length, inInclusiveRange(1, 3));
-        expect(h.crypto.abandoned, h.api.bundles.length,
-            reason: 'every refused bundle is still dropped');
-        h.state.dispose();
-      });
+      test(
+        '$status: is not claimed or restaged again before its backoff',
+        () async {
+          final h = await _Harness.start(
+            refuse: () => ApiException(status, '{"error":"invalid_input"}'),
+          );
+          await _waitFor(() => h.api.bundles.isNotEmpty);
+          // Sync frames keep asking for catch-ups, as on a busy connection.
+          await h.frames(const Duration(milliseconds: 2500));
+          // Default backoff: attempts at 0 s, 1 s, 3 s. One of slack for timing.
+          expect(h.api.claims.length, inInclusiveRange(1, 3));
+          expect(h.api.bundles.length, inInclusiveRange(1, 3));
+          expect(
+            h.crypto.abandoned,
+            h.api.bundles.length,
+            reason: 'every refused bundle is still dropped',
+          );
+          h.state.dispose();
+        },
+      );
     }
 
     test('409 at an unchanged epoch is rate-limited too', () async {
       final h = await _Harness.start(
-          refuse: () => ApiException(409, '{"error":"mls_change_pending"}'));
+        refuse: () => ApiException(409, '{"error":"mls_change_pending"}'),
+      );
       await _waitFor(() => h.api.bundles.isNotEmpty);
       await h.frames(const Duration(milliseconds: 2500));
       expect(h.api.claims.length, inInclusiveRange(1, 3));
@@ -54,39 +62,43 @@ void main() {
       h.state.dispose();
     });
 
-    test('keeps retrying on the capped schedule, with no terminal pause',
-        () async {
-      final h = await _Harness.start(
+    test(
+      'keeps retrying on the capped schedule, with no terminal pause',
+      () async {
+        final h = await _Harness.start(
           refuse: () => ApiException(422, '{"error":"invalid_input"}'),
           configure: (state) => state
             ..mlsRetryBase = const Duration(milliseconds: 200)
-            ..mlsRetryCap = const Duration(milliseconds: 400));
-      await _waitFor(() => h.api.bundles.isNotEmpty);
-      await h.frames(const Duration(seconds: 3));
-      // Attempts at 0, 0.2, 0.6, 1.0, 1.4 ... s: about eight in 3 s.
-      expect(h.api.claims.length, inInclusiveRange(4, 10));
-      expect(h.api.bundles.length, h.api.claims.length);
-      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
-      h.state.dispose();
-    });
+            ..mlsRetryCap = const Duration(milliseconds: 400),
+        );
+        await _waitFor(() => h.api.bundles.isNotEmpty);
+        await h.frames(const Duration(seconds: 3));
+        // Attempts at 0, 0.2, 0.6, 1.0, 1.4 ... s: about eight in 3 s.
+        expect(h.api.claims.length, inInclusiveRange(4, 10));
+        expect(h.api.bundles.length, h.api.claims.length);
+        expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+        h.state.dispose();
+      },
+    );
 
     test('409 at a new epoch restages without waiting', () async {
       var first = true;
       final h = await _Harness.start(
-          fakes: (api, crypto) => api.onBundle = (conversationId, bundle) {
-                if (!first) return;
-                first = false;
-                // Another member's commit won epoch 3; catching up applies
-                // it.
-                api.serverEpochs[conversationId] = 4;
-                crypto.epochs[conversationId] = 4;
-                throw ApiException(
-                    409, '{"error":"mls_epoch_conflict","epoch":4}');
-              },
-          configure: (state) =>
-              state.mlsRetryBase = const Duration(seconds: 30));
-      await _waitFor(() => h.crypto.completed == 1,
-          timeout: const Duration(seconds: 5));
+        fakes: (api, crypto) => api.onBundle = (conversationId, bundle) {
+          if (!first) return;
+          first = false;
+          // Another member's commit won epoch 3; catching up applies
+          // it.
+          api.serverEpochs[conversationId] = 4;
+          crypto.epochs[conversationId] = 4;
+          throw ApiException(409, '{"error":"mls_epoch_conflict","epoch":4}');
+        },
+        configure: (state) => state.mlsRetryBase = const Duration(seconds: 30),
+      );
+      await _waitFor(
+        () => h.crypto.completed == 1,
+        timeout: const Duration(seconds: 5),
+      );
       expect(h.api.bundles, hasLength(2));
       expect(h.crypto.abandoned, 1);
       h.state.dispose();
@@ -94,9 +106,10 @@ void main() {
 
     test('a staged bundle still in flight does not spin the wake', () async {
       final h = await _Harness.start(
-          refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
-          configure: (state) =>
-              state.mlsRetryBase = const Duration(milliseconds: 200));
+        refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
+        configure: (state) =>
+            state.mlsRetryBase = const Duration(milliseconds: 200),
+      );
       await _waitFor(() => h.api.bundles.isNotEmpty);
       // The next bundle never gets an answer.
       h.api.hangBundles = true;
@@ -107,36 +120,43 @@ void main() {
       h.state.dispose();
     });
 
-    test('is reconciled again by the wake alone once its backoff expires',
-        () async {
-      // An idle connected session: no sync frames, no resume, nothing new
-      // queued. The first bundle is refused, the next one accepted.
-      final h = await _Harness.start(refuseOnce: <Object>[
-        ApiException(422, '{"error":"invalid_input"}'),
-      ]);
-      await _waitFor(() => h.api.bundles.isNotEmpty);
-      // The refusal's own catch-up succeeds before the deadline; it must
-      // neither restage at once nor cancel the wake.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      expect(h.api.claims, hasLength(1));
-      expect(h.api.bundles, hasLength(1));
-      expect(h.syncCalls, greaterThan(1),
-          reason: 'the refusal asks for a catch-up');
+    test(
+      'is reconciled again by the wake alone once its backoff expires',
+      () async {
+        // An idle connected session: no sync frames, no resume, nothing new
+        // queued. The first bundle is refused, the next one accepted.
+        final h = await _Harness.start(
+          refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
+        );
+        await _waitFor(() => h.api.bundles.isNotEmpty);
+        // The refusal's own catch-up succeeds before the deadline; it must
+        // neither restage at once nor cancel the wake.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect(h.api.claims, hasLength(1));
+        expect(h.api.bundles, hasLength(1));
+        expect(
+          h.syncCalls,
+          greaterThan(1),
+          reason: 'the refusal asks for a catch-up',
+        );
 
-      await _waitFor(() => h.crypto.completed == 1,
-          timeout: const Duration(seconds: 5));
-      expect(h.api.claims, hasLength(2));
-      expect(h.api.bundles, hasLength(2));
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
-      expect(h.api.claims, hasLength(2));
-      expect(h.api.bundles, hasLength(2));
-      h.state.dispose();
-    });
+        await _waitFor(
+          () => h.crypto.completed == 1,
+          timeout: const Duration(seconds: 5),
+        );
+        expect(h.api.claims, hasLength(2));
+        expect(h.api.bundles, hasLength(2));
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        expect(h.api.claims, hasLength(2));
+        expect(h.api.bundles, hasLength(2));
+        h.state.dispose();
+      },
+    );
 
     test('wakes nothing after dispose', () async {
-      final h = await _Harness.start(refuseOnce: <Object>[
-        ApiException(422, '{"error":"invalid_input"}'),
-      ]);
+      final h = await _Harness.start(
+        refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
+      );
       await _waitFor(() => h.api.bundles.isNotEmpty);
       await Future<void>.delayed(const Duration(milliseconds: 100));
       h.state.dispose();
@@ -150,9 +170,9 @@ void main() {
     });
 
     test('wakes nothing after sign-out', () async {
-      final h = await _Harness.start(refuseOnce: <Object>[
-        ApiException(422, '{"error":"invalid_input"}'),
-      ]);
+      final h = await _Harness.start(
+        refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
+      );
       await _waitFor(() => h.api.bundles.isNotEmpty);
       await Future<void>.delayed(const Duration(milliseconds: 100));
       await h.state.logout();
@@ -169,44 +189,56 @@ void main() {
   });
 
   group('an accepted control message that fails to finish locally', () {
-    test('a commit that fails to merge is finished by the retry timer',
-        () async {
-      final h = await _Harness.start(pending: const <String>{});
-      await _settle();
-      // The failure comes after startup, with the connection already
-      // online, so no later wake would pick the bundle up.
-      h.crypto.completeFailures.add(StateError('merge failed'));
-      await h.state.addConversationMember('conv_a', 'acct_bob');
-      await _waitFor(() => h.crypto.completeCalls == 1);
-      await _waitFor(() => h.crypto.completed == 1,
-          timeout: const Duration(seconds: 6));
-      expect(h.api.bundles, hasLength(1),
-          reason: 'the accepted bundle is finished, not sent again');
-      expect(h.crypto.abandoned, 0, reason: 'an accepted commit is kept');
-      expect(await h.store.pendingMlsMessages(), isEmpty);
-      h.state.dispose();
-    });
+    test(
+      'a commit that fails to merge is finished by the retry timer',
+      () async {
+        final h = await _Harness.start(pending: const <String>{});
+        await _settle();
+        // The failure comes after startup, with the connection already
+        // online, so no later wake would pick the bundle up.
+        h.crypto.completeFailures.add(StateError('merge failed'));
+        await h.state.addConversationMember('conv_a', 'acct_bob');
+        await _waitFor(() => h.crypto.completeCalls == 1);
+        await _waitFor(
+          () => h.crypto.completed == 1,
+          timeout: const Duration(seconds: 6),
+        );
+        expect(
+          h.api.bundles,
+          hasLength(1),
+          reason: 'the accepted bundle is finished, not sent again',
+        );
+        expect(h.crypto.abandoned, 0, reason: 'an accepted commit is kept');
+        expect(await h.store.pendingMlsMessages(), isEmpty);
+        h.state.dispose();
+      },
+    );
 
-    test('a sent message whose removal fails is removed by the retry timer',
-        () async {
-      final store = _FlakyStore();
-      final h = await _Harness.start(pending: const <String>{}, store: store);
-      await _settle();
-      store.removeFailures = 1;
-      await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
-      h.sync.frame();
-      await _waitFor(() => h.api.messages.isNotEmpty);
-      await _waitFor(() async => (await store.pendingMlsMessages()).isEmpty,
-          timeout: const Duration(seconds: 6));
-      expect(h.api.messages, <String>['c1']);
-      h.state.dispose();
-    });
+    test(
+      'a sent message whose removal fails is removed by the retry timer',
+      () async {
+        final store = _FlakyStore();
+        final h = await _Harness.start(pending: const <String>{}, store: store);
+        await _settle();
+        store.removeFailures = 1;
+        await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
+        h.sync.frame();
+        await _waitFor(() => h.api.messages.isNotEmpty);
+        await _waitFor(
+          () async => (await store.pendingMlsMessages()).isEmpty,
+          timeout: const Duration(seconds: 6),
+        );
+        expect(h.api.messages, <String>['c1']);
+        h.state.dispose();
+      },
+    );
 
     test('a failed finish is retried with growing backoff', () async {
       final h = await _Harness.start(pending: const <String>{});
       await _settle();
-      h.crypto.completeFailures
-          .addAll(List<Object>.generate(50, (_) => StateError('stuck')));
+      h.crypto.completeFailures.addAll(
+        List<Object>.generate(50, (_) => StateError('stuck')),
+      );
       await h.state.addConversationMember('conv_a', 'acct_bob');
       await _waitFor(() => h.crypto.completeCalls == 1);
       await Future<void>.delayed(const Duration(milliseconds: 4500));
@@ -227,34 +259,40 @@ void main() {
       store.mlsReadFailures = 2;
       h.sync.frame();
       await _waitFor(() => store.mlsReadFailures == 0);
-      await _waitFor(() => h.api.messages.contains('c1'),
-          timeout: const Duration(seconds: 6));
+      await _waitFor(
+        () => h.api.messages.contains('c1'),
+        timeout: const Duration(seconds: 6),
+      );
       await _waitFor(() async => (await store.pendingMlsMessages()).isEmpty);
       h.state.dispose();
     });
   });
 
   group('storage failures in the outbox workers', () {
-    test('a store that keeps failing is retried with backoff, not spun',
-        () async {
-      final store = _FlakyStore();
-      final h = await _Harness.start(pending: const <String>{}, store: store);
-      await _settle();
-      await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
-      store.mlsReadFailures = 1000;
-      h.sync.frame();
-      await _waitFor(() => store.mlsReads > 0);
-      final reads = store.mlsReads;
-      await Future<void>.delayed(const Duration(seconds: 3));
-      // Fallback timers at 2 s and then 8 s; a 100 ms spin would read ~60
-      // times.
-      expect(store.mlsReads - reads, lessThanOrEqualTo(8));
-      store.mlsReadFailures = 0;
-      h.state.dispose();
-    });
+    test(
+      'a store that keeps failing is retried with backoff, not spun',
+      () async {
+        final store = _FlakyStore();
+        final h = await _Harness.start(pending: const <String>{}, store: store);
+        await _settle();
+        await _queue(store, <PendingMlsMessage>[_message('c1', 'conv_a')]);
+        store.mlsReadFailures = 1000;
+        h.sync.frame();
+        await _waitFor(() => store.mlsReads > 0);
+        final reads = store.mlsReads;
+        await Future<void>.delayed(const Duration(seconds: 3));
+        // Fallback timers at 2 s and then 8 s; a 100 ms spin would read ~60
+        // times.
+        expect(store.mlsReads - reads, lessThanOrEqualTo(8));
+        store.mlsReadFailures = 0;
+        h.state.dispose();
+      },
+    );
 
     Future<(AppState, _Api, List<Object>)> appOutbox(
-        _FlakyStore store, int failures) async {
+      _FlakyStore store,
+      int failures,
+    ) async {
       final api = _Api();
       final errors = <Object>[];
       late AppState state;
@@ -270,12 +308,14 @@ void main() {
           ..conversations = <Conversation>[
             Conversation(id: 'conv_a', kind: 'group'),
           ];
-        await store.enqueueEnvelope(MessageEnvelope(
-          conversationId: 'conv_a',
-          idempotencyKey: 'app_1',
-          ciphertext: const <int>[1],
-          cryptoProtocol: 'test-only-not-production',
-        ));
+        await store.enqueueEnvelope(
+          MessageEnvelope(
+            conversationId: 'conv_a',
+            idempotencyKey: 'app_1',
+            ciphertext: const <int>[1],
+            cryptoProtocol: 'test-only-not-production',
+          ),
+        );
         store.envelopeReadFailures = failures;
         // A resume flushes the outbox; its first read fails.
         state.handleAppLifecycleState(AppLifecycleState.resumed);
@@ -287,8 +327,10 @@ void main() {
       final store = _FlakyStore();
       final (state, api, errors) = await appOutbox(store, 1);
       await _waitFor(() => store.envelopeReadFailures == 0);
-      await _waitFor(() => api.envelopes.contains('app_1'),
-          timeout: const Duration(seconds: 6));
+      await _waitFor(
+        () => api.envelopes.contains('app_1'),
+        timeout: const Duration(seconds: 6),
+      );
       expect(errors, isEmpty, reason: 'no storage error escapes the worker');
       state.dispose();
     });
@@ -298,25 +340,29 @@ void main() {
       // The worker's read and then the scheduler's read fail.
       final (state, api, errors) = await appOutbox(store, 2);
       await _waitFor(() => store.envelopeReadFailures == 0);
-      await _waitFor(() => api.envelopes.contains('app_1'),
-          timeout: const Duration(seconds: 8));
+      await _waitFor(
+        () => api.envelopes.contains('app_1'),
+        timeout: const Duration(seconds: 8),
+      );
       expect(errors, isEmpty);
       state.dispose();
     });
 
-    test('an outbox that keeps failing is retried with backoff, not spun',
-        () async {
-      final store = _FlakyStore();
-      final (state, api, errors) = await appOutbox(store, 1000);
-      await _waitFor(() => store.envelopeReads > 0);
-      final reads = store.envelopeReads;
-      await Future<void>.delayed(const Duration(seconds: 3));
-      expect(store.envelopeReads - reads, lessThanOrEqualTo(8));
-      expect(api.envelopes, isEmpty);
-      expect(errors, isEmpty);
-      store.envelopeReadFailures = 0;
-      state.dispose();
-    });
+    test(
+      'an outbox that keeps failing is retried with backoff, not spun',
+      () async {
+        final store = _FlakyStore();
+        final (state, api, errors) = await appOutbox(store, 1000);
+        await _waitFor(() => store.envelopeReads > 0);
+        final reads = store.envelopeReads;
+        await Future<void>.delayed(const Duration(seconds: 3));
+        expect(store.envelopeReads - reads, lessThanOrEqualTo(8));
+        expect(api.envelopes, isEmpty);
+        expect(errors, isEmpty);
+        store.envelopeReadFailures = 0;
+        state.dispose();
+      },
+    );
   });
 
   group('a revocation this device coordinates', () {
@@ -342,7 +388,8 @@ void main() {
         }
         return <MlsRevocation>[
           revocation(
-              h.api.messages.contains('rev1') ? 'commit_submitted' : 'pending'),
+            h.api.messages.contains('rev1') ? 'commit_submitted' : 'pending',
+          ),
         ];
       };
     }
@@ -351,20 +398,24 @@ void main() {
       final h = await _Harness.start(pending: const <String>{});
       await _settle();
       listRevocation(
-          h,
-          PendingMlsMessage(
-            idempotencyKey: 'rev1',
-            conversationId: 'conv_a',
-            kind: 'commit',
-            payload: const <int>[1],
-            revocationDeviceId: 'dev_gone',
-          ));
+        h,
+        PendingMlsMessage(
+          idempotencyKey: 'rev1',
+          conversationId: 'conv_a',
+          kind: 'commit',
+          payload: const <int>[1],
+          revocationDeviceId: 'dev_gone',
+        ),
+      );
       h.state.handleAppLifecycleState(AppLifecycleState.paused);
       h.state.handleAppLifecycleState(AppLifecycleState.resumed);
       await _waitFor(() => h.api.messages.contains('rev1'));
       await _settle();
-      expect(h.crypto.revocationCommits, 0,
-          reason: 'the server already has this revocation\'s commit');
+      expect(
+        h.crypto.revocationCommits,
+        0,
+        reason: 'the server already has this revocation\'s commit',
+      );
       expect(h.api.messages, <String>['rev1']);
       h.state.dispose();
     });
@@ -386,41 +437,51 @@ void main() {
 
   group('a local MLS outbox failure', () {
     Future<(PendingMlsMessage, bool)> fail(
-        PendingMlsMessage message, Object? error) async {
+      PendingMlsMessage message,
+      Object? error,
+    ) async {
       final h = await _Harness.start(pending: const <String>{});
       await _settle();
       if (error != null) h.api.messageFailures[message.idempotencyKey] = error;
       await _queue(h.store, <PendingMlsMessage>[message]);
       h.sync.frame();
-      await _waitFor(() async =>
-          (await h.store.pendingMlsMessages()).single.attemptCount == 1);
+      await _waitFor(
+        () async =>
+            (await h.store.pendingMlsMessages()).single.attemptCount == 1,
+      );
       final recorded = (await h.store.pendingMlsMessages()).single;
       await _waitFor(
-          () => h.state.mlsConversationFailed('conv_a') == recorded.terminal);
+        () => h.state.mlsConversationFailed('conv_a') == recorded.terminal,
+      );
       final failed = h.state.mlsConversationFailed('conv_a');
       h.state.dispose();
       return (recorded, failed);
     }
 
-    test('an undecodable bundle is terminal and pauses its conversation',
-        () async {
-      final (recorded, failed) = await fail(
+    test(
+      'an undecodable bundle is terminal and pauses its conversation',
+      () async {
+        final (recorded, failed) = await fail(
           const PendingMlsMessage(
             idempotencyKey: 'b1',
             conversationId: 'conv_a',
             kind: MlsCommitBundle.kind,
             payload: <int>[1],
           ),
-          null);
-      expect(recorded.terminal, isTrue);
-      expect(recorded.failureClass, 'terminal:local:FormatException');
-      expect(recorded.nextAttemptAt, isNull);
-      expect(failed, isTrue);
-    });
+          null,
+        );
+        expect(recorded.terminal, isTrue);
+        expect(recorded.failureClass, 'terminal:local:FormatException');
+        expect(recorded.nextAttemptAt, isNull);
+        expect(failed, isTrue);
+      },
+    );
 
     test('an argument error is terminal', () async {
-      final (recorded, failed) =
-          await fail(_message('c1', 'conv_a'), ArgumentError('bad payload'));
+      final (recorded, failed) = await fail(
+        _message('c1', 'conv_a'),
+        ArgumentError('bad payload'),
+      );
       expect(recorded.terminal, isTrue);
       expect(recorded.failureClass, 'terminal:local:ArgumentError');
       expect(failed, isTrue);
@@ -428,9 +489,13 @@ void main() {
 
     test('a durable storage error is terminal', () async {
       final (recorded, failed) = await fail(
-          _message('c1', 'conv_a'),
-          const FileSystemException(
-              'open failed', '/data/x', OSError('No such file', 2)));
+        _message('c1', 'conv_a'),
+        const FileSystemException(
+          'open failed',
+          '/data/x',
+          OSError('No such file', 2),
+        ),
+      );
       expect(recorded.terminal, isTrue);
       expect(recorded.failureClass, 'terminal:local:FileSystemException');
       expect(failed, isTrue);
@@ -438,9 +503,13 @@ void main() {
 
     test('a transient storage error retries, labelled local', () async {
       final (recorded, failed) = await fail(
-          _message('c1', 'conv_a'),
-          const FileSystemException(
-              'write failed', '/data/x', OSError('No space left', 28)));
+        _message('c1', 'conv_a'),
+        const FileSystemException(
+          'write failed',
+          '/data/x',
+          OSError('No space left', 28),
+        ),
+      );
       expect(recorded.terminal, isFalse);
       expect(recorded.failureClass, 'retryable:local');
       expect(recorded.nextAttemptAt, isNotNull);
@@ -448,8 +517,10 @@ void main() {
     });
 
     test('a network error still retries, labelled network', () async {
-      final (recorded, failed) =
-          await fail(_message('c1', 'conv_a'), const SocketException('down'));
+      final (recorded, failed) = await fail(
+        _message('c1', 'conv_a'),
+        const SocketException('down'),
+      );
       expect(recorded.terminal, isFalse);
       expect(recorded.failureClass, 'retryable:network');
       expect(recorded.nextAttemptAt, isNotNull);
@@ -459,16 +530,20 @@ void main() {
     test('a malformed server response retries, labelled response', () async {
       // ApiResponseException is a FormatException, but the server's next
       // answer may be fine (a captive portal's page, say).
-      final (recorded, failed) =
-          await fail(_message('c1', 'conv_a'), const ApiResponseException());
+      final (recorded, failed) = await fail(
+        _message('c1', 'conv_a'),
+        const ApiResponseException(),
+      );
       expect(recorded.terminal, isFalse);
       expect(recorded.failureClass, 'retryable:response');
       expect(failed, isFalse);
     });
 
     test('an unknown error retries, labelled unknown', () async {
-      final (recorded, failed) =
-          await fail(_message('c1', 'conv_a'), StateError('odd'));
+      final (recorded, failed) = await fail(
+        _message('c1', 'conv_a'),
+        StateError('odd'),
+      );
       expect(recorded.terminal, isFalse);
       expect(recorded.failureClass, 'retryable:unknown');
       expect(recorded.nextAttemptAt, isNotNull);
@@ -476,31 +551,321 @@ void main() {
     });
   });
 
-  group('MLS catch-up failures stay isolated', () {
-    test('a change that fails to stage backs off; later changes still go',
-        () async {
-      final h = await _Harness.start(
-          pending: const <String>{'conv_a', 'conv_b'},
-          fakes: (api, crypto) => crypto.stageFailures.add('conv_a'));
-      await _waitFor(() => h.crypto.completed == 1);
-      expect(h.api.claims, <String>['conv_a', 'conv_b']);
-      expect(h.api.pendingAdds, <String>{'conv_a'});
-      // Catch-ups right after the failure claim nothing for it again.
-      await h.frames(const Duration(milliseconds: 600));
-      expect(h.api.claims.where((id) => id == 'conv_a'), hasLength(1));
-      // Its backoff over, it is tried again without any other trigger.
-      h.crypto.stageFailures.clear();
-      await _waitFor(() => h.crypto.completed == 2,
-          timeout: const Duration(seconds: 5));
-      expect(h.api.claims.where((id) => id == 'conv_a'), hasLength(2));
-      expect(h.api.pendingAdds, isEmpty);
+  group('D134: a stuck encryption update is retried or discarded', () {
+    // Queues one commit bundle for conv_a whose first send fails locally,
+    // so it ends terminal and pauses the conversation. An application
+    // message queued behind it waits, unless [held] is false.
+    Future<_Harness> stuck({
+      List<int>? payload,
+      List<MlsDeviceRef> removed = const <MlsDeviceRef>[],
+      bool held = true,
+      List<PendingMlsMessage> after = const <PendingMlsMessage>[],
+      int failures = 1,
+      int epoch = 3,
+    }) async {
+      final h =
+          await _Harness.start(pending: const <String>{}, refuseOnce: <Object>[
+        for (var i = 0; i < failures; i++) ArgumentError('bad bundle'),
+      ], fakes: (_, crypto) => crypto.epochs['conv_a'] = epoch);
+      await _settle();
+      await _queue(h.store, <PendingMlsMessage>[
+        PendingMlsMessage(
+          idempotencyKey: 'b1',
+          conversationId: 'conv_a',
+          kind: MlsCommitBundle.kind,
+          payload: payload ??
+              MlsCommitBundle(
+                epoch: epoch,
+                commit: const <int>[1],
+                removed: removed,
+              ).encode(),
+        ),
+        ...after,
+      ]);
+      if (held) {
+        await h.store.enqueueEnvelope(MessageEnvelope(
+          conversationId: 'conv_a',
+          idempotencyKey: 'app1',
+          ciphertext: const <int>[1],
+          cryptoProtocol: 'mls10-openmls-v1',
+        ));
+      }
+      h.sync.frame();
+      await _waitFor(() => h.state.mlsConversationFailed('conv_a'));
+      expect((await h.store.pendingMlsMessages()).first.terminal, isTrue);
+      expect(h.state.pausedMlsUpdate('conv_a')?.idempotencyKey, 'b1');
+      return h;
+    }
+
+    test('nothing clears the pause by itself', () async {
+      final h = await stuck();
+      await h.frames(const Duration(milliseconds: 1500));
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.api.envelopes, isEmpty);
       h.state.dispose();
     });
 
+    test('Retry sends it again under its key, and held messages follow',
+        () async {
+      final h = await stuck();
+      await h.state.retryMlsUpdate('conv_a');
+      expect(h.api.bundleKeys, <String>['b1', 'b1']);
+      expect(h.crypto.completed, 1);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(await h.store.pendingMlsMessages(), isEmpty);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('a retry that fails the same way pauses again', () async {
+      final h = await stuck(payload: const <int>[1]);
+      await h.state.retryMlsUpdate('conv_a');
+      final record = (await h.store.pendingMlsMessages()).single;
+      expect(record.terminal, isTrue);
+      expect(record.attemptCount, 2);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect(h.api.envelopes, isEmpty);
+      h.state.dispose();
+    });
+
+    test('Discard drops the staged commit unsent, and held messages follow',
+        () async {
+      final h = await stuck();
+      await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(h.crypto.abandoned, 1);
+      expect(h.crypto.completed, 0);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(await h.store.pendingMlsMessages(), isEmpty);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('an update that no longer decodes can be discarded', () async {
+      final h = await stuck(payload: const <int>[1]);
+      await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      await _waitFor(() => h.api.envelopes.contains('app1'));
+      h.state.dispose();
+    });
+
+    test('Discard leaves alone an update a retry is sending', () async {
+      final h = await stuck();
+      h.api.hangBundles = true;
+      unawaited(h.state.retryMlsUpdate('conv_a'));
+      await _waitFor(() => h.api.bundleKeys.length == 2);
+      await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(h.crypto.abandoned, 0);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'b1');
+      expect(queued.terminal, isFalse);
+      h.state.dispose();
+    });
+
+    test('a discarded removal keeps sends held until it is made again',
+        () async {
+      final h = await stuck(removed: const <MlsDeviceRef>[_bob], held: false);
+      expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
+      // The server still lists the removal: the commit never reached it.
+      h.api.pendingRemoves.add('conv_a');
+      await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      expect(h.state.sendHeldForRemoval('conv_a'), isTrue);
+      // Reconcile makes the removal again, after the change's backoff.
+      await _waitFor(() => h.crypto.completed == 1);
+      expect(h.api.bundles, <String>['conv_a', 'conv_a']);
+      h.state.dispose();
+    });
+
+    test('a discarded revocation commit is made again by its coordinator',
+        () async {
+      const gone = (accountId: 'acct_me', deviceId: 'dev_gone');
+      final h = await stuck(
+          payload: const MlsCommitBundle(
+            epoch: 3,
+            commit: <int>[1],
+            removed: <MlsDeviceRef>[gone],
+            revocationDeviceId: 'dev_gone',
+          ).encode(),
+          held: false);
+      // The server still waits for this device to revoke dev_gone.
+      h.api.revocationsHook = () async => <MlsRevocation>[
+            MlsRevocation(
+              conversationId: 'conv_a',
+              revokedDeviceId: 'dev_gone',
+              revokedAccountId: 'acct_me',
+              coordinatorDeviceId: 'dev_me',
+              state: h.api.revoked.contains('conv_a')
+                  ? 'commit_submitted'
+                  : 'pending',
+              commitMessageId:
+                  h.api.revoked.contains('conv_a') ? 'mls_rev1' : null,
+              requestedAt: DateTime.utc(2026, 10, 31),
+            ),
+          ];
+      expect(h.crypto.revocationCommits, 0);
+      await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(h.crypto.abandoned, 1);
+      await _waitFor(() => h.api.revoked.contains('conv_a'));
+      expect(h.crypto.revocationCommits, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      h.state.dispose();
+    });
+
+    test('a group\'s first update cannot be discarded', () async {
+      final h = await stuck(epoch: 0);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isFalse);
+      final outcome = await h.state.discardMlsUpdate('conv_a', 'b1');
+      expect(outcome, MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      expect(h.state.errorFor(Ops.send), isNull);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      expect((await h.store.pendingMlsMessages()).first.idempotencyKey, 'b1');
+      expect(h.api.envelopes, isEmpty);
+      h.state.dispose();
+    });
+
+    test('nor can one that no longer decodes in a group at epoch 0', () async {
+      final h = await stuck(payload: const <int>[1], epoch: 0);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isFalse);
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a control message that is not a bundle stays in place', () async {
+      final h = await _Harness.start(pending: const <String>{});
+      await _settle();
+      h.api.messageFailures['w1'] = ArgumentError('bad welcome');
+      await _queue(h.store, <PendingMlsMessage>[_message('w1', 'conv_a')]);
+      h.sync.frame();
+      await _waitFor(() => h.state.mlsConversationFailed('conv_a'));
+      expect(h.state.pausedMlsUpdate('conv_a'),
+          (idempotencyKey: 'w1', discardable: false));
+      expect(await h.state.discardMlsUpdate('conv_a', 'w1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 0);
+      expect(h.state.errorFor(Ops.mlsUpdate),
+          englishL10n.chatPausedDiscardRefused);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'w1');
+      expect(queued.terminal, isTrue);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a second tap never drops a later update the person has not seen',
+        () async {
+      final h =
+          await stuck(failures: 2, held: false, after: <PendingMlsMessage>[
+        PendingMlsMessage(
+          idempotencyKey: 'b2',
+          conversationId: 'conv_a',
+          kind: MlsCommitBundle.kind,
+          payload: const MlsCommitBundle(epoch: 3, commit: <int>[2]).encode(),
+        ),
+      ]);
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.discarded);
+      // b2 goes next, fails the same way, and pauses the chat again.
+      await _waitFor(
+          () => h.state.pausedMlsUpdate('conv_a')?.idempotencyKey == 'b2');
+      // The second tap still names b1, the update the person saw.
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.notDone);
+      expect(h.crypto.abandoned, 1);
+      final queued = (await h.store.pendingMlsMessages()).single;
+      expect(queued.idempotencyKey, 'b2');
+      expect(queued.terminal, isTrue);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+
+    test('a discarded role change says it was not made', () async {
+      final h = await stuck(
+          payload: const MlsCommitBundle(
+        epoch: 3,
+        commit: <int>[1],
+        roleChange: true,
+      ).encode());
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.roleChangeNotMade);
+      expect(h.crypto.abandoned, 1);
+      expect(h.state.mlsConversationFailed('conv_a'), isFalse);
+      h.state.dispose();
+    });
+
+    test('an undecodable update holds sends from before it is dropped',
+        () async {
+      final h = await stuck(payload: const <int>[1], held: false);
+      expect(h.state.pausedMlsUpdate('conv_a')?.discardable, isTrue);
+      expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
+      bool? heldAtAbandon;
+      h.crypto.onAbandon =
+          (_) => heldAtAbandon = h.state.sendHeldForRemoval('conv_a');
+      expect(await h.state.discardMlsUpdate('conv_a', 'b1'),
+          MlsUpdateDiscard.discarded);
+      expect(heldAtAbandon, isTrue);
+      // The server lists no removal: the hold is released once reconcile
+      // has looked again after a complete fetch.
+      await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
+      h.state.dispose();
+    });
+
+    test('only a paused conversation is touched', () async {
+      final h = await stuck();
+      await h.state.retryMlsUpdate('conv_b');
+      await h.state.discardMlsUpdate('conv_b', 'b1');
+      expect(h.crypto.abandoned, 0);
+      expect(h.api.bundleKeys, <String>['b1']);
+      expect(h.state.mlsConversationFailed('conv_a'), isTrue);
+      h.state.dispose();
+    });
+  });
+
+  group('MLS catch-up failures stay isolated', () {
+    test(
+      'a change that fails to stage backs off; later changes still go',
+      () async {
+        final h = await _Harness.start(
+          pending: const <String>{'conv_a', 'conv_b'},
+          fakes: (api, crypto) => crypto.stageFailures.add('conv_a'),
+        );
+        await _waitFor(() => h.crypto.completed == 1);
+        expect(h.api.claims, <String>['conv_a', 'conv_b']);
+        expect(h.api.pendingAdds, <String>{'conv_a'});
+        // Catch-ups right after the failure claim nothing for it again.
+        await h.frames(const Duration(milliseconds: 600));
+        expect(h.api.claims.where((id) => id == 'conv_a'), hasLength(1));
+        // Its backoff over, it is tried again without any other trigger.
+        h.crypto.stageFailures.clear();
+        await _waitFor(
+          () => h.crypto.completed == 2,
+          timeout: const Duration(seconds: 5),
+        );
+        expect(h.api.claims.where((id) => id == 'conv_a'), hasLength(2));
+        expect(h.api.pendingAdds, isEmpty);
+        h.state.dispose();
+      },
+    );
+
     test('a failed claim backs off too', () async {
       final h = await _Harness.start(
-          fakes: (api, crypto) => api.claimFailures['conv_a'] =
-              ApiException(404, '{"error":"not_found"}'));
+        fakes: (api, crypto) => api.claimFailures['conv_a'] = ApiException(
+          404,
+          '{"error":"not_found"}',
+        ),
+      );
       await _waitFor(() => h.api.claimCalls == 1);
       await h.frames(const Duration(milliseconds: 600));
       expect(h.api.claimCalls, 1);
@@ -509,8 +874,11 @@ void main() {
 
     test('a 401 from a claim still signs the device out', () async {
       final h = await _Harness.start(
-          fakes: (api, crypto) => api.claimFailures['conv_a'] =
-              ApiException(401, '{"error":"unauthorized"}'));
+        fakes: (api, crypto) => api.claimFailures['conv_a'] = ApiException(
+          401,
+          '{"error":"unauthorized"}',
+        ),
+      );
       await _waitFor(() => h.state.session == null);
       h.state.dispose();
     });
@@ -526,42 +894,54 @@ void main() {
 
     test('a failed revocation is retried on an idle session', () async {
       final h = await _Harness.start(
-          pending: const <String>{},
-          fakes: (api, crypto) {
-            crypto.revocationFailures.add('conv_a');
-            api.revocationsHook = () async => <MlsRevocation>[
-                  for (final id in <String>['conv_a', 'conv_b'])
-                    if (!api.revoked.contains(id)) pendingRevocation(id),
-                ];
-          });
+        pending: const <String>{},
+        fakes: (api, crypto) {
+          crypto.revocationFailures.add('conv_a');
+          api.revocationsHook = () async => <MlsRevocation>[
+                for (final id in <String>['conv_a', 'conv_b'])
+                  if (!api.revoked.contains(id)) pendingRevocation(id),
+              ];
+        },
+      );
       await _waitFor(() => h.api.revoked.contains('conv_b'));
       expect(h.crypto.revocationAttempts, <String>['conv_a', 'conv_b']);
       h.crypto.revocationFailures.clear();
       // No frame, resume or new work: the retry alone commits it.
-      await _waitFor(() => h.api.revoked.contains('conv_a'),
-          timeout: const Duration(seconds: 5));
-      expect(
-          h.crypto.revocationAttempts, <String>['conv_a', 'conv_b', 'conv_a']);
+      await _waitFor(
+        () => h.api.revoked.contains('conv_a'),
+        timeout: const Duration(seconds: 5),
+      );
+      expect(h.crypto.revocationAttempts, <String>[
+        'conv_a',
+        'conv_b',
+        'conv_a',
+      ]);
       h.state.dispose();
     });
 
     test('an unreadable revocation list does not skip reconcile', () async {
       final h = await _Harness.start(
-          fakes: (api, crypto) => api.revocationsHook =
-              () async => throw ApiException(503, '{"error":"unavailable"}'));
-      await _waitFor(() => h.api.claims.isNotEmpty,
-          timeout: const Duration(seconds: 3));
+        fakes: (api, crypto) => api.revocationsHook =
+            () async => throw ApiException(503, '{"error":"unavailable"}'),
+      );
+      await _waitFor(
+        () => h.api.claims.isNotEmpty,
+        timeout: const Duration(seconds: 3),
+      );
       final reads = h.api.revocationReads;
       // The failed read is tried again, with backoff.
-      await _waitFor(() => h.api.revocationReads > reads,
-          timeout: const Duration(seconds: 5));
+      await _waitFor(
+        () => h.api.revocationReads > reads,
+        timeout: const Duration(seconds: 5),
+      );
       h.state.dispose();
     });
 
     test('a 401 from the revocation list still signs the device out', () async {
       final h = await _Harness.start(
-          fakes: (api, crypto) => api.revocationsHook =
-              () async => throw ApiException(401, '{"error":"unauthorized"}'));
+        fakes: (api, crypto) => api.revocationsHook =
+            () async => throw ApiException(401, '{"error":"unauthorized"}'),
+      );
       await _waitFor(() => h.state.session == null);
       h.state.dispose();
     });
@@ -644,24 +1024,28 @@ Future<void> _settle() =>
 Future<void> _queue(LocalStore store, List<PendingMlsMessage> messages) async {
   if (messages.isEmpty) return;
   final counter = (await store.loadCryptoState())?.counter ?? 0;
-  await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-    expectedCounter: counter,
-    expectedCursor: await store.loadSyncCursor(),
-    state: StoredCryptoState(
-      counter: counter + 1,
-      stateKey: List<int>.filled(32, 1),
-      sealedState: const <int>[1],
+  await store.commitOutgoingMlsTransition(
+    OutgoingMlsStateTransition(
+      expectedCounter: counter,
+      expectedCursor: await store.loadSyncCursor(),
+      state: StoredCryptoState(
+        counter: counter + 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: const <int>[1],
+      ),
+      messages: messages,
     ),
-    messages: messages,
-  ));
+  );
 }
 
 /// A request yields to timers, as real I/O does; a loop of requests that
 /// never waits would otherwise starve every timer in the test.
 Future<void> _network() => Future<void>.delayed(Duration.zero);
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -677,10 +1061,14 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   final Map<String, int> serverEpochs = <String, int>{};
   final Set<String> pendingAdds = <String>{};
+
+  /// Conversations whose pending change also removes `acct_bob`.
+  final Set<String> pendingRemoves = <String>{};
   ApiException Function()? refuse;
   final List<Object> bundleFailures = <Object>[];
   final List<String> claims = <String>[];
   final List<String> bundles = <String>[];
+  final List<String> bundleKeys = <String>[];
   final List<String> messages = <String>[];
   final List<String> envelopes = <String>[];
   final Map<String, Object> messageFailures = <String, Object>{};
@@ -728,8 +1116,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <String, Object?>{'enabled': false};
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-      {int after = 0, int limit = 100}) async {
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
     await _network();
     syncCalls++;
     return const <SyncEvent>[];
@@ -749,19 +1140,27 @@ class _Api extends ApiClient with LegacySyncPageFake {
     await _network();
     pendingChangeCalls++;
     return <MlsPendingChange>[
-      for (final conversationId in pendingAdds.toList()..sort())
+      for (final conversationId
+          in {...pendingAdds, ...pendingRemoves}.toList()..sort())
         MlsPendingChange(
           conversationId: conversationId,
           epoch: epochOf(conversationId),
-          add: const <MlsDeviceRef>[_bob],
-          remove: const <MlsDeviceRef>[],
+          add: pendingAdds.contains(conversationId)
+              ? const <MlsDeviceRef>[_bob]
+              : const <MlsDeviceRef>[],
+          remove: pendingRemoves.contains(conversationId)
+              ? const <MlsDeviceRef>[_bob]
+              : const <MlsDeviceRef>[],
         ),
     ];
   }
 
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String conversationId, List<String> deviceIds) async {
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
     await _network();
     claimCalls++;
     final failure = claimFailures[conversationId];
@@ -788,6 +1187,7 @@ class _Api extends ApiClient with LegacySyncPageFake {
   }) async {
     await _network();
     bundles.add(conversationId);
+    bundleKeys.add(idempotencyKey);
     if (hangBundles) await Completer<void>().future;
     onBundle?.call(conversationId, bundle);
     final refusal = refuse;
@@ -795,6 +1195,7 @@ class _Api extends ApiClient with LegacySyncPageFake {
     if (bundleFailures.isNotEmpty) throw bundleFailures.removeAt(0);
     serverEpochs[conversationId] = bundle.epoch + 1;
     pendingAdds.remove(conversationId);
+    if (bundle.removed.isNotEmpty) pendingRemoves.remove(conversationId);
     return bundle.epoch + 1;
   }
 
@@ -855,7 +1256,8 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: epochOf(conversationId), pending: false);
 
   @override
@@ -914,15 +1316,21 @@ class _Crypto implements MlsConversationCryptoService {
     await store.removePendingMlsMessage(bundle.idempotencyKey);
   }
 
+  /// Called as a bundle is abandoned, before it leaves the queue.
+  void Function(PendingMlsMessage bundle)? onAbandon;
+
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage bundle) async {
     abandoned++;
+    onAbandon?.call(bundle);
     await store.removePendingMlsMessage(bundle.idempotencyKey);
   }
 
   @override
   Future<MessageEnvelope> encrypt(
-          String conversationId, String plaintext) async =>
+    String conversationId,
+    String plaintext,
+  ) async =>
       MessageEnvelope(
         conversationId: conversationId,
         idempotencyKey: 'app_${DateTime.now().microsecondsSinceEpoch}',

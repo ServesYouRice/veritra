@@ -439,3 +439,42 @@ frozen state is sound under the MLS ordering rules.
   keeps the claim.
 - Checks: Flutter is not installed on this host; Dart is verified by CI on
   PR #123 (see the PR for the run).
+
+## 2026-11-21: adversarial coverage of the wired transfer (tests only)
+
+Checked against the code at 42626ff: the live transfer is wired end to end
+(v3 link, upload, download, verify, import, ACK; #123) and the K1-4 restore
+is offered when a copy ends. No product code, ABI, schema or migration
+change. Added tests for the cases a hostile or unreliable server can cause:
+
+- `mobile/test/k2_transfer_adversarial_test.dart` (6, real native library;
+  one source, two new devices over two links): a copy sealed for another
+  device under a receipt rewritten to name this link (refused by native) and
+  unchanged (refused by the context check); this link's handoff with another
+  link's ciphertext, with the digest rewritten (refused at the handoff) and
+  not (native digest check, file deleted); a handoff changed at six places
+  or lengths (native refuses, nothing kept); ciphertext altered or cut under
+  a rewritten digest and size (refused at the handoff); an upload cut after
+  the first streamed chunk and after the last byte (nothing stored, cache
+  unchanged, the retry stores exactly the cached copy once); a finished copy offered again after the ACK
+  (no transfer, nothing more imported). The genuine copy arrives after each.
+- `mobile/test/device_link_v3_flow_test.dart` (+3, two real AppStates): a
+  forged handoff, then altered ciphertext, import nothing and send no ACK
+  (status `failed`, retried) until the genuine copy arrives; a receipt naming
+  another device ends the copy without importing; nothing the server is
+  given (link and claim records, device lists, transfer metadata, handoff,
+  ciphertext) holds the link secret (raw, base64, hex, typed code) or the
+  history text.
+- Go: `TestHistoryTransferHTTPPartialUploadLeavesNothingAndRetrySucceeds`
+  (body cut in the metadata, in the ciphertext, before the closing
+  boundary: no transfer, no intent, quota back, partial blob queued for
+  deletion, then the same upload is a 201) and
+  `TestHistoryTransferOtherDevicesCannotReadAckOrCancel` (store).
+- Guards confirmed by mutation: removing the upload abort, the receipt's
+  recipient check, the handoff-versus-receipt digest check or the native
+  download rejection makes the new tests fail. Native guards were not
+  mutated (that needs a Rust rebuild).
+- Also passing: the 16 K2/K1/link neighbour files (240 tests), `go test` of
+  `internal/httpapi` and `internal/storage`, `go vet ./...`, gofmt,
+  `flutter analyze`, `dart format`, and `demo_e2e_test.dart` against the
+  real Go server (data on tmpfs) including the K2 link and copy.

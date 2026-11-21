@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -28,10 +29,16 @@ enum InviteTargetKind {
 /// (`MembershipInviteLink.matches`) and the signature through the engine, and
 /// refuses the invitation unless all pass. An invitation made before v2 has
 /// an empty [signature] and is refused.
+///
+/// [anchorGroupId] (v3) is the MLS group the invitation admits to: the group
+/// itself, or a community's shared group. It is signed with the rest; the
+/// server only repeats it. Empty when the server sends none, which the joiner
+/// refuses.
 class InviteBinding {
   const InviteBinding({
     required this.kind,
     required this.targetId,
+    required this.anchorGroupId,
     required this.inviterAccountId,
     required this.inviterDeviceId,
     required this.inviterSigningKey,
@@ -41,6 +48,7 @@ class InviteBinding {
 
   final InviteTargetKind kind;
   final String targetId;
+  final String anchorGroupId;
   final String inviterAccountId;
   final String inviterDeviceId;
   final Uint8List inviterSigningKey;
@@ -56,6 +64,7 @@ class InviteBinding {
     if (json is! Map) throw const FormatException('no invitation binding');
     final kind = InviteTargetKind.fromWire(json['target_kind']);
     final targetId = json['target_id'];
+    final anchor = json['anchor_group_id'];
     final accountId = json['inviter_account_id'];
     final deviceId = json['inviter_device_id'];
     final key = json['inviter_signing_key'];
@@ -64,6 +73,7 @@ class InviteBinding {
     if (kind == null ||
         targetId is! String ||
         targetId.isEmpty ||
+        (anchor != null && anchor is! String) ||
         accountId is! String ||
         accountId.isEmpty ||
         deviceId is! String ||
@@ -76,6 +86,7 @@ class InviteBinding {
     return InviteBinding(
       kind: kind,
       targetId: targetId,
+      anchorGroupId: (anchor as String?) ?? '',
       inviterAccountId: accountId,
       inviterDeviceId: deviceId,
       inviterSigningKey: Uint8List.fromList(base64.decode(key)),
@@ -276,6 +287,52 @@ class CommunityBan {
       username: username is String && username.isNotEmpty ? username : null,
       bannedBy: json['banned_by']! as String,
       createdAt: DateTime.parse(json['created_at']! as String),
+    );
+  }
+}
+
+/// The pending join requests of a target as the server lists them, with the
+/// end of a running pause of the community's invitations (C5). While paused
+/// the requests are listed so admins can decline them, but approving is
+/// refused until the pause ends (owner decision 2026-11-21). A plain list
+/// (an older server) reads as not paused.
+class JoinRequestList extends UnmodifiableListView<JoinRequest> {
+  JoinRequestList(super.source, {this.invitesPausedUntil});
+
+  final DateTime? invitesPausedUntil;
+
+  /// The pause of [requests], or null for a list that carries none.
+  static DateTime? pausedUntilOf(List<JoinRequest> requests) =>
+      requests is JoinRequestList ? requests.invitesPausedUntil : null;
+}
+
+/// A running timeout the server remembers in a community (C5), for admins
+/// and above. [member] is false for someone who left or was kicked (it comes
+/// back if they rejoin, so admins can lift it: owner decision 2026-11-21)
+/// and true for a current member, whose timeout the C4 record may lack after
+/// a rejoin (the server restores it, the record does not). A server that
+/// predates the flag lists departed accounts only, so a missing flag is
+/// false.
+class CommunityTimeout {
+  const CommunityTimeout({
+    required this.accountId,
+    required this.username,
+    required this.timeoutUntil,
+    this.member = false,
+  });
+
+  final String accountId;
+  final String? username;
+  final DateTime timeoutUntil;
+  final bool member;
+
+  factory CommunityTimeout.fromJson(Map<String, Object?> json) {
+    final username = json['username'];
+    return CommunityTimeout(
+      accountId: json['account_id']! as String,
+      username: username is String && username.isNotEmpty ? username : null,
+      timeoutUntil: DateTime.parse(json['timeout_until']! as String),
+      member: json['member'] == true,
     );
   }
 }

@@ -92,7 +92,9 @@ void main() {
       expect(AppPayloadType.historyChange.wireName, 'history_change');
       expect(AppPayloadType.historySync.wireName, 'history_sync');
       expect(
-          AppPayloadType.historySyncRequest.wireName, 'history_sync_request');
+        AppPayloadType.historySyncRequest.wireName,
+        'history_sync_request',
+      );
       for (final type in c7PayloadTypes) {
         expect(type.sendsHidden, isTrue);
       }
@@ -109,31 +111,34 @@ void main() {
 
     test('history_sync needs sorted distinct ids and 32-byte keys', () {
       expect(
-          isValidC7SyncBody({
-            'for_epoch': 4,
-            'channels': [
-              ['chan_a', b64(32)],
-              ['chan_b', b64(32)],
-            ],
-          }),
-          isTrue);
+        isValidC7SyncBody({
+          'for_epoch': 4,
+          'channels': [
+            ['chan_a', b64(32)],
+            ['chan_b', b64(32)],
+          ],
+        }),
+        isTrue,
+      );
       expect(
-          isValidC7SyncBody({
-            'for_epoch': 4,
-            'channels': [
-              ['chan_b', b64(32)],
-              ['chan_a', b64(32)],
-            ],
-          }),
-          isFalse);
+        isValidC7SyncBody({
+          'for_epoch': 4,
+          'channels': [
+            ['chan_b', b64(32)],
+            ['chan_a', b64(32)],
+          ],
+        }),
+        isFalse,
+      );
       expect(
-          isValidC7SyncBody({
-            'for_epoch': 4,
-            'channels': [
-              ['chan_a', b64(31)],
-            ],
-          }),
-          isFalse);
+        isValidC7SyncBody({
+          'for_epoch': 4,
+          'channels': [
+            ['chan_a', b64(31)],
+          ],
+        }),
+        isFalse,
+      );
       expect(isValidC7SyncBody({'for_epoch': 4, 'channels': []}), isFalse);
       expect(isValidC7SyncBody({'for_epoch': -1, 'channels': []}), isFalse);
     });
@@ -167,12 +172,14 @@ void main() {
         expect(state.root, isNull);
       }
       // A root of the wrong length is dropped, the floor kept.
-      final short = C7GroupState.decode(jsonEncode({
-        'v': 1,
-        'floor': 3,
-        'root_epoch': 3,
-        'root': base64Encode([1])
-      }));
+      final short = C7GroupState.decode(
+        jsonEncode({
+          'v': 1,
+          'floor': 3,
+          'root_epoch': 3,
+          'root': base64Encode([1]),
+        }),
+      );
       expect(short.floor, 3);
       expect(short.root, isNull);
     });

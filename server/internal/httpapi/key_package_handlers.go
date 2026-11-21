@@ -66,9 +66,9 @@ func (a *API) claimConversationKeyPackages(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_conversation_id")
 		return
 	}
-	// With explicit IDs, claim only those devices (L1 signed-list discovery
-	// at creation or later reconciliation); without IDs, claim every other
-	// member device for older clients creating a group.
+	// Only the listed devices are claimed (L1 signed-list discovery at
+	// creation or later reconciliation). A claim that names none is refused:
+	// the route no longer claims every other member device (D134).
 	var request struct {
 		DeviceIDs []string `json:"device_ids"`
 	}
@@ -82,23 +82,11 @@ func (a *API) claimConversationKeyPackages(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	var packages []domain.DeviceKeyPackage
-	var err error
-	if len(request.DeviceIDs) > 0 {
-		packages, err = a.Store.ClaimDeviceKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID, request.DeviceIDs)
-	} else {
-		packages, err = a.Store.ClaimConversationKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID)
-	}
-	if errors.Is(err, storage.ErrKeyPackageUnavailable) {
-		writeError(w, http.StatusConflict, "key_package_unavailable")
+	if len(request.DeviceIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
-	if errors.Is(err, storage.ErrKeyPackageClaimLimit) {
-		// The claims count over a day; an hour is when asking again is worth it.
-		w.Header().Set("Retry-After", "3600")
-		writeError(w, http.StatusTooManyRequests, "key_package_claim_limit")
-		return
-	}
+	packages, err := a.Store.ClaimDeviceKeyPackages(r.Context(), conversationID, principal.AccountID, principal.DeviceID, request.DeviceIDs)
 	if err != nil {
 		handleStorageError(w, err)
 		return

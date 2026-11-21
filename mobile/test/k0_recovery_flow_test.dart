@@ -3,31 +3,12 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/crypto/native_crypto_bindings.dart'
-    show BackupHeaderInfo, OpenedBackup;
-import 'dart:typed_data';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, PendingEnrollmentConflict;
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'k0_recovery_fakes.dart';
-
-/// A build that can open K1 backups: the recovery follow-up then starts with
-/// the restore step (K1-4).
-class _RestoringCrypto extends K0Crypto implements BackupOpenCryptoService {
-  @override
-  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
-
-  @override
-  Future<OpenedBackup> openK1Backup({
-    required Uint8List ciphertext,
-    required Uint8List entropy,
-    required String accountId,
-    String? sourceDeviceId,
-  }) async =>
-      throw UnimplementedError();
-}
 
 /// K0 R3 (recovery key setup) and R4 (recovery when every device is lost)
 /// through AppState against a fake server (docs/designs/K0-recovery-
@@ -67,7 +48,8 @@ void main() {
 
   Future<PendingAccountRecovery?> persisted() async =>
       PendingAccountRecovery.fromEnrollment(
-          await store.loadPendingEnrollment());
+        await store.loadPendingEnrollment(),
+      );
 
   Future<void> claim({String key = k0Display}) async {
     final ok = await state.startAccountRecovery(
@@ -80,51 +62,63 @@ void main() {
   }
 
   group('R3 recovery key setup', () {
-    test('generate, confirm by typing, then PUT only the public values',
-        () async {
-      await signIn();
-      expect(state.recoveryAvailable, isTrue);
-      final draft = await state.createRecoveryKeyDraft();
-      expect(draft.display, k0Display);
-      expect(await state.recoveryKeyMatches(draft, 'nope'), isFalse);
-      // Written in groups, with tabs and a line break, in lower case.
-      final typed = 'abcd-efgh\tjkmn pqrs\r\ntvwx–yz01 2345-6789-abcd'
-          'efghjkmnpqrstvwx';
-      expect(await state.recoveryKeyMatches(draft, typed), isTrue);
-      // The decoded copy was wiped.
-      expect(crypto.handedOut.last, everyElement(0));
+    test(
+      'generate, confirm by typing, then PUT only the public values',
+      () async {
+        await signIn();
+        expect(state.recoveryAvailable, isTrue);
+        final draft = await state.createRecoveryKeyDraft();
+        expect(draft.display, k0Display);
+        expect(await state.recoveryKeyMatches(draft, 'nope'), isFalse);
+        // Written in groups, with tabs and a line break, in lower case.
+        final typed = 'abcd-efgh\tjkmn pqrs\r\ntvwx–yz01 2345-6789-abcd'
+            'efghjkmnpqrstvwx';
+        expect(await state.recoveryKeyMatches(draft, typed), isTrue);
+        // The decoded copy was wiped.
+        expect(crypto.handedOut.last, everyElement(0));
 
-      expect(await state.saveRecoveryKey(draft),
-          RecoveryActionResult.needsRecentAuth);
-      expect(server.puts, isEmpty);
-      expect(await state.reauthenticate('pw'), isTrue);
-      expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
-      expect(server.puts.single['rk_auth_pub'], List<int>.filled(32, 0xA1));
-      expect(server.puts.single['rk_id'], List<int>.filled(16, 0xB2));
-      expect(state.recoveryKeyStatus?.configured, isTrue);
+        expect(
+          await state.saveRecoveryKey(draft),
+          RecoveryActionResult.needsRecentAuth,
+        );
+        expect(server.puts, isEmpty);
+        expect(await state.reauthenticate('pw'), isTrue);
+        expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
+        expect(server.puts.single['rk_auth_pub'], List<int>.filled(32, 0xA1));
+        expect(server.puts.single['rk_id'], List<int>.filled(16, 0xB2));
+        expect(state.recoveryKeyStatus?.configured, isTrue);
 
-      draft.dispose();
-      expect(crypto.handedOut.first, everyElement(0));
-    });
+        draft.dispose();
+        expect(crypto.handedOut.first, everyElement(0));
+      },
+    );
 
-    test('a build without the native engine offers nothing (fails closed)',
-        () async {
-      final closed = k0App(server, store, UnavailableCryptoService());
-      addTearDown(closed.dispose);
-      expect(closed.recoveryAvailable, isFalse);
-      await expectLater(
-          closed.createRecoveryKeyDraft(), throwsA(isA<UserFacingException>()));
-      expect(
+    test(
+      'a build without the native engine offers nothing (fails closed)',
+      () async {
+        final closed = k0App(server, store, UnavailableCryptoService());
+        addTearDown(closed.dispose);
+        expect(closed.recoveryAvailable, isFalse);
+        await expectLater(
+          closed.createRecoveryKeyDraft(),
+          throwsA(isA<UserFacingException>()),
+        );
+        expect(
           await closed.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'pw',
-              recoveryKey: k0Display),
-          isFalse);
-      expect(
-          closed.errorFor(Ops.accountRecovery), l10n.recoveryUnavailableHere);
-      expect(server.reserved, isEmpty);
-    });
+            baseUrl: k0Origin,
+            username: 'alice',
+            password: 'pw',
+            recoveryKey: k0Display,
+          ),
+          isFalse,
+        );
+        expect(
+          closed.errorFor(Ops.accountRecovery),
+          l10n.recoveryUnavailableHere,
+        );
+        expect(server.reserved, isEmpty);
+      },
+    );
   });
 
   group('R4 claim', () {
@@ -162,12 +156,14 @@ void main() {
 
     test('a key that does not decode never reaches the network', () async {
       expect(
-          await state.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'pw',
-              recoveryKey: 'ABCD-EFGH'),
-          isFalse);
+        await state.startAccountRecovery(
+          baseUrl: k0Origin,
+          username: 'alice',
+          password: 'pw',
+          recoveryKey: 'ABCD-EFGH',
+        ),
+        isFalse,
+      );
       expect(state.errorFor(Ops.accountRecovery), l10n.recoveryKeyUnreadable);
       expect(apis, isEmpty);
       expect(server.reserved, isEmpty);
@@ -175,25 +171,33 @@ void main() {
 
     group('a stored enrollment the app did not load', () {
       Future<bool> start() => state.startAccountRecovery(
-          baseUrl: k0Origin,
-          username: 'alice',
-          password: 'pw',
-          recoveryKey: k0Display);
+            baseUrl: k0Origin,
+            username: 'alice',
+            password: 'pw',
+            recoveryKey: k0Display,
+          );
 
-      test('a device link refuses before the network, with its own text',
-          () async {
-        await store.savePendingEnrollment(const PendingEnrollment(
-            kind: PendingEnrollment.kindDeviceLinkV3,
-            origin: k0Origin,
-            accountId: 'acct_me',
-            deviceId: 'dev_link',
-            payloadJson: '{}'));
-        expect(await start(), isFalse);
-        expect(state.errorFor(Ops.accountRecovery),
-            l10n.recoveryDeviceLinkInProgress);
-        expect(server.reserved, isEmpty);
-        expect((await store.loadPendingEnrollment())?.deviceId, 'dev_link');
-      });
+      test(
+        'a device link refuses before the network, with its own text',
+        () async {
+          await store.savePendingEnrollment(
+            const PendingEnrollment(
+              kind: PendingEnrollment.kindDeviceLinkV3,
+              origin: k0Origin,
+              accountId: 'acct_me',
+              deviceId: 'dev_link',
+              payloadJson: '{}',
+            ),
+          );
+          expect(await start(), isFalse);
+          expect(
+            state.errorFor(Ops.accountRecovery),
+            l10n.recoveryDeviceLinkInProgress,
+          );
+          expect(server.reserved, isEmpty);
+          expect((await store.loadPendingEnrollment())?.deviceId, 'dev_link');
+        },
+      );
 
       test('a readable claim is shown instead of a second claim', () async {
         final stored = PendingAccountRecovery(
@@ -207,32 +211,42 @@ void main() {
           deviceSecret: 'secret',
           readyAt: DateTime.now().toUtc().add(const Duration(days: 3)),
           mlsState: StoredCryptoState(
-              counter: 1,
-              stateKey: List<int>.filled(32, 4),
-              sealedState: const [1, 2, 3]),
+            counter: 1,
+            stateKey: List<int>.filled(32, 4),
+            sealedState: const [1, 2, 3],
+          ),
         );
         await store.savePendingEnrollment(stored.toEnrollment());
         expect(await start(), isFalse);
         expect(
-            state.errorFor(Ops.accountRecovery), l10n.recoveryAlreadyPending);
+          state.errorFor(Ops.accountRecovery),
+          l10n.recoveryAlreadyPending,
+        );
         expect(server.reserved, isEmpty);
         expect(state.pendingAccountRecovery?.requestId, 'arr_stored');
         expect((await persisted())?.requestId, 'arr_stored');
       });
 
       test('an unreadable claim is dropped and the claim goes ahead', () async {
-        await store.savePendingEnrollment(PendingEnrollment(
+        await store.savePendingEnrollment(
+          PendingEnrollment(
             kind: PendingEnrollment.kindAccountRecovery,
             origin: k0Origin,
             accountId: 'acct_me',
             deviceId: 'dev_broken',
             payloadJson: '{"v":1}',
             state: StoredCryptoState(
-                counter: 1,
-                stateKey: List<int>.filled(32, 4),
-                sealedState: const [1])));
-        expect(await start(), isTrue,
-            reason: state.errorFor(Ops.accountRecovery));
+              counter: 1,
+              stateKey: List<int>.filled(32, 4),
+              sealedState: const [1],
+            ),
+          ),
+        );
+        expect(
+          await start(),
+          isTrue,
+          reason: state.errorFor(Ops.accountRecovery),
+        );
         expect(server.reserved, <String>['alice']);
         expect((await persisted())?.deviceId, isNot('dev_broken'));
         expect(state.pendingAccountRecovery, isNotNull);
@@ -242,12 +256,14 @@ void main() {
     test('a refused claim says so and drops the new identity', () async {
       server.claimFailure = k0Error(401, 'invalid_credentials');
       expect(
-          await state.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'wrong',
-              recoveryKey: k0Display),
-          isFalse);
+        await state.startAccountRecovery(
+          baseUrl: k0Origin,
+          username: 'alice',
+          password: 'wrong',
+          recoveryKey: k0Display,
+        ),
+        isFalse,
+      );
       expect(state.errorFor(Ops.accountRecovery), l10n.recoveryClaimRefused);
       expect(crypto.abandons, 1);
       expect(state.pendingAccountRecovery, isNull);
@@ -257,12 +273,14 @@ void main() {
     test('the server backoff is shown as such', () async {
       server.claimFailure = k0Error(429, 'recovery_backoff');
       expect(
-          await state.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'pw',
-              recoveryKey: k0Display),
-          isFalse);
+        await state.startAccountRecovery(
+          baseUrl: k0Origin,
+          username: 'alice',
+          password: 'pw',
+          recoveryKey: k0Display,
+        ),
+        isFalse,
+      );
       expect(state.errorFor(Ops.accountRecovery), l10n.apiErrorRecoveryBackoff);
     });
 
@@ -282,9 +300,12 @@ void main() {
   group('R4 wait and completion', () {
     test('a waiting answer moves ready_at', () async {
       await claim();
-      server.statusAnswers.add(AccountRecoveryStatus(
+      server.statusAnswers.add(
+        AccountRecoveryStatus(
           phase: AccountRecoveryPhase.waiting,
-          readyAt: DateTime.utc(2026, 11, 9)));
+          readyAt: DateTime.utc(2026, 11, 9),
+        ),
+      );
       expect(await state.checkAccountRecovery(), isTrue);
       expect(state.pendingAccountRecovery!.readyAt, DateTime.utc(2026, 11, 9));
       expect((await persisted())!.readyAt, DateTime.utc(2026, 11, 9));
@@ -309,22 +330,30 @@ void main() {
     });
 
     test('completion enrolls this device with the claimed identity', () async {
-      await store.saveSession(Session(
+      await store.saveSession(
+        Session(
           baseUrl: k0Origin,
           token: '',
           accountId: 'acct_me',
-          username: 'alice'));
+          username: 'alice',
+        ),
+      );
       await claim();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completed,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-        username: 'alice',
-        role: 'member',
-        token: 'tok_new',
-      ));
-      expect(await state.checkAccountRecovery(), isTrue,
-          reason: state.errorFor(Ops.accountRecovery));
+      server.statusAnswers.add(
+        const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completed,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          username: 'alice',
+          role: 'member',
+          token: 'tok_new',
+        ),
+      );
+      expect(
+        await state.checkAccountRecovery(),
+        isTrue,
+        reason: state.errorFor(Ops.accountRecovery),
+      );
       final session = state.session!;
       expect(session.token, 'tok_new');
       expect(session.deviceId, 'dev_new');
@@ -340,128 +369,148 @@ void main() {
 
     test('a substituted device is refused', () async {
       await claim();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completed,
-        accountId: 'acct_me',
-        deviceId: 'dev_attacker',
-        token: 'tok_new',
-      ));
+      server.statusAnswers.add(
+        const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completed,
+          accountId: 'acct_me',
+          deviceId: 'dev_attacker',
+          token: 'tok_new',
+        ),
+      );
       expect(await state.checkAccountRecovery(), isFalse);
       expect(state.session, isNull);
       expect(state.pendingAccountRecovery, isNotNull);
     });
 
-    test('a lost answer finishes with the password and the claim secret',
-        () async {
-      await claim();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completedWithoutToken,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-      ));
-      expect(await state.checkAccountRecovery(), isTrue);
-      expect(state.pendingAccountRecovery!.needsLogin, isTrue);
-      expect((await persisted())!.needsLogin, isTrue);
+    test(
+      'a lost answer finishes with the password and the claim secret',
+      () async {
+        await claim();
+        server.statusAnswers.add(
+          const AccountRecoveryStatus(
+            phase: AccountRecoveryPhase.completedWithoutToken,
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+        );
+        expect(await state.checkAccountRecovery(), isTrue);
+        expect(state.pendingAccountRecovery!.needsLogin, isTrue);
+        expect((await persisted())!.needsLogin, isTrue);
 
-      expect(await state.finishAccountRecoveryWithPassword('bad'), isFalse);
-      expect(
-          state.errorFor(Ops.accountRecovery), l10n.apiErrorInvalidCredentials);
-      expect(state.session, isNull);
+        expect(await state.finishAccountRecoveryWithPassword('bad'), isFalse);
+        expect(
+          state.errorFor(Ops.accountRecovery),
+          l10n.apiErrorInvalidCredentials,
+        );
+        expect(state.session, isNull);
 
-      expect(await state.finishAccountRecoveryWithPassword('pw'), isTrue);
-      expect(server.logins.last, <String, Object?>{
-        'username': 'alice',
-        'password': 'pw',
-        'device_id': 'dev_new',
-        'device_secret': 'secret_new',
-      });
-      expect(state.session!.token, 'tok_login');
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
-    });
+        expect(await state.finishAccountRecoveryWithPassword('pw'), isTrue);
+        expect(server.logins.last, <String, Object?>{
+          'username': 'alice',
+          'password': 'pw',
+          'device_id': 'dev_new',
+          'device_secret': 'secret_new',
+        });
+        expect(state.session!.token, 'tok_login');
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      },
+    );
 
-    test('the forced follow-up survives a restart and ends with a password',
-        () async {
-      await claim();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completed,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-        token: 'tok_new',
-      ));
-      await state.checkAccountRecovery();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+    test(
+      'the forced follow-up survives a restart and ends with a password',
+      () async {
+        await claim();
+        server.statusAnswers.add(
+          const AccountRecoveryStatus(
+            phase: AccountRecoveryPhase.completed,
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            token: 'tok_new',
+          ),
+        );
+        await state.checkAccountRecovery();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
 
-      // Killed here: the next start opens the follow-up again.
-      state.dispose();
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+        // Killed here: the next start opens the follow-up again.
+        state.dispose();
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
 
-      final draft = await state.createRecoveryKeyDraft();
-      expect(await state.saveRecoveryKey(draft),
-          RecoveryActionResult.needsRecentAuth);
-      await state.reauthenticate('pw');
-      expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
-      draft.dispose();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+        final draft = await state.createRecoveryKeyDraft();
+        expect(
+          await state.saveRecoveryKey(draft),
+          RecoveryActionResult.needsRecentAuth,
+        );
+        await state.reauthenticate('pw');
+        expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
+        draft.dispose();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
 
-      state.dispose();
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
-      await state.changePassword('a new long password');
-      expect(server.passwords.single, 'a new long password');
-      expect(state.recoveryFollowUp, isNull);
-      expect(await store.loadSetting('k0.recovery_follow_up'), '');
-    });
+        state.dispose();
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+        await state.changePassword('a new long password');
+        expect(server.passwords.single, 'a new long password');
+        expect(state.recoveryFollowUp, isNull);
+        expect(await store.loadSetting('k0.recovery_follow_up'), '');
+      },
+    );
 
-    test('with backups to restore, the follow-up starts at the restore step',
-        () async {
-      state.dispose();
-      crypto = _RestoringCrypto();
-      state = k0App(server, store, crypto, apis: apis);
-      await claim();
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completed,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-        token: 'tok_new',
-      ));
-      expect(await state.checkAccountRecovery(), isTrue);
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
-      // The lost phone's copy opens with the old key, so nothing replaces
-      // that key before the restore is done or skipped.
-      expect(server.puts, isEmpty);
+    test(
+      'with backups to restore, the follow-up starts at the restore step',
+      () async {
+        state.dispose();
+        crypto = K0RestoringCrypto();
+        state = k0App(server, store, crypto, apis: apis);
+        await claim();
+        server.statusAnswers.add(
+          const AccountRecoveryStatus(
+            phase: AccountRecoveryPhase.completed,
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            token: 'tok_new',
+          ),
+        );
+        expect(await state.checkAccountRecovery(), isTrue);
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+        // The lost phone's copy opens with the old key, so nothing replaces
+        // that key before the restore is done or skipped.
+        expect(server.puts, isEmpty);
 
-      // A crash here resumes at the same step.
-      state.dispose();
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+        // A crash here resumes at the same step.
+        state.dispose();
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
 
-      await state.finishRecoveryRestoreStep();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
-      await state.finishRecoveryRestoreStep();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
-      state.dispose();
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
-    });
+        await state.finishRecoveryRestoreStep();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+        await state.finishRecoveryRestoreStep();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+        state.dispose();
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      },
+    );
 
-    test('a crash between session and MLS state reopens the identity',
-        () async {
-      await claim();
-      // As if the app stopped right after saving the session.
-      await store.saveSession(server.session());
-      state.dispose();
-      final before = crypto.resumed.length;
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(crypto.resumed.length, before + 1);
-      expect(crypto.activated.first.deviceId, 'dev_new');
-      expect(await persisted(), isNull);
-    });
+    test(
+      'a crash between session and MLS state reopens the identity',
+      () async {
+        await claim();
+        // As if the app stopped right after saving the session.
+        await store.saveSession(server.session());
+        state.dispose();
+        final before = crypto.resumed.length;
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(crypto.resumed.length, before + 1);
+        expect(crypto.activated.first.deviceId, 'dev_new');
+        expect(await persisted(), isNull);
+      },
+    );
 
     test('abandoning drops the claim locally', () async {
       await claim();
@@ -469,6 +518,195 @@ void main() {
       expect(state.pendingAccountRecovery, isNull);
       expect(await persisted(), isNull);
       expect(crypto.abandons, 1);
+    });
+  });
+
+  group('U23: Back in the follow-up', () {
+    /// A recovery that finished on a build with ([restore]) or without the
+    /// K1 restore.
+    Future<void> recovered({required bool restore}) async {
+      state.dispose();
+      crypto = restore ? K0RestoringCrypto() : K0Crypto();
+      state = k0App(server, store, crypto, apis: apis);
+      await claim();
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completed,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        token: 'tok_new',
+      ));
+      expect(await state.checkAccountRecovery(), isTrue,
+          reason: state.errorFor(Ops.accountRecovery));
+    }
+
+    /// The app killed and started again, on [build] when it changed.
+    Future<void> restart([K0Crypto? build]) async {
+      state.dispose();
+      if (build != null) crypto = build;
+      state = k0App(server, store, crypto, apis: apis);
+      await state.tryRestoreSession();
+    }
+
+    Future<void> saveKey() async {
+      final draft = await state.createRecoveryKeyDraft();
+      if (!server.recentAuth) await state.reauthenticate('pw');
+      expect(await state.saveRecoveryKey(draft), RecoveryActionResult.done);
+      draft.dispose();
+    }
+
+    test('back from the key to the restore, and forward, across restarts',
+        () async {
+      await recovered(restore: true);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      // The restore step is the first: nothing before it to go back to.
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+
+      await state.finishRecoveryRestoreStep();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      expect(await state.backToRecoveryRestoreStep(), isTrue);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+
+      // The step Back stored is the one a restart opens.
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+
+      await state.finishRecoveryRestoreStep();
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      // Going back and forth replaced nothing.
+      expect(server.puts, isEmpty);
+      expect(server.passwords, isEmpty);
+    });
+
+    test('no Back once the key is replaced: it is never replaced twice',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await saveKey();
+      expect(server.puts, hasLength(1));
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+
+      await state.changePassword('a new long password');
+      expect(state.recoveryFollowUp, isNull);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, isNull);
+      expect(server.puts, hasLength(1));
+      expect(server.passwords, <String>['a new long password']);
+      // The end of the follow-up also ends its restore flag.
+      expect(await store.loadSetting('k0.recovery_follow_up'), '');
+      expect(await store.loadSetting('k0.recovery_follow_up_restore'), '');
+    });
+
+    test('Back waits behind a key save in flight and then refuses', () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      server.requireRecentAuth = false;
+      final draft = await state.createRecoveryKeyDraft();
+      final saving = state.saveRecoveryKey(draft);
+      final back = state.backToRecoveryRestoreStep();
+      expect(await saving, RecoveryActionResult.done);
+      expect(await back, isFalse);
+      draft.dispose();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+      expect(server.puts, hasLength(1));
+    });
+
+    test('a key save queued behind Back is refused: nothing is replaced',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      server.requireRecentAuth = false;
+      final draft = await state.createRecoveryKeyDraft();
+      final back = state.backToRecoveryRestoreStep();
+      final saving = state.saveRecoveryKey(draft);
+      expect(await back, isTrue);
+      expect(await saving, RecoveryActionResult.failed);
+      draft.dispose();
+      expect(
+          state.errorFor(Ops.recoveryKey), state.l10n.recoveryKeyStepMovedBack);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(server.puts, isEmpty);
+      // Forward again: the key can be saved then.
+      await state.finishRecoveryRestoreStep();
+      await saveKey();
+      expect(server.puts, hasLength(1));
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+    });
+
+    test('without the restore there is no Back, and two steps', () async {
+      await recovered(restore: false);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+
+      // A later build that can restore does not add a step mid-way.
+      await restart(K0RestoringCrypto());
+      expect(state.k1RestoreSupported, isTrue);
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+    });
+
+    test('a build that can no longer restore keeps the count, offers no Back',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await restart(K0Crypto());
+      expect(state.k1RestoreSupported, isFalse);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      // Still step 2 of 3: the restore step was part of this follow-up.
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+      expect(await state.backToRecoveryRestoreStep(), isFalse);
+    });
+
+    test('a restore step open on a build that cannot restore stays open',
+        () async {
+      await recovered(restore: true);
+      await restart(K0Crypto());
+      // Never skipped silently: the user still restores elsewhere or skips
+      // with the warning.
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+    });
+
+    test('a follow-up from an earlier build reads as before', () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      // As an earlier build left it: no restore flag.
+      await store.saveSetting('k0.recovery_follow_up_restore', '');
+      await restart();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
+      expect(state.canGoBackToRecoveryRestore, isTrue);
+      await restart(K0Crypto());
+      expect(state.recoveryFollowUpIncludesRestore, isFalse);
+      expect(state.canGoBackToRecoveryRestore, isFalse);
+    });
+
+    test("another account's restore flag is not read", () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      await store.saveSetting(
+          'k0.recovery_follow_up_restore', 'acct_other\u0000dev_new\u00000');
+      await restart();
+      // Falls back to this build, which restores.
+      expect(state.recoveryFollowUpIncludesRestore, isTrue);
     });
   });
 
@@ -489,24 +727,32 @@ void main() {
         recoveryKey: k0Display,
       );
       expect(ok, isTrue, reason: state.errorFor(Ops.accountRecovery));
-      server.statusAnswers.add(const AccountRecoveryStatus(
-        phase: AccountRecoveryPhase.completed,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-        username: 'alice',
-        role: 'member',
-        token: 'tok_new',
-      ));
-      expect(await state.checkAccountRecovery(), isTrue,
-          reason: state.errorFor(Ops.accountRecovery));
+      server.statusAnswers.add(
+        const AccountRecoveryStatus(
+          phase: AccountRecoveryPhase.completed,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          username: 'alice',
+          role: 'member',
+          token: 'tok_new',
+        ),
+      );
+      expect(
+        await state.checkAccountRecovery(),
+        isTrue,
+        reason: state.errorFor(Ops.accountRecovery),
+      );
     }
 
     test('completion promotes in one step with a ledger row', () async {
-      await store.saveSession(Session(
+      await store.saveSession(
+        Session(
           baseUrl: k0Origin,
           token: '',
           accountId: 'acct_me',
-          username: 'alice'));
+          username: 'alice',
+        ),
+      );
       await completeRecovery();
       expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
       expect(promoting.activated, isEmpty);
@@ -515,41 +761,50 @@ void main() {
       expect(await store.loadSyncCursor(), 0);
       expect(await store.loadPendingEnrollment(), isNull);
       expect(
-          await store.isEnrollmentPromoted(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          isTrue);
+        await store.isEnrollmentPromoted(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ),
+        isTrue,
+      );
     });
 
     // Signed out with the device kept (its MLS state stays): the sign-in
     // screen still offers recovery. The server completes the claim before
     // the promotion runs, so the promotion must not refuse here; the old
     // device's local state goes, as any identity change drops it.
-    test('completion replaces a signed-out device that kept its state',
-        () async {
-      await store.saveSession(const Session(
-        baseUrl: k0Origin,
-        token: '',
-        accountId: 'acct_me',
-        deviceId: 'dev_old',
-        username: 'alice',
-        deviceSecret: 'secret_old',
-      ));
-      await store.saveCryptoState(
+    test(
+      'completion replaces a signed-out device that kept its state',
+      () async {
+        await store.saveSession(
+          const Session(
+            baseUrl: k0Origin,
+            token: '',
+            accountId: 'acct_me',
+            deviceId: 'dev_old',
+            username: 'alice',
+            deviceSecret: 'secret_old',
+          ),
+        );
+        await store.saveCryptoState(
           StoredCryptoState(
-              counter: 5,
-              stateKey: List<int>.filled(32, 5),
-              sealedState: const <int>[5]),
-          3);
-      await completeRecovery();
-      expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
-      final stored = (await store.loadSession())!;
-      expect(stored.deviceId, 'dev_new');
-      expect(stored.token, 'tok_new');
-      expect((await store.loadCryptoState())!.counter, 1);
-      expect(await store.loadSyncCursor(), 0);
-      expect(await store.loadPendingEnrollment(), isNull);
-      expect(state.session?.deviceId, 'dev_new');
-    });
+            counter: 5,
+            stateKey: List<int>.filled(32, 5),
+            sealedState: const <int>[5],
+          ),
+          3,
+        );
+        await completeRecovery();
+        expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
+        final stored = (await store.loadSession())!;
+        expect(stored.deviceId, 'dev_new');
+        expect(stored.token, 'tok_new');
+        expect((await store.loadCryptoState())!.counter, 1);
+        expect(await store.loadSyncCursor(), 0);
+        expect(await store.loadPendingEnrollment(), isNull);
+        expect(state.session?.deviceId, 'dev_new');
+      },
+    );
 
     test('an emptied MLS state never resumes the frozen claim', () async {
       await completeRecovery();
@@ -561,15 +816,18 @@ void main() {
       await store.saveSession(server.session());
       expect(await store.loadCryptoState(), isNull);
       await expectLater(
-          store.savePendingEnrollment(PendingEnrollment(
+        store.savePendingEnrollment(
+          PendingEnrollment(
             kind: PendingEnrollment.kindAccountRecovery,
             origin: k0Origin,
             accountId: 'acct_me',
             deviceId: 'dev_new',
             payloadJson: '{}',
             state: frozen,
-          )),
-          throwsA(isA<PendingEnrollmentConflict>()));
+          ),
+        ),
+        throwsA(isA<PendingEnrollmentConflict>()),
+      );
       final resumedBefore = promoting.resumed.length;
       state = k0App(server, store, promoting, apis: apis);
       await state.tryRestoreSession();
@@ -581,68 +839,82 @@ void main() {
 
   group('notices on a signed-in device', () {
     SyncEvent event(int id, String type, Object? payload) => SyncEvent(
-        id: id,
-        type: type,
-        payload: payload,
-        createdAt: DateTime.now().toUtc());
+          id: id,
+          type: type,
+          payload: payload,
+          createdAt: DateTime.now().toUtc(),
+        );
 
-    test('a pending recovery is read from the server and can be cancelled',
-        () async {
-      server.status = RecoveryKeyStatus(
-        available: true,
-        configured: true,
-        setAt: DateTime.utc(2026, 10, 1),
-        pending: PendingRecoveryRequest(
+    test(
+      'a pending recovery is read from the server and can be cancelled',
+      () async {
+        server.status = RecoveryKeyStatus(
+          available: true,
+          configured: true,
+          setAt: DateTime.utc(2026, 10, 1),
+          pending: PendingRecoveryRequest(
             id: 'arr_9',
             deviceName: 'Unknown phone',
-            readyAt: DateTime.utc(2099, 11, 8)),
-      );
-      await signIn();
-      expect(state.recoveryKeyStatus?.pending?.id, 'arr_9');
+            readyAt: DateTime.utc(2099, 11, 8),
+          ),
+        );
+        await signIn();
+        expect(state.recoveryKeyStatus?.pending?.id, 'arr_9');
 
-      expect(await state.cancelAccountRecoveryRequest('arr_9'),
-          RecoveryActionResult.needsRecentAuth);
-      expect(server.cancels, isEmpty);
-      await state.reauthenticate('pw');
-      expect(await state.cancelAccountRecoveryRequest('arr_9'),
-          RecoveryActionResult.done);
-      expect(server.cancels, <String>['arr_9']);
-      expect(state.recoveryKeyStatus?.pending, isNull);
-      // Signed in still: the 403 never ended the session.
-      expect(state.session, isNotNull);
-    });
+        expect(
+          await state.cancelAccountRecoveryRequest('arr_9'),
+          RecoveryActionResult.needsRecentAuth,
+        );
+        expect(server.cancels, isEmpty);
+        await state.reauthenticate('pw');
+        expect(
+          await state.cancelAccountRecoveryRequest('arr_9'),
+          RecoveryActionResult.done,
+        );
+        expect(server.cancels, <String>['arr_9']);
+        expect(state.recoveryKeyStatus?.pending, isNull);
+        // Signed in still: the 403 never ended the session.
+        expect(state.session, isNotNull);
+      },
+    );
 
-    test('account events from sync refresh the status and raise the warning',
-        () async {
-      final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
-      server.events.addAll(<SyncEvent>[
-        event(1, 'account.recovery.pending', <String, Object?>{
-          'request_id': 'arr_2',
-          'device_name': 'Phone',
-          'ready_at': '2099-11-08T10:00:00Z',
-        }),
-        event(2, 'account.password_leak_suspected',
-            <String, Object?>{'day': today}),
-      ]);
-      await signIn();
-      final reads = server.statusReads;
-      await waitFor(() async => await store.loadSyncCursor() == 2);
-      await waitFor(() async => server.statusReads > reads);
-      expect(state.passwordLeakWarningDay, today);
-      await waitFor(() async => state.passwordLeakWarningDay == today);
+    test(
+      'account events from sync refresh the status and raise the warning',
+      () async {
+        final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
+        server.events.addAll(<SyncEvent>[
+          event(1, 'account.recovery.pending', <String, Object?>{
+            'request_id': 'arr_2',
+            'device_name': 'Phone',
+            'ready_at': '2099-11-08T10:00:00Z',
+          }),
+          event(2, 'account.password_leak_suspected', <String, Object?>{
+            'day': today,
+          }),
+        ]);
+        await signIn();
+        final reads = server.statusReads;
+        await waitFor(() async => await store.loadSyncCursor() == 2);
+        await waitFor(() async => server.statusReads > reads);
+        expect(state.passwordLeakWarningDay, today);
+        await waitFor(() async => state.passwordLeakWarningDay == today);
 
-      await state.dismissPasswordLeakWarning();
-      expect(state.passwordLeakWarningDay, isNull);
-      // Still dismissed after a restart.
-      state.dispose();
-      state = k0App(server, store, crypto, apis: apis);
-      await state.tryRestoreSession();
-      expect(state.passwordLeakWarningDay, isNull);
-    });
+        await state.dismissPasswordLeakWarning();
+        expect(state.passwordLeakWarningDay, isNull);
+        // Still dismissed after a restart.
+        state.dispose();
+        state = k0App(server, store, crypto, apis: apis);
+        await state.tryRestoreSession();
+        expect(state.passwordLeakWarningDay, isNull);
+      },
+    );
 
     test('an old leak warning replayed from cursor 0 stays hidden', () async {
-      server.events.add(event(1, 'account.password_leak_suspected',
-          <String, Object?>{'day': '2025-01-01'}));
+      server.events.add(
+        event(1, 'account.password_leak_suspected', <String, Object?>{
+          'day': '2025-01-01',
+        }),
+      );
       await signIn();
       await waitFor(() async => await store.loadSyncCursor() == 1);
       expect(state.passwordLeakWarningDay, isNull);
@@ -650,8 +922,11 @@ void main() {
 
     test('a password change ends the warning', () async {
       final today = DateTime.now().toUtc().toIso8601String().substring(0, 10);
-      server.events.add(event(1, 'account.password_leak_suspected',
-          <String, Object?>{'day': today}));
+      server.events.add(
+        event(1, 'account.password_leak_suspected', <String, Object?>{
+          'day': today,
+        }),
+      );
       await signIn();
       await waitFor(() async => state.passwordLeakWarningDay == today);
       await state.changePassword('a new long password');

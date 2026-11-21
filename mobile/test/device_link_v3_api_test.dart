@@ -11,8 +11,11 @@ String hash(String c) => List.filled(64, c).join();
 String binary(int n, [int size = 32]) => base64Encode(List.filled(size, n));
 final claimToken = base64Url.encode(List.filled(32, 11)).replaceAll('=', '');
 
-Map<String, Object?> context(String origin,
-        {String state = 'claimed', bool revealed = false}) =>
+Map<String, Object?> context(
+  String origin, {
+  String state = 'claimed',
+  bool revealed = false,
+}) =>
     {
       'id': 'dlink_test',
       'protocol_version': deviceLinkV3Protocol,
@@ -93,11 +96,12 @@ void main() {
     origin = 'http://127.0.0.1:${server.port}';
     api = ApiClient(baseUrl: origin, transport: TransportPolicy.demo);
     owner = Session(
-        baseUrl: origin,
-        token: 'source-token',
-        accountId: 'acct_test',
-        deviceId: 'dev_old',
-        username: 'owner');
+      baseUrl: origin,
+      token: 'source-token',
+      accountId: 'acct_test',
+      deviceId: 'dev_old',
+      username: 'owner',
+    );
     server.listen((r) async {
       await handle(r);
       await r.response.close();
@@ -108,320 +112,390 @@ void main() {
     await server.close(force: true);
   });
 
-  test('v3 wire keeps credentials client-owned and completion receipt-only',
-      () async {
-    final methods = <String>[];
-    handle = (r) async {
-      methods.add('${r.method} ${r.uri.path}');
-      final text = await utf8.decoder.bind(r).join();
-      final body = text.isEmpty
-          ? <String, Object?>{}
-          : Map<String, Object?>.from(jsonDecode(text) as Map);
-      expect(body.keys, isNot(contains('device_secret')));
-      expect(body.keys, isNot(contains('session_token')));
-      expect(body.keys, isNot(contains('claim_token')));
-      Object response;
-      switch (r.uri.path) {
-        case '/api/v1/device-links/v3':
-          expect(r.headers.value('authorization'), 'Bearer source-token');
-          expect(body['server_origin'], origin);
-          expect(body['source_commitment'], binary(12));
-          response = {'device_link': context(origin, state: 'pending')};
-        case '/api/v1/device-links/v3/claim-enrollment':
-          expect(body['reservation_request_id'], hash('b'));
-          response = {
-            'id': 'dlink_test',
-            'account_id': 'acct_test',
-            'device_id': 'dev_new',
-            'challenge': binary(10),
-            'expires_at': '2026-10-28T10:10:00Z',
-            'protocol_version': deviceLinkV3Protocol,
-            'link_nonce': binary(1),
-            'existing_device_id': 'dev_old',
-            'existing_signing_key': binary(2),
-            'source_commitment': binary(12)
-          };
-        case '/api/v1/device-links/v3/claim':
-          expect(body, signedClaim(origin));
-          response = {'device_link': context(origin)};
-        case '/api/v1/device-links/v3/dlink_test/claim-status':
-          expect(r.method, 'GET');
-          expect(body, isEmpty);
-          expect(r.headers.value('X-Veritra-Claim-Token'), claimToken);
-          response = {'device_link': context(origin, state: 'approved')};
-        case '/api/v1/device-links/v3/dlink_test/reveal':
-          expect(r.headers.value('authorization'), 'Bearer source-token');
-          expect(body['claim_request_hash'], hash('d'));
-          expect(body['source_random'], binary(14));
-          response = {'device_link': context(origin, revealed: true)};
-        case '/api/v1/device-links/v3/dlink_test/approve':
-          expect(body['claim_request_hash'], hash('d'));
-          expect(body['approval_tag'], binary(7));
-          response = {
-            'device_link': context(origin, state: 'approved'),
-            'device': {}
-          };
-        case '/api/v1/device-links/v3/dlink_test/complete':
-          expect(r.method, 'POST');
-          expect(r.headers.value('X-Veritra-Claim-Token'), claimToken);
-          expect(body['initial_session_token_hash'], hash('3'));
-          response = receipt(origin);
-        default:
-          response = r.method == 'DELETE'
-              ? {'state': 'revoked'}
-              : {'device_link': context(origin)};
-      }
-      r.response.headers.contentType = ContentType.json;
-      r.response.write(jsonEncode(response));
-    };
-    await api.createDeviceLinkV3(owner, hash('a'), List.filled(32, 12));
-    final reservation = await api.reserveDeviceLinkV3(hash('a'), hash('b'));
-    expect(reservation.fields['device_id'], 'dev_new');
-    final frozen = FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-        requestHash: hash('d'), transport: TransportPolicy.demo);
-    final claimed = await api.submitDeviceLinkV3Claim(frozen, reservation);
-    await api.deviceLinkV3(owner, claimed.id);
-    final revealed =
-        await api.revealDeviceLinkV3(owner, claimed, List.filled(32, 14));
-    expect(revealed.fields['source_random'], binary(14));
-    final approved =
-        await api.approveDeviceLinkV3(owner, revealed, List.filled(32, 7));
-    await api.deviceLinkV3ClaimStatus(approved, claimToken);
-    final completed =
-        await api.completeDeviceLinkV3(approved, claimToken, hash('3'));
-    expect(completed.fields['device_id'], 'dev_new');
-    expect(completed.approvalTag, List.filled(32, 7));
-    await api.cancelDeviceLinkV3(owner, claimed.id);
-    // create, reserve, claim, read, reveal (L1-3), approve, poll, complete,
-    // cancel.
-    expect(methods.length, 9);
-  });
-
-  test('completion rejects substituted context, tokens and malformed MACs',
-      () async {
-    for (final key in [
-      'link_id',
-      'account_id',
-      'device_id',
-      'server_origin',
-      'claim_request_hash',
-      'transcript_hash',
-      'initial_session_token_hash',
-      'token',
-      'approval_tag'
-    ]) {
+  test(
+    'v3 wire keeps credentials client-owned and completion receipt-only',
+    () async {
+      final methods = <String>[];
       handle = (r) async {
-        await r.drain<void>();
-        final json = receipt(origin);
-        if (key == 'approval_tag') {
-          json[key] = binary(1, 31);
-        } else {
-          (json['completion'] as Map<String, Object?>)[key] = switch (key) {
-            'server_origin' => 'https://other.example',
-            'claim_request_hash' || 'initial_session_token_hash' => hash('f'),
-            'transcript_hash' => binary(20),
-            _ => 'substituted',
-          };
+        methods.add('${r.method} ${r.uri.path}');
+        final text = await utf8.decoder.bind(r).join();
+        final body = text.isEmpty
+            ? <String, Object?>{}
+            : Map<String, Object?>.from(jsonDecode(text) as Map);
+        expect(body.keys, isNot(contains('device_secret')));
+        expect(body.keys, isNot(contains('session_token')));
+        expect(body.keys, isNot(contains('claim_token')));
+        Object response;
+        switch (r.uri.path) {
+          case '/api/v1/device-links/v3':
+            expect(r.headers.value('authorization'), 'Bearer source-token');
+            expect(body['server_origin'], origin);
+            expect(body['source_commitment'], binary(12));
+            response = {'device_link': context(origin, state: 'pending')};
+          case '/api/v1/device-links/v3/claim-enrollment':
+            expect(body['reservation_request_id'], hash('b'));
+            response = {
+              'id': 'dlink_test',
+              'account_id': 'acct_test',
+              'device_id': 'dev_new',
+              'challenge': binary(10),
+              'expires_at': '2026-10-28T10:10:00Z',
+              'protocol_version': deviceLinkV3Protocol,
+              'link_nonce': binary(1),
+              'existing_device_id': 'dev_old',
+              'existing_signing_key': binary(2),
+              'source_commitment': binary(12),
+            };
+          case '/api/v1/device-links/v3/claim':
+            expect(body, signedClaim(origin));
+            response = {'device_link': context(origin)};
+          case '/api/v1/device-links/v3/dlink_test/claim-status':
+            expect(r.method, 'GET');
+            expect(body, isEmpty);
+            expect(r.headers.value('X-Veritra-Claim-Token'), claimToken);
+            response = {'device_link': context(origin, state: 'approved')};
+          case '/api/v1/device-links/v3/dlink_test/reveal':
+            expect(r.headers.value('authorization'), 'Bearer source-token');
+            expect(body['claim_request_hash'], hash('d'));
+            expect(body['source_random'], binary(14));
+            response = {'device_link': context(origin, revealed: true)};
+          case '/api/v1/device-links/v3/dlink_test/approve':
+            expect(body['claim_request_hash'], hash('d'));
+            expect(body['approval_tag'], binary(7));
+            response = {
+              'device_link': context(origin, state: 'approved'),
+              'device': {},
+            };
+          case '/api/v1/device-links/v3/dlink_test/complete':
+            expect(r.method, 'POST');
+            expect(r.headers.value('X-Veritra-Claim-Token'), claimToken);
+            expect(body['initial_session_token_hash'], hash('3'));
+            response = receipt(origin);
+          default:
+            response = r.method == 'DELETE'
+                ? {'state': 'revoked'}
+                : {'device_link': context(origin)};
         }
-        r.response.write(jsonEncode(json));
+        r.response.headers.contentType = ContentType.json;
+        r.response.write(jsonEncode(response));
       };
-      await expectLater(
-          api.completeDeviceLinkV3(
-              DeviceLinkV3Record.fromJson(context(origin, state: 'approved'),
-                  transport: TransportPolicy.demo),
-              claimToken,
-              hash('3')),
-          throwsA(isA<ApiResponseException>()),
-          reason: key);
-    }
-  });
+      await api.createDeviceLinkV3(owner, hash('a'), List.filled(32, 12));
+      final reservation = await api.reserveDeviceLinkV3(hash('a'), hash('b'));
+      expect(reservation.fields['device_id'], 'dev_new');
+      final frozen = FrozenDeviceLinkV3Claim.fromJson(
+        signedClaim(origin),
+        requestHash: hash('d'),
+        transport: TransportPolicy.demo,
+      );
+      final claimed = await api.submitDeviceLinkV3Claim(frozen, reservation);
+      await api.deviceLinkV3(owner, claimed.id);
+      final revealed = await api.revealDeviceLinkV3(
+        owner,
+        claimed,
+        List.filled(32, 14),
+      );
+      expect(revealed.fields['source_random'], binary(14));
+      final approved = await api.approveDeviceLinkV3(
+        owner,
+        revealed,
+        List.filled(32, 7),
+      );
+      await api.deviceLinkV3ClaimStatus(approved, claimToken);
+      final completed = await api.completeDeviceLinkV3(
+        approved,
+        claimToken,
+        hash('3'),
+      );
+      expect(completed.fields['device_id'], 'dev_new');
+      expect(completed.approvalTag, List.filled(32, 7));
+      await api.cancelDeviceLinkV3(owner, claimed.id);
+      // create, reserve, claim, read, reveal (L1-3), approve, poll, complete,
+      // cancel.
+      expect(methods.length, 9);
+    },
+  );
 
-  test('claim acknowledgement pins every durable reservation identity field',
-      () async {
-    final reservation = DeviceLinkV3Reservation.fromJson({
-      'id': 'dlink_test',
-      'account_id': 'acct_test',
-      'device_id': 'dev_new',
-      'challenge': binary(10),
-      'expires_at': '2026-10-28T10:10:00Z',
-      'protocol_version': deviceLinkV3Protocol,
-      'link_nonce': binary(1),
-      'existing_device_id': 'dev_old',
-      'existing_signing_key': binary(2),
-      'source_commitment': binary(12),
-    });
-    for (final key in [
-      'account_id',
-      'created_by_device_id',
-      'claimed_device_id',
-      'existing_signing_key',
-      'link_nonce',
-      'expires_at',
-      'claim_request_hash',
-      // L1-3: the commitment the new device was given, and its own random.
-      'source_commitment',
-      'recipient_random',
-    ]) {
-      handle = (r) async {
-        await r.drain<void>();
-        final json = context(origin);
-        json[key] = switch (key) {
-          'existing_signing_key' ||
-          'link_nonce' ||
-          'source_commitment' ||
-          'recipient_random' =>
-            binary(19),
-          'expires_at' => '2026-10-28T10:11:00Z',
-          'claim_request_hash' => hash('e'),
-          _ => 'changed_identity',
+  test(
+    'completion rejects substituted context, tokens and malformed MACs',
+    () async {
+      for (final key in [
+        'link_id',
+        'account_id',
+        'device_id',
+        'server_origin',
+        'claim_request_hash',
+        'transcript_hash',
+        'initial_session_token_hash',
+        'token',
+        'approval_tag',
+      ]) {
+        handle = (r) async {
+          await r.drain<void>();
+          final json = receipt(origin);
+          if (key == 'approval_tag') {
+            json[key] = binary(1, 31);
+          } else {
+            (json['completion'] as Map<String, Object?>)[key] = switch (key) {
+              'server_origin' => 'https://other.example',
+              'claim_request_hash' || 'initial_session_token_hash' => hash('f'),
+              'transcript_hash' => binary(20),
+              _ => 'substituted',
+            };
+          }
+          r.response.write(jsonEncode(json));
         };
-        r.response.write(jsonEncode({'device_link': json}));
+        await expectLater(
+          api.completeDeviceLinkV3(
+            DeviceLinkV3Record.fromJson(
+              context(origin, state: 'approved'),
+              transport: TransportPolicy.demo,
+            ),
+            claimToken,
+            hash('3'),
+          ),
+          throwsA(isA<ApiResponseException>()),
+          reason: key,
+        );
+      }
+    },
+  );
+
+  test(
+    'claim acknowledgement pins every durable reservation identity field',
+    () async {
+      final reservation = DeviceLinkV3Reservation.fromJson({
+        'id': 'dlink_test',
+        'account_id': 'acct_test',
+        'device_id': 'dev_new',
+        'challenge': binary(10),
+        'expires_at': '2026-10-28T10:10:00Z',
+        'protocol_version': deviceLinkV3Protocol,
+        'link_nonce': binary(1),
+        'existing_device_id': 'dev_old',
+        'existing_signing_key': binary(2),
+        'source_commitment': binary(12),
+      });
+      for (final key in [
+        'account_id',
+        'created_by_device_id',
+        'claimed_device_id',
+        'existing_signing_key',
+        'link_nonce',
+        'expires_at',
+        'claim_request_hash',
+        // L1-3: the commitment the new device was given, and its own random.
+        'source_commitment',
+        'recipient_random',
+      ]) {
+        handle = (r) async {
+          await r.drain<void>();
+          final json = context(origin);
+          json[key] = switch (key) {
+            'existing_signing_key' ||
+            'link_nonce' ||
+            'source_commitment' ||
+            'recipient_random' =>
+              binary(19),
+            'expires_at' => '2026-10-28T10:11:00Z',
+            'claim_request_hash' => hash('e'),
+            _ => 'changed_identity',
+          };
+          r.response.write(jsonEncode({'device_link': json}));
+        };
+        await expectLater(
+          api.submitDeviceLinkV3Claim(
+            FrozenDeviceLinkV3Claim.fromJson(
+              signedClaim(origin),
+              requestHash: hash('d'),
+              transport: TransportPolicy.demo,
+            ),
+            reservation,
+          ),
+          throwsA(isA<ApiResponseException>()),
+          reason: key,
+        );
+      }
+    },
+  );
+
+  test(
+    'approved polling rejects regression and changed fixed approval context',
+    () async {
+      final expected = DeviceLinkV3Record.fromJson(
+        context(origin, state: 'approved'),
+        transport: TransportPolicy.demo,
+      );
+      for (final change in ['regression', 'tag', 'deadline']) {
+        handle = (r) async {
+          await r.drain<void>();
+          final json = context(
+            origin,
+            state: change == 'regression' ? 'claimed' : 'approved',
+          );
+          if (change == 'tag') json['approval_tag'] = binary(18);
+          if (change == 'deadline') {
+            json['approved_at'] = '2026-10-28T10:03:00Z';
+            json['transfer_expires_at'] = '2026-11-04T10:03:00Z';
+          }
+          r.response.write(jsonEncode({'device_link': json}));
+        };
+        await expectLater(
+          api.deviceLinkV3ClaimStatus(expected, claimToken),
+          throwsA(isA<ApiResponseException>()),
+          reason: change,
+        );
+      }
+    },
+  );
+
+  test(
+    'claim credential cannot follow redirects to a different origin',
+    () async {
+      final other = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => other.close(force: true));
+      var leaked = 0;
+      other.listen((r) async {
+        leaked++;
+        await r.response.close();
+      });
+      handle = (r) async {
+        r.response.statusCode = HttpStatus.temporaryRedirect;
+        r.response.headers.set(
+          'location',
+          'http://127.0.0.1:${other.port}/capture',
+        );
       };
       await expectLater(
-          api.submitDeviceLinkV3Claim(
-              FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-                  requestHash: hash('d'), transport: TransportPolicy.demo),
-              reservation),
-          throwsA(isA<ApiResponseException>()),
-          reason: key);
-    }
-  });
-
-  test('approved polling rejects regression and changed fixed approval context',
-      () async {
-    final expected = DeviceLinkV3Record.fromJson(
-        context(origin, state: 'approved'),
-        transport: TransportPolicy.demo);
-    for (final change in ['regression', 'tag', 'deadline']) {
-      handle = (r) async {
-        await r.drain<void>();
-        final json = context(origin,
-            state: change == 'regression' ? 'claimed' : 'approved');
-        if (change == 'tag') json['approval_tag'] = binary(18);
-        if (change == 'deadline') {
-          json['approved_at'] = '2026-10-28T10:03:00Z';
-          json['transfer_expires_at'] = '2026-11-04T10:03:00Z';
-        }
-        r.response.write(jsonEncode({'device_link': json}));
-      };
-      await expectLater(api.deviceLinkV3ClaimStatus(expected, claimToken),
-          throwsA(isA<ApiResponseException>()),
-          reason: change);
-    }
-  });
-
-  test('claim credential cannot follow redirects to a different origin',
-      () async {
-    final other = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => other.close(force: true));
-    var leaked = 0;
-    other.listen((r) async {
-      leaked++;
-      await r.response.close();
-    });
-    handle = (r) async {
-      r.response.statusCode = HttpStatus.temporaryRedirect;
-      r.response.headers
-          .set('location', 'http://127.0.0.1:${other.port}/capture');
-    };
-    await expectLater(
         api.deviceLinkV3ClaimStatus(
-            DeviceLinkV3Record.fromJson(context(origin),
-                transport: TransportPolicy.demo),
-            claimToken),
-        throwsA(isA<ApiException>()));
-    expect(leaked, 0);
-  });
+          DeviceLinkV3Record.fromJson(
+            context(origin),
+            transport: TransportPolicy.demo,
+          ),
+          claimToken,
+        ),
+        throwsA(isA<ApiException>()),
+      );
+      expect(leaked, 0);
+    },
+  );
 
-  test('invalid inputs fail before requests; decoder exceptions omit values',
-      () async {
-    var requests = 0;
-    handle = (r) async {
-      requests++;
-    };
-    await expectLater(
-        api.deviceLinkV3(owner, '../other'), throwsFormatException);
-    await expectLater(api.reserveDeviceLinkV3('raw-secret', hash('b')),
-        throwsFormatException);
-    await expectLater(
+  test(
+    'invalid inputs fail before requests; decoder exceptions omit values',
+    () async {
+      var requests = 0;
+      handle = (r) async {
+        requests++;
+      };
+      await expectLater(
+        api.deviceLinkV3(owner, '../other'),
+        throwsFormatException,
+      );
+      await expectLater(
+        api.reserveDeviceLinkV3('raw-secret', hash('b')),
+        throwsFormatException,
+      );
+      await expectLater(
         api.createDeviceLinkV3(
-            const Session(
-                baseUrl: 'https://elsewhere.example',
-                token: 'token',
-                accountId: 'acct_test',
-                deviceId: 'dev_old',
-                username: 'owner'),
-            hash('a'),
-            List.filled(32, 12)),
-        throwsFormatException);
-    expect(requests, 0);
-    for (final mutate in <void Function(Map<String, Object?>)>[
-      (j) => j['link_nonce'] = 'sensitive-invalid-binary',
-      (j) => j['protocol_version'] = 'veritra-device-link-v2',
-      (j) => j['session_token'] = 'forbidden',
-      (j) => j['expires_at'] = '2026-10-28T09:00:00Z',
-      // L1-3: a commitment and a recipient random are required, never zero;
-      // a reveal comes with its time; v3 (no commitment) is refused.
-      (j) => j.remove('source_commitment'),
-      (j) => j['source_commitment'] = binary(0),
-      (j) => j.remove('recipient_random'),
-      (j) => j['recipient_random'] = binary(0),
-      (j) => j['source_random'] = binary(14),
-      (j) => j['protocol_version'] = 'veritra-device-link-v3',
-    ]) {
-      final json = context(origin);
-      mutate(json);
-      try {
-        DeviceLinkV3Record.fromJson(json, transport: TransportPolicy.demo);
-        fail('accepted malformed context');
-      } on FormatException catch (e) {
-        expect(e.source, isNull);
-        expect(e.toString(), isNot(contains('sensitive-invalid-binary')));
+          const Session(
+            baseUrl: 'https://elsewhere.example',
+            token: 'token',
+            accountId: 'acct_test',
+            deviceId: 'dev_old',
+            username: 'owner',
+          ),
+          hash('a'),
+          List.filled(32, 12),
+        ),
+        throwsFormatException,
+      );
+      expect(requests, 0);
+      for (final mutate in <void Function(Map<String, Object?>)>[
+        (j) => j['link_nonce'] = 'sensitive-invalid-binary',
+        (j) => j['protocol_version'] = 'veritra-device-link-v2',
+        (j) => j['session_token'] = 'forbidden',
+        (j) => j['expires_at'] = '2026-10-28T09:00:00Z',
+        // L1-3: a commitment and a recipient random are required, never zero;
+        // a reveal comes with its time; v3 (no commitment) is refused.
+        (j) => j.remove('source_commitment'),
+        (j) => j['source_commitment'] = binary(0),
+        (j) => j.remove('recipient_random'),
+        (j) => j['recipient_random'] = binary(0),
+        (j) => j['source_random'] = binary(14),
+        (j) => j['protocol_version'] = 'veritra-device-link-v3',
+      ]) {
+        final json = context(origin);
+        mutate(json);
+        try {
+          DeviceLinkV3Record.fromJson(json, transport: TransportPolicy.demo);
+          fail('accepted malformed context');
+        } on FormatException catch (e) {
+          expect(e.source, isNull);
+          expect(e.toString(), isNot(contains('sensitive-invalid-binary')));
+        }
       }
-    }
-  });
+    },
+  );
 
-  test('release default refuses loopback HTTP; HTTPS and the demo policy pass',
-      () async {
-    var requests = 0;
-    handle = (r) async {
-      requests++;
-    };
-    // An ApiClient built the way main.dart builds it (no policy) rejects a
-    // loopback HTTP origin before any request is made.
-    final release = ApiClient(baseUrl: origin);
-    addTearDown(release.close);
-    await expectLater(
+  test(
+    'release default refuses loopback HTTP; HTTPS and the demo policy pass',
+    () async {
+      var requests = 0;
+      handle = (r) async {
+        requests++;
+      };
+      // An ApiClient built the way main.dart builds it (no policy) rejects a
+      // loopback HTTP origin before any request is made.
+      final release = ApiClient(baseUrl: origin);
+      addTearDown(release.close);
+      await expectLater(
         release.createDeviceLinkV3(owner, hash('a'), List.filled(32, 12)),
-        throwsFormatException);
-    await expectLater(
-        release.deviceLinkV3(owner, 'dlink_test'), throwsFormatException);
-    expect(requests, 0);
-    // The parsers default to HTTPS only as well.
-    expect(() => DeviceLinkV3Record.fromJson(context(origin)),
-        throwsFormatException);
-    expect(
-        () => FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-            requestHash: hash('d')),
-        throwsFormatException);
-    expect(() => DeviceLinkV3Completion.fromJson(receipt(origin)),
-        throwsFormatException);
-    // The same inputs are valid under the demo policy, so the refusals
-    // above are about the origin alone.
-    DeviceLinkV3Completion.fromJson(receipt(origin),
-        transport: TransportPolicy.demo);
-    FrozenDeviceLinkV3Claim.fromJson(signedClaim(origin),
-        requestHash: hash('d'), transport: TransportPolicy.demo);
-    // HTTPS is accepted under the default, and loopback only when the
-    // caller opts in with the demo policy.
-    const secure = 'https://veritra.example';
-    expect(DeviceLinkV3Record.fromJson(context(secure)).origin, secure);
-    expect(
-        DeviceLinkV3Record.fromJson(context(origin),
-                transport: TransportPolicy.demo)
-            .origin,
-        origin);
-  });
+        throwsFormatException,
+      );
+      await expectLater(
+        release.deviceLinkV3(owner, 'dlink_test'),
+        throwsFormatException,
+      );
+      expect(requests, 0);
+      // The parsers default to HTTPS only as well.
+      expect(
+        () => DeviceLinkV3Record.fromJson(context(origin)),
+        throwsFormatException,
+      );
+      expect(
+        () => FrozenDeviceLinkV3Claim.fromJson(
+          signedClaim(origin),
+          requestHash: hash('d'),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => DeviceLinkV3Completion.fromJson(receipt(origin)),
+        throwsFormatException,
+      );
+      // The same inputs are valid under the demo policy, so the refusals
+      // above are about the origin alone.
+      DeviceLinkV3Completion.fromJson(
+        receipt(origin),
+        transport: TransportPolicy.demo,
+      );
+      FrozenDeviceLinkV3Claim.fromJson(
+        signedClaim(origin),
+        requestHash: hash('d'),
+        transport: TransportPolicy.demo,
+      );
+      // HTTPS is accepted under the default, and loopback only when the
+      // caller opts in with the demo policy.
+      const secure = 'https://veritra.example';
+      expect(DeviceLinkV3Record.fromJson(context(secure)).origin, secure);
+      expect(
+        DeviceLinkV3Record.fromJson(
+          context(origin),
+          transport: TransportPolicy.demo,
+        ).origin,
+        origin,
+      );
+    },
+  );
 
   test('L1-3: no approval without a reveal, no claim without a commitment', () {
     for (final json in <Map<String, Object?>>[
@@ -432,20 +506,23 @@ void main() {
       {...context(origin, state: 'pending'), 'source_random': binary(14)},
       {
         ...context(origin, revealed: true),
-        'revealed_at': '2026-10-28T10:00:30Z'
+        'revealed_at': '2026-10-28T10:00:30Z',
       },
     ]) {
       expect(
-          () => DeviceLinkV3Record.fromJson(json,
-              transport: TransportPolicy.demo),
-          throwsFormatException,
-          reason: '$json');
+        () =>
+            DeviceLinkV3Record.fromJson(json, transport: TransportPolicy.demo),
+        throwsFormatException,
+        reason: '$json',
+      );
     }
     expect(
-        DeviceLinkV3Record.fromJson(context(origin, revealed: true),
-                transport: TransportPolicy.demo)
-            .fields['source_random'],
-        binary(14));
+      DeviceLinkV3Record.fromJson(
+        context(origin, revealed: true),
+        transport: TransportPolicy.demo,
+      ).fields['source_random'],
+      binary(14),
+    );
     final reservation = <String, Object?>{
       'id': 'dlink_test',
       'account_id': 'acct_test',
@@ -465,8 +542,10 @@ void main() {
       {...reservation, 'protocol_version': 'veritra-device-link-v3'},
     ]) {
       expect(
-          () => DeviceLinkV3Reservation.fromJson(json), throwsFormatException,
-          reason: '$json');
+        () => DeviceLinkV3Reservation.fromJson(json),
+        throwsFormatException,
+        reason: '$json',
+      );
     }
     final claim = signedClaim('https://veritra.example');
     for (final json in <Map<String, Object?>>[
@@ -474,9 +553,10 @@ void main() {
       {...claim, 'recipient_random': binary(0)},
     ]) {
       expect(
-          () => FrozenDeviceLinkV3Claim.fromJson(json, requestHash: hash('d')),
-          throwsFormatException,
-          reason: '$json');
+        () => FrozenDeviceLinkV3Claim.fromJson(json, requestHash: hash('d')),
+        throwsFormatException,
+        reason: '$json',
+      );
     }
   });
 }

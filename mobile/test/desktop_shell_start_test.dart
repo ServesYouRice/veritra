@@ -86,11 +86,8 @@ Future<void> _closeWindow() async {
   );
 }
 
-Future<void> _start(PluginDesktopShell shell) => shell.start(
-      openLabel: 'Open',
-      quitLabel: 'Quit',
-      tooltip: 'Veritra',
-    );
+Future<void> _start(PluginDesktopShell shell) =>
+    shell.start(openLabel: 'Open', quitLabel: 'Quit', tooltip: 'Veritra');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -128,17 +125,22 @@ void main() {
     expect(plugins.calls, contains('hide'));
   });
 
-  test('the tray is created before closing the window is intercepted',
-      () async {
-    final shell = PluginDesktopShell();
-    addTearDown(shell.dispose);
-    await _start(shell);
-    final preventClose = plugins.calls.indexOf('setPreventClose:true');
-    for (final step in traySteps) {
-      expect(plugins.calls.indexOf(step), lessThan(preventClose),
-          reason: '$step must come before setPreventClose(true)');
-    }
-  });
+  test(
+    'the tray is created before closing the window is intercepted',
+    () async {
+      final shell = PluginDesktopShell();
+      addTearDown(shell.dispose);
+      await _start(shell);
+      final preventClose = plugins.calls.indexOf('setPreventClose:true');
+      for (final step in traySteps) {
+        expect(
+          plugins.calls.indexOf(step),
+          lessThan(preventClose),
+          reason: '$step must come before setPreventClose(true)',
+        );
+      }
+    },
+  );
 
   for (final step in traySteps) {
     test('when $step fails, closing the window still closes the app', () async {
@@ -148,15 +150,21 @@ void main() {
 
       await expectLater(_start(shell), throwsA(isA<PlatformException>()));
 
-      expect(plugins.preventClose, isNot(isTrue),
-          reason: 'prevent-close must not stay on');
+      expect(
+        plugins.preventClose,
+        isNot(isTrue),
+        reason: 'prevent-close must not stay on',
+      );
       expect(windowManager.listeners, isNot(contains(shell)));
       expect(trayManager.hasListeners, isFalse);
 
       plugins.calls.clear();
       await _closeWindow();
-      expect(plugins.calls, isNot(contains('hide')),
-          reason: 'the window must not be hidden without a tray');
+      expect(
+        plugins.calls,
+        isNot(contains('hide')),
+        reason: 'the window must not be hidden without a tray',
+      );
     });
   }
 
@@ -179,8 +187,9 @@ void main() {
 
     await expectLater(
       _start(shell),
-      throwsA(isA<PlatformException>()
-          .having((e) => e.message, 'message', 'setIcon')),
+      throwsA(
+        isA<PlatformException>().having((e) => e.message, 'message', 'setIcon'),
+      ),
     );
     expect(windowManager.listeners, isNot(contains(shell)));
   });
@@ -197,15 +206,17 @@ void main() {
       );
     });
 
-    test('returns null and leaves the window closable when the tray fails',
-        () async {
-      plugins.failing.add('setContextMenu');
-      final desktop = await DesktopServices.startIfSupported(state);
-      expect(desktop, isNull);
-      expect(plugins.preventClose, isNot(isTrue));
-      expect(windowManager.hasListeners, isFalse);
-      expect(trayManager.hasListeners, isFalse);
-    });
+    test(
+      'returns null and leaves the window closable when the tray fails',
+      () async {
+        plugins.failing.add('setContextMenu');
+        final desktop = await DesktopServices.startIfSupported(state);
+        expect(desktop, isNull);
+        expect(plugins.preventClose, isNot(isTrue));
+        expect(windowManager.hasListeners, isFalse);
+        expect(trayManager.hasListeners, isFalse);
+      },
+    );
 
     test('returns the services when the tray starts', () async {
       final desktop = await DesktopServices.startIfSupported(state);

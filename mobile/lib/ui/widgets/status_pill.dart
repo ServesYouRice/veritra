@@ -100,7 +100,7 @@ class StatusPill extends StatelessWidget {
                 children: <Widget>[
                   Icon(icon, size: 12, color: foreground),
                   const SizedBox(width: 4),
-                  text,
+                  Flexible(child: text),
                 ],
               ),
       ),
@@ -147,10 +147,6 @@ class StatusDot extends StatelessWidget {
     if (semanticsLabel == null) {
       return ExcludeSemantics(child: dot);
     }
-    return Semantics(
-      label: semanticsLabel,
-      excludeSemantics: true,
-      child: dot,
-    );
+    return Semantics(label: semanticsLabel, excludeSemantics: true, child: dot);
   }
 }

@@ -77,12 +77,10 @@ func TestL1ExplicitClaimsDoNotReopenLegacyGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	addTestDevice(t, ctx, store, owner.Account.ID, "dev_sibling")
-	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+	seedLegacyMLSMessage(t, store, CreateMLSMessageInput{
 		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
 		Kind: "commit", Payload: []byte("opaque legacy commit"), IdempotencyKey: "legacy",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if _, err := store.ClaimDeviceKeyPackages(ctx, conversation.ID, owner.Account.ID, owner.Device.ID,
 		[]string{"dev_sibling"}); !errors.Is(err, ErrMLSNotInGroup) {
 		t.Fatalf("legacy group reopened: %v", err)

@@ -18,32 +18,43 @@ import 'test_crypto_service.dart';
 void main() {
   Finder key(String value) => find.byKey(ValueKey<String>(value));
 
-  Future<_State> open(WidgetTester tester,
-      {bool storedIdentity = false,
-      bool linkedHere = false,
-      bool fresh = false}) async {
+  Future<_State> open(
+    WidgetTester tester, {
+    bool storedIdentity = false,
+    bool linkedHere = false,
+    bool fresh = false,
+  }) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = _State(
-        storedIdentity: storedIdentity, linkedHere: linkedHere, fresh: fresh);
+      storedIdentity: storedIdentity,
+      linkedHere: linkedHere,
+      fresh: fresh,
+    );
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      home: ConnectScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        home: ConnectScreen(state: state),
+      ),
+    );
     await tester.pumpAndSettle();
     return state;
   }
 
-  testWidgets('the first screen offers two choices and the big logo',
-      (tester) async {
+  testWidgets('the first screen offers two choices and the big logo', (
+    tester,
+  ) async {
     await open(tester);
     expect(find.text('I have an invite'), findsOneWidget);
     expect(find.text('I already have an account'), findsOneWidget);
     expect(find.byType(VeritraMark), findsOneWidget);
-    expect(find.byType(TextFormField), findsNothing,
-        reason: 'no form before the person has chosen');
+    expect(
+      find.byType(TextFormField),
+      findsNothing,
+      reason: 'no form before the person has chosen',
+    );
     expect(key('connect-step-back'), findsNothing);
   });
 
@@ -74,33 +85,37 @@ void main() {
     expect(find.byType(VeritraMark), findsNothing);
   });
 
-  testWidgets('both choice screens meet the tap-target and contrast guidelines',
-      (tester) async {
-    final semantics = tester.ensureSemantics();
-    await open(tester);
-    Future<void> check() async {
-      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
-      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
-      await expectLater(tester, meetsGuideline(textContrastGuideline));
-    }
+  testWidgets(
+    'both choice screens meet the tap-target and contrast guidelines',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await open(tester);
+      Future<void> check() async {
+        await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+        await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+        await expectLater(tester, meetsGuideline(textContrastGuideline));
+      }
 
-    await check();
-    await tester.tap(key('welcome-account'));
-    await tester.pumpAndSettle();
-    await check();
-    // Each choice reads as one button named by its words.
-    expect(
+      await check();
+      await tester.tap(key('welcome-account'));
+      await tester.pumpAndSettle();
+      await check();
+      // Each choice reads as one button named by its words.
+      expect(
         tester.getSemantics(key('welcome-new-device')),
         isSemantics(
           isButton: true,
           hasTapAction: true,
           label: 'This is a new device\nAdd it using a device you already use.',
-        ));
-    semantics.dispose();
-  });
+        ),
+      );
+      semantics.dispose();
+    },
+  );
 
-  testWidgets('back and the system back gesture step back through the flow',
-      (tester) async {
+  testWidgets('back and the system back gesture step back through the flow', (
+    tester,
+  ) async {
     await open(tester);
     await tester.tap(key('welcome-account'));
     await tester.pumpAndSettle();
@@ -133,8 +148,9 @@ void main() {
     expect(find.text('I have an invite'), findsOneWidget);
   });
 
-  testWidgets('the probe never changes the path the person chose',
-      (tester) async {
+  testWidgets('the probe never changes the path the person chose', (
+    tester,
+  ) async {
     // Sign-in chosen on a server this device has no identity for: the probe
     // used to switch the form to joining.
     final state = await open(tester);
@@ -143,22 +159,27 @@ void main() {
     await tester.tap(key('welcome-signed-in-before'));
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byType(TextFormField).first, 'https://one.example.org');
+      find.byType(TextFormField).first,
+      'https://one.example.org',
+    );
     await tester.pump(const Duration(milliseconds: 700));
     await tester.pumpAndSettle();
     expect(state.probes, <String>['https://one.example.org']);
     expect(find.text('SIGN IN'), findsOneWidget);
   });
 
-  testWidgets('a new server offers its setup from the chosen path',
-      (tester) async {
+  testWidgets('a new server offers its setup from the chosen path', (
+    tester,
+  ) async {
     await open(tester, fresh: true);
     await tester.tap(key('welcome-account'));
     await tester.pumpAndSettle();
     await tester.tap(key('welcome-signed-in-before'));
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byType(TextFormField).first, 'https://new.example.org');
+      find.byType(TextFormField).first,
+      'https://new.example.org',
+    );
     await tester.pump(const Duration(milliseconds: 700));
     await tester.pumpAndSettle();
     expect(find.text('SIGN IN'), findsOneWidget);
@@ -197,7 +218,9 @@ class _State extends AppState {
   Future<SetupProbeResult> probeSetup(String baseUrl) async {
     probes.add(baseUrl);
     return SetupProbeResult(
-        state: SetupProbeState.reachable, setupRequired: fresh);
+      state: SetupProbeState.reachable,
+      setupRequired: fresh,
+    );
   }
 }
 

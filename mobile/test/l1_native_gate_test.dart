@@ -31,91 +31,124 @@ void main() {
   Future<_Client> client(String account, String device) =>
       _Client.enroll(bindings, account, device);
 
-  test('an approved device is added with its pinned key and messages flow',
-      () async {
-    final alice = await client('acct_alice', 'dev_alice');
-    final bob = await client('acct_bob', 'dev_bob');
-    await alice.trust(bob);
-    await bob.trust(alice);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
-    await _accept(alice, [bob], const []);
+  test(
+    'an approved device is added with its pinned key and messages flow',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final bob = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      await bob.trust(alice);
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+      ]);
+      await _accept(alice, [bob], const []);
 
-    expect(await alice.service.refreshApprovalHold('conv_1'), isFalse);
-    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
-    final leaves = await bob.store.loadApprovalLeaves('conv_1');
-    expect(leaves, hasLength(2));
-    expect(
-        leaves.every((leaf) => leaf.verdict == LeafVerdict.approved), isTrue);
-    final sent = await alice.send('hello');
-    await bob.receive(alice, sent);
-    expect((await bob.history()).single.body, 'hello');
-  }, skip: skip);
+      expect(await alice.service.refreshApprovalHold('conv_1'), isFalse);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+      final leaves = await bob.store.loadApprovalLeaves('conv_1');
+      expect(leaves, hasLength(2));
+      expect(
+        leaves.every((leaf) => leaf.verdict == LeafVerdict.approved),
+        isTrue,
+      );
+      final sent = await alice.send('hello');
+      await bob.receive(alice, sent);
+      expect((await bob.history()).single.body, 'hello');
+    },
+    skip: skip,
+  );
 
   test('signed-list discovery finds siblings omitted by the server', () async {
     final alice = await client('acct_alice', 'dev_alice');
     final bob = await client('acct_bob', 'dev_bob');
     final phone = await client('acct_bob', 'dev_phone');
     await alice.trust(bob);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _accept(alice, [bob], const []);
-    final genesis = await bob.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_bob'),
-      version: 1,
-      prevHash: DeviceListBody.zeroHash,
-      createdAtMs: 1,
-      change: DeviceListChange.migrationGenesis,
-      entries: [
-        DeviceListPair(
-            idBytes('dev_bob'), await bob.service.currentSigningKey()),
-        DeviceListPair(
-            idBytes('dev_phone'), await phone.service.currentSigningKey()),
-      ],
-    ));
+    final genesis = await bob.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_bob'),
+        version: 1,
+        prevHash: DeviceListBody.zeroHash,
+        createdAtMs: 1,
+        change: DeviceListChange.migrationGenesis,
+        entries: [
+          DeviceListPair(
+            idBytes('dev_bob'),
+            await bob.service.currentSigningKey(),
+          ),
+          DeviceListPair(
+            idBytes('dev_phone'),
+            await phone.service.currentSigningKey(),
+          ),
+        ],
+      ),
+    );
     final source = _ListSource()..chain = [genesis];
     final pins = DeviceListPins(
-        store: alice.store, source: source, verifier: alice.service);
+      store: alice.store,
+      source: source,
+      verifier: alice.service,
+    );
     alice.service.deviceListPins = pins;
     expect(
-        await alice.service
-            .missingApprovedDevices('conv_1', ['acct_bob', 'acct_bob']),
-        [(accountId: 'acct_bob', deviceId: 'dev_phone')]);
+      await alice.service.missingApprovedDevices('conv_1', [
+        'acct_bob',
+        'acct_bob',
+      ]),
+      [(accountId: 'acct_bob', deviceId: 'dev_phone')],
+    );
     expect(
-        await alice.service.missingApprovedDevices(null, ['acct_bob']),
-        unorderedEquals([
-          (accountId: 'acct_bob', deviceId: 'dev_bob'),
-          (accountId: 'acct_bob', deviceId: 'dev_phone'),
-        ]));
+      await alice.service.missingApprovedDevices(null, ['acct_bob']),
+      unorderedEquals([
+        (accountId: 'acct_bob', deviceId: 'dev_bob'),
+        (accountId: 'acct_bob', deviceId: 'dev_phone'),
+      ]),
+    );
     final head = bindings.checkDeviceListStep(
-        expectedAccountId: idBytes('acct_bob'), statement: genesis);
-    final removed = await bob.service.signDeviceList(DeviceListBody(
-      accountId: idBytes('acct_bob'),
-      version: 2,
-      prevHash: head.listHash,
-      createdAtMs: 2,
-      change: DeviceListChange.remove,
-      entries: [
-        DeviceListPair(
-            idBytes('dev_bob'), await bob.service.currentSigningKey())
-      ],
-    ));
+      expectedAccountId: idBytes('acct_bob'),
+      statement: genesis,
+    );
+    final removed = await bob.service.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_bob'),
+        version: 2,
+        prevHash: head.listHash,
+        createdAtMs: 2,
+        change: DeviceListChange.remove,
+        entries: [
+          DeviceListPair(
+            idBytes('dev_bob'),
+            await bob.service.currentSigningKey(),
+          ),
+        ],
+      ),
+    );
     source.chain.add(removed);
     pins.invalidate('acct_bob');
-    expect(await alice.service.missingApprovedDevices('conv_1', ['acct_bob']),
-        isEmpty);
+    expect(
+      await alice.service.missingApprovedDevices('conv_1', ['acct_bob']),
+      isEmpty,
+    );
     // A sticky conflict authorizes nothing, even with a previously pinned key.
     await alice.store.saveDeviceListConflict(
-        accountId: 'acct_bob',
-        version: 2,
-        pinnedStatement: removed,
-        otherStatement: removed,
-        recordedAt: 3);
-    expect(await alice.service.missingApprovedDevices(null, ['acct_bob']),
-        isEmpty);
+      accountId: 'acct_bob',
+      version: 2,
+      pinnedStatement: removed,
+      otherStatement: removed,
+      recordedAt: 3,
+    );
+    expect(
+      await alice.service.missingApprovedDevices(null, ['acct_bob']),
+      isEmpty,
+    );
     alice.service.deviceListPins = null;
-    expect(await alice.service.missingApprovedDevices(null, ['acct_bob']),
-        isEmpty);
+    expect(
+      await alice.service.missingApprovedDevices(null, ['acct_bob']),
+      isEmpty,
+    );
   }, skip: skip);
 
   test('a device the list does not approve is never staged', () async {
@@ -124,8 +157,9 @@ void main() {
     final ghost = await client('acct_bob', 'dev_ghost');
     await alice.trust(bob);
     // The server lists dev_ghost for acct_bob; bob's list does not.
-    await alice.service
-        .initializeConversation('conv_1', [await ghost.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await ghost.keyPackage(),
+    ]);
     final item = (await alice.store.pendingMlsMessages()).single;
     final bundle = MlsCommitBundle.decode(item.payload);
     expect(bundle.hasCommit, isFalse);
@@ -133,9 +167,12 @@ void main() {
     await alice.service.completeCommitBundle(item);
 
     await expectLater(
-        alice.service
-            .stageMembershipChange('conv_1', adds: [await ghost.keyPackage()]),
-        throwsA(isA<DeviceListNotApprovedException>()));
+      alice.service.stageMembershipChange(
+        'conv_1',
+        adds: [await ghost.keyPackage()],
+      ),
+      throwsA(isA<DeviceListNotApprovedException>()),
+    );
     expect(await alice.store.pendingMlsMessages(), isEmpty);
   }, skip: skip);
 
@@ -233,15 +270,19 @@ void main() {
       expect(shown['sent before MLS removal']?.senderRemoved, isTrue);
       expect(shown['sent while approved']?.senderRemoved, isNot(isTrue));
       // An edit from the removed device marks the text it leaves.
-      final edit = await alice.service
-          .encryptPayload('conv_1', AppPayloadType.edit, <String, Object?>{
-        'message_id': approvedKey,
-        'text': 'rewritten after removal',
-      });
+      final edit = await alice.service.encryptPayload(
+        'conv_1',
+        AppPayloadType.edit,
+        <String, Object?>{
+          'message_id': approvedKey,
+          'text': 'rewritten after removal',
+        },
+      );
       await alice.store.removePendingEnvelope(edit.idempotencyKey);
       await bob.receive(alice, edit);
-      final edited =
-          (await bob.history()).firstWhere((m) => m.key == approvedKey);
+      final edited = (await bob.history()).firstWhere(
+        (m) => m.key == approvedKey,
+      );
       expect(edited.body, 'rewritten after removal');
       expect(edited.senderRemoved, isTrue);
       expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
@@ -281,31 +322,40 @@ void main() {
     skip: skip,
   );
 
-  test('a key package with another key than the pinned one is refused',
-      () async {
-    final alice = await client('acct_alice', 'dev_alice');
-    final bob = await client('acct_bob', 'dev_bob');
-    // A server-made twin of dev_bob: same ids, its own signing key.
-    final twin = await client('acct_bob', 'dev_bob');
-    await alice.trust(bob);
-    await alice.service.initializeConversation('conv_1', const []);
-    await alice.service
-        .completeCommitBundle((await alice.store.pendingMlsMessages()).single);
-    await expectLater(
-        alice.service
-            .stageMembershipChange('conv_1', adds: [await twin.keyPackage()]),
-        throwsA(isA<NativeCryptoException>()));
-    expect(await alice.store.pendingMlsMessages(), isEmpty);
-  }, skip: skip);
+  test(
+    'a key package with another key than the pinned one is refused',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final bob = await client('acct_bob', 'dev_bob');
+      // A server-made twin of dev_bob: same ids, its own signing key.
+      final twin = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      await alice.service.initializeConversation('conv_1', const []);
+      await alice.service.completeCommitBundle(
+        (await alice.store.pendingMlsMessages()).single,
+      );
+      await expectLater(
+        alice.service.stageMembershipChange(
+          'conv_1',
+          adds: [await twin.keyPackage()],
+        ),
+        throwsA(isA<NativeCryptoException>()),
+      );
+      expect(await alice.store.pendingMlsMessages(), isEmpty);
+    },
+    skip: skip,
+  );
 
   test('without pins nothing is added (fail closed)', () async {
     final alice = await client('acct_alice', 'dev_alice');
     final bob = await client('acct_bob', 'dev_bob');
     alice.service.deviceListPins = null;
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     final bundle = MlsCommitBundle.decode(
-        (await alice.store.pendingMlsMessages()).single.payload);
+      (await alice.store.pendingMlsMessages()).single.payload,
+    );
     expect(bundle.added, isEmpty);
   }, skip: skip);
 
@@ -317,37 +367,50 @@ void main() {
     final ghost = await client('acct_alice', 'dev_ghost');
     await alice.trust(carol);
     await carol.trust(alice);
-    await alice.service
-        .initializeConversation('conv_1', [await carol.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await carol.keyPackage(),
+    ]);
     await _accept(alice, [carol], const []);
     // Alice's device trusts the ghost (a stolen device signed it onto her
     // view, say); Carol's view of acct_alice's list does not have it.
     await alice.trust(ghost);
     await ghost.trust(alice);
     await ghost.trust(carol);
-    await alice.service
-        .stageMembershipChange('conv_1', adds: [await ghost.keyPackage()]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      adds: [await ghost.keyPackage()],
+    );
     await _accept(alice, [ghost], [carol]);
 
     // Carol applied the commit (sync goes on) and holds the conversation.
-    expect(
-        await carol.service.groupEpoch('conv_1'), (epoch: 2, pending: false));
-    final held = (await carol.store.loadApprovalLeaves('conv_1'))
+    expect(await carol.service.groupEpoch('conv_1'), (
+      epoch: 2,
+      pending: false,
+    ));
+    final held = (await carol.store.loadApprovalLeaves(
+      'conv_1',
+    ))
         .where((leaf) => leaf.verdict != LeafVerdict.approved)
         .toList();
     expect(held, hasLength(1));
     expect(held.single.verdict, LeafVerdict.unapproved);
-    await expectLater(carol.send('to everyone'),
-        throwsA(isA<ConversationApprovalHeldException>()));
-    await expectLater(carol.service.stageSelfUpdate('conv_1'),
-        throwsA(isA<ConversationApprovalHeldException>()));
+    await expectLater(
+      carol.send('to everyone'),
+      throwsA(isA<ConversationApprovalHeldException>()),
+    );
+    await expectLater(
+      carol.service.stageSelfUpdate('conv_1'),
+      throwsA(isA<ConversationApprovalHeldException>()),
+    );
 
     // The ghost's words never speak as acct_alice on Carol's device.
     final spoken = await ghost.send('i am alice');
     final event = carol.nextEvent();
     final envelope = carol.envelopeFrom(ghost, spoken);
     expect(
-        await carol.service.processApplicationMessage(envelope, event), isNull);
+      await carol.service.processApplicationMessage(envelope, event),
+      isNull,
+    );
     final row = (await carol.history()).single;
     expect(row.key, 'unapproved:$event:${envelope.id}');
     expect(row.kind, LocalMessageKind.invalid);
@@ -357,22 +420,26 @@ void main() {
     // Nor does it ring as acct_alice (review fix): its call signal is
     // dropped, the cursor moves on.
     final ring = await ghost.service.encryptCallSignal(
-        'conv_1', <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+      'conv_1',
+      <String, Object?>{'type': 'offer', 'sdp': 'v=0'},
+    );
     final ringEvent = carol.nextEvent();
     expect(
-        await carol.service.processCallSignal(
-            CallSession(
-              id: 'call_1',
-              conversationId: 'conv_1',
-              createdBy: 'acct_alice',
-              invitedAccountId: 'acct_carol',
-              state: 'ringing',
-              version: 1,
-              metadata: ring.metadata,
-              createdAt: DateTime.now().toUtc(),
-            ),
-            ringEvent),
-        isNull);
+      await carol.service.processCallSignal(
+        CallSession(
+          id: 'call_1',
+          conversationId: 'conv_1',
+          createdBy: 'acct_alice',
+          invitedAccountId: 'acct_carol',
+          state: 'ringing',
+          version: 1,
+          metadata: ring.metadata,
+          createdAt: DateTime.now().toUtc(),
+        ),
+        ringEvent,
+      ),
+      isNull,
+    );
     expect(await carol.store.loadSyncCursor(), ringEvent);
 
     // Alice's real device still speaks normally.
@@ -381,32 +448,39 @@ void main() {
     expect((await carol.history()).last.body, 'really me');
 
     // A removal commit is allowed while held, and releases the hold.
-    await alice.service.stageMembershipChange('conv_1', removes: [
-      (accountId: 'acct_alice', deviceId: 'dev_ghost'),
-    ]);
+    await alice.service.stageMembershipChange(
+      'conv_1',
+      removes: [(accountId: 'acct_alice', deviceId: 'dev_ghost')],
+    );
     await _accept(alice, const [], [carol]);
     expect(await carol.service.refreshApprovalHold('conv_1'), isFalse);
     await carol.send('safe again');
   }, skip: skip);
 
-  test('a Welcome into a group with an unapproved leaf joins and holds',
-      () async {
-    final alice = await client('acct_alice', 'dev_alice');
-    final bob = await client('acct_bob', 'dev_bob');
-    await alice.trust(bob);
-    // Bob's view does not approve dev_alice.
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
-    await _accept(alice, [bob], const []);
-    expect(await bob.service.groupEpoch('conv_1'), isNotNull);
-    expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
-    await expectLater(
-        bob.send('x'), throwsA(isA<ConversationApprovalHeldException>()));
-    // Once Bob's list approves it (a fresher pin), the hold lifts.
-    await bob.trust(alice);
-    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
-    await bob.send('now');
-  }, skip: skip);
+  test(
+    'a Welcome into a group with an unapproved leaf joins and holds',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final bob = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      // Bob's view does not approve dev_alice.
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+      ]);
+      await _accept(alice, [bob], const []);
+      expect(await bob.service.groupEpoch('conv_1'), isNotNull);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+      await expectLater(
+        bob.send('x'),
+        throwsA(isA<ConversationApprovalHeldException>()),
+      );
+      // Once Bob's list approves it (a fresher pin), the hold lifts.
+      await bob.trust(alice);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+      await bob.send('now');
+    },
+    skip: skip,
+  );
 
   test(
       'a Welcome leaf of a non-participant stays held: a later re-judge by '
@@ -418,17 +492,23 @@ void main() {
     await mallory.trust(bob);
     await bob.trust(mallory);
     bob.service.conversationAuthority = _Members({'acct_alice', 'acct_bob'});
-    await mallory.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await mallory.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _accept(mallory, [bob], const []);
-    final held = (await bob.store.loadApprovalLeaves('conv_1'))
+    final held = (await bob.store.loadApprovalLeaves(
+      'conv_1',
+    ))
         .where((leaf) => leaf.verdict != LeafVerdict.approved)
         .toList();
-    expect(held.map((leaf) => String.fromCharCodes(leaf.deviceId)),
-        ['dev_mallory']);
+    expect(held.map((leaf) => String.fromCharCodes(leaf.deviceId)), [
+      'dev_mallory',
+    ]);
     // The first send judges the held leaf again; it must stay held.
     await expectLater(
-        bob.send('x'), throwsA(isA<ConversationApprovalHeldException>()));
+      bob.send('x'),
+      throwsA(isA<ConversationApprovalHeldException>()),
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
   }, skip: skip);
 
@@ -438,16 +518,19 @@ void main() {
     final alice = await client('acct_alice', 'dev_alice');
     final bob = await client('acct_bob', 'dev_bob');
     await alice.trust(bob);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _accept(alice, [bob], const []);
     // Bob judged dev_alice before his view of her list had it.
     expect(
-        (await bob.store.loadApprovalLeaves('conv_1'))
-            .firstWhere(
-                (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice')
-            .verdict,
-        LeafVerdict.unapproved);
+      (await bob.store.loadApprovalLeaves('conv_1'))
+          .firstWhere(
+            (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice',
+          )
+          .verdict,
+      LeafVerdict.unapproved,
+    );
     await bob.trust(alice);
     await bob.receive(alice, await alice.send('hello'));
     expect((await bob.history()).single.body, 'hello');
@@ -459,16 +542,19 @@ void main() {
     await alice.trust(bob);
     await bob.trust(alice);
     bob.lists.unavailable.add('acct_alice');
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await alice.service.initializeConversation('conv_1', [
+      await bob.keyPackage(),
+    ]);
     await _accept(alice, [bob], const []);
     final leaves = await bob.store.loadApprovalLeaves('conv_1');
     expect(
-        leaves
-            .firstWhere(
-                (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice')
-            .verdict,
-        LeafVerdict.checking);
+      leaves
+          .firstWhere(
+            (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice',
+          )
+          .verdict,
+      LeafVerdict.checking,
+    );
     // A message from a leaf still being checked is hidden, never shown.
     final sent = await alice.send('early');
     final event = bob.nextEvent();
@@ -481,29 +567,43 @@ void main() {
     expect((await bob.history()).last.body, 'later');
   }, skip: skip);
 
-  test('a group from before L1 (no rows) is judged before it is used',
-      () async {
-    final alice = await client('acct_alice', 'dev_alice');
-    final bob = await client('acct_bob', 'dev_bob');
-    await alice.trust(bob);
-    await bob.trust(alice);
-    await alice.service
-        .initializeConversation('conv_1', [await bob.keyPackage()]);
-    await _accept(alice, [bob], const []);
-    // As if the rows were never written (an upgrade from schema 20).
-    await bob.store.saveApprovalLeaves(const ApprovalLeafChange(
-        conversationId: 'conv_1', leaves: [], replaceAll: true));
-    expect(await bob.store.loadApprovalLeaves('conv_1'), isEmpty);
-    bob.lists.remove('acct_alice', 'dev_alice');
-    await expectLater(
-        bob.send('x'), throwsA(isA<ConversationApprovalHeldException>()));
-    expect(await bob.store.loadApprovalLeaves('conv_1'), hasLength(2));
-  }, skip: skip);
+  test(
+    'a group from before L1 (no rows) is judged before it is used',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final bob = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      await bob.trust(alice);
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+      ]);
+      await _accept(alice, [bob], const []);
+      // As if the rows were never written (an upgrade from schema 20).
+      await bob.store.saveApprovalLeaves(
+        const ApprovalLeafChange(
+          conversationId: 'conv_1',
+          leaves: [],
+          replaceAll: true,
+        ),
+      );
+      expect(await bob.store.loadApprovalLeaves('conv_1'), isEmpty);
+      bob.lists.remove('acct_alice', 'dev_alice');
+      await expectLater(
+        bob.send('x'),
+        throwsA(isA<ConversationApprovalHeldException>()),
+      );
+      expect(await bob.store.loadApprovalLeaves('conv_1'), hasLength(2));
+    },
+    skip: skip,
+  );
 
   // L2-5 (D94): the own-device alert.
-  DeviceListPin pin(String accountId, int version,
-          {int listId = 0xab,
-          List<DeviceListKeyRow> keys = const <DeviceListKeyRow>[]}) =>
+  DeviceListPin pin(
+    String accountId,
+    int version, {
+    int listId = 0xab,
+    List<DeviceListKeyRow> keys = const <DeviceListKeyRow>[],
+  }) =>
       DeviceListPin(
         accountId: accountId,
         version: version,
@@ -516,8 +616,11 @@ void main() {
       );
 
   Future<MessageEnvelope> alert(_Client from, Map<String, Object?> body) async {
-    final envelope = await from.service
-        .encryptPayload('conv_1', AppPayloadType.deviceListAlert, body);
+    final envelope = await from.service.encryptPayload(
+      'conv_1',
+      AppPayloadType.deviceListAlert,
+      body,
+    );
     await from.store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;
   }
@@ -532,17 +635,22 @@ void main() {
     await bob.trust(alice);
     await bob.trust(ghost);
     await alice.trust(bob);
-    await bob.service.initializeConversation(
-        'conv_1', [await alice.keyPackage(), await ghost.keyPackage()]);
+    await bob.service.initializeConversation('conv_1', [
+      await alice.keyPackage(),
+      await ghost.keyPackage(),
+    ]);
     await _accept(bob, [alice, ghost], const []);
     expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
 
     // Alice's own list does not have dev_ghost: held, and an alert is owed.
     expect(await alice.service.refreshApprovalHold('conv_1'), isTrue);
     expect(
-        await alice.store
-            .saveDeviceListPin(pin('acct_alice', 3), expectedVersion: null),
-        isTrue);
+      await alice.store.saveDeviceListPin(
+        pin('acct_alice', 3),
+        expectedVersion: null,
+      ),
+      isTrue,
+    );
     final due = await alice.service.ownDeviceAlertsDue();
     expect(due, hasLength(1));
     expect(due.single.conversationId, 'conv_1');
@@ -552,7 +660,9 @@ void main() {
       'list_id': 'ab' * 32,
     });
     await expectLater(
-        alice.send('held'), throwsA(isA<ConversationApprovalHeldException>()));
+      alice.send('held'),
+      throwsA(isA<ConversationApprovalHeldException>()),
+    );
 
     // A forged alert (about another account) changes nothing at bob. Sent
     // first: once bob holds acct_alice's leaves, ghost's messages hide.
@@ -563,9 +673,11 @@ void main() {
     });
     await bob.receive(ghost, forged);
     expect(
-        await bob.store
-            .loadSetting(NativeCryptoService.alertHeadSetting('acct_bob')),
-        isNull);
+      await bob.store.loadSetting(
+        NativeCryptoService.alertHeadSetting('acct_bob'),
+      ),
+      isNull,
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
 
     // The alert itself goes out although the chat is held.
@@ -580,77 +692,101 @@ void main() {
     // acct_alice is "checking" and the chat is held, nothing shown.
     expect(await bob.receive(alice, sent), isNull);
     expect(
-        await bob.store
-            .loadSetting(NativeCryptoService.alertHeadSetting('acct_alice')),
-        '3:${'ab' * 32}:dev_alice');
+      await bob.store.loadSetting(
+        NativeCryptoService.alertHeadSetting('acct_alice'),
+      ),
+      '3:${'ab' * 32}:dev_alice',
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
     final leaves = await bob.store.loadApprovalLeaves('conv_1');
     for (final leaf in leaves) {
       final account = String.fromCharCodes(leaf.accountId);
-      expect(leaf.verdict,
-          account == 'acct_alice' ? LeafVerdict.checking : LeafVerdict.approved,
-          reason: String.fromCharCodes(leaf.deviceId));
+      expect(
+        leaf.verdict,
+        account == 'acct_alice' ? LeafVerdict.checking : LeafVerdict.approved,
+        reason: String.fromCharCodes(leaf.deviceId),
+      );
     }
     expect((await bob.history()).where((m) => m.body != null), isEmpty);
 
     // A pin at that head of another list (another genesis) that lists the
     // alerting device still holds.
     final aliceRow = DeviceListKeyRow(
-        deviceId: utf8.encode('dev_alice'),
-        signingKey: await alice.service.currentSigningKey(),
-        addedVersion: 1,
-        removedVersion: 0);
+      deviceId: utf8.encode('dev_alice'),
+      signingKey: await alice.service.currentSigningKey(),
+      addedVersion: 1,
+      removedVersion: 0,
+    );
     expect(
-        await bob.store.saveDeviceListPin(
-            pin('acct_alice', 3, listId: 0xcd, keys: [aliceRow]),
-            expectedVersion: null),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin('acct_alice', 3, listId: 0xcd, keys: [aliceRow]),
+        expectedVersion: null,
+      ),
+      isTrue,
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
 
     // Once bob's pin is the alerted list at that head, the list alone
     // decides again.
     expect(
-        await bob.store
-            .saveDeviceListPin(pin('acct_alice', 3), expectedVersion: 3),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin('acct_alice', 3),
+        expectedVersion: 3,
+      ),
+      isTrue,
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
 
     // A rogue device of acct_alice alerting a head never published holds
     // the account's leaves only until a pin shows that device removed.
     await bob.receive(
-        ghost,
-        await alert(ghost, <String, Object?>{
-          'account_id': 'acct_alice',
-          'head_version': 9,
-          'list_id': 'ab' * 32,
-        }));
+      ghost,
+      await alert(ghost, <String, Object?>{
+        'account_id': 'acct_alice',
+        'head_version': 9,
+        'list_id': 'ab' * 32,
+      }),
+    );
     expect(
-        await bob.store
-            .loadSetting(NativeCryptoService.alertHeadSetting('acct_alice')),
-        '9:${'ab' * 32}:dev_ghost');
+      await bob.store.loadSetting(
+        NativeCryptoService.alertHeadSetting('acct_alice'),
+      ),
+      '9:${'ab' * 32}:dev_ghost',
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
     expect(
-        await bob.store.saveDeviceListPin(
-            pin('acct_alice', 4, keys: [
-              DeviceListKeyRow(
-                  deviceId: utf8.encode('dev_ghost'),
-                  signingKey: List<int>.filled(32, 7),
-                  addedVersion: 1,
-                  removedVersion: 4),
-            ]),
-            expectedVersion: 3),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin(
+          'acct_alice',
+          4,
+          keys: [
+            DeviceListKeyRow(
+              deviceId: utf8.encode('dev_ghost'),
+              signingKey: List<int>.filled(32, 7),
+              addedVersion: 1,
+              removedVersion: 4,
+            ),
+          ],
+        ),
+        expectedVersion: 3,
+      ),
+      isTrue,
+    );
     expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
 
     // A new own head makes the alert due again.
     expect(
-        await alice.store
-            .saveDeviceListPin(pin('acct_alice', 4), expectedVersion: 3),
-        isTrue);
+      await alice.store.saveDeviceListPin(
+        pin('acct_alice', 4),
+        expectedVersion: 3,
+      ),
+      isTrue,
+    );
     expect(await alice.service.refreshApprovalHold('conv_1'), isTrue);
     expect(
-        (await alice.service.ownDeviceAlertsDue()).single.body['head_version'],
-        4);
+      (await alice.service.ownDeviceAlertsDue()).single.body['head_version'],
+      4,
+    );
   }, skip: skip);
 
   // Review M3: an alert counts only from an approved leaf, is kept per
@@ -675,19 +811,25 @@ void main() {
     ]);
     await _accept(bob, [alice, ghost, rogue], const []);
     expect(
-        await bob.store
-            .saveDeviceListPin(pin('acct_alice', 3), expectedVersion: null),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin('acct_alice', 3),
+        expectedVersion: null,
+      ),
+      isTrue,
+    );
     Future<LeafVerdict> verdictOf(String device) async {
       await bob.service.refreshApprovalHold('conv_1');
-      return (await bob.store.loadApprovalLeaves('conv_1'))
+      return (await bob.store.loadApprovalLeaves(
+        'conv_1',
+      ))
           .where((leaf) => utf8.decode(leaf.deviceId) == device)
           .single
           .verdict;
     }
 
-    Future<String?> alerts() => bob.store
-        .loadSetting(NativeCryptoService.alertHeadSetting('acct_alice'));
+    Future<String?> alerts() => bob.store.loadSetting(
+          NativeCryptoService.alertHeadSetting('acct_alice'),
+        );
     final inflated = <String, Object?>{
       'account_id': 'acct_alice',
       'head_version': 1 << 53,
@@ -709,71 +851,95 @@ void main() {
 
     // The account removes the rogue device (list head 4): the hold lifts.
     final aliceListed = DeviceListKeyRow(
-        deviceId: utf8.encode('dev_alice'),
-        signingKey: await alice.service.currentSigningKey(),
-        addedVersion: 1,
-        removedVersion: 0);
+      deviceId: utf8.encode('dev_alice'),
+      signingKey: await alice.service.currentSigningKey(),
+      addedVersion: 1,
+      removedVersion: 0,
+    );
     final rogueRemoved = DeviceListKeyRow(
-        deviceId: utf8.encode('dev_rogue'),
-        signingKey: await rogue.service.currentSigningKey(),
-        addedVersion: 1,
-        removedVersion: 4);
+      deviceId: utf8.encode('dev_rogue'),
+      signingKey: await rogue.service.currentSigningKey(),
+      addedVersion: 1,
+      removedVersion: 4,
+    );
     expect(
-        await bob.store.saveDeviceListPin(
-            pin('acct_alice', 4, keys: [aliceListed, rogueRemoved]),
-            expectedVersion: 3),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin('acct_alice', 4, keys: [aliceListed, rogueRemoved]),
+        expectedVersion: 3,
+      ),
+      isTrue,
+    );
     expect(await verdictOf('dev_alice'), LeafVerdict.approved);
 
     // The honest device's later alert at a head far below the rogue's is
     // kept and holds (before review M3 the rogue's head dropped it).
     await bob.receive(
-        alice,
-        await alert(alice, <String, Object?>{
-          'account_id': 'acct_alice',
-          'head_version': 5,
-          'list_id': 'ab' * 32,
-        }));
+      alice,
+      await alert(alice, <String, Object?>{
+        'account_id': 'acct_alice',
+        'head_version': 5,
+        'list_id': 'ab' * 32,
+      }),
+    );
     expect(await alerts(), '5:${'ab' * 32}:dev_alice');
     expect(await verdictOf('dev_alice'), LeafVerdict.checking);
 
     // The account's list restarts from another genesis that does not list
     // the alerting device: the old alert names nothing in it and releases.
     expect(
-        await bob.store.saveDeviceListPin(pin('acct_alice', 6, listId: 0xef),
-            expectedVersion: 4),
-        isTrue);
+      await bob.store.saveDeviceListPin(
+        pin('acct_alice', 6, listId: 0xef),
+        expectedVersion: 4,
+      ),
+      isTrue,
+    );
     expect(await verdictOf('dev_alice'), LeafVerdict.approved);
   }, skip: skip);
 
   // Review L7: the C6 channel roster and the C3 no-admin roster count only
   // accounts with a leaf their list approves; an unapproved leaf can carry
   // any account's id.
-  test('MLS account rosters leave out accounts with no approved leaf',
-      () async {
-    final alice = await client('acct_alice', 'dev_alice');
-    final carol = await client('acct_carol', 'dev_carol');
-    // A leaf named acct_mallory that carol's view of that list never
-    // approved (alice's view did).
-    final mallory = await client('acct_mallory', 'dev_mallory');
-    await alice.trust(carol);
-    await alice.trust(mallory);
-    await carol.trust(alice);
-    await alice.service.initializeConversation(
-        'conv_1', [await carol.keyPackage(), await mallory.keyPackage()]);
-    await _accept(alice, [carol, mallory], const []);
-    expect(await carol.service.refreshApprovalHold('conv_1'), isTrue);
-    expect(carol.service.mlsAccountsOf('conv_1'), {'acct_alice', 'acct_carol'});
-    expect(carol.service.groupMemberAccounts('conv_1'),
-        {'acct_alice', 'acct_carol'});
-    expect(alice.service.mlsAccountsOf('conv_1'),
-        {'acct_alice', 'acct_carol', 'acct_mallory'});
-    // Once carol's list approves the leaf, the account counts.
-    await carol.trust(mallory);
-    expect(await carol.service.refreshApprovalHold('conv_1'), isFalse);
-    expect(carol.service.mlsAccountsOf('conv_1'),
-        {'acct_alice', 'acct_carol', 'acct_mallory'});
-  }, skip: skip);
+  test(
+    'MLS account rosters leave out accounts with no approved leaf',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final carol = await client('acct_carol', 'dev_carol');
+      // A leaf named acct_mallory that carol's view of that list never
+      // approved (alice's view did).
+      final mallory = await client('acct_mallory', 'dev_mallory');
+      await alice.trust(carol);
+      await alice.trust(mallory);
+      await carol.trust(alice);
+      await alice.service.initializeConversation('conv_1', [
+        await carol.keyPackage(),
+        await mallory.keyPackage(),
+      ]);
+      await _accept(alice, [carol, mallory], const []);
+      expect(await carol.service.refreshApprovalHold('conv_1'), isTrue);
+      expect(carol.service.mlsAccountsOf('conv_1'), {
+        'acct_alice',
+        'acct_carol',
+      });
+      expect(carol.service.groupMemberAccounts('conv_1'), {
+        'acct_alice',
+        'acct_carol',
+      });
+      expect(alice.service.mlsAccountsOf('conv_1'), {
+        'acct_alice',
+        'acct_carol',
+        'acct_mallory',
+      });
+      // Once carol's list approves the leaf, the account counts.
+      await carol.trust(mallory);
+      expect(await carol.service.refreshApprovalHold('conv_1'), isFalse);
+      expect(carol.service.mlsAccountsOf('conv_1'), {
+        'acct_alice',
+        'acct_carol',
+        'acct_mallory',
+      });
+    },
+    skip: skip,
+  );
 }
 
 int _serverIds = 0;
@@ -820,29 +986,39 @@ class _Client {
   int _events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    NativeCryptoBindings bindings,
+    String accountId,
+    String deviceId,
+  ) async {
     final local = MemoryLocalStore();
     final service = NativeCryptoService(bindings: bindings, localStore: local);
     final lists = TestDeviceLists();
     service.deviceListPins = lists;
-    await service.createEnrollmentCredential(EnrollmentReservation(
-      id: 'res_$deviceId',
-      accountId: accountId,
-      deviceId: deviceId,
-      challenge: const <int>[1, 2, 3],
-    ));
-    await service.activateSession(Session(
-      baseUrl: 'https://localhost:8443',
-      token: 'token',
-      accountId: accountId,
-      deviceId: deviceId,
-    ));
+    await service.createEnrollmentCredential(
+      EnrollmentReservation(
+        id: 'res_$deviceId',
+        accountId: accountId,
+        deviceId: deviceId,
+        challenge: const <int>[1, 2, 3],
+      ),
+    );
+    await service.activateSession(
+      Session(
+        baseUrl: 'https://localhost:8443',
+        token: 'token',
+        accountId: accountId,
+        deviceId: deviceId,
+      ),
+    );
     return _Client(service, local, accountId, deviceId, lists);
   }
 
   /// This device's view of [other]'s account list now approves [other].
   Future<void> trust(_Client other) async => lists.approve(
-      other.accountId, other.deviceId, await other.service.currentSigningKey());
+        other.accountId,
+        other.deviceId,
+        await other.service.currentSigningKey(),
+      );
 
   int nextEvent() => ++_events;
 
@@ -860,7 +1036,10 @@ class _Client {
 
   Future<MessageEnvelope> send(String text) async {
     final envelope = await service.encryptPayload(
-        'conv_1', AppPayloadType.text, <String, Object?>{'text': text});
+      'conv_1',
+      AppPayloadType.text,
+      <String, Object?>{'text': text},
+    );
     await store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;
   }
@@ -883,35 +1062,42 @@ class _Client {
 }
 
 Future<void> _accept(
-    _Client from, List<_Client> joiners, List<_Client> members) async {
+  _Client from,
+  List<_Client> joiners,
+  List<_Client> members,
+) async {
   final item = (await from.store.pendingMlsMessages()).single;
   final bundle = MlsCommitBundle.decode(item.payload);
   await from.service.completeCommitBundle(item);
   for (final member in members) {
-    await member.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: 'conv_1',
-      senderAccountId: from.accountId,
-      senderDeviceId: from.deviceId,
-      kind: 'commit',
-      payload: bundle.commit,
-      idempotencyKey: item.idempotencyKey,
-      syncEventId: member.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-    ));
+    await member.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_${++_serverIds}',
+        conversationId: 'conv_1',
+        senderAccountId: from.accountId,
+        senderDeviceId: from.deviceId,
+        kind: 'commit',
+        payload: bundle.commit,
+        idempotencyKey: item.idempotencyKey,
+        syncEventId: member.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
   }
   for (final joiner in joiners) {
-    await joiner.service.processMlsMessage(MlsMessage(
-      id: 'mls_${++_serverIds}',
-      conversationId: 'conv_1',
-      senderAccountId: from.accountId,
-      senderDeviceId: from.deviceId,
-      kind: 'welcome',
-      payload: bundle.welcome,
-      idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.deviceId}',
-      syncEventId: joiner.nextEvent(),
-      createdAt: DateTime.now().toUtc(),
-      recipientDeviceId: joiner.deviceId,
-    ));
+    await joiner.service.processMlsMessage(
+      MlsMessage(
+        id: 'mls_${++_serverIds}',
+        conversationId: 'conv_1',
+        senderAccountId: from.accountId,
+        senderDeviceId: from.deviceId,
+        kind: 'welcome',
+        payload: bundle.welcome,
+        idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.deviceId}',
+        syncEventId: joiner.nextEvent(),
+        createdAt: DateTime.now().toUtc(),
+        recipientDeviceId: joiner.deviceId,
+      ),
+    );
   }
 }

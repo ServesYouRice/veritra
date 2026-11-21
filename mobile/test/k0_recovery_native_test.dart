@@ -27,8 +27,8 @@ void main() {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     // A missing vector fails the test; it never skips.
     final vector = jsonDecode(
-            File('../testing/vectors/k0-recovery-v1.json').readAsStringSync())
-        as Map<String, dynamic>;
+      File('../testing/vectors/k0-recovery-v1.json').readAsStringSync(),
+    ) as Map<String, dynamic>;
     key = vector['recovery_key'] as Map<String, dynamic>;
     proof = vector['proof'] as Map<String, dynamic>;
   });
@@ -59,56 +59,67 @@ void main() {
     expect(otherOrigin, isNot(signature));
   }, skip: nativeCryptoSkip());
 
-  test('typed variants decode; typos and bad input fail closed', () {
-    final display = key['display'] as String;
-    final entropy = hex(key['entropy_hex']);
-    final grouped = [
-      for (var i = 0; i < display.length; i += 4) display.substring(i, i + 4),
-    ].join('-');
-    expect(bindings.decodeRecoveryKey(grouped.toLowerCase()), entropy);
-    expect(bindings.decodeRecoveryKey(grouped.replaceAll('-', ' ')), entropy);
+  test(
+    'typed variants decode; typos and bad input fail closed',
+    () {
+      final display = key['display'] as String;
+      final entropy = hex(key['entropy_hex']);
+      final grouped = [
+        for (var i = 0; i < display.length; i += 4) display.substring(i, i + 4),
+      ].join('-');
+      expect(bindings.decodeRecoveryKey(grouped.toLowerCase()), entropy);
+      expect(bindings.decodeRecoveryKey(grouped.replaceAll('-', ' ')), entropy);
 
-    Matcher failsWith(NativeCryptoError kind) => throwsA(
-        isA<NativeCryptoException>().having((e) => e.kind, 'kind', kind));
-    final typo = display.replaceRange(10, 11, display[10] == 'A' ? 'B' : 'A');
-    for (final text in [
-      '',
-      typo,
-      display.substring(1),
-      '${display}0',
-      display.replaceFirst('W', 'U'),
-      'é' * 52,
-      '-' * 300,
-    ]) {
-      expect(() => bindings.decodeRecoveryKey(text),
+      Matcher failsWith(NativeCryptoError kind) => throwsA(
+            isA<NativeCryptoException>().having((e) => e.kind, 'kind', kind),
+          );
+      final typo = display.replaceRange(10, 11, display[10] == 'A' ? 'B' : 'A');
+      for (final text in [
+        '',
+        typo,
+        display.substring(1),
+        '${display}0',
+        display.replaceFirst('W', 'U'),
+        'é' * 52,
+        '-' * 300,
+      ]) {
+        expect(
+          () => bindings.decodeRecoveryKey(text),
           failsWith(NativeCryptoError.invalidArgument),
-          reason: 'text of length ${text.length}');
-    }
-    expect(
-        () => bindings.encodeRecoveryKey(Uint8List(29)), throwsArgumentError);
-    expect(
-        () => bindings.deriveRecoveryKey(Uint8List(31)), throwsArgumentError);
-    expect(
-      () => bindings.signRecoveryProof(
-        entropy: entropy,
-        challenge: hex(proof['challenge_hex']),
-        signingKey: hex(proof['signing_key_hex']),
-        keyPackage: hex(proof['key_package_hex']),
-        origin: 'https://chat.example.com\n',
-      ),
-      failsWith(NativeCryptoError.invalidArgument),
-    );
-    expect(
-      () => bindings.signRecoveryProof(
-        entropy: entropy,
-        challenge: hex(proof['challenge_hex']),
-        signingKey: Uint8List(31),
-        keyPackage: hex(proof['key_package_hex']),
-        origin: proof['origin'] as String,
-      ),
-      throwsArgumentError,
-    );
-  }, skip: nativeCryptoSkip());
+          reason: 'text of length ${text.length}',
+        );
+      }
+      expect(
+        () => bindings.encodeRecoveryKey(Uint8List(29)),
+        throwsArgumentError,
+      );
+      expect(
+        () => bindings.deriveRecoveryKey(Uint8List(31)),
+        throwsArgumentError,
+      );
+      expect(
+        () => bindings.signRecoveryProof(
+          entropy: entropy,
+          challenge: hex(proof['challenge_hex']),
+          signingKey: hex(proof['signing_key_hex']),
+          keyPackage: hex(proof['key_package_hex']),
+          origin: 'https://chat.example.com\n',
+        ),
+        failsWith(NativeCryptoError.invalidArgument),
+      );
+      expect(
+        () => bindings.signRecoveryProof(
+          entropy: entropy,
+          challenge: hex(proof['challenge_hex']),
+          signingKey: Uint8List(31),
+          keyPackage: hex(proof['key_package_hex']),
+          origin: proof['origin'] as String,
+        ),
+        throwsArgumentError,
+      );
+    },
+    skip: nativeCryptoSkip(),
+  );
 
   test('generated keys round-trip and differ', () {
     final first = bindings.generateRecoveryKey();
@@ -119,8 +130,10 @@ void main() {
     expect(display, hasLength(NativeCryptoBindings.recoveryKeyDisplayChars));
     expect(display, matches(RegExp(r'^[0-9A-HJKMNP-TV-Z]{52}$')));
     expect(bindings.decodeRecoveryKey(display), first);
-    expect(bindings.deriveRecoveryKey(first).rkAuthPub,
-        isNot(bindings.deriveRecoveryKey(second).rkAuthPub));
+    expect(
+      bindings.deriveRecoveryKey(first).rkAuthPub,
+      isNot(bindings.deriveRecoveryKey(second).rkAuthPub),
+    );
     first.fillRange(0, first.length, 0);
     second.fillRange(0, second.length, 0);
   }, skip: nativeCryptoSkip());

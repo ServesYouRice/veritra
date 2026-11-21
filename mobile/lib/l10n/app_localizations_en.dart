@@ -271,11 +271,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTurnOn => 'Turn on';
 
   @override
-  String get settingsPushProvider => 'Push provider';
+  String get settingsPushProvider => 'Delivery service';
 
   @override
   String get settingsPushProviderDetail =>
-      'Choose an Android UnifiedPush provider';
+      'Choose an Android UnifiedPush delivery service';
 
   @override
   String get settingsTestPush => 'Send a test notification';
@@ -319,24 +319,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCallsComingSoonDetail => '1:1 audio/video';
 
   @override
-  String get settingsCallsRelayTitle => 'Calls';
+  String get settingsDirectCallsTitle => 'Direct calls';
 
   @override
-  String get settingsCallsRelayNote =>
-      'Calls go through the server\'s relay, so the other side never sees your network address.';
+  String get settingsDirectCallsNote =>
+      'Faster; the other person sees your IP.';
 
   @override
   String get settingsDeleteAccount => 'Delete account';
 
   @override
   String get settingsDeleteAccountDetail =>
-      'Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.';
+      'Permanently deletes your account, its devices and its keys on the server. Messages you already sent stay in other people\'s chats, encrypted.';
 
   @override
   String get settingsSignedIn => 'Signed in';
 
   @override
-  String get settingsRevokeDeviceTitle => 'Revoke device?';
+  String get settingsRevokeDeviceTitle => 'Sign out device?';
 
   @override
   String settingsRevokeDeviceMessage(String deviceName) {
@@ -373,10 +373,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDeleteAccountMessage =>
-      'This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.';
+      'This permanently deletes your account. You lose:\n• your sign-in, passkeys, username and profile\n• every device signed in to it\n• your memberships, uploaded files, backups and recovery key on the server\n\nMessages you already sent stay in other people\'s chats, encrypted, and some encrypted records may stay under the server\'s retention rules. This cannot be undone.';
 
   @override
-  String get settingsDeleteAccountConfirm => 'Disable account';
+  String get settingsDeleteAccountConfirm => 'Delete account';
 
   @override
   String get settingsReauthTitle => 'Confirm your password';
@@ -423,7 +423,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPushServerDisabledTitle =>
-      'This server has no push provider';
+      'This server has no notification delivery service';
 
   @override
   String get settingsPushServerDisabledDetail =>
@@ -490,7 +490,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsDeviceRevoked => 'Revoked';
+  String get settingsDeviceRevoked => 'Signed out';
 
   @override
   String get settingsDeviceCurrent => 'This device';
@@ -506,15 +506,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get backupReplaceConfirm => 'Replace backup';
 
   @override
-  String get inviteRevokeTitle => 'Revoke invite?';
+  String get inviteRevokeTitle => 'Turn off this invite?';
 
   @override
-  String inviteRevokeMessage(String code) {
-    return 'Code $code stops working immediately. People who already joined with it keep their accounts.';
-  }
+  String get inviteRevokeMessage =>
+      'It stops working immediately. People who already joined with it keep their accounts.';
 
   @override
-  String get connectFreshInstanceTitle => 'Fresh instance detected';
+  String get inviteTurnOff => 'Turn off';
+
+  @override
+  String get inviteCannotReshare => 'Can\'t be shared again';
+
+  @override
+  String get connectFreshInstanceTitle => 'This server is new';
 
   @override
   String get connectFreshInstanceMessage =>
@@ -524,7 +529,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectFreshInstanceAction => 'Set up this server';
 
   @override
-  String get connectInstanceUrl => 'Instance URL';
+  String get connectInstanceUrl => 'Server address';
 
   @override
   String get connectCheckApproval => 'Check now';
@@ -565,7 +570,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInviteCodeRequired => 'Enter the invite code you received.';
 
   @override
-  String get connectInviteCodeHint => 'From an admin on this instance';
+  String get connectInviteCodeHint => 'From an admin of this server';
 
   @override
   String get connectInviteLink => 'Invite link';
@@ -612,7 +617,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectUsernameRequired => 'Enter a username.';
 
   @override
-  String get connectUsernameHint => 'Your name on this instance';
+  String get connectUsernameHint => 'Your name on this server';
 
   @override
   String get connectUsernameInvalid => 'Use 3 to 32 letters, digits, _ or -.';
@@ -636,13 +641,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectConfirmPasswordHint => 'Repeat your password';
 
   @override
-  String get connectSetupToken => 'Setup token';
+  String get connectSetupToken => 'Setup code';
 
   @override
   String get connectSetupTokenHint => 'Required unless connecting on loopback';
 
   @override
-  String get connectUrlRequired => 'Enter the instance URL.';
+  String get connectUrlRequired => 'Enter the server address.';
 
   @override
   String get connectUrlInvalid =>
@@ -650,11 +655,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectUrlOriginOnly =>
-      'Enter only the server origin, e.g. https://chat.example.org';
+      'Enter only the server address, with no path, e.g. https://chat.example.org';
 
   @override
   String get connectUrlHttpsRequired =>
-      'Veritra requires HTTPS. Use an https:// server origin.';
+      'Veritra requires HTTPS. Use an https:// server address.';
 
   @override
   String get connectUrlLoopbackOnly =>
@@ -677,7 +682,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectModeOwnerDetail =>
-      'First run only: create the owner account on a fresh self-hosted instance.';
+      'First run only: create the owner account on a new self-hosted server.';
 
   @override
   String get connectModeSignInDetail =>
@@ -696,18 +701,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectOriginFilled =>
-      'Server origin filled. Verify it before continuing.';
+      'Server address filled. Check it before continuing.';
 
   @override
   String get connectConfirmServerTitle => 'Confirm server';
 
   @override
   String connectConfirmServerMessage(String origin) {
-    return 'This QR code suggests $origin. The app will still probe the server before using it. Continue with this HTTPS origin?';
+    return 'This QR code suggests $origin. The app will still check the server before using it. Continue with this HTTPS address?';
   }
 
   @override
-  String get connectUseOrigin => 'Use origin';
+  String get connectUseOrigin => 'Connect';
 
   @override
   String get connectSubmitOwner => 'Create owner';
@@ -719,7 +724,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectSubmitJoin => 'Join with invite';
 
   @override
-  String get connectSubmitLink => 'Claim link';
+  String get connectSubmitLink => 'Add this phone';
 
   @override
   String get connectTagline => 'Self-hosted, end-to-end encrypted messaging';
@@ -873,27 +878,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'No account found with that exact username.';
 
   @override
-  String get searchHint => 'Search people, communities, channels…';
+  String get searchHint => 'Search communities, channels or @username…';
 
   @override
   String get searchClear => 'Clear search';
 
   @override
-  String get searchLookUpAccount => 'Look up this username';
+  String get searchLookUpAccount => 'Look up an @username';
 
   @override
   String get searchIntroTitle => 'Search people and communities';
 
   @override
   String get searchIntroMessage =>
-      'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.';
+      'Communities and channels are found on this device as you type. To find a person, type @ and their exact username, then press Enter: only that is sent to the server. Message contents are end-to-end encrypted and never searchable on the server.';
 
   @override
   String get searchNoResultsTitle => 'No results';
 
   @override
   String get searchNoResultsMessage =>
-      'Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.';
+      'Nothing matched. To find a person, type @ and their exact username. Only communities and channels whose names this device holds can be found.';
 
   @override
   String get searchNoOpenChannel => 'No channel you can open yet';
@@ -1044,6 +1049,14 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String inviteExpiresIn(String time) {
+    return 'Expires in $time';
+  }
+
+  @override
+  String get inviteExpired => 'Expired';
+
+  @override
   String get inviteActions => 'Invite actions';
 
   @override
@@ -1069,7 +1082,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'On the new phone, open Veritra, tap “I have an invite” and scan this code.';
 
   @override
-  String get profileThisInstance => 'this instance';
+  String get profileThisInstance => 'this server';
 
   @override
   String get profileTitle => 'Profile';
@@ -1155,7 +1168,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileCurrentDevice => 'Current device';
 
   @override
-  String get profileInstanceRole => 'Instance role';
+  String get profileInstanceRole => 'Server role';
 
   @override
   String get profileSectionEncryption => 'Encryption';
@@ -1572,6 +1585,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get bannerPaused => 'Messages paused';
+
+  @override
+  String noticesMore(int count) {
+    return '$count more';
+  }
+
+  @override
+  String get noticesShowFewer => 'Show fewer';
 
   @override
   String get bannerTryAgain => 'Try again';
@@ -2334,6 +2355,88 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String chatHoldChecking(String name) {
+    return 'Checking $name\'s devices. Sending in this chat is paused until they\'re checked.';
+  }
+
+  @override
+  String chatHoldWaiting(String name) {
+    return 'Waiting for $name to open the app and approve their devices. Sending in this chat is paused.';
+  }
+
+  @override
+  String chatHoldRemoved(String name) {
+    return 'A device $name removed is still in this chat. Sending is paused until it leaves.';
+  }
+
+  @override
+  String get chatHoldOwnRemoved =>
+      'A device you removed is still in this chat. Sending is paused until it leaves.';
+
+  @override
+  String chatHoldUnapproved(String name) {
+    return 'A device that isn\'t on $name\'s approved list is in this chat. Sending is paused until it\'s approved or leaves.';
+  }
+
+  @override
+  String get chatHoldOwnUnapproved =>
+      'A device you didn\'t approve was added to this chat. Sending is paused. Check your devices in Settings.';
+
+  @override
+  String chatHoldConflict(String name) {
+    return '$name\'s device list changed in a way that can\'t be verified. Sending in this chat is paused.';
+  }
+
+  @override
+  String get chatHoldOwnConflict =>
+      'Your device list changed in a way that can\'t be verified. Sending in this chat is paused.';
+
+  @override
+  String get chatHoldCheckAgain => 'Check again';
+
+  @override
+  String get chatHoldCompare => 'Compare safety numbers';
+
+  @override
+  String get chatHoldTrust => 'Trust current list';
+
+  @override
+  String chatHoldTrustTitle(String name) {
+    return 'Trust $name\'s current device list?';
+  }
+
+  @override
+  String chatHoldTrustBody(String name) {
+    return 'One of $name\'s devices, or their recovery key, signed two different versions of their device list. Ask $name to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after $name confirms the devices in this chat are theirs.';
+  }
+
+  @override
+  String chatHoldTrustNewDevices(String name, int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'Devices that weren\'t on $name\'s list before it changed: $countString. Trusting the list approves them, and they can be added to your chats.';
+  }
+
+  @override
+  String chatHoldTrustRecoveryKey(String name) {
+    return 'This version also changes $name\'s recovery key. Whoever holds that key can replace all of $name\'s devices.';
+  }
+
+  @override
+  String get chatHoldTrustConfirm => 'Trust list';
+
+  @override
+  String get chatHoldTrustRefused =>
+      'The list the server shows now isn\'t one of the two signed versions, so nothing changed. Try again later.';
+
+  @override
+  String chatHoldTrusted(String name) {
+    return '$name\'s current device list is trusted now.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Couldn\'t join this chat. Ask a member to add you again.';
 
@@ -2408,7 +2511,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatPausedNotice =>
-      'Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.';
+      'Sending is paused here: an encryption update for this conversation could not be sent. Try it again, or discard it. Other conversations still work.';
+
+  @override
+  String get chatPausedDiscard => 'Discard update';
+
+  @override
+  String get chatPausedNoticeRetryOnly =>
+      'Sending is paused here: an encryption update for this conversation could not be sent. Try it again. Other conversations still work.';
+
+  @override
+  String get chatPausedDiscardRefused =>
+      'This encryption update cannot be discarded. Try it again, or leave the conversation.';
+
+  @override
+  String get chatPausedRoleChangeNotMade =>
+      'The update was discarded, so the role change was not made. Make it again if you still want it.';
 
   @override
   String get chatSyncPausedNotice =>
@@ -2646,7 +2764,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get apiErrorSetupToken =>
-      'The setup token is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).';
+      'The setup code is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).';
 
   @override
   String get apiErrorDraining => 'The server is restarting. Try again shortly.';
@@ -2760,7 +2878,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errorUnreachable =>
-      'Could not reach the server. Check the instance URL and your connection.';
+      'Could not reach the server. Check the server address and your connection.';
 
   @override
   String get probeChecking => 'Checking the server…';
@@ -2775,7 +2893,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get probeInvalidOrigin =>
-      'Enter an HTTPS server origin, for example https://chat.example.org.';
+      'Enter an HTTPS server address, for example https://chat.example.org.';
 
   @override
   String get probeInsecure =>
@@ -2862,7 +2980,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errorPasswordLoginNeedsLink =>
-      'Password login requires this device to be linked first.';
+      'New phone? Add it using a device you already use.';
 
   @override
   String get attachmentSendFailedState => 'The attachment could not be sent.';
@@ -2871,16 +2989,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get errorRelinkRequired => 'This device must be linked again.';
 
   @override
+  String get recoveryKeyStepMovedBack =>
+      'You went back to the restore step, so this recovery key was not saved. Finish or skip the restore, then set a key.';
+
+  @override
   String get pushTestSent =>
       'Test sent. A notification should arrive within a minute.';
 
   @override
   String get pushTestGone =>
-      'The push provider no longer accepts this device. Registering again.';
+      'The delivery service no longer accepts this device. Registering again.';
 
   @override
   String get pushTestRejected =>
-      'The push provider did not accept the test. Try again later.';
+      'The delivery service did not accept the test. Try again later.';
 
   @override
   String get pushTestRateLimited =>
@@ -2895,7 +3017,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String errorServerNotAllowed(String url) {
-    return 'This build does not allow the server address $url. Use an https:// server origin.';
+    return 'This build does not allow the server address $url. Use an https:// server address.';
   }
 
   @override
@@ -3214,7 +3336,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String w8PinDays(int days) {
-    return 'Pin for $days days';
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'Pin for $days days',
+      one: 'Pin for 1 day',
+    );
+    return '$_temp0';
   }
 
   @override
@@ -3227,22 +3355,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get w8ForwardedMany => 'Forwarded many times';
 
   @override
-  String get w8Star => 'Star on this device';
+  String get w8Star => 'Star';
 
   @override
   String get w8Unstar => 'Remove star';
 
   @override
-  String get w8DeleteForMe => 'Delete for me on this device';
+  String get w8DeleteForMe => 'Delete for me';
 
   @override
-  String get w8Archive => 'Archive on this device';
+  String get w8DeletedForMe => 'Deleted on this device';
+
+  @override
+  String get w8DeleteForMeUndoFailed =>
+      'This message could not be brought back.';
+
+  @override
+  String get w8Archive => 'Archive';
 
   @override
   String get w8Unarchive => 'Unarchive';
 
   @override
-  String get w8PinChat => 'Pin chat on this device';
+  String get w8PinChat => 'Pin chat';
 
   @override
   String get w8UnpinChat => 'Unpin chat';
@@ -3261,7 +3396,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notify when a member mentions you, even in a muted chat.';
 
   @override
-  String get chatPreviewsSetting => 'Last message on chats';
+  String get chatPreviewsSetting => 'Show last message';
 
   @override
   String get chatPreviewsSettingDetail => 'Read from this device only.';
@@ -3277,7 +3412,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get b2LinkPreviewsOff => 'Off';
 
   @override
-  String get b2LinkPreviewsKnown => 'Known sites only';
+  String get b2LinkPreviewsKnown => 'Known sites';
 
   @override
   String get b2LinkPreviewsAll => 'All sites';
@@ -3286,7 +3421,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get w8HiddenSpoiler => 'Message containing a hidden spoiler';
 
   @override
-  String get w8StarredMessages => 'Starred messages on this device';
+  String get w8StarredMessages => 'Starred messages';
+
+  @override
+  String get w8MessageActionsLocalNote =>
+      'Star and Delete for me apply to this device only.';
+
+  @override
+  String get w8ChatActionsLocalNote =>
+      'Archive and Pin chat apply to this device only.';
 
   @override
   String get k2CopiedHistory => 'Copied history · device snapshot';
@@ -3393,6 +3536,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String recoveryKeyGroupsMatched(int count) {
     return '$count of 13 groups match.';
   }
+
+  @override
+  String get recoveryKeyCheck => 'Check my key';
+
+  @override
+  String get recoveryKeyCheckOk => 'This is your key. Nothing was saved yet.';
+
+  @override
+  String get recoveryKeyCheckSavedTitle => 'Check a saved key';
+
+  @override
+  String get recoveryKeyCheckSavedDetail =>
+      'Type the recovery key you saved, from your paper or password manager. It is checked on this device and is never sent. Dashes and spaces do not matter.';
+
+  @override
+  String get recoveryKeyCheckSavedCurrent =>
+      'This is your account\'s current recovery key. Keep it safe, with your server address.';
+
+  @override
+  String get recoveryKeyCheckSavedNotCurrent =>
+      'This is a recovery key, but not this account\'s current one. It may be an older key that was replaced, or the key of another account. If you cannot find the current one, create a new key.';
+
+  @override
+  String get recoveryKeyCheckSavedUnknown =>
+      'The key could not be checked right now. Try again later.';
 
   @override
   String get recoveryKeyTooLong =>
@@ -3536,6 +3704,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String recoveryPendingNotice(String device, String date) {
     return 'Someone is recovering your account on “$device”, finishing $date. Not you? Cancel, or change your password or recovery key.';
   }
+
+  @override
+  String get recoveryPendingTitle => 'Account recovery attempt';
+
+  @override
+  String get recoveryPendingNotMe => 'This is not me';
 
   @override
   String get recoveryPendingCancel => 'Cancel recovery';
@@ -3702,6 +3876,51 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get joinReqNone => 'No one is waiting.';
+
+  @override
+  String get settingsInvitesSection => 'Community invitations';
+
+  @override
+  String get settingsInvitesSharedOnlyTitle =>
+      'Only accept community invites from people I share a group with';
+
+  @override
+  String get settingsInvitesSharedOnlyNote =>
+      'Invites from anyone else are refused.';
+
+  @override
+  String get joinInviteFromStranger =>
+      'You only accept community invites from people you share a group with. To join, turn this off in Settings › Privacy and safety › Blocked accounts.';
+
+  @override
+  String get joinRequestNoticeText => 'New join request';
+
+  @override
+  String get joinRequestNoticeDismiss => 'Dismiss';
+
+  @override
+  String get joinReqPausedNote =>
+      'Invitations are paused. You can decline requests now and approve them once the pause ends.';
+
+  @override
+  String get moderationSectionDepartedTimeouts => 'Timed out after leaving';
+
+  @override
+  String get moderationDepartedTimeoutsNote =>
+      'These timeouts come back if the person rejoins.';
+
+  @override
+  String get moderationNoDepartedTimeouts => 'No one who left is timed out.';
+
+  @override
+  String moderationDepartedTimeoutUntil(String time) {
+    return 'Until $time';
+  }
+
+  @override
+  String moderationLiftTimeout(String username) {
+    return 'Lift timeout for $username';
+  }
 
   @override
   String joinReqAskedAt(String date) {
@@ -3976,6 +4195,42 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get roomCameraOn => 'Turn on camera';
+
+  @override
+  String get roomCameraOff => 'Turn off camera';
+
+  @override
+  String get roomPickSourceTitle => 'Choose what to share';
+
+  @override
+  String get roomSourceScreen => 'Screen';
+
+  @override
+  String get roomSourceWindow => 'Window';
+
+  @override
+  String get roomSharingYou => 'You are sharing your screen';
+
+  @override
+  String get roomNoticeCamera => 'The camera could not be started.';
+
+  @override
+  String get roomNoticeScreen => 'The screen could not be shared.';
+
+  @override
+  String get roomNoticeNoSource => 'There is no screen or window to share.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'This call has too many people for video. Voice only.';
+
+  @override
+  String roomTileScreen(String name) {
+    return '$name\'s screen';
+  }
+
+  @override
   String get moderationTitle => 'Moderation';
 
   @override
@@ -4003,6 +4258,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String memberTimedOutUntil(String time) {
     return 'Timed out until $time';
   }
+
+  @override
+  String memberServerTimeoutUntil(String time) {
+    return 'Timed out until $time (server only)';
+  }
+
+  @override
+  String get memberTimeoutApplyToRecord => 'Apply to the record';
+
+  @override
+  String get memberTimeoutAppliedToRecord => 'Timeout added to the record.';
 
   @override
   String banTitle(String username) {
@@ -4122,7 +4388,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportIntro =>
-      'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
+      'This sends this one message and the reason you pick, with what is needed to check it, to the people who handle reports here. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
 
   @override
   String get c6ReportPreviewLabel => 'This message will be sent';
@@ -4130,6 +4396,41 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get c6ReportPreviewNoText =>
       'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.';
+
+  @override
+  String get c6ReportReasonLabel => 'Why are you reporting it?';
+
+  @override
+  String get c6ReportReasonNote =>
+      'Only the people who get the report see the reason. It is sealed with the message.';
+
+  @override
+  String get c6ReportReasonSpam => 'Spam or scam';
+
+  @override
+  String get c6ReportReasonHarassment => 'Harassment or bullying';
+
+  @override
+  String get c6ReportReasonHate => 'Hate speech';
+
+  @override
+  String get c6ReportReasonViolence => 'Threats or violence';
+
+  @override
+  String get c6ReportReasonSexual => 'Sexual content';
+
+  @override
+  String get c6ReportReasonChildSafety => 'Puts a child at risk';
+
+  @override
+  String get c6ReportReasonSelfHarm => 'Self-harm or suicide';
+
+  @override
+  String get c6ReportReasonPrivateInfo =>
+      'Shares someone\'s private information';
+
+  @override
+  String get c6ReportReasonOther => 'Something else';
 
   @override
   String get c6ReportSend => 'Send report';
@@ -4244,6 +4545,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get c6ReportsKeyReady => 'Report key published.';
 
   @override
+  String get c6ReportsKeyChangedMeanwhile =>
+      'Another device changed your report key while you were deciding. Nothing was changed here. Check the key below and choose again.';
+
+  @override
   String get c6ReportsEmpty => 'No reports';
 
   @override
@@ -4298,6 +4603,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String c6ReportsReporter(String account) {
     return 'Reported by $account';
   }
+
+  @override
+  String c6ReportsReason(String reason) {
+    return 'Reason given by the reporter: $reason';
+  }
+
+  @override
+  String c6ReportsRowReason(String reason) {
+    return 'Reporter\'s reason: $reason';
+  }
+
+  @override
+  String get c6ReportsReasonNone =>
+      'No reason given. Reports from older app versions carry none.';
+
+  @override
+  String get c6ReportsReasonNotChecked =>
+      'The check covers the message only, not the reason.';
 
   @override
   String c6ReportsSender(String account) {
@@ -4454,6 +4777,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupTypeKey => 'Type recovery key';
 
   @override
+  String get autoBackupKeySubmit => 'Turn on backups';
+
+  @override
   String get autoBackupKeyWrong => 'That is not this account\'s recovery key.';
 
   @override
@@ -4486,6 +4812,23 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get channelMembersFailed =>
       'The channel was created. Some members could not be added. Retry to add only those members.';
+
+  @override
+  String channelMembersSkipped(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString members were not added: they are in too many chats. Add them later from the channel\'s members.',
+      one:
+          '1 member was not added: they are in too many chats. Add them later from the channel\'s members.',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get channelAdminOnly => 'Only owners and admins can create channels.';
@@ -4848,6 +5191,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUpdateDisabled => 'Automatic update checks are turned off';
 
   @override
+  String get settingsUpdateUnavailable =>
+      'Update checks are not available in this build';
+
+  @override
+  String get settingsUpdateDownload => 'Download update';
+
+  @override
+  String get settingsUpdateDownloading => 'Downloading the update…';
+
+  @override
+  String get settingsUpdateDownloadFailed =>
+      'The update could not be downloaded or verified';
+
+  @override
+  String get settingsUpdateRestart => 'Restart to update';
+
+  @override
+  String settingsUpdateReady(String version) {
+    return 'Version $version is ready';
+  }
+
+  @override
   String get settingsScreenGuard => 'Screen guard';
 
   @override
@@ -4992,6 +5357,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get rolesOwnerCancelNote =>
       'You are the owner: your app ends this election by itself.';
+
+  @override
+  String get rolesEarlyWin =>
+      'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.';
+
+  @override
+  String get rolesElectorHint =>
+      'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.';
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';

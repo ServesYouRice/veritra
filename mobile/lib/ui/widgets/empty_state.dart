@@ -52,11 +52,7 @@ class EmptyState extends StatelessWidget {
                         // line art.
                         strokeWidth: 20,
                       ),
-                      Icon(
-                        icon,
-                        size: 26,
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      Icon(icon, size: 26, color: scheme.onSurfaceVariant),
                     ],
                   ),
                 ),

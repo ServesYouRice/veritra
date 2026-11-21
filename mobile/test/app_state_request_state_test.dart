@@ -61,8 +61,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <MlsRevocation>[];
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 }
 
@@ -129,7 +132,10 @@ Future<_FaultyStore> _upgradedStore(List<Conversation> cached) async {
   final store = _FaultyStore();
   await store.saveSession(_session);
   await store.saveSnapshot(
-      cached, <String, List<ReceivedMessageEnvelope>>{}, 0);
+    cached,
+    <String, List<ReceivedMessageEnvelope>>{},
+    0,
+  );
   return store;
 }
 
@@ -149,14 +155,19 @@ void main() {
     final state = _state(api, store);
     await state.tryRestoreSession();
 
-    expect(state.requestStateLoaded, isTrue,
-        reason: 'the list must still show, with requests held back');
+    expect(
+      state.requestStateLoaded,
+      isTrue,
+      reason: 'the list must still show, with requests held back',
+    );
     expect(_bucket(state, 'stranger'), RequestBucket.request);
     expect(_bucket(state, 'sgroup'), RequestBucket.request);
     expect(_bucket(state, 'friend'), RequestBucket.request);
     expect(store.writes, isEmpty);
     expect(
-        await store.loadSetting(_setting), _stored(accepted: ['acct_friend']));
+      await store.loadSetting(_setting),
+      _stored(accepted: ['acct_friend']),
+    );
 
     // The next refresh reads the value and applies it as stored.
     await state.refreshConversations();
@@ -171,8 +182,10 @@ void main() {
       'VAL-045: an undecodable value is neither grandfathered nor '
       'overwritten', () async {
     for (final raw in <String>['{not json', '[1,2]', '"text"']) {
-      final store =
-          await _upgradedStore(<Conversation>[stranger, strangerGroup]);
+      final store = await _upgradedStore(<Conversation>[
+        stranger,
+        strangerGroup,
+      ]);
       await store.saveSetting(_setting, raw);
       store.writes.clear();
       final api = _Api()..list = <Conversation>[stranger, strangerGroup];
@@ -190,10 +203,14 @@ void main() {
 
   test('VAL-046: stored declines survive a read error', () async {
     final declinedAt = DateTime.utc(2026, 6, 3);
-    final declinedDm =
-        _dm('declined', 'acct_spam', lastMessageAt: DateTime.utc(2026, 6, 2));
-    final stored =
-        _stored(declined: {'declined': declinedAt.toIso8601String()});
+    final declinedDm = _dm(
+      'declined',
+      'acct_spam',
+      lastMessageAt: DateTime.utc(2026, 6, 2),
+    );
+    final stored = _stored(
+      declined: {'declined': declinedAt.toIso8601String()},
+    );
     final store = await _upgradedStore(<Conversation>[declinedDm]);
     await store.saveSetting(_setting, stored);
     store.writes.clear();
@@ -223,43 +240,50 @@ void main() {
     await state.refreshConversations();
     expect(_bucket(state, 'friend'), RequestBucket.chat);
     expect(_bucket(state, 'sgroup'), RequestBucket.chat);
-    expect(_bucket(state, 'stranger'), RequestBucket.request,
-        reason: 'only what the cached snapshot held is grandfathered');
+    expect(
+      _bucket(state, 'stranger'),
+      RequestBucket.request,
+      reason: 'only what the cached snapshot held is grandfathered',
+    );
     state.dispose();
   });
 
-  test('decisions made during a read error merge into the stored value',
-      () async {
-    final declinedAt = DateTime.utc(2026, 6, 3);
-    final other = _dm('other', 'acct_other');
-    final store = await _upgradedStore(<Conversation>[]);
-    await store.saveSetting(
+  test(
+    'decisions made during a read error merge into the stored value',
+    () async {
+      final declinedAt = DateTime.utc(2026, 6, 3);
+      final other = _dm('other', 'acct_other');
+      final store = await _upgradedStore(<Conversation>[]);
+      await store.saveSetting(
         _setting,
         _stored(
-            accepted: ['acct_friend'],
-            declined: {'stranger': declinedAt.toIso8601String()}));
-    store.writes.clear();
-    store.failReads = 2;
-    final api = _Api()..list = <Conversation>[stranger, friend, other];
-    final state = _state(api, store);
-    await state.tryRestoreSession();
-    expect(_bucket(state, 'stranger'), RequestBucket.request);
+          accepted: ['acct_friend'],
+          declined: {'stranger': declinedAt.toIso8601String()},
+        ),
+      );
+      store.writes.clear();
+      store.failReads = 2;
+      final api = _Api()..list = <Conversation>[stranger, friend, other];
+      final state = _state(api, store);
+      await state.tryRestoreSession();
+      expect(_bucket(state, 'stranger'), RequestBucket.request);
 
-    expect(await state.acceptMessageRequest('stranger'), isTrue);
-    expect(await state.deleteMessageRequest('other'), isTrue);
-    expect(_bucket(state, 'stranger'), RequestBucket.chat);
-    expect(store.writes, isEmpty, reason: 'wrote over an unread value');
+      expect(await state.acceptMessageRequest('stranger'), isTrue);
+      expect(await state.deleteMessageRequest('other'), isTrue);
+      expect(_bucket(state, 'stranger'), RequestBucket.chat);
+      expect(store.writes, isEmpty, reason: 'wrote over an unread value');
 
-    await state.refreshConversations();
-    expect(_bucket(state, 'stranger'), RequestBucket.chat);
-    expect(_bucket(state, 'friend'), RequestBucket.chat);
-    expect(_bucket(state, 'other'), RequestBucket.hidden);
-    final saved = jsonDecode((await store.loadSetting(_setting))!)
-        as Map<String, Object?>;
-    expect(saved['accepted'], <String>['acct_friend', 'acct_stranger']);
-    expect((saved['declined'] as Map).keys, <String>['other']);
-    state.dispose();
-  });
+      await state.refreshConversations();
+      expect(_bucket(state, 'stranger'), RequestBucket.chat);
+      expect(_bucket(state, 'friend'), RequestBucket.chat);
+      expect(_bucket(state, 'other'), RequestBucket.hidden);
+      final saved = jsonDecode((await store.loadSetting(_setting))!)
+          as Map<String, Object?>;
+      expect(saved['accepted'], <String>['acct_friend', 'acct_stranger']);
+      expect((saved['declined'] as Map).keys, <String>['other']);
+      state.dispose();
+    },
+  );
 
   test('an explicit decision replaces an undecodable value', () async {
     final store = await _upgradedStore(<Conversation>[]);

@@ -11,11 +11,12 @@ abstract interface class K1SecondCopyWriter {
   /// Replaces the copy in [folder] with [ciphertext]: a temporary file is
   /// written and renamed over the old one, so a crash leaves the old copy or
   /// the new, never half of one. Throws on any failure.
-  Future<void> write(
-      {required String folder,
-      required String accountId,
-      required String deviceId,
-      required Uint8List ciphertext});
+  Future<void> write({
+    required String folder,
+    required String accountId,
+    required String deviceId,
+    required Uint8List ciphertext,
+  });
 }
 
 /// The file name of one device's copy. Ids are reduced to safe characters.
@@ -29,11 +30,12 @@ class FileK1SecondCopyWriter implements K1SecondCopyWriter {
   const FileK1SecondCopyWriter();
 
   @override
-  Future<void> write(
-      {required String folder,
-      required String accountId,
-      required String deviceId,
-      required Uint8List ciphertext}) async {
+  Future<void> write({
+    required String folder,
+    required String accountId,
+    required String deviceId,
+    required Uint8List ciphertext,
+  }) async {
     final dir = Directory(folder);
     if (!await dir.exists()) throw FileSystemException('no folder', folder);
     final name = k1SecondCopyFileName(accountId, deviceId);
@@ -86,8 +88,9 @@ typedef K1PickedFolder = ({String folder, String label});
 /// The phone side of the channel. Every call throws [PlatformException] on
 /// failure; the codes carry no names or paths.
 class K1SecondCopyChannel {
-  const K1SecondCopyChannel(
-      [this.channel = const MethodChannel(k1SecondCopyChannelName)]);
+  const K1SecondCopyChannel([
+    this.channel = const MethodChannel(k1SecondCopyChannelName),
+  ]);
 
   final MethodChannel channel;
 
@@ -111,41 +114,52 @@ class K1SecondCopyChannel {
 
   /// Android: replaces the copy in [tree], through a temporary file.
   Future<void> write(String tree, String name, Uint8List bytes) =>
-      channel.invokeMethod<void>('write',
-          <String, Object?>{'tree': tree, 'name': name, 'bytes': bytes});
+      channel.invokeMethod<void>('write', <String, Object?>{
+        'tree': tree,
+        'name': name,
+        'bytes': bytes,
+      });
 
   /// iOS: the system document picker saves [bytes] as [name] where the user
   /// chooses. True when saved, false when cancelled.
   Future<bool> export(String name, Uint8List bytes) async =>
-      await channel.invokeMethod<bool>(
-          'export', <String, Object?>{'name': name, 'bytes': bytes}) ??
+      await channel.invokeMethod<bool>('export', <String, Object?>{
+        'name': name,
+        'bytes': bytes,
+      }) ??
       false;
 }
 
 /// The writer the app uses: an Android tree goes through the channel, a
 /// path to the file system.
 class PlatformK1SecondCopyWriter implements K1SecondCopyWriter {
-  const PlatformK1SecondCopyWriter(
-      {this.channel = const K1SecondCopyChannel(),
-      this.files = const FileK1SecondCopyWriter()});
+  const PlatformK1SecondCopyWriter({
+    this.channel = const K1SecondCopyChannel(),
+    this.files = const FileK1SecondCopyWriter(),
+  });
 
   final K1SecondCopyChannel channel;
   final K1SecondCopyWriter files;
 
   @override
-  Future<void> write(
-      {required String folder,
-      required String accountId,
-      required String deviceId,
-      required Uint8List ciphertext}) {
+  Future<void> write({
+    required String folder,
+    required String accountId,
+    required String deviceId,
+    required Uint8List ciphertext,
+  }) {
     if (!isK1DocumentTree(folder)) {
       return files.write(
-          folder: folder,
-          accountId: accountId,
-          deviceId: deviceId,
-          ciphertext: ciphertext);
+        folder: folder,
+        accountId: accountId,
+        deviceId: deviceId,
+        ciphertext: ciphertext,
+      );
     }
     return channel.write(
-        folder, k1SecondCopyFileName(accountId, deviceId), ciphertext);
+      folder,
+      k1SecondCopyFileName(accountId, deviceId),
+      ciphertext,
+    );
   }
 }

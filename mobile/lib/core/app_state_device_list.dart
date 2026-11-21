@@ -14,8 +14,10 @@ class _AppDeviceListSource implements DeviceListSource {
   final AppState _app;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-      {required int after}) {
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) {
     final current = _app.session;
     final client = _app.api;
     if (current == null || client == null) {
@@ -40,8 +42,10 @@ class _EnrollmentListSource implements DeviceListSource {
   final Session current;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-          {required int after}) =>
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) =>
       client.fetchDeviceList(current.token, accountId, after: after);
 }
 
@@ -65,10 +69,15 @@ extension AppStateDeviceList on AppState {
         continue;
       }
       final sent = await _sendPayload(
-          due.conversationId, AppPayloadType.deviceListAlert, due.body);
+        due.conversationId,
+        AppPayloadType.deviceListAlert,
+        due.body,
+      );
       if (sent) {
         await alerts.markOwnDeviceAlertSent(
-            due.conversationId, due.body['head_version'] as int);
+          due.conversationId,
+          due.body['head_version'] as int,
+        );
       }
     }
   }
@@ -82,17 +91,19 @@ extension AppStateDeviceList on AppState {
     if (crypto == null) return null;
     final key = await crypto.currentSigningKey();
     final device = idBytes(enrollment.deviceId);
-    return crypto.signDeviceList(DeviceListBody(
-      accountId: idBytes(enrollment.accountId),
-      version: 1,
-      prevHash: DeviceListBody.zeroHash,
-      createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
-      change: DeviceListChange.genesis,
-      entries: [DeviceListPair(device, key)],
-      // L2-3: the device's franking key is listed from the start, but only
-      // while the server's sealed switch is on (condition A).
-      frankKeys: await _ownFrankKeys(crypto, api, device),
-    ));
+    return crypto.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes(enrollment.accountId),
+        version: 1,
+        prevHash: DeviceListBody.zeroHash,
+        createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+        change: DeviceListChange.genesis,
+        entries: [DeviceListPair(device, key)],
+        // L2-3: the device's franking key is listed from the start, but only
+        // while the server's sealed switch is on (condition A).
+        frankKeys: await _ownFrankKeys(crypto, api, device),
+      ),
+    );
   }
 
   /// Condition A (`docs/crypto.md`, "Franking a sealed message"): this
@@ -103,8 +114,11 @@ extension AppStateDeviceList on AppState {
   /// status cannot be read, the version stays format 1, byte for byte the
   /// earlier format, and the key is added later with change 7 by the first
   /// sealed token pass ([_sealedFrankContext]).
-  Future<List<DeviceListFrankKey>> _ownFrankKeys(DeviceListCryptoService crypto,
-      ApiClient? client, Uint8List device) async {
+  Future<List<DeviceListFrankKey>> _ownFrankKeys(
+    DeviceListCryptoService crypto,
+    ApiClient? client,
+    Uint8List device,
+  ) async {
     if (client == null) return const <DeviceListFrankKey>[];
     try {
       final status = await client.setupStatus();
@@ -121,16 +135,19 @@ extension AppStateDeviceList on AppState {
       'l1.activation.${base64UrlEncode(utf8.encode(jsonEncode([
             canonicalizeServerOrigin(current.baseUrl),
             current.accountId,
-            current.deviceId,
+            current.deviceId
           ])))}';
 
   /// Write ahead of session persistence/promotion. Only public signed bytes.
   Future<void> _journalDeviceListAnchor(
-          Session current, List<List<int>> statements) =>
+    Session current,
+    List<List<int>> statements,
+  ) =>
       localStore.saveSetting(
-          _anchorJournalKey(current),
-          jsonEncode(
-              [for (final statement in statements) base64Encode(statement)]));
+        _anchorJournalKey(current),
+        jsonEncode(
+            [for (final statement in statements) base64Encode(statement)]),
+      );
 
   /// Must finish before any active-session path can read server lists.
   /// Errors deliberately propagate: missing durable trust is not TOFU.
@@ -144,8 +161,11 @@ extension AppStateDeviceList on AppState {
         base64Decode(value as String),
     ];
     if (statements.isEmpty) throw StateError('empty activation anchor');
-    await pins.pinChain(current.accountId!, statements,
-        expectedHead: statements.last);
+    await pins.pinChain(
+      current.accountId!,
+      statements,
+      expectedHead: statements.last,
+    );
   }
 
   Future<void> _clearDeviceListAnchorJournal(Session current) async {
@@ -242,7 +262,9 @@ extension AppStateDeviceList on AppState {
     final listed = head.listedFrankKey(idBytes(device));
     if (listed == null || !_sameIdBytes(listed, own)) return null;
     return SealedFrankContext(
-        listedKey: listed, ownerKeys: await _pinnedOwnerKeys(origin));
+      listedKey: listed,
+      ownerKeys: await _pinnedOwnerKeys(origin),
+    );
   }
 
   /// L2-3 (owner decision 2026-11-12, auto-pin on first use): reads the
@@ -278,8 +300,10 @@ extension AppStateDeviceList on AppState {
         inbox = await client.getReportInbox(current.token, conversationId);
       } on ApiException catch (error) {
         if (error.serverCode == 'report_inbox_unavailable') {
-          inbox =
-              ReportInbox(kind: reportInboxInstanceOwner, recipients: const []);
+          inbox = ReportInbox(
+            kind: reportInboxInstanceOwner,
+            recipients: const [],
+          );
         }
       }
       if (inbox != null && _sameSession(current)) await watch.observe(inbox);
@@ -313,8 +337,12 @@ extension AppStateDeviceList on AppState {
         if (head.listedKey(id) == null || head.listedFrankKey(id) != null) {
           return null;
         }
-        return _nextBody(head, DeviceListChange.frankKey, _listedPairs(head),
-            ownFrankKey: DeviceListFrankKey(id, frank));
+        return _nextBody(
+          head,
+          DeviceListChange.frankKey,
+          _listedPairs(head),
+          ownFrankKey: DeviceListFrankKey(id, frank),
+        );
       },
       (statement) async {
         if (statement == null) return;
@@ -390,8 +418,12 @@ extension AppStateDeviceList on AppState {
         ]);
       },
       (statement) async {
-        approved = await client.approveDeviceLinkV3(current, link, approvalTag,
-            deviceList: statement);
+        approved = await client.approveDeviceLinkV3(
+          current,
+          link,
+          approvalTag,
+          deviceList: statement,
+        );
       },
     );
     return approved;
@@ -400,7 +432,10 @@ extension AppStateDeviceList on AppState {
   /// Revokes [deviceId] with the change-3 version that leaves it out. A
   /// device not on the list, or the last one, is revoked with no version.
   Future<void> _revokeWithDeviceList(
-      ApiClient client, Session current, String deviceId) async {
+    ApiClient client,
+    Session current,
+    String deviceId,
+  ) async {
     await _signAndSend(
       current,
       (head) {
@@ -433,14 +468,21 @@ extension AppStateDeviceList on AppState {
         final same = head.recoveryKey != null &&
             _sameIdBytes(head.recoveryKey!, listKey);
         if (same) return null;
-        return _nextBody(head, DeviceListChange.recoveryKey, _listedPairs(head),
-            keepRecoveryKey: false, recoveryKey: listKey);
+        return _nextBody(
+          head,
+          DeviceListChange.recoveryKey,
+          _listedPairs(head),
+          keepRecoveryKey: false,
+          recoveryKey: listKey,
+        );
       },
       (statement) async {
-        status = await client.putRecoveryKey(current.token,
-            rkAuthPub: values.rkAuthPub,
-            rkId: values.rkId,
-            deviceList: statement);
+        status = await client.putRecoveryKey(
+          current.token,
+          rkAuthPub: values.rkAuthPub,
+          rkId: values.rkId,
+          deviceList: statement,
+        );
       },
     );
     return status;
@@ -468,32 +510,40 @@ extension AppStateDeviceList on AppState {
         if (!revoked.contains(_textId(pair.deviceId))) pair,
     ];
     if (rest.length == listed.length || rest.isEmpty) return;
-    if (!rest.any((pair) =>
-        _sameIdBytes(pair.deviceId, idBytes(current.deviceId ?? '')))) {
+    if (!rest.any(
+      (pair) => _sameIdBytes(pair.deviceId, idBytes(current.deviceId ?? '')),
+    )) {
       return; // This device is not on the list: it cannot sign.
     }
-    final statement = await crypto
-        .signDeviceList(_nextBody(head, DeviceListChange.remove, rest));
+    final statement = await crypto.signDeviceList(
+      _nextBody(head, DeviceListChange.remove, rest),
+    );
     await client.publishDeviceList(current.token, statement);
     await _deviceListPins?.pinOwnStep(current.accountId ?? '', statement);
   }
 
   /// Validate before promotion; never let a server-selected chain become TOFU.
-  Future<void> _journalLinkedDeviceAnchor(ApiClient client, Session current,
-      {required List<int> signingKey,
-      required String approverDeviceId,
-      required List<int> approverSigningKey}) async {
+  Future<void> _journalLinkedDeviceAnchor(
+    ApiClient client,
+    Session current, {
+    required List<int> signingKey,
+    required String approverDeviceId,
+    required List<int> approverSigningKey,
+  }) async {
     final crypto = _listCrypto;
     if (crypto == null) throw StateError('device-list verifier unavailable');
     final pins = DeviceListPins(
-        store: localStore,
-        source: _EnrollmentListSource(client, current),
-        verifier: crypto);
-    final statements = await pins.linkedAnchor(current.accountId!,
-        deviceId: idBytes(current.deviceId!),
-        signingKey: signingKey,
-        approverDeviceId: idBytes(approverDeviceId),
-        approverSigningKey: approverSigningKey);
+      store: localStore,
+      source: _EnrollmentListSource(client, current),
+      verifier: crypto,
+    );
+    final statements = await pins.linkedAnchor(
+      current.accountId!,
+      deviceId: idBytes(current.deviceId!),
+      signingKey: signingKey,
+      approverDeviceId: idBytes(approverDeviceId),
+      approverSigningKey: approverSigningKey,
+    );
     await _journalDeviceListAnchor(current, statements);
   }
 
@@ -533,28 +583,37 @@ extension AppStateDeviceList on AppState {
         }
         statement = await crypto.signRecoveryDeviceList(
           prev: head.headStatement,
-          body: _nextBody(head, DeviceListChange.recovery,
-              [DeviceListPair(idBytes(device), own)],
-              ownFrankKey:
-                  (await _ownFrankKeys(crypto, client, idBytes(device)))
-                      .firstOrNull),
+          body: _nextBody(
+            head,
+            DeviceListChange.recovery,
+            [DeviceListPair(idBytes(device), own)],
+            ownFrankKey: (await _ownFrankKeys(
+              crypto,
+              client,
+              idBytes(device),
+            ))
+                .firstOrNull,
+          ),
           history: [
             for (final key in head.keys)
               DeviceListPair(key.deviceId, key.signingKey),
           ],
         );
         await localStore.saveSetting(
-            _recoveryStatementSetting,
-            jsonEncode(<String, Object?>{
-              'account_id': account,
-              'device_id': device,
-              'statement': base64Encode(statement),
-            }));
+          _recoveryStatementSetting,
+          jsonEncode(<String, Object?>{
+            'account_id': account,
+            'device_id': device,
+            'statement': base64Encode(statement),
+          }),
+        );
       }
       await _sendRecoveryStatement(recovered, statement);
     } on Object catch (err) {
-      developer.log('L1 recovery version not posted: ${err.runtimeType}',
-          name: 'veritra.l1');
+      developer.log(
+        'L1 recovery version not posted: ${err.runtimeType}',
+        name: 'veritra.l1',
+      );
       // No held seed, or one the head does not name: Settings asks for the
       // recovery key again (retype).
       unawaited(_refreshOwnListState().catchError((Object _) {}));
@@ -572,13 +631,17 @@ extension AppStateDeviceList on AppState {
     try {
       await _sendRecoveryStatement(current, statement);
     } on Object catch (err) {
-      developer.log('L1 recovery version not posted: ${err.runtimeType}',
-          name: 'veritra.l1');
+      developer.log(
+        'L1 recovery version not posted: ${err.runtimeType}',
+        name: 'veritra.l1',
+      );
     }
   }
 
   Future<void> _sendRecoveryStatement(
-      Session current, Uint8List statement) async {
+    Session current,
+    Uint8List statement,
+  ) async {
     final client = api;
     final pins = _deviceListPins;
     final account = current.accountId;
@@ -631,7 +694,9 @@ extension AppStateDeviceList on AppState {
   }
 
   Future<Uint8List?> _storedRecoveryStatement(
-      String account, String device) async {
+    String account,
+    String device,
+  ) async {
     final raw = await localStore.loadSetting(_recoveryStatementSetting);
     if (raw == null || raw.isEmpty) return null;
     try {
@@ -706,8 +771,9 @@ extension AppStateDeviceList on AppState {
       final crypto = _recoveryCrypto;
       final Uint8List entropy;
       try {
-        entropy =
-            await crypto.decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+        entropy = await crypto.decodeRecoveryKey(
+          normalizeRecoveryKeyInput(typed),
+        );
       } catch (_) {
         throw UserFacingException(l10n.recoveryKeyUnreadable);
       }
@@ -722,8 +788,11 @@ extension AppStateDeviceList on AppState {
             !_constantTimeBytesEqual(values.rkId, serverId)) {
           throw UserFacingException(l10n.recoveryKeyNotThisAccount);
         }
-        final status =
-            await _putRecoveryKeyWithDeviceList(client, current, values);
+        final status = await _putRecoveryKeyWithDeviceList(
+          client,
+          current,
+          values,
+        );
         if (!identical(session, current)) return;
         recoveryKeyStatus = status;
         _ownHeadWithoutRecoveryKey = false;
@@ -763,8 +832,9 @@ extension AppStateDeviceList on AppState {
       }
       final Uint8List entropy;
       try {
-        entropy = await _recoveryCrypto
-            .decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+        entropy = await _recoveryCrypto.decodeRecoveryKey(
+          normalizeRecoveryKeyInput(typed),
+        );
       } catch (_) {
         throw UserFacingException(l10n.recoveryKeyUnreadable);
       }
@@ -786,8 +856,12 @@ extension AppStateDeviceList on AppState {
         try {
           statement = await crypto.signRecoveryDeviceList(
             prev: head.headStatement,
-            body: _nextBody(head, DeviceListChange.recovery,
-                [DeviceListPair(idBytes(device), own)],
+            body: _nextBody(
+                head,
+                DeviceListChange.recovery,
+                [
+                  DeviceListPair(idBytes(device), own),
+                ],
                 ownFrankKey: frankKeys.firstOrNull),
             history: [
               for (final key in head.keys)
@@ -801,12 +875,13 @@ extension AppStateDeviceList on AppState {
           throw UserFacingException(l10n.recoveryKeyNotThisAccount);
         }
         await localStore.saveSetting(
-            _recoveryStatementSetting,
-            jsonEncode(<String, Object?>{
-              'account_id': account,
-              'device_id': device,
-              'statement': base64Encode(statement),
-            }));
+          _recoveryStatementSetting,
+          jsonEncode(<String, Object?>{
+            'account_id': account,
+            'device_id': device,
+            'statement': base64Encode(statement),
+          }),
+        );
         await _sendRecoveryStatement(current, statement);
       } finally {
         entropy.fillRange(0, entropy.length, 0);
@@ -821,7 +896,8 @@ extension AppStateDeviceList on AppState {
   /// its approved-device list, signed by this device, which must be one of
   /// them. The unticked devices are then revoked. Needs recent auth.
   Future<RecoveryActionResult> createApprovedDeviceList(
-      Set<String> keepDeviceIds) async {
+    Set<String> keepDeviceIds,
+  ) async {
     var needsRecentAuth = false;
     final ok = await _runScoped(Ops.devices, () async {
       final current = session;
@@ -847,18 +923,20 @@ extension AppStateDeviceList on AppState {
             DeviceListPair(idBytes(device.id), device.signingKey!),
         DeviceListPair(idBytes(own), ownKey),
       ];
-      final statement = await crypto.signDeviceList(DeviceListBody(
-        accountId: idBytes(account),
-        version: 1,
-        prevHash: DeviceListBody.zeroHash,
-        createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
-        change: DeviceListChange.migrationGenesis,
-        entries: entries,
-        // L2-3: only this device's own franking key, and only while the
-        // sealed switch is on (condition A); the others set theirs with
-        // change 7.
-        frankKeys: await _ownFrankKeys(crypto, client, idBytes(own)),
-      ));
+      final statement = await crypto.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(account),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+          change: DeviceListChange.migrationGenesis,
+          entries: entries,
+          // L2-3: only this device's own franking key, and only while the
+          // sealed switch is on (condition A); the others set theirs with
+          // change 7.
+          frankKeys: await _ownFrankKeys(crypto, client, idBytes(own)),
+        ),
+      );
       try {
         await client.publishDeviceList(current.token, statement);
       } on ApiException catch (err) {
@@ -868,7 +946,11 @@ extension AppStateDeviceList on AppState {
         }
         rethrow;
       }
-      await _deviceListPins?.pinChain(account, [statement],
+      await _deviceListPins?.pinChain(
+          account,
+          [
+            statement,
+          ],
           expectedHead: statement);
       ownDeviceListMissing = false;
       for (final device in devices) {

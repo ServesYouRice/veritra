@@ -52,8 +52,10 @@ Future<void> expectRollbackRefused(LocalStore store) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('memory store refuses an equal or lower counter and keeps its state',
-      () => expectRollbackRefused(MemoryLocalStore()));
+  test(
+    'memory store refuses an equal or lower counter and keeps its state',
+    () => expectRollbackRefused(MemoryLocalStore()),
+  );
 
   group('encrypted store', () {
     late Directory directory;

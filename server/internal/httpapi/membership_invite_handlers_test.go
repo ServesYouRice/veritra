@@ -62,7 +62,7 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("bad locator: status=%d body=%s", status, body)
 	}
-	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"max_uses": 2}))
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"max_uses": 2, "anchor_group_id": groupID}))
 	if status != http.StatusCreated {
 		t.Fatalf("create invite: status=%d body=%s", status, body)
 	}
@@ -93,10 +93,11 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 			InviterSigningKey []byte `json:"inviter_signing_key"`
 			Tag               string `json:"tag"`
 			Signature         []byte `json:"signature"`
+			AnchorGroupID     string `json:"anchor_group_id"`
 		} `json:"binding"`
 	}
 	decodeBody(t, body, &preview)
-	if preview.Binding.TargetID != groupID || preview.Binding.InviterAccountID == "" || preview.Binding.InviterDeviceID == "" ||
+	if preview.Binding.TargetID != groupID || preview.Binding.AnchorGroupID != groupID || preview.Binding.InviterAccountID == "" || preview.Binding.InviterDeviceID == "" ||
 		len(preview.Binding.InviterSigningKey) != 32 || preview.Binding.Tag != testBindingTag || !bytes.Equal(preview.Binding.Signature, testBindingSignature) {
 		t.Fatalf("preview binding = %+v", preview.Binding)
 	}
@@ -107,10 +108,22 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 		{"binding_signature": make([]byte, 63)},
 		{"signing_key": nil},
 		{"signing_key": make([]byte, 32)},
+		// v3: the signed anchor must be the group itself.
+		{"anchor_group_id": nil},
+		{"anchor_group_id": ""},
+		{"anchor_group_id": "conv_other"},
 	} {
-		if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, mutate)); status != http.StatusBadRequest {
-			t.Fatalf("create invite with %v: status=%d body=%s", mutate, status, body)
+		// A fresh locator, so only the mutation can refuse the body.
+		body := inviteBody(t, handler, ownerToken, map[string]interface{}{"locator": strings.Repeat("e", 64), "anchor_group_id": groupID})
+		for key, value := range mutate {
+			body[key] = value
 		}
+		if status, answer := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, body); status != http.StatusBadRequest {
+			t.Fatalf("create invite with %v: status=%d body=%s", mutate, status, answer)
+		}
+	}
+	if status, answer := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"locator": strings.Repeat("e", 64), "anchor_group_id": groupID})); status != http.StatusCreated {
+		t.Fatalf("the unmutated body: status=%d body=%s", status, answer)
 	}
 	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/membership-invites/preview", aliceToken, map[string]string{"locator": strings.Repeat("f", 64)})
 	if status != http.StatusNotFound {

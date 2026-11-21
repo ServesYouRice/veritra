@@ -10,28 +10,55 @@ extension InviteAnchorSql on EncryptedLocalDatabase {
   )''');
 
   Future<void> writeInviteAnchor(InviteAnchor anchor) => customStatement(
-          'INSERT INTO local_invite_anchors VALUES (?, ?, ?, ?) '
-          'ON CONFLICT(conversation_id) DO UPDATE SET account_id=excluded.account_id, '
-          'device_id=excluded.device_id, signing_key=excluded.signing_key',
-          [
-            anchor.conversationId,
-            anchor.accountId,
-            anchor.deviceId,
-            Uint8List.fromList(anchor.signingKey)
-          ]);
+        'INSERT INTO local_invite_anchors VALUES (?, ?, ?, ?) '
+        'ON CONFLICT(conversation_id) DO UPDATE SET account_id=excluded.account_id, '
+        'device_id=excluded.device_id, signing_key=excluded.signing_key',
+        [
+          anchor.conversationId,
+          anchor.accountId,
+          anchor.deviceId,
+          Uint8List.fromList(anchor.signingKey),
+        ],
+      );
 
   Future<InviteAnchor?> readInviteAnchor(String conversationId) async {
     final row = await customSelect(
-        'SELECT * FROM local_invite_anchors WHERE conversation_id = ?',
-        variables: [Variable.withString(conversationId)]).getSingleOrNull();
+      'SELECT * FROM local_invite_anchors WHERE conversation_id = ?',
+      variables: [Variable.withString(conversationId)],
+    ).getSingleOrNull();
     if (row == null) return null;
     return InviteAnchor(
-        conversationId: conversationId,
-        accountId: row.read<String>('account_id'),
-        deviceId: row.read<String>('device_id'),
-        signingKey: row.read<Uint8List>('signing_key'));
+      conversationId: conversationId,
+      accountId: row.read<String>('account_id'),
+      deviceId: row.read<String>('device_id'),
+      signingKey: row.read<Uint8List>('signing_key'),
+    );
   }
 
-  Future<void> _clearInviteAnchors() =>
-      customStatement('DELETE FROM local_invite_anchors');
+  /// C1 v3: community -> shared group pins live in `local_metadata` under
+  /// [_communityInviteAnchorPrefix] (no schema change). They are not
+  /// settings, so no settings export carries them, and they are cleared with
+  /// the invite anchors.
+  static const String _communityInviteAnchorPrefix = 'c1.community-anchor:';
+
+  Future<void> writeCommunityInviteAnchor(String communityId, String groupId) {
+    if (communityId.isEmpty || groupId.isEmpty) {
+      throw ArgumentError('invalid community invitation anchor');
+    }
+    return writeMetadata('$_communityInviteAnchorPrefix$communityId', groupId);
+  }
+
+  Future<String?> readCommunityInviteAnchor(String communityId) =>
+      readMetadata('$_communityInviteAnchorPrefix$communityId');
+
+  Future<void> _clearInviteAnchors() async {
+    await customStatement('DELETE FROM local_invite_anchors');
+    await customStatement(
+      'DELETE FROM local_metadata WHERE substr(name, 1, ?) = ?',
+      <Object?>[
+        _communityInviteAnchorPrefix.length,
+        _communityInviteAnchorPrefix,
+      ],
+    );
+  }
 }

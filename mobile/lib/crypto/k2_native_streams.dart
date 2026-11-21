@@ -2,41 +2,73 @@ part of 'native_crypto_bindings.dart';
 
 final class _PmHistoryStream extends Opaque {}
 
-typedef _K2BeginNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
-    Pointer<Pointer<_PmHistoryStream>>, Pointer<_PmOwnedBuffer>);
-typedef _K2BeginDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
-    Pointer<Pointer<_PmHistoryStream>>, Pointer<_PmOwnedBuffer>);
+typedef _K2BeginNative = Int32 Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  Pointer<Pointer<_PmHistoryStream>>,
+  Pointer<_PmOwnedBuffer>,
+);
+typedef _K2BeginDart = int Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  Pointer<Pointer<_PmHistoryStream>>,
+  Pointer<_PmOwnedBuffer>,
+);
 typedef _K2StreamNative = Int32 Function(
-    Pointer<_PmHistoryStream>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+  Pointer<_PmHistoryStream>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+);
 typedef _K2StreamDart = int Function(
-    Pointer<_PmHistoryStream>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
-typedef _K2FinishNative = Int32 Function(Pointer<_PmCryptoHandle>,
-    Pointer<_PmHistoryStream>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
-typedef _K2FinishDart = int Function(Pointer<_PmCryptoHandle>,
-    Pointer<_PmHistoryStream>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+  Pointer<_PmHistoryStream>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+);
+typedef _K2FinishNative = Int32 Function(
+  Pointer<_PmCryptoHandle>,
+  Pointer<_PmHistoryStream>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+);
+typedef _K2FinishDart = int Function(
+  Pointer<_PmCryptoHandle>,
+  Pointer<_PmHistoryStream>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+);
 typedef _K2DestroyNative = Void Function(Pointer<_PmHistoryStream>);
 typedef _K2DestroyDart = void Function(Pointer<_PmHistoryStream>);
 
 class _K2StreamBindings {
   _K2StreamBindings(DynamicLibrary library)
       : sourceBegin = library.lookupFunction<_K2BeginNative, _K2BeginDart>(
-            'pm_crypto_k2_source_begin'),
+          'pm_crypto_k2_source_begin',
+        ),
         receiveBegin = library.lookupFunction<_K2BeginNative, _K2BeginDart>(
-            'pm_crypto_k2_receive_begin_bundle'),
+          'pm_crypto_k2_receive_begin_bundle',
+        ),
         write = library.lookupFunction<_K2StreamNative, _K2StreamDart>(
-            'pm_crypto_k2_stream_write'),
+          'pm_crypto_k2_stream_write',
+        ),
         read = library.lookupFunction<_K2StreamNative, _K2StreamDart>(
-            'pm_crypto_k2_stream_read'),
+          'pm_crypto_k2_stream_read',
+        ),
         sourceFinish = library.lookupFunction<_K2FinishNative, _K2FinishDart>(
-            'pm_crypto_k2_source_finish'),
+          'pm_crypto_k2_source_finish',
+        ),
         receiveFinish = library.lookupFunction<_K2FinishNative, _K2FinishDart>(
-            'pm_crypto_k2_receive_finish'),
+          'pm_crypto_k2_receive_finish',
+        ),
         destroy = library.lookupFunction<_K2DestroyNative, _K2DestroyDart>(
-            'pm_crypto_k2_stream_destroy'),
-        finalizer = NativeFinalizer(library
-            .lookup<NativeFunction<_K2DestroyNative>>(
-                'pm_crypto_k2_stream_destroy')
-            .cast());
+          'pm_crypto_k2_stream_destroy',
+        ),
+        finalizer = NativeFinalizer(
+          library
+              .lookup<NativeFunction<_K2DestroyNative>>(
+                'pm_crypto_k2_stream_destroy',
+              )
+              .cast(),
+        );
   final _K2BeginDart sourceBegin, receiveBegin;
   final _K2StreamDart write, read;
   final _K2FinishDart sourceFinish, receiveFinish;
@@ -96,8 +128,11 @@ class K2StreamChunk {
   /// Decodes an owned native read-result frame. Failure wipes the entire
   /// allocation, including when its outer header is malformed. A successful
   /// result owns a view into [frame]; consume and wipe [bytes] afterwards.
-  factory K2StreamChunk.fromOwnedNativeFrame(Uint8List frame,
-          {required int offset, int maximum = 1024 * 1024}) =>
+  factory K2StreamChunk.fromOwnedNativeFrame(
+    Uint8List frame, {
+    required int offset,
+    int maximum = 1024 * 1024,
+  }) =>
       K2StreamChunk._fromReader(_ownedStreamReader(frame, 25), offset, maximum);
 
   static K2StreamChunk _fromReader(_K2Reader r, int offset, int maximum) {
@@ -142,12 +177,14 @@ _K2Reader _ownedStreamReader(List<int> result, int operation) {
 }
 
 extension K2NativeBundleStreams on NativeCryptoDevice {
-  K2HistoryStream k2SourceBegin(K2TransferId id,
-      {required int now,
-      required int createdAt,
-      required int snapshotCounter,
-      required int plaintextVersion,
-      required int payloadLength}) {
+  K2HistoryStream k2SourceBegin(
+    K2TransferId id, {
+    required int now,
+    required int createdAt,
+    required int snapshotCounter,
+    required int plaintextVersion,
+    required int payloadLength,
+  }) {
     final w = _K2Writer(20);
     id._write(w);
     w.u64(now);
@@ -167,8 +204,12 @@ extension K2NativeBundleStreams on NativeCryptoDevice {
 
   /// Verify and persist native handoff state+exact handoff bytes before fetching
   /// ciphertext/importing. Returned transferId must match server metadata.
-  K2ReceiveBundleResult k2ReceiveBeginBundle(K2TransferId id, List<int> handoff,
-      {required int now, required int plaintextVersion}) {
+  K2ReceiveBundleResult k2ReceiveBeginBundle(
+    K2TransferId id,
+    List<int> handoff, {
+    required int now,
+    required int plaintextVersion,
+  }) {
     final w = _K2Writer(23);
     id._write(w);
     w.u64(now);
@@ -186,24 +227,34 @@ extension K2NativeBundleStreams on NativeCryptoDevice {
   }
 
   ({K2HistoryStream stream, _K2Reader reader}) _k2BeginStream(
-      _K2Writer w, bool incoming) {
+    _K2Writer w,
+    bool incoming,
+  ) {
     final pointer = calloc<Pointer<_PmHistoryStream>>();
     final bytes = w.bytes();
     K2HistoryStream? stream;
     try {
       _bindings._bounded(bytes, 64 * 1024);
       final result = _bindings._withSlice(
-          bytes,
-          (slice) => _bindings._output((out) => (incoming
-                  ? _bindings._k2Streams.receiveBegin
-                  : _bindings._k2Streams.sourceBegin)(
-              _liveHandle, slice, pointer, out)));
+        bytes,
+        (slice) => _bindings._output(
+          (out) => (incoming
+              ? _bindings._k2Streams.receiveBegin
+              : _bindings._k2Streams.sourceBegin)(
+            _liveHandle,
+            slice,
+            pointer,
+            out,
+          ),
+        ),
+      );
       if (pointer.value == nullptr) _K2Reader.invalid();
       stream = K2HistoryStream._(this, pointer.value);
       pointer.value = nullptr;
       final r = _K2Reader(
-          result is Uint8List ? result : Uint8List.fromList(result),
-          w.operation);
+        result is Uint8List ? result : Uint8List.fromList(result),
+        w.operation,
+      );
       return (stream: stream, reader: r);
     } catch (_) {
       stream?.close();
@@ -220,8 +271,11 @@ extension K2NativeBundleStreams on NativeCryptoDevice {
 /// close invalidates/wipes its native data even while this Dart object exists.
 class K2HistoryStream implements Finalizable {
   K2HistoryStream._(this._owner, this._pointer) {
-    _owner._bindings._k2Streams.finalizer
-        .attach(this, _pointer.cast(), detach: this);
+    _owner._bindings._k2Streams.finalizer.attach(
+      this,
+      _pointer.cast(),
+      detach: this,
+    );
   }
   final NativeCryptoDevice _owner;
   Pointer<_PmHistoryStream> _pointer;
@@ -273,16 +327,27 @@ class K2HistoryStream implements Finalizable {
     final binding = _owner._bindings;
     try {
       final result = binding._withSlice(
-          bytes,
-          (slice) => binding._output((out) => switch (w.operation) {
-                21 => binding._k2Streams.write(_live, slice, out),
-                22 => binding._k2Streams
-                    .sourceFinish(_owner._liveHandle, _live, slice, out),
-                24 => binding._k2Streams
-                    .receiveFinish(_owner._liveHandle, _live, slice, out),
-                25 => binding._k2Streams.read(_live, slice, out),
-                _ => throw StateError('Unknown stream operation'),
-              }));
+        bytes,
+        (slice) => binding._output(
+          (out) => switch (w.operation) {
+            21 => binding._k2Streams.write(_live, slice, out),
+            22 => binding._k2Streams.sourceFinish(
+                _owner._liveHandle,
+                _live,
+                slice,
+                out,
+              ),
+            24 => binding._k2Streams.receiveFinish(
+                _owner._liveHandle,
+                _live,
+                slice,
+                out,
+              ),
+            25 => binding._k2Streams.read(_live, slice, out),
+            _ => throw StateError('Unknown stream operation'),
+          },
+        ),
+      );
       return _ownedStreamReader(result, w.operation);
     } finally {
       bytes.fillRange(0, bytes.length, 0);

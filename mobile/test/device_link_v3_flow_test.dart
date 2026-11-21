@@ -11,6 +11,7 @@ import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/history_transfer_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
+import 'package:private_messenger/crypto/device_link_code.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/sha256.dart';
@@ -71,8 +72,9 @@ class _LinkServer {
   Map<String, Object?> get record => Map<String, Object?>.from(link!);
 
   DeviceLinkV3Record view() => DeviceLinkV3Record.fromJson(
-      revoked ? {...record, 'state': 'revoked'} : record,
-      transport: TransportPolicy.production);
+        revoked ? {...record, 'state': 'revoked'} : record,
+        transport: TransportPolicy.production,
+      );
 }
 
 class _LinkApi extends ApiClient with LegacySyncPageFake {
@@ -81,19 +83,29 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
   final _LinkServer server;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String token,
+    String accountId, {
+    required int after,
+  }) async {
     final chain = server.servedChain ?? server.chain;
-    return DeviceListPage(headVersion: chain.length, more: false, statements: [
-      for (var i = after; i < chain.length; i++)
-        (version: i + 1, statement: chain[i])
-    ]);
+    return DeviceListPage(
+      headVersion: chain.length,
+      more: false,
+      statements: [
+        for (var i = after; i < chain.length; i++)
+          (version: i + 1, statement: chain[i]),
+      ],
+    );
   }
 
   @override
   Future<DeviceLinkV3Record> createDeviceLinkV3(
-      Session owner, String locator, List<int> sourceCommitment,
-      {int expiresInSeconds = 600}) async {
+    Session owner,
+    String locator,
+    List<int> sourceCommitment, {
+    int expiresInSeconds = 600,
+  }) async {
     final now = DateTime.now().toUtc();
     server
       ..links += 1
@@ -118,7 +130,9 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<DeviceLinkV3Reservation> reserveDeviceLinkV3(
-      String locator, String requestId) async {
+    String locator,
+    String requestId,
+  ) async {
     final link = server.link;
     if (link == null || link['code'] != locator) {
       throw ApiException(404, '{"error":"not_found"}');
@@ -144,8 +158,9 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<DeviceLinkV3Record> submitDeviceLinkV3Claim(
-      FrozenDeviceLinkV3Claim claim,
-      DeviceLinkV3Reservation reservation) async {
+    FrozenDeviceLinkV3Claim claim,
+    DeviceLinkV3Reservation reservation,
+  ) async {
     final link = server.link!;
     final fields = claim.fields;
     final stored = server.claim;
@@ -178,21 +193,27 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
   }
 
   void _checkClaimToken(String token) {
-    expect(sha256Hex(utf8.encode(token)), server.claim!['claim_token_hash'],
-        reason: 'the claim token does not match its stored hash');
+    expect(
+      sha256Hex(utf8.encode(token)),
+      server.claim!['claim_token_hash'],
+      reason: 'the claim token does not match its stored hash',
+    );
   }
 
   @override
   Future<DeviceLinkV3Record> deviceLinkV3ClaimStatus(
-      DeviceLinkV3Record expected, String claimToken) async {
+    DeviceLinkV3Record expected,
+    String claimToken,
+  ) async {
     // The real endpoint loads the link inside its valid window: a revoked,
     // expired or unknown link is a 400 invalid_device_link, never a 410 and
     // never the state 'revoked'. An approved or consumed link keeps
     // answering 200 (the transfer window).
     final link = server.link!;
     final open = link['state'] == 'pending' || link['state'] == 'claimed';
-    final expired =
-        DateTime.parse(link['expires_at'] as String).isBefore(DateTime.now());
+    final expired = DateTime.parse(
+      link['expires_at'] as String,
+    ).isBefore(DateTime.now());
     if (server.revoked || (open && expired)) {
       throw ApiException(400, '{"error":"invalid_device_link"}');
     }
@@ -201,23 +222,30 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
     _checkClaimToken(claimToken);
     final substituted = server.substitutedReveal;
     if (substituted != null && link.containsKey('source_random')) {
-      return DeviceLinkV3Record.fromJson(
-          {...server.record, 'source_random': base64Encode(substituted)},
-          transport: TransportPolicy.production);
+      return DeviceLinkV3Record.fromJson({
+        ...server.record,
+        'source_random': base64Encode(substituted),
+      }, transport: TransportPolicy.production);
     }
     return server.view();
   }
 
   @override
-  Future<DeviceLinkV3Record> revealDeviceLinkV3(Session owner,
-      DeviceLinkV3Record expected, List<int> sourceRandom) async {
+  Future<DeviceLinkV3Record> revealDeviceLinkV3(
+    Session owner,
+    DeviceLinkV3Record expected,
+    List<int> sourceRandom,
+  ) async {
     final link = server.link!;
     expect(expected.fields['claim_request_hash'], link['claim_request_hash']);
     expect(link['state'], 'claimed', reason: 'a reveal comes after the claim');
     server.reveals++;
     if (link.containsKey('source_random')) {
-      expect(link['source_random'], base64Encode(sourceRandom),
-          reason: 'a repeat must reveal the same random');
+      expect(
+        link['source_random'],
+        base64Encode(sourceRandom),
+        reason: 'a repeat must reveal the same random',
+      );
     } else {
       server.link = <String, Object?>{
         ...link,
@@ -230,8 +258,11 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<DeviceLinkV3Record> approveDeviceLinkV3(
-      Session owner, DeviceLinkV3Record expected, List<int> approvalTag,
-      {List<int>? deviceList}) async {
+    Session owner,
+    DeviceLinkV3Record expected,
+    List<int> approvalTag, {
+    List<int>? deviceList,
+  }) async {
     final link = server.link!;
     expect(expected.fields['claim_request_hash'], link['claim_request_hash']);
     if (link['state'] == 'claimed') {
@@ -249,20 +280,26 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
         'transfer_expires_at': _iso(approved.add(const Duration(days: 7))),
       };
     } else {
-      expect(link['approval_tag'], base64Encode(approvalTag),
-          reason: 'a replay must carry the same approval tag');
+      expect(
+        link['approval_tag'],
+        base64Encode(approvalTag),
+        reason: 'a replay must carry the same approval tag',
+      );
     }
     return server.view();
   }
 
   @override
   Future<DeviceLinkV3Completion> completeDeviceLinkV3(
-      DeviceLinkV3Record expected,
-      String claimToken,
-      String initialSessionTokenHash) async {
+    DeviceLinkV3Record expected,
+    String claimToken,
+    String initialSessionTokenHash,
+  ) async {
     _checkClaimToken(claimToken);
     expect(
-        initialSessionTokenHash, server.claim!['initial_session_token_hash']);
+      initialSessionTokenHash,
+      server.claim!['initial_session_token_hash'],
+    );
     final link = server.link!;
     expect(link['state'], anyOf('approved', 'consumed'));
     server.completes++;
@@ -302,13 +339,19 @@ class _LinkApi extends ApiClient with LegacySyncPageFake {
   }) async {}
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <SyncEvent>[];
 
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <MlsMessage>[];
 
   @override
@@ -339,14 +382,33 @@ class _Transfer implements HistoryTransferTransport {
   int uploads = 0;
   int cancels = 0;
 
+  /// A hostile server: serves the handoff with one byte changed.
+  bool forgeHandoff = false;
+
+  /// A hostile server: serves the ciphertext with one byte changed, under
+  /// the digest the source uploaded.
+  bool tamperDownload = false;
+
+  /// A hostile server: names another recipient device in the receipt.
+  String? recipientOverride;
+  int forgedHandoffsServed = 0;
+  int rejectedDownloads = 0;
+  int acks = 0;
+
   HistoryTransferReceipt _receipt() {
     final base = stored!;
+    var served = handoff;
+    if (forgeHandoff && served != null) {
+      served = Uint8List.fromList(served);
+      served[served.length ~/ 2] ^= 1;
+      forgedHandoffsServed++;
+    }
     return HistoryTransferReceipt(
       transferId: base.transferId,
       linkId: base.linkId,
       accountId: base.accountId,
       sourceDeviceId: base.sourceDeviceId,
-      recipientDeviceId: base.recipientDeviceId,
+      recipientDeviceId: recipientOverride ?? base.recipientDeviceId,
       claimRequestHash: base.claimRequestHash,
       transcriptHash: base.transcriptHash,
       ciphertextSha256: base.ciphertextSha256,
@@ -354,7 +416,7 @@ class _Transfer implements HistoryTransferTransport {
       state: state,
       createdAt: base.createdAt,
       expiresAt: base.expiresAt,
-      handoff: state == 'active' ? handoff : null,
+      handoff: state == 'active' ? served : null,
     );
   }
 
@@ -393,7 +455,9 @@ class _Transfer implements HistoryTransferTransport {
 
   @override
   Future<HistoryTransferReceipt> status(
-      String linkId, HistoryTransferAuth auth) async {
+    String linkId,
+    HistoryTransferAuth auth,
+  ) async {
     if (stored == null) throw ApiException(404, '{"error":"not_found"}');
     return _receipt();
   }
@@ -407,12 +471,15 @@ class _Transfer implements HistoryTransferTransport {
     required File target,
     required Future<bool> Function(File complete) verifyDigest,
   }) async {
-    target.writeAsBytesSync(ciphertext!);
+    final bytes = Uint8List.fromList(ciphertext!);
+    if (tamperDownload) bytes[bytes.length ~/ 3] ^= 0x80;
+    target.writeAsBytesSync(bytes);
     if (!await verifyDigest(target)) {
+      rejectedDownloads++;
       target.deleteSync();
       throw const HistoryTransferMismatch();
     }
-    return ciphertext!.length;
+    return bytes.length;
   }
 
   @override
@@ -423,6 +490,7 @@ class _Transfer implements HistoryTransferTransport {
     required String ciphertextSha256,
   }) async {
     if (state == 'cancelled') throw ApiException(409, '');
+    acks++;
     state = 'acknowledged';
     return _receipt();
   }
@@ -440,15 +508,18 @@ class _Store extends MemoryLocalStore {
   bool failPin = false;
 
   @override
-  Future<bool> saveDeviceListPin(DeviceListPin pin,
-      {required int? expectedVersion}) async {
+  Future<bool> saveDeviceListPin(
+    DeviceListPin pin, {
+    required int? expectedVersion,
+  }) async {
     if (failPin) throw StateError('pin storage failed');
     return super.saveDeviceListPin(pin, expectedVersion: expectedVersion);
   }
 
   @override
-  Future<List<int>> exportHistorySnapshot(
-          {bool omitDisappearing = false}) async =>
+  Future<List<int>> exportHistorySnapshot({
+    bool omitDisappearing = false,
+  }) async =>
       snapshot == null
           ? super.exportHistorySnapshot(omitDisappearing: omitDisappearing)
           : List.of(snapshot!);
@@ -473,7 +544,7 @@ List<int> _snapshot(int now, List<String> bodies) => HistorySnapshot(
       counter: 3,
       createdAt: now,
       conversations: const [
-        HistoryConversation('conv', 'dm', title: 'historical'),
+        HistoryConversation('conv', 'dm', title: 'historical')
       ],
       messages: [
         for (var i = 0; i < bodies.length; i++)
@@ -514,9 +585,10 @@ class _World {
 
   AppState newDevice() {
     final crypto = newCrypto = TestNativeCryptoService(
-        bindings: bindings,
-        localStore: newStore,
-        clock: () => DateTime.now().subtract(newClockLag));
+      bindings: bindings,
+      localStore: newStore,
+      clock: () => DateTime.now().subtract(newClockLag),
+    );
     return AppState(
       screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
@@ -530,27 +602,39 @@ class _World {
 
   Future<void> setUp(List<String> bodies) async {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    sourceStore =
-        _Store(_snapshot(DateTime.now().millisecondsSinceEpoch, bodies));
+    sourceStore = _Store(
+      _snapshot(DateTime.now().millisecondsSinceEpoch, bodies),
+    );
     sourceCrypto = TestNativeCryptoService(
-        bindings: bindings, localStore: sourceStore, clock: DateTime.now);
+      bindings: bindings,
+      localStore: sourceStore,
+      clock: DateTime.now,
+    );
     final credential = await sourceCrypto.createEnrollmentCredential(
-        const EnrollmentReservation(
-            id: 'res_src',
-            accountId: _account,
-            deviceId: _sourceDevice,
-            challenge: <int>[1, 2, 3]));
+      const EnrollmentReservation(
+        id: 'res_src',
+        accountId: _account,
+        deviceId: _sourceDevice,
+        challenge: <int>[1, 2, 3],
+      ),
+    );
     await sourceStore.saveSession(_sourceSession);
     await sourceCrypto.activateSession(_sourceSession);
     server = _LinkServer(credential.signingKey);
-    server.chain.add(await sourceCrypto.signDeviceList(DeviceListBody(
-      accountId: idBytes(_account),
-      version: 1,
-      prevHash: DeviceListBody.zeroHash,
-      createdAtMs: 1,
-      change: DeviceListChange.genesis,
-      entries: [DeviceListPair(idBytes(_sourceDevice), credential.signingKey)],
-    )));
+    server.chain.add(
+      await sourceCrypto.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(_account),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.genesis,
+          entries: [
+            DeviceListPair(idBytes(_sourceDevice), credential.signingKey),
+          ],
+        ),
+      ),
+    );
     api = _LinkApi(server);
     source = AppState(
       screenGuard: FakeScreenGuard(),
@@ -578,11 +662,17 @@ class _World {
     expect(fresh.pendingDeviceLinkClaim!.verificationCode, isEmpty);
     await source.refreshActiveDeviceLink();
     expect(source.errorFor(Ops.deviceLink), isNull);
-    expect(server.link!['source_random'], isNotNull,
-        reason: 'the source reveals once it accepted the claim');
+    expect(
+      server.link!['source_random'],
+      isNotNull,
+      reason: 'the source reveals once it accepted the claim',
+    );
     await fresh.completeDeviceLinkClaim();
-    expect(fresh.errorFor(Ops.deviceLinkClaim), isNull,
-        reason: fresh.errorFor(Ops.deviceLinkClaim));
+    expect(
+      fresh.errorFor(Ops.deviceLinkClaim),
+      isNull,
+      reason: fresh.errorFor(Ops.deviceLinkClaim),
+    );
     final sas = fresh.pendingDeviceLinkClaim!.verificationCode;
     expect(sas, matches(RegExp(r'^\d{8}$')));
     expect(source.activeDeviceLink?.verificationCode, sas);
@@ -597,12 +687,15 @@ class _World {
       final stored = (await newStore.loadPendingEnrollment())!;
       final payload = jsonDecode(stored.payloadJson) as Map<String, Object?>;
       payload['expires_at'] = expiresAt;
-      await newStore.savePendingEnrollment(PendingEnrollment(
+      await newStore.savePendingEnrollment(
+        PendingEnrollment(
           kind: stored.kind,
           origin: stored.origin,
           accountId: stored.accountId,
           deviceId: stored.deviceId,
-          payloadJson: jsonEncode(payload)));
+          payloadJson: jsonEncode(payload),
+        ),
+      );
     }
     retire(fresh);
     fresh = newDevice();
@@ -611,9 +704,11 @@ class _World {
 
   /// Runs [step] until [done], at most [limit] of wall-clock time: a slow
   /// runner may need seconds for the export, the encryption and the import.
-  Future<void> until(Future<bool> Function() done,
-      {Future<void> Function()? step,
-      Duration limit = const Duration(seconds: 30)}) async {
+  Future<void> until(
+    Future<bool> Function() done, {
+    Future<void> Function()? step,
+    Duration limit = const Duration(seconds: 30),
+  }) async {
     final deadline = DateTime.now().add(limit);
     while (!await done()) {
       if (DateTime.now().isAfter(deadline)) {
@@ -626,18 +721,22 @@ class _World {
 
   /// Runs both devices' transfer steps until neither has a row.
   Future<void> drain() => until(
-          () async =>
-              (await sourceStore.loadHistoryTransfers()).isEmpty &&
-              (await newStore.loadHistoryTransfers()).isEmpty, step: () async {
-        await source.resumeHistoryTransfers();
-        if (fresh.session != null) await fresh.resumeHistoryTransfers();
-      });
+        () async =>
+            (await sourceStore.loadHistoryTransfers()).isEmpty &&
+            (await newStore.loadHistoryTransfers()).isEmpty,
+        step: () async {
+          await source.resumeHistoryTransfers();
+          if (fresh.session != null) await fresh.resumeHistoryTransfers();
+        },
+      );
 
   /// Calls the source's transfer step until the copy is on the server (a
   /// step already running, started by the approval, makes a call a no-op).
   Future<void> sourceUploads() async {
-    await until(() async => transfer.stored != null,
-        step: source.resumeHistoryTransfers);
+    await until(
+      () async => transfer.stored != null,
+      step: source.resumeHistoryTransfers,
+    );
     expect(transfer.stored, isNotNull);
   }
 
@@ -691,529 +790,762 @@ void main() {
   final skip = nativeCryptoSkip();
 
   test(
-      'a reveal that does not open the commitment shows no code and ends the '
-      'claim with its own message (L1-3)',
-      () => _withWorld((w) async {
-            await w.source.createDeviceLink();
-            await w.fresh
-                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
-            // The relay saw the commitment and the new device's random, and
-            // after the source's reveal hands the new device another one.
-            w.server.substitutedReveal = List<int>.filled(32, 0x42);
-            await w.source.refreshActiveDeviceLink();
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            expect(w.server.reveals, 1);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains("link check did not match"));
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(w.fresh.session, isNull);
-          }),
-      skip: skip);
+    'a reveal that does not open the commitment shows no code and ends the '
+    'claim with its own message (L1-3)',
+    () => _withWorld((w) async {
+      await w.source.createDeviceLink();
+      await w.fresh.claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+      expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
+      // The relay saw the commitment and the new device's random, and
+      // after the source's reveal hands the new device another one.
+      w.server.substitutedReveal = List<int>.filled(32, 0x42);
+      await w.source.refreshActiveDeviceLink();
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      expect(w.server.reveals, 1);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains("link check did not match"),
+      );
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(w.fresh.session, isNull);
+    }),
+    skip: skip,
+  );
 
   for (final attack in [
     'missing',
     'unrelated genesis',
     'wrong approver key',
-    'wrong add signer'
+    'wrong add signer',
   ]) {
     test(
-        'L1 linked anchor refuses $attack before promotion and after restart',
-        () => _withWorld((w) async {
-              final sas = await w.claimAndRefresh();
-              await w.source.approveActiveDeviceLink(sas);
-              expect(w.source.errorFor(Ops.deviceLink), isNull);
-              final ownKey =
-                  base64Decode(w.server.claim!['signing_key'] as String);
-              final ghostId =
-                  attack == 'wrong approver key' ? _sourceDevice : 'dev_ghost';
-              final ghost = w.bindings.createDevice(_account, ghostId);
-              try {
-                final ghostPair =
-                    DeviceListPair(idBytes(ghostId), ghost.signingPublicKey());
-                final sourcePair = DeviceListPair(
-                    idBytes(_sourceDevice), w.server.sourceSigningKey);
-                final ownPair = DeviceListPair(idBytes(_newDevice), ownKey);
-                final genesis = ghost.signDeviceList(
-                    DeviceListBody(
-                      accountId: idBytes(_account),
-                      version: 1,
-                      prevHash: DeviceListBody.zeroHash,
-                      createdAtMs: 1,
-                      change: DeviceListChange.genesis,
-                      entries: [ghostPair],
-                    ),
-                    idBytes(ghostId));
-                var served = <Uint8List>[];
-                if (attack != 'missing') served = [genesis];
-                if (attack == 'wrong approver key') {
-                  final head = w.bindings
-                      .checkDeviceListChain(idBytes(_account), served)
-                      .head;
-                  served.add(ghost.signDeviceList(
-                      DeviceListBody(
-                        accountId: idBytes(_account),
-                        version: 2,
-                        prevHash: head.listHash,
-                        createdAtMs: 2,
-                        change: DeviceListChange.add,
-                        entries: [ghostPair, ownPair],
-                      ),
-                      idBytes(ghostId)));
-                }
-                if (attack == 'wrong add signer') {
-                  served = [w.server.chain.first];
-                  final head = w.bindings
-                      .checkDeviceListChain(idBytes(_account), served)
-                      .head;
-                  served.add(await w.sourceCrypto.signDeviceList(DeviceListBody(
-                    accountId: idBytes(_account),
-                    version: 2,
-                    prevHash: head.listHash,
-                    createdAtMs: 2,
-                    change: DeviceListChange.add,
-                    entries: [sourcePair, ghostPair],
-                  )));
-                  final previous = w.bindings
-                      .checkDeviceListChain(idBytes(_account), served)
-                      .head;
-                  served.add(ghost.signDeviceList(
-                      DeviceListBody(
-                        accountId: idBytes(_account),
-                        version: 3,
-                        prevHash: previous.listHash,
-                        createdAtMs: 3,
-                        change: DeviceListChange.add,
-                        entries: [sourcePair, ghostPair, ownPair],
-                      ),
-                      idBytes(ghostId)));
-                }
-                w.server.servedChain = served;
-                await w.fresh.completeDeviceLinkClaim();
-                expect(w.fresh.session, isNull);
-                expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
-                expect(await w.newStore.loadSession(), isNull);
-                expect(await w.newStore.loadDeviceListPin(_account), isNull);
-                expect(await w.newStore.loadPendingEnrollment(), isNotNull);
-                await w.restartFresh();
-                await w.fresh.completeDeviceLinkClaim();
-                expect(w.fresh.session, isNull);
-                expect(await w.newStore.loadDeviceListPin(_account), isNull);
-                // Restore honest service: the same frozen claim can safely finish.
-                w.server.servedChain = null;
-                await w.fresh.completeDeviceLinkClaim();
-                expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
-                expect(w.fresh.session?.deviceId, _newDevice);
-                expect(
-                    (await w.newStore.loadDeviceListPin(_account))
-                        ?.headStatement,
-                    w.server.chain.last);
-              } finally {
-                ghost.close();
-              }
-            }),
-        skip: skip);
+      'L1 linked anchor refuses $attack before promotion and after restart',
+      () => _withWorld((w) async {
+        final sas = await w.claimAndRefresh();
+        await w.source.approveActiveDeviceLink(sas);
+        expect(w.source.errorFor(Ops.deviceLink), isNull);
+        final ownKey = base64Decode(w.server.claim!['signing_key'] as String);
+        final ghostId =
+            attack == 'wrong approver key' ? _sourceDevice : 'dev_ghost';
+        final ghost = w.bindings.createDevice(_account, ghostId);
+        try {
+          final ghostPair = DeviceListPair(
+            idBytes(ghostId),
+            ghost.signingPublicKey(),
+          );
+          final sourcePair = DeviceListPair(
+            idBytes(_sourceDevice),
+            w.server.sourceSigningKey,
+          );
+          final ownPair = DeviceListPair(idBytes(_newDevice), ownKey);
+          final genesis = ghost.signDeviceList(
+            DeviceListBody(
+              accountId: idBytes(_account),
+              version: 1,
+              prevHash: DeviceListBody.zeroHash,
+              createdAtMs: 1,
+              change: DeviceListChange.genesis,
+              entries: [ghostPair],
+            ),
+            idBytes(ghostId),
+          );
+          var served = <Uint8List>[];
+          if (attack != 'missing') served = [genesis];
+          if (attack == 'wrong approver key') {
+            final head =
+                w.bindings.checkDeviceListChain(idBytes(_account), served).head;
+            served.add(
+              ghost.signDeviceList(
+                DeviceListBody(
+                  accountId: idBytes(_account),
+                  version: 2,
+                  prevHash: head.listHash,
+                  createdAtMs: 2,
+                  change: DeviceListChange.add,
+                  entries: [ghostPair, ownPair],
+                ),
+                idBytes(ghostId),
+              ),
+            );
+          }
+          if (attack == 'wrong add signer') {
+            served = [w.server.chain.first];
+            final head =
+                w.bindings.checkDeviceListChain(idBytes(_account), served).head;
+            served.add(
+              await w.sourceCrypto.signDeviceList(
+                DeviceListBody(
+                  accountId: idBytes(_account),
+                  version: 2,
+                  prevHash: head.listHash,
+                  createdAtMs: 2,
+                  change: DeviceListChange.add,
+                  entries: [sourcePair, ghostPair],
+                ),
+              ),
+            );
+            final previous =
+                w.bindings.checkDeviceListChain(idBytes(_account), served).head;
+            served.add(
+              ghost.signDeviceList(
+                DeviceListBody(
+                  accountId: idBytes(_account),
+                  version: 3,
+                  prevHash: previous.listHash,
+                  createdAtMs: 3,
+                  change: DeviceListChange.add,
+                  entries: [sourcePair, ghostPair, ownPair],
+                ),
+                idBytes(ghostId),
+              ),
+            );
+          }
+          w.server.servedChain = served;
+          await w.fresh.completeDeviceLinkClaim();
+          expect(w.fresh.session, isNull);
+          expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
+          expect(await w.newStore.loadSession(), isNull);
+          expect(await w.newStore.loadDeviceListPin(_account), isNull);
+          expect(await w.newStore.loadPendingEnrollment(), isNotNull);
+          await w.restartFresh();
+          await w.fresh.completeDeviceLinkClaim();
+          expect(w.fresh.session, isNull);
+          expect(await w.newStore.loadDeviceListPin(_account), isNull);
+          // Restore honest service: the same frozen claim can safely finish.
+          w.server.servedChain = null;
+          await w.fresh.completeDeviceLinkClaim();
+          expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
+          expect(w.fresh.session?.deviceId, _newDevice);
+          expect(
+            (await w.newStore.loadDeviceListPin(_account))?.headStatement,
+            w.server.chain.last,
+          );
+        } finally {
+          ghost.close();
+        }
+      }),
+      skip: skip,
+    );
   }
 
   test(
-      'L1 linked pin-write failure stays pending across promotion and restart',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            w.newStore.failPin = true;
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.session, isNull);
-            expect(await w.newStore.loadSession(), isNotNull);
-            // Promotion atomically consumes the claim; the anchor journal now survives it.
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(await w.newStore.loadDeviceListPin(_account), isNull);
-            w.server.servedChain = [];
-            await w.restartFresh();
-            expect(w.fresh.session, isNull);
-            expect(w.fresh.lifecycle, SessionLifecycle.recoveryRequired);
-            w.newStore.failPin = false;
-            await w.fresh.tryRestoreSession();
-            expect(w.fresh.session?.deviceId, _newDevice);
-            expect(
-                (await w.newStore.loadDeviceListPin(_account))?.headStatement,
-                w.server.chain.last,
-                reason: 'replayed the authenticated journal offline');
-          }),
-      skip: skip);
+    'L1 linked pin-write failure stays pending across promotion and restart',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      w.newStore.failPin = true;
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session, isNull);
+      expect(await w.newStore.loadSession(), isNotNull);
+      // Promotion atomically consumes the claim; the anchor journal now survives it.
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(await w.newStore.loadDeviceListPin(_account), isNull);
+      w.server.servedChain = [];
+      await w.restartFresh();
+      expect(w.fresh.session, isNull);
+      expect(w.fresh.lifecycle, SessionLifecycle.recoveryRequired);
+      w.newStore.failPin = false;
+      await w.fresh.tryRestoreSession();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      expect(
+        (await w.newStore.loadDeviceListPin(_account))?.headStatement,
+        w.server.chain.last,
+        reason: 'replayed the authenticated journal offline',
+      );
+    }),
+    skip: skip,
+  );
 
   test(
-      'the source reveals only after it accepted the claim, and only once',
-      () => _withWorld((w) async {
-            await w.source.createDeviceLink();
-            // Nothing to reveal before a claim.
-            await w.source.refreshActiveDeviceLink();
-            expect(w.server.reveals, 0);
-            expect(w.server.link!['source_commitment'], isNotNull);
-            await w.fresh
-                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
-            await w.source.refreshActiveDeviceLink();
-            expect(w.server.reveals, 1);
-            final revealed = w.server.link!['source_random'];
-            // A second refresh finds its own reveal and sends nothing new.
-            await w.source.refreshActiveDeviceLink();
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            expect(w.server.reveals, 1);
-            expect(w.server.link!['source_random'], revealed);
-          }),
-      skip: skip);
+    'the source reveals only after it accepted the claim, and only once',
+    () => _withWorld((w) async {
+      await w.source.createDeviceLink();
+      // Nothing to reveal before a claim.
+      await w.source.refreshActiveDeviceLink();
+      expect(w.server.reveals, 0);
+      expect(w.server.link!['source_commitment'], isNotNull);
+      await w.fresh.claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+      await w.source.refreshActiveDeviceLink();
+      expect(w.server.reveals, 1);
+      final revealed = w.server.link!['source_random'];
+      // A second refresh finds its own reveal and sends nothing new.
+      await w.source.refreshActiveDeviceLink();
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      expect(w.server.reveals, 1);
+      expect(w.server.link!['source_random'], revealed);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a new device is linked and receives the history, and both clean up',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            expect(w.fresh.session, isNull);
+    'a new device is linked and receives the history, and both clean up',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      expect(w.fresh.session, isNull);
 
-            // A wrong code is refused natively and approves nothing.
-            await w.source.approveActiveDeviceLink(
-                sas == '00000000' ? '11111111' : '00000000');
-            expect(w.source.errorFor(Ops.deviceLink),
-                contains('does not match the one on the new device'));
-            expect(w.server.link!['state'], 'claimed');
+      // A wrong code is refused natively and approves nothing.
+      await w.source.approveActiveDeviceLink(
+        sas == '00000000' ? '11111111' : '00000000',
+      );
+      expect(
+        w.source.errorFor(Ops.deviceLink),
+        contains('does not match the one on the new device'),
+      );
+      expect(w.server.link!['state'], 'claimed');
 
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNull,
-                reason: w.source.errorFor(Ops.deviceLink));
-            expect(w.source.activeDeviceLink?.state, 'approved');
-            expect(w.source.activeDeviceLinkCode, isNull,
-                reason: 'the link secret is cleared on approval');
+      await w.source.approveActiveDeviceLink(sas);
+      expect(
+        w.source.errorFor(Ops.deviceLink),
+        isNull,
+        reason: w.source.errorFor(Ops.deviceLink),
+      );
+      expect(w.source.activeDeviceLink?.state, 'approved');
+      expect(
+        w.source.activeDeviceLinkCode,
+        isNull,
+        reason: 'the link secret is cleared on approval',
+      );
 
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
-                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
-            expect(w.fresh.session?.deviceId, _newDevice);
-            expect(w.fresh.session?.accountId, _account);
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect((await w.newStore.loadSession())?.deviceId, _newDevice);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(w.server.completes, 1);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        isNull,
+        reason: w.fresh.errorFor(Ops.deviceLinkClaim),
+      );
+      expect(w.fresh.session?.deviceId, _newDevice);
+      expect(w.fresh.session?.accountId, _account);
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect((await w.newStore.loadSession())?.deviceId, _newDevice);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(w.server.completes, 1);
 
-            await w.drain();
-            expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
-            expect(await w.newStore.loadHistoryTransfers(), isEmpty);
-            expect(w.transfer.state, 'acknowledged');
-            final messages = await w.newStore.loadMessages('conv');
-            expect(messages.map((m) => m.body), ['first', 'second']);
-            expect(w.fresh.historyOnlyConversations.map((c) => c.id), ['conv']);
-            expect(w.fresh.historyTransferStatus, isNull);
-            expect(w.source.historyTransferStatus, isNull);
-            expect(
-                Directory('${w.dir.path}/source/source').existsSync() &&
-                    Directory('${w.dir.path}/source/source')
-                        .listSync()
-                        .isNotEmpty,
-                isFalse);
-            expect(
-                Directory('${w.dir.path}/new/incoming').existsSync() &&
-                    Directory('${w.dir.path}/new/incoming')
-                        .listSync()
-                        .isNotEmpty,
-                isFalse);
-          }),
-      skip: skip);
-
-  test(
-      'L1: a server that swaps the claimed signing key after the code was '
-      'checked gets no approval and no change-2 version',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            // The record the source fetches again at approval names another
-            // key; its transcript_hash field is left as the real one.
-            w.server.link = <String, Object?>{
-              ...w.server.link!,
-              'claimed_signing_key': base64Encode(List<int>.filled(32, 7)),
-            };
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNotNull);
-            expect(w.server.link!['state'], 'claimed',
-                reason: 'nothing may be approved for a swapped key');
-          }),
-      skip: skip);
+      await w.drain();
+      expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
+      expect(await w.newStore.loadHistoryTransfers(), isEmpty);
+      expect(w.transfer.state, 'acknowledged');
+      final messages = await w.newStore.loadMessages('conv');
+      expect(messages.map((m) => m.body), ['first', 'second']);
+      expect(w.fresh.historyOnlyConversations.map((c) => c.id), ['conv']);
+      expect(w.fresh.historyTransferStatus, isNull);
+      expect(w.source.historyTransferStatus, isNull);
+      expect(
+        Directory('${w.dir.path}/source/source').existsSync() &&
+            Directory('${w.dir.path}/source/source').listSync().isNotEmpty,
+        isFalse,
+      );
+      expect(
+        Directory('${w.dir.path}/new/incoming').existsSync() &&
+            Directory('${w.dir.path}/new/incoming').listSync().isNotEmpty,
+        isFalse,
+      );
+    }),
+    skip: skip,
+  );
 
   test(
-      'a restart while the claim waits resumes it, and the claim is replayed '
-      'byte for byte',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            final stored = (await w.newStore.loadPendingEnrollment())!;
-            expect(stored.kind, PendingEnrollment.kindDeviceLinkV3);
-            expect(stored.state, isNotNull);
-            expect(stored.toString(), isNot(contains('claim_token')));
-            // The app restarts: a new service and a new AppState over the
-            // same store. The identity comes back from the sealed state.
-            w.retire(w.fresh);
-            w.fresh = w.newDevice();
-            await w.fresh.tryRestoreSession();
-            expect(w.fresh.session, isNull);
-
-            // A lost claim answer: the same signed claim goes again. The
-            // code is never stored; the read-only reveal derives it again.
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
-            expect(w.fresh.session, isNull);
-            expect(w.fresh.pendingDeviceLinkClaim?.verificationCode, sas);
-            expect(stored.payloadJson, isNot(contains(sas)));
-
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
-                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
-            expect(w.fresh.session?.deviceId, _newDevice);
-            await w.drain();
-            expect((await w.newStore.loadMessages('conv')).map((m) => m.body),
-                ['first', 'second']);
-          }),
-      skip: skip);
+    'L1: a server that swaps the claimed signing key after the code was '
+    'checked gets no approval and no change-2 version',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      // The record the source fetches again at approval names another
+      // key; its transcript_hash field is left as the real one.
+      w.server.link = <String, Object?>{
+        ...w.server.link!,
+        'claimed_signing_key': base64Encode(List<int>.filled(32, 7)),
+      };
+      await w.source.approveActiveDeviceLink(sas);
+      expect(w.source.errorFor(Ops.deviceLink), isNotNull);
+      expect(
+        w.server.link!['state'],
+        'claimed',
+        reason: 'nothing may be approved for a swapped key',
+      );
+    }),
+    skip: skip,
+  );
 
   test(
-      'a restart after the approval resumes the copy from its stored rows',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.session?.deviceId, _newDevice);
-            // Both apps stop before any transfer step ran far.
-            w.retire(w.source);
-            w.retire(w.fresh);
-            await w.sourceCrypto.dispose();
-            await w.newCrypto?.dispose();
-            // The source comes back first and uploads; the new device then
-            // comes back and receives, each from its stored row.
-            w.sourceCrypto = TestNativeCryptoService(
-                bindings: w.bindings,
-                localStore: w.sourceStore,
-                clock: DateTime.now);
-            w.source = AppState(
-              screenGuard: FakeScreenGuard(),
-              apiClientFactory: (_) => w.api,
-              cryptoService: w.sourceCrypto,
-              localStore: w.sourceStore,
-              syncServiceFactory: (_, __) => _QuietSync(),
-            )
-              ..historyTransferDirectory = (() async => '${w.dir.path}/source')
-              ..historyTransferTransportFactory = ((_) => w.transfer);
-            await w.source.tryRestoreSession();
-            expect(w.source.session?.deviceId, _sourceDevice);
-            await w.sourceUploads();
-            w.fresh = w.newDevice();
-            await w.fresh.tryRestoreSession();
-            expect(w.fresh.session?.deviceId, _newDevice);
-            await w.drain();
-            expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
-            expect(await w.newStore.loadHistoryTransfers(), isEmpty);
-            expect((await w.newStore.loadMessages('conv')).map((m) => m.body),
-                ['first', 'second']);
-          }),
-      skip: skip);
+    'a restart while the claim waits resumes it, and the claim is replayed '
+    'byte for byte',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      final stored = (await w.newStore.loadPendingEnrollment())!;
+      expect(stored.kind, PendingEnrollment.kindDeviceLinkV3);
+      expect(stored.state, isNotNull);
+      expect(stored.toString(), isNot(contains('claim_token')));
+      // The app restarts: a new service and a new AppState over the
+      // same store. The identity comes back from the sealed state.
+      w.retire(w.fresh);
+      w.fresh = w.newDevice();
+      await w.fresh.tryRestoreSession();
+      expect(w.fresh.session, isNull);
+
+      // A lost claim answer: the same signed claim goes again. The
+      // code is never stored; the read-only reveal derives it again.
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
+      expect(w.fresh.session, isNull);
+      expect(w.fresh.pendingDeviceLinkClaim?.verificationCode, sas);
+      expect(stored.payloadJson, isNot(contains(sas)));
+
+      await w.source.approveActiveDeviceLink(sas);
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        isNull,
+        reason: w.fresh.errorFor(Ops.deviceLinkClaim),
+      );
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a copy the server closed ends on both devices and keeps the link',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            await w.fresh.completeDeviceLinkClaim();
-            await w.sourceUploads();
-            // The server cancels the copy before the new device fetched it.
-            w.transfer.state = 'cancelled';
-            await w.fresh.resumeHistoryTransfers();
-            expect(w.fresh.historyTransferStatus?.phase,
-                HistoryTransferPhase.ended);
-            expect(await w.newStore.loadHistoryTransfers(), isEmpty);
-            await w.source.resumeHistoryTransfers();
-            expect(w.source.historyTransferStatus?.phase,
-                HistoryTransferPhase.ended);
-            expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
-            // The device is linked all the same; no history came.
-            expect(w.fresh.session?.deviceId, _newDevice);
-            expect(await w.newStore.loadMessages('conv'), isEmpty);
-            w.fresh.dismissHistoryCopyNotice();
-            expect(w.fresh.historyTransferStatus, isNull);
-          }),
-      skip: skip);
+    'a restart after the approval resumes the copy from its stored rows',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      // Both apps stop before any transfer step ran far.
+      w.retire(w.source);
+      w.retire(w.fresh);
+      await w.sourceCrypto.dispose();
+      await w.newCrypto?.dispose();
+      // The source comes back first and uploads; the new device then
+      // comes back and receives, each from its stored row.
+      w.sourceCrypto = TestNativeCryptoService(
+        bindings: w.bindings,
+        localStore: w.sourceStore,
+        clock: DateTime.now,
+      );
+      w.source = AppState(
+        screenGuard: FakeScreenGuard(),
+        apiClientFactory: (_) => w.api,
+        cryptoService: w.sourceCrypto,
+        localStore: w.sourceStore,
+        syncServiceFactory: (_, __) => _QuietSync(),
+      )
+        ..historyTransferDirectory = (() async => '${w.dir.path}/source')
+        ..historyTransferTransportFactory = ((_) => w.transfer);
+      await w.source.tryRestoreSession();
+      expect(w.source.session?.deviceId, _sourceDevice);
+      await w.sourceUploads();
+      w.fresh = w.newDevice();
+      await w.fresh.tryRestoreSession();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.drain();
+      expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
+      expect(await w.newStore.loadHistoryTransfers(), isEmpty);
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+    }),
+    skip: skip,
+  );
 
   test(
-      'an approval the source never made is refused before the link completes',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            // A server that substituted the link answers with a tag of its
-            // own; the new device pinned the real context when it claimed.
-            w.server.link = <String, Object?>{
-              ...w.server.link!,
-              'approval_tag': base64Encode(List<int>.filled(32, 7)),
-            };
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains('approval could not be verified'));
-            expect(w.server.completes, 0);
-            expect(w.fresh.session, isNull);
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(await w.newStore.loadSession(), isNull);
-            expect(await w.newStore.loadHistoryTransfers(), isEmpty);
-          }),
-      skip: skip);
+    'a copy the server closed ends on both devices and keeps the link',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      await w.sourceUploads();
+      // The server cancels the copy before the new device fetched it.
+      w.transfer.state = 'cancelled';
+      await w.fresh.resumeHistoryTransfers();
+      expect(w.fresh.historyTransferStatus?.phase, HistoryTransferPhase.ended);
+      expect(await w.newStore.loadHistoryTransfers(), isEmpty);
+      await w.source.resumeHistoryTransfers();
+      expect(w.source.historyTransferStatus?.phase, HistoryTransferPhase.ended);
+      expect(await w.sourceStore.loadHistoryTransfers(), isEmpty);
+      // The device is linked all the same; no history came.
+      expect(w.fresh.session?.deviceId, _newDevice);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      w.fresh.dismissHistoryCopyNotice();
+      expect(w.fresh.historyTransferStatus, isNull);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a revoked link ends the waiting claim and drops the pending identity',
-      () => _withWorld((w) async {
-            await w.claimAndRefresh();
-            w.server.revoked = true;
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains('cancelled or has expired'));
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(w.fresh.session, isNull);
-          }),
-      skip: skip);
+    'an approval the source never made is refused before the link completes',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      // A server that substituted the link answers with a tag of its
+      // own; the new device pinned the real context when it claimed.
+      w.server.link = <String, Object?>{
+        ...w.server.link!,
+        'approval_tag': base64Encode(List<int>.filled(32, 7)),
+      };
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains('approval could not be verified'),
+      );
+      expect(w.server.completes, 0);
+      expect(w.fresh.session, isNull);
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(await w.newStore.loadSession(), isNull);
+      expect(await w.newStore.loadHistoryTransfers(), isEmpty);
+    }),
+    skip: skip,
+  );
 
   test(
-      'an approval read after the link window still finishes (L1-3: the '
-      'reveal is checked only while the code is shown)',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            // The new device looks again only after its 10-minute link window
-            // (it was in the background): native would refuse any reveal now.
-            w.newClockLag = const Duration(minutes: -11);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
-                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
-            expect(w.fresh.session?.deviceId, _newDevice);
-            expect(w.server.completes, 1);
-            w.newClockLag = Duration.zero;
-            await w.drain();
-          }),
-      skip: skip);
+    'a revoked link ends the waiting claim and drops the pending identity',
+    () => _withWorld((w) async {
+      await w.claimAndRefresh();
+      w.server.revoked = true;
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains('cancelled or has expired'),
+      );
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(w.fresh.session, isNull);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a clock behind the server does not make a genuine approval read as '
-      'forged',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            await w.source.approveActiveDeviceLink(sas);
-            expect(w.source.errorFor(Ops.deviceLink), isNull);
-            // The server stamped approved_at on its own clock, a few seconds
-            // ahead of this device's: native would refuse an approval from
-            // the future, so the scratch check lifts its time to approved_at.
-            w.newClockLag = const Duration(seconds: 5);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
-                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
-            expect(w.fresh.session?.deviceId, _newDevice);
-            expect(w.server.completes, 1);
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            // The clock is right again: the copy goes on as usual.
-            w.newClockLag = Duration.zero;
-            await w.drain();
-            expect((await w.newStore.loadMessages('conv')).map((m) => m.body),
-                ['first', 'second']);
-          }),
-      skip: skip);
+    'an approval read after the link window still finishes (L1-3: the '
+    'reveal is checked only while the code is shown)',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      // The new device looks again only after its 10-minute link window
+      // (it was in the background): native would refuse any reveal now.
+      w.newClockLag = const Duration(minutes: -11);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        isNull,
+        reason: w.fresh.errorFor(Ops.deviceLinkClaim),
+      );
+      expect(w.fresh.session?.deviceId, _newDevice);
+      expect(w.server.completes, 1);
+      w.newClockLag = Duration.zero;
+      await w.drain();
+    }),
+    skip: skip,
+  );
 
   test(
-      'an expired waiting claim ends when the server answers 400 '
-      'invalid_device_link',
-      () => _withWorld((w) async {
-            await w.claimAndRefresh();
-            final past = DateTime.now().subtract(const Duration(seconds: 1));
-            w.server.link = <String, Object?>{
-              ...w.server.link!,
-              'expires_at': _iso(past),
-            };
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains('cancelled or has expired'));
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(w.fresh.session, isNull);
-          }),
-      skip: skip);
+    'a clock behind the server does not make a genuine approval read as '
+    'forged',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      await w.source.approveActiveDeviceLink(sas);
+      expect(w.source.errorFor(Ops.deviceLink), isNull);
+      // The server stamped approved_at on its own clock, a few seconds
+      // ahead of this device's: native would refuse an approval from
+      // the future, so the scratch check lifts its time to approved_at.
+      w.newClockLag = const Duration(seconds: 5);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        isNull,
+        reason: w.fresh.errorFor(Ops.deviceLinkClaim),
+      );
+      expect(w.fresh.session?.deviceId, _newDevice);
+      expect(w.server.completes, 1);
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      // The clock is right again: the copy goes on as usual.
+      w.newClockLag = Duration.zero;
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a waiting claim past its expiry ends on any status error',
-      () => _withWorld((w) async {
-            await w.claimAndRefresh();
-            w.server.statusFailure = ApiException(503, '');
-            // The stored expiry is in the past; the restart resumes the claim
-            // and its status call fails with an error that names nothing.
-            final past = DateTime.now().subtract(const Duration(seconds: 1));
-            await w.restartFresh(expiresAt: past.millisecondsSinceEpoch);
-            await w.fresh.completeDeviceLinkClaim();
-            await w.until(() async => w.fresh.pendingDeviceLinkClaim == null);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-            expect(w.fresh.session, isNull);
-          }),
-      skip: skip);
+    'an expired waiting claim ends when the server answers 400 '
+    'invalid_device_link',
+    () => _withWorld((w) async {
+      await w.claimAndRefresh();
+      final past = DateTime.now().subtract(const Duration(seconds: 1));
+      w.server.link = <String, Object?>{
+        ...w.server.link!,
+        'expires_at': _iso(past),
+      };
+      await w.fresh.completeDeviceLinkClaim();
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains('cancelled or has expired'),
+      );
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(w.fresh.session, isNull);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a waiting claim inside its expiry survives a status error',
-      () => _withWorld((w) async {
-            final sas = await w.claimAndRefresh();
-            w.server.statusFailure = ApiException(503, '');
-            await w.restartFresh();
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
-            expect(w.fresh.pendingDeviceLinkClaim, isNotNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNotNull);
-            // The server comes back and the claim goes on to be approved.
-            w.server.statusFailure = null;
-            await w.source.approveActiveDeviceLink(sas);
-            await w.fresh.completeDeviceLinkClaim();
-            expect(w.fresh.session?.deviceId, _newDevice);
-            await w.drain();
-          }),
-      skip: skip);
+    'a waiting claim past its expiry ends on any status error',
+    () => _withWorld((w) async {
+      await w.claimAndRefresh();
+      w.server.statusFailure = ApiException(503, '');
+      // The stored expiry is in the past; the restart resumes the claim
+      // and its status call fails with an error that names nothing.
+      final past = DateTime.now().subtract(const Duration(seconds: 1));
+      await w.restartFresh(expiresAt: past.millisecondsSinceEpoch);
+      await w.fresh.completeDeviceLinkClaim();
+      await w.until(() async => w.fresh.pendingDeviceLinkClaim == null);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+      expect(w.fresh.session, isNull);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a second claim while one waits is refused and a recovery in progress '
-      'refuses the link',
-      () => _withWorld((w) async {
-            await w.claimAndRefresh();
-            await w.fresh
-                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains('already waiting'));
-            await w.fresh.abandonDeviceLinkClaim();
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
-
-            // Another kind of pending enrollment blocks a claim before any
-            // network call.
-            await w.newStore.savePendingEnrollment(PendingEnrollment(
-                kind: PendingEnrollment.kindAccountRecovery,
-                origin: _origin,
-                accountId: _account,
-                deviceId: 'dev_other',
-                payloadJson: '{}'));
-            final reservations = w.server.reservationRequestId;
-            await w.fresh
-                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
-                contains('account recovery is waiting'));
-            expect(w.server.reservationRequestId, reservations);
-          }),
-      skip: skip);
+    'a waiting claim inside its expiry survives a status error',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      w.server.statusFailure = ApiException(503, '');
+      await w.restartFresh();
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
+      expect(w.fresh.pendingDeviceLinkClaim, isNotNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNotNull);
+      // The server comes back and the claim goes on to be approved.
+      w.server.statusFailure = null;
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.drain();
+    }),
+    skip: skip,
+  );
 
   test(
-      'a code that is not a link code fails before any request',
-      () => _withWorld((w) async {
-            await w.fresh.claimDeviceLink(_origin, 'PAIRCODE');
-            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
-            expect(w.server.reservationRequestId, isNull);
-            expect(w.fresh.pendingDeviceLinkClaim, isNull);
-            expect(await w.newStore.loadPendingEnrollment(), isNull);
+    'a second claim while one waits is refused and a recovery in progress '
+    'refuses the link',
+    () => _withWorld((w) async {
+      await w.claimAndRefresh();
+      await w.fresh.claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains('already waiting'),
+      );
+      await w.fresh.abandonDeviceLinkClaim();
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+
+      // Another kind of pending enrollment blocks a claim before any
+      // network call.
+      await w.newStore.savePendingEnrollment(
+        PendingEnrollment(
+          kind: PendingEnrollment.kindAccountRecovery,
+          origin: _origin,
+          accountId: _account,
+          deviceId: 'dev_other',
+          payloadJson: '{}',
+        ),
+      );
+      final reservations = w.server.reservationRequestId;
+      await w.fresh.claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+      expect(
+        w.fresh.errorFor(Ops.deviceLinkClaim),
+        contains('account recovery is waiting'),
+      );
+      expect(w.server.reservationRequestId, reservations);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a code that is not a link code fails before any request',
+    () => _withWorld((w) async {
+      await w.fresh.claimDeviceLink(_origin, 'PAIRCODE');
+      expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
+      expect(w.server.reservationRequestId, isNull);
+      expect(w.fresh.pendingDeviceLinkClaim, isNull);
+      expect(await w.newStore.loadPendingEnrollment(), isNull);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a server that forges the handoff or alters the copy gets nothing '
+    'imported and no ACK, and the genuine copy still arrives',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      w.transfer
+        ..forgeHandoff = true
+        ..tamperDownload = true;
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.sourceUploads();
+
+      Future<HistoryTransferProgress> row() async =>
+          (await w.newStore.loadHistoryTransfers()).single;
+
+      // A forged handoff: native refuses its signature, so nothing of it is
+      // stored and the copy waits (fails closed) rather than ending.
+      await w.until(
+        () async => w.transfer.forgedHandoffsServed >= 2,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      await w.until(
+        () async =>
+            w.fresh.historyTransferStatus?.phase == HistoryTransferPhase.failed,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      expect((await row()).stage, HistoryTransferStage.awaitingHandoff);
+      expect((await row()).handoff, isNull);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.transfer.state, 'active');
+
+      // The genuine handoff, but ciphertext with one byte changed under the
+      // uploaded digest: the native check rejects it, the file is deleted
+      // and nothing is imported.
+      w.transfer.forgeHandoff = false;
+      await w.until(
+        () async => w.transfer.rejectedDownloads >= 2,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      final downloading = await row();
+      expect(downloading.stage, HistoryTransferStage.downloading);
+      expect(File(downloading.filePath!).existsSync(), isFalse);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.fresh.historyOnlyConversations, isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.fresh.historyTransferStatus?.phase, HistoryTransferPhase.failed);
+
+      // The honest bytes: imported once, acknowledged once.
+      w.transfer.tamperDownload = false;
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+      expect(w.transfer.state, 'acknowledged');
+      expect(w.transfer.acks, 1);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a receipt that names another device ends the copy on the new device '
+    'without importing anything',
+    () => _withWorld((w) async {
+      final sas = await w.claimAndRefresh();
+      w.transfer.recipientOverride = 'dev_someone_else';
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.sourceUploads();
+      await w.until(
+        () async => (await w.newStore.loadHistoryTransfers()).isEmpty,
+        step: w.fresh.resumeHistoryTransfers,
+      );
+      expect(w.fresh.historyTransferStatus?.phase, HistoryTransferPhase.ended);
+      expect(w.fresh.historyTransferStatus?.incoming, isTrue);
+      expect(await w.newStore.loadMessages('conv'), isEmpty);
+      expect(w.transfer.acks, 0);
+      expect(w.transfer.cancels, greaterThanOrEqualTo(1));
+      // The link itself stays: the new device is linked, only the copy ended.
+      expect(w.fresh.session?.deviceId, _newDevice);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'nothing the server receives carries the link secret or the history '
+    'in readable form',
+    () => _withWorld((w) async {
+      await w.source.createDeviceLink();
+      final code = w.source.activeDeviceLinkCode!;
+      final secret = decodeDeviceLinkSecret(code);
+      expect(secret, hasLength(16));
+      await w.fresh.claimDeviceLink(_origin, code);
+      await w.source.refreshActiveDeviceLink();
+      await w.fresh.completeDeviceLinkClaim();
+      final sas = w.fresh.pendingDeviceLinkClaim!.verificationCode;
+      await w.source.approveActiveDeviceLink(sas);
+      await w.fresh.completeDeviceLinkClaim();
+      expect(w.fresh.session?.deviceId, _newDevice);
+      await w.drain();
+      expect((await w.newStore.loadMessages('conv')).map((m) => m.body), [
+        'first',
+        'second',
+      ]);
+
+      // Everything the in-memory server was given: the link and claim
+      // records (approval tag included), the signed device lists, the
+      // reservation, the transfer metadata, the handoff and the ciphertext.
+      final stored = w.transfer.stored!;
+      final seen = <List<int>>[
+        utf8.encode(jsonEncode(w.server.link)),
+        utf8.encode(jsonEncode(w.server.claim)),
+        utf8.encode(w.server.reservationRequestId ?? ''),
+        for (final statement in w.server.chain) statement,
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'transfer_id': stored.transferId,
+            'claim_request_hash': stored.claimRequestHash,
+            'transcript_hash': base64Encode(stored.transcriptHash),
+            'ciphertext_sha256': stored.ciphertextSha256,
           }),
-      skip: skip);
+        ),
+        w.transfer.handoff!,
+        w.transfer.ciphertext!,
+      ];
+      final needles = <String, List<int>>{
+        'raw secret': secret,
+        'base64 secret': utf8.encode(base64Encode(secret)),
+        'base64url secret': utf8.encode(
+          base64Url.encode(secret).replaceAll('=', ''),
+        ),
+        'hex secret': utf8.encode(hexOf(secret)),
+        'typed code': utf8.encode(code),
+        'history text': utf8.encode('first'),
+        'history text 2': utf8.encode('second'),
+        'conversation title': utf8.encode('historical'),
+      };
+      for (final haystack in seen) {
+        for (final entry in needles.entries) {
+          expect(
+            _contains(haystack, entry.value),
+            isFalse,
+            reason: 'the server was given the ${entry.key}',
+          );
+        }
+      }
+    }),
+    skip: skip,
+  );
+}
+
+bool _contains(List<int> haystack, List<int> needle) {
+  if (needle.isEmpty || needle.length > haystack.length) return false;
+  outer:
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
 }

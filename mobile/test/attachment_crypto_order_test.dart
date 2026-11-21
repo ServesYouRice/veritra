@@ -87,27 +87,29 @@ void main() {
     expect(chunkCount, 3);
   });
 
-  test('chunks are encrypted and decrypted with indices 0..n-1 in order',
-      () async {
-    final bindings = _RecordingBindings();
-    final service = serviceWith(bindings);
-    final sourcePath = await writeSource();
-    final prepared = await encrypt(service, sourcePath);
-    expect(bindings.encrypted, List<int>.generate(chunkCount, (i) => i));
-    expect(prepared.manifest['chunk_count'], chunkCount);
+  test(
+    'chunks are encrypted and decrypted with indices 0..n-1 in order',
+    () async {
+      final bindings = _RecordingBindings();
+      final service = serviceWith(bindings);
+      final sourcePath = await writeSource();
+      final prepared = await encrypt(service, sourcePath);
+      expect(bindings.encrypted, List<int>.generate(chunkCount, (i) => i));
+      expect(prepared.manifest['chunk_count'], chunkCount);
 
-    final destination = '${tempDir.path}/out.bin';
-    await service.decryptFile(
-      ciphertextPath: prepared.ciphertextPath,
-      destinationPath: destination,
-      manifest: prepared.manifest,
-    );
-    expect(bindings.decrypted, List<int>.generate(chunkCount, (i) => i));
-    expect(
-      await File(destination).readAsBytes(),
-      await File(sourcePath).readAsBytes(),
-    );
-  });
+      final destination = '${tempDir.path}/out.bin';
+      await service.decryptFile(
+        ciphertextPath: prepared.ciphertextPath,
+        destinationPath: destination,
+        manifest: prepared.manifest,
+      );
+      expect(bindings.decrypted, List<int>.generate(chunkCount, (i) => i));
+      expect(
+        await File(destination).readAsBytes(),
+        await File(sourcePath).readAsBytes(),
+      );
+    },
+  );
 
   test('each encryption uses a fresh key and nonce prefix', () async {
     final service = serviceWith(_RecordingBindings());
@@ -116,10 +118,14 @@ void main() {
     final second = await encrypt(service, sourcePath);
     expect(base64Decode(first.manifest['key']! as String), hasLength(32));
     expect(
-        base64Decode(first.manifest['nonce_prefix']! as String), hasLength(8));
+      base64Decode(first.manifest['nonce_prefix']! as String),
+      hasLength(8),
+    );
     expect(first.manifest['key'], isNot(second.manifest['key']));
     expect(
-        first.manifest['nonce_prefix'], isNot(second.manifest['nonce_prefix']));
+      first.manifest['nonce_prefix'],
+      isNot(second.manifest['nonce_prefix']),
+    );
     expect(first.ciphertextPath, isNot(second.ciphertextPath));
   });
 
@@ -139,7 +145,8 @@ void main() {
       final what = swap ? 'swapped' : 'duplicated';
       test('$what chunk frames do not decrypt', () async {
         final service = serviceWith(
-            NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+        );
         final sourcePath = await writeSource();
         final prepared = await encrypt(service, sourcePath);
 
@@ -150,8 +157,10 @@ void main() {
           destinationPath: control,
           manifest: prepared.manifest,
         );
-        expect(await File(control).readAsBytes(),
-            await File(sourcePath).readAsBytes());
+        expect(
+          await File(control).readAsBytes(),
+          await File(sourcePath).readAsBytes(),
+        );
 
         await rearrange(prepared.ciphertextPath, swap: swap);
         await expectRefused(service, prepared);
@@ -212,9 +221,10 @@ class _RecordingBindings implements NativeCryptoBindings {
     required List<int> plaintext,
   }) {
     encrypted.add(chunkIndex);
-    return Uint8List.fromList(
-      <int>[...plaintext, ..._tag(key, noncePrefix, chunkIndex, context)],
-    );
+    return Uint8List.fromList(<int>[
+      ...plaintext,
+      ..._tag(key, noncePrefix, chunkIndex, context),
+    ]);
   }
 
   @override

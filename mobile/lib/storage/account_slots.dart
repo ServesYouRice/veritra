@@ -134,10 +134,7 @@ class SlotException implements Exception {
 /// new registry that the store writes and reads back.
 @immutable
 class AccountRegistry {
-  const AccountRegistry({
-    required this.active,
-    required this.slots,
-  });
+  const AccountRegistry({required this.active, required this.slots});
 
   /// A device that never added a second account: one active primary slot.
   factory AccountRegistry.initial(String primaryNamespace) => AccountRegistry(
@@ -192,7 +189,10 @@ class AccountRegistry {
       slots: <AccountSlot>[
         ...slots,
         AccountSlot(
-            namespace: namespace, state: SlotState.pending, addedAt: now),
+          namespace: namespace,
+          state: SlotState.pending,
+          addedAt: now,
+        ),
       ],
     );
   }
@@ -200,7 +200,11 @@ class AccountRegistry {
   /// A session was saved in [namespace]: it becomes active with its identity.
   /// A second slot for the same server and account is refused.
   AccountRegistry withIdentity(
-      String namespace, String origin, String accountId, String? username) {
+    String namespace,
+    String origin,
+    String accountId,
+    String? username,
+  ) {
     final current = slot(namespace);
     // A slot being removed never becomes active again.
     if (current == null || current.state == SlotState.removing) {
@@ -210,13 +214,14 @@ class AccountRegistry {
       throw const SlotException(SlotRefusal.duplicate);
     }
     return _replace(
-        namespace,
-        current.copyWith(
-          state: SlotState.active,
-          origin: origin,
-          accountId: accountId,
-          username: username,
-        ));
+      namespace,
+      current.copyWith(
+        state: SlotState.active,
+        origin: origin,
+        accountId: accountId,
+        username: username,
+      ),
+    );
   }
 
   AccountRegistry withActive(String namespace) {
@@ -434,9 +439,10 @@ class AccountRegistryStore {
     // account then owns this choice even if it has never been opened yet.
     final preview =
         await _storage.read('veritra.notifications.hide_preview.v1') ?? 'false';
-    final key =
-        ProfileScope(namespace: namespace, primaryNamespace: primaryNamespace)
-            .secureKey('notifications.hide_preview.v1');
+    final key = ProfileScope(
+      namespace: namespace,
+      primaryNamespace: primaryNamespace,
+    ).secureKey('notifications.hide_preview.v1');
     await _storage.write(key, preview);
     if (await _storage.read(key) != preview) {
       throw const AccountRegistryException('readback');

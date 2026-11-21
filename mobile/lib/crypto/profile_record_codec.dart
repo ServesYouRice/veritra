@@ -119,9 +119,11 @@ class ProfileRecordCodec {
 
   /// The AEAD context: `"veritra-profile-v1\0" kind "\0" subject "\0" keyId`.
   static Uint8List context(String kind, String subjectId, String keyId) =>
-      Uint8List.fromList(utf8.encode(
-        'veritra-profile-v1\u0000$kind\u0000$subjectId\u0000$keyId',
-      ));
+      Uint8List.fromList(
+        utf8.encode(
+          'veritra-profile-v1\u0000$kind\u0000$subjectId\u0000$keyId',
+        ),
+      );
 
   /// Null when [name] is acceptable, otherwise why not. A name is 1..[max]
   /// UTF-16 units after trimming and holds no control or bidi characters.
@@ -135,8 +137,11 @@ class ProfileRecordCodec {
   /// [validName]'s rules for any short text: at most [max] UTF-16 units, no
   /// control, bidi or line-separator characters, no unpaired surrogates, and
   /// not blank unless [allowEmpty] (C3 topics may be empty).
-  static bool validText(String name,
-      {required int max, bool allowEmpty = false}) {
+  static bool validText(
+    String name, {
+    required int max,
+    bool allowEmpty = false,
+  }) {
     if (name.length > max) return false;
     if (name.trim().isEmpty) return allowEmpty && name.isEmpty;
     final units = name.codeUnits;
@@ -224,8 +229,11 @@ class ProfileRecordCodec {
         context: context(record.kind, record.subjectId, id),
         plaintext: plain,
       );
-      return Uint8List.fromList(
-          <int>[...utf8.encode(_blobMagic), ...nonce, ...sealed]);
+      return Uint8List.fromList(<int>[
+        ...utf8.encode(_blobMagic),
+        ...nonce,
+        ...sealed,
+      ]);
     } finally {
       plain.fillRange(0, plain.length, 0);
     }
@@ -266,13 +274,15 @@ class ProfileRecordCodec {
     }
     final Uint8List plain;
     try {
-      plain = Uint8List.fromList(_bindings.decryptAttachmentChunk(
-        key: key,
-        noncePrefix: blob.sublist(4, 12),
-        chunkIndex: 0,
-        context: context(kind, subjectId, servedKeyId),
-        ciphertext: blob.sublist(12),
-      ));
+      plain = Uint8List.fromList(
+        _bindings.decryptAttachmentChunk(
+          key: key,
+          noncePrefix: blob.sublist(4, 12),
+          chunkIndex: 0,
+          context: context(kind, subjectId, servedKeyId),
+          ciphertext: blob.sublist(12),
+        ),
+      );
     } on NativeCryptoException {
       throw const ProfileRecordException(ProfileRecordFailure.authFailed);
     }
@@ -379,8 +389,12 @@ class ProfileRecordCodec {
       checkPhoto(png, width, height);
 
   /// [_checkPhoto] with a caller's side limit (C3 icons are at most 256).
-  static void checkPhoto(Uint8List png, int width, int height,
-      {int maxSide = profileMaxPhotoSide}) {
+  static void checkPhoto(
+    Uint8List png,
+    int width,
+    int height, {
+    int maxSide = profileMaxPhotoSide,
+  }) {
     const bad = ProfileRecordException(ProfileRecordFailure.badPhoto);
     if (png.length < 33 || png.length > profileMaxPhotoBytes) throw bad;
     const signature = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

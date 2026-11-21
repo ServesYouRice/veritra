@@ -87,8 +87,11 @@ class ReportPlan {
 /// its shared group: the owner, the admins and the moderators. The server's
 /// roles never decide who receives a community report.
 class ReportModerators {
-  const ReportModerators(this.communityId, this.accounts,
-      {required this.recordGroupId});
+  const ReportModerators(
+    this.communityId,
+    this.accounts, {
+    required this.recordGroupId,
+  });
 
   final String communityId;
   final Set<String> accounts;
@@ -101,8 +104,12 @@ class ReportModerators {
 /// Who a report is sealed to: the keys, how they were judged, and the
 /// verified moderators left out for lack of an MLS announcement.
 class _SealTargets {
-  const _SealTargets(this.recipients, this.check,
-      {this.unconfirmed = const <String>[], this.recordGroupId});
+  const _SealTargets(
+    this.recipients,
+    this.check, {
+    this.unconfirmed = const <String>[],
+    this.recordGroupId,
+  });
 
   final List<ReportRecipientKey> recipients;
   final ReportKeyCheck check;
@@ -174,6 +181,11 @@ class OpenedReport {
   final String? text;
 
   bool get isOpen => body != null;
+
+  /// The reporter's reason (U33): null when the report is not open, or was
+  /// sent as a body from before reasons (version 1 or 2). The reporter's
+  /// claim only; no check covers it.
+  ReportReason? get reason => body?.reason;
 }
 
 /// What checking a report against the server's record found.
@@ -238,6 +250,7 @@ class ReportsService {
     this.communityId,
     this.onSeedChanged,
     this.senderFrankKey,
+    this.otherInboxes,
     Random? random,
     DateTime Function()? clock,
   })  : pins = ReportKeyPins(store, api.baseUrl),
@@ -276,6 +289,13 @@ class ReportsService {
   /// instance owner's.
   final String? communityId;
 
+  /// Every inbox this account may have published this device's key to on
+  /// this server: null names the instance owners' inbox, any other value a
+  /// community's moderator inbox. When a key is replaced, each of them that
+  /// still lists the old seed's key moves to the new one, so one seed serves
+  /// every inbox again (C6, "Community moderator inbox", left item).
+  final Iterable<String?> Function()? otherInboxes;
+
   /// The same service for this account's moderator inbox in [id].
   ReportsService forCommunity(String id) => ReportsService(
         api: api,
@@ -288,6 +308,7 @@ class ReportsService {
         communityId: id,
         onSeedChanged: onSeedChanged,
         senderFrankKey: senderFrankKey,
+        otherInboxes: otherInboxes,
         random: _random,
         clock: _clock,
       );
@@ -329,7 +350,8 @@ class ReportsService {
       final account = accountOf[recipient.inboxId];
       if (account == null) continue;
       final announced = await store.loadSetting(
-          reportKeyAnnouncementSetting(moderators.recordGroupId, account));
+        reportKeyAnnouncementSetting(moderators.recordGroupId, account),
+      );
       if (announced != null && announced == base64Encode(recipient.publicKey)) {
         trusted.add(recipient);
       } else {
@@ -340,7 +362,7 @@ class ReportsService {
       trusted,
       ReportKeyCheck([
         for (final recipient in trusted)
-          ReportKeyAssessment(recipient, ReportKeyStatus.authenticated, null)
+          ReportKeyAssessment(recipient, ReportKeyStatus.authenticated, null),
       ], const <ReportKeyPin>[]),
       unconfirmed: unconfirmed,
       recordGroupId: moderators.recordGroupId,
@@ -350,9 +372,11 @@ class ReportsService {
   /// Refuses an empty seal.
   void _requireTargets(_SealTargets targets) {
     if (targets.recipients.isNotEmpty) return;
-    throw ReportFailureException(targets.unconfirmed.isEmpty
-        ? ReportFailure.noRecipients
-        : ReportFailure.moderatorKeysPending);
+    throw ReportFailureException(
+      targets.unconfirmed.isEmpty
+          ? ReportFailure.noRecipients
+          : ReportFailure.moderatorKeysPending,
+    );
   }
 
   // ---- Reporter ----------------------------------------------------------
@@ -403,9 +427,15 @@ class ReportsService {
   /// Looks the recipients up again and seals only to keys that equal their
   /// pins (owners) or their MLS announcements (moderators), so a key
   /// swapped after the person confirmed is refused.
+  ///
+  /// [reason] is sealed in every copy alike (report body v3). It never
+  /// changes who gets a copy, how many copies there are or when the report
+  /// is sent, since the server sees all of that, and this device does not
+  /// keep it.
   Future<void> file({
     required String conversationId,
     required String messageKey,
+    required ReportReason reason,
   }) async {
     final reveal = await store.loadFrankReveal(messageKey);
     if (reveal == null || reveal.conversationId != conversationId) {
@@ -431,7 +461,7 @@ class ReportsService {
       conversationId: conversationId,
       reportId: reportId,
       reporterAccountId: accountId,
-      body: ReportBody.fromReveal(reveal),
+      body: ReportBody.fromReveal(reveal, reason: reason),
     );
     await api.createReport(
       token,
@@ -453,7 +483,10 @@ class ReportsService {
   List<ReportRecipientKey> _recipients(ReportInbox inbox) => [
         for (final r in inbox.recipients)
           ReportRecipientKey(
-              inboxId: r.inboxId, publicKey: r.publicKey, keyRev: r.keyRev)
+            inboxId: r.inboxId,
+            publicKey: r.publicKey,
+            keyRev: r.keyRev,
+          ),
       ];
 
   // ---- Instance owner ----------------------------------------------------
@@ -481,31 +514,59 @@ class ReportsService {
           : _sameBytes(own, listed.publicKey)
               ? OwnerReportKeyState.active
               : OwnerReportKeyState.replacedElsewhere;
-      return OwnerReportKeyStatus(state,
-          localKey: own, listedKey: listed?.publicKey);
+      return OwnerReportKeyStatus(
+        state,
+        localKey: own,
+        listedKey: listed?.publicKey,
+      );
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
   }
+
+  /// Whether [error] is the server's compare-and-swap refusal of a key
+  /// publish: another device of this account published or replaced the key
+  /// since this device read it. Nothing was published; the caller reloads
+  /// [keyStatus] and lets the person decide again.
+  static bool isKeyConflict(Object error) =>
+      error is ApiException && error.serverCode == 'report_key_changed';
 
   /// Makes a new report key on this device and publishes it. The seed is
   /// stored first, so a failed publish leaves a seed that [publishKey] can
   /// publish again; the call never replaces a seed this device already holds
   /// unless [replace] is true (the second-device and rotation case, after a
   /// person confirmed). Returns the public key and revision.
-  Future<(List<int>, int)> createKey({bool replace = false}) async {
+  ///
+  /// [expectedKey] is the key [keyStatus] listed when the person decided
+  /// ([OwnerReportKeyStatus.listedKey], null when none). The server refuses
+  /// the publish if another device changed the key since ([isKeyConflict]);
+  /// this device's previous seed is then put back, as for any failed
+  /// publish, and nothing is overwritten.
+  Future<(List<int>, int)> createKey({
+    bool replace = false,
+    required List<int>? expectedKey,
+  }) async {
     if (!replace && await seeds.load(api.baseUrl, accountId) != null) {
       throw StateError('a report key already exists on this device');
     }
     final previous = await seeds.load(api.baseUrl, accountId);
+    // A seed that no longer yields a key must not block its replacement:
+    // then nothing is moved and each inbox's screen offers the publish.
+    List<int>? previousKey;
+    if (previous != null) {
+      try {
+        previousKey = await crypto.reportPublicKey(previous);
+      } catch (_) {
+        previousKey = null;
+      }
+    }
     final seed = await crypto.generateReportKeySeed();
     try {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
+      final int rev;
       try {
-        final rev = await _putKey(key);
-        _seedChanged();
-        return (key, rev);
+        rev = await _putKey(key, expectedKey);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
         // opens stay readable.
@@ -516,23 +577,71 @@ class ReportsService {
         }
         rethrow;
       }
+      // Published: from here on the new seed is the one the server lists,
+      // so nothing below may put the old seed back.
+      if (previousKey != null) await _moveOtherInboxes(previousKey, key);
+      _seedChanged();
+      return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
       previous?.fillRange(0, previous.length, 0);
     }
   }
 
-  /// Publishes the key of the seed this device already holds.
-  Future<(List<int>, int)> publishKey() async {
+  /// Publishes the key of the seed this device already holds. [expectedKey]
+  /// as for [createKey].
+  Future<(List<int>, int)> publishKey({required List<int>? expectedKey}) async {
     final seed = await seeds.load(api.baseUrl, accountId);
     if (seed == null) throw StateError('no report key on this device');
     try {
       final key = await crypto.reportPublicKey(seed);
-      final rev = await _putKey(key);
+      final rev = await _putKey(key, expectedKey);
       _seedChanged();
       return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
+    }
+  }
+
+  /// After this device replaced its seed: publishes [key] to every other
+  /// inbox (see [otherInboxes]) that still lists [previousKey], the key of
+  /// the seed this device just dropped. An inbox listing any other key (one
+  /// another device holds) is left alone. Best effort per inbox: one that
+  /// fails reads as replaced elsewhere on its screen, which offers to
+  /// publish this device's key. Each publish expects [previousKey], so an
+  /// inbox another device changed between the check and the publish is
+  /// refused by the server and left alone too.
+  /// Never throws: it runs after the publish, when the old seed is gone.
+  Future<void> _moveOtherInboxes(List<int> previousKey, List<int> key) async {
+    final Set<String?> others;
+    try {
+      others = otherInboxes?.call().toSet() ?? const <String?>{};
+    } catch (_) {
+      return; // Each inbox's own screen offers the move instead.
+    }
+    final own = communityId;
+    for (final inbox in others) {
+      if (inbox == own) continue;
+      try {
+        final listed = inbox == null
+            ? await api.getOwnReportKey(token)
+            : await api.getOwnModeratorReportKey(token, inbox);
+        if (listed == null || !_sameBytes(listed.publicKey, previousKey)) {
+          continue;
+        }
+        if (inbox == null) {
+          await api.putInstanceReportKey(token, key, expected: previousKey);
+        } else {
+          await api.putModeratorReportKey(
+            token,
+            inbox,
+            key,
+            expected: previousKey,
+          );
+        }
+      } catch (_) {
+        // Left for that inbox's own screen (replaced elsewhere).
+      }
     }
   }
 
@@ -547,11 +656,12 @@ class ReportsService {
   /// Publishes [key] to this service's inbox: the instance owner's, or this
   /// account's moderator inbox in [communityId]. The seed is the account's
   /// one report seed on this device, so every inbox lists the same key.
-  Future<int> _putKey(List<int> key) {
+  /// [expected] is the key the person saw listed (compare-and-swap).
+  Future<int> _putKey(List<int> key, List<int>? expected) {
     final community = communityId;
     return community == null
-        ? api.putInstanceReportKey(token, key)
-        : api.putModeratorReportKey(token, community, key);
+        ? api.putInstanceReportKey(token, key, expected: expected)
+        : api.putModeratorReportKey(token, community, key, expected: expected);
   }
 
   /// This owner's report copies, oldest first.
@@ -658,8 +768,11 @@ class ReportsService {
     if (body == null) throw StateError('report is not open');
     final ReportEnvelopeRecord record;
     try {
-      record =
-          await api.getReportEnvelope(token, report.row.id, body.envelopeId);
+      record = await api.getReportEnvelope(
+        token,
+        report.row.id,
+        body.envelopeId,
+      );
     } on ApiException catch (err) {
       if (err.statusCode == 404) {
         return const ReportVerification(ReportVerdict.recordGone);
@@ -717,7 +830,9 @@ class ReportsService {
   /// setting so a later check cannot move it), and
   /// [ReportVerdict.verifiedServerTrusted] otherwise.
   Future<ReportVerification> _verifySealed(
-      OpenedReport report, ReportEnvelopeRecord record) async {
+    OpenedReport report,
+    ReportEnvelopeRecord record,
+  ) async {
     final body = report.body!;
     final account = body.senderAccountId;
     final designation = body.designation;
@@ -808,17 +923,19 @@ class ReportsService {
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
-    return ReportVerification(passed,
-        record: ReportEnvelopeRecord(
-          envelopeId: record.envelopeId,
-          conversationId: record.conversationId,
-          senderAccountId: account,
-          senderDeviceId: body.senderDeviceId,
-          frankCommit: commit,
-          createdAt: record.createdAt,
-          sealed: true,
-          idempotencyKey: record.idempotencyKey,
-        ));
+    return ReportVerification(
+      passed,
+      record: ReportEnvelopeRecord(
+        envelopeId: record.envelopeId,
+        conversationId: record.conversationId,
+        senderAccountId: account,
+        senderDeviceId: body.senderDeviceId,
+        frankCommit: commit,
+        createdAt: record.createdAt,
+        sealed: true,
+        idempotencyKey: record.idempotencyKey,
+      ),
+    );
   }
 
   /// Dismisses this owner's copy of a report.
@@ -873,9 +990,10 @@ String? _textOf(List<int> payload) {
 /// `SHA-256("veritra-frank-dv-kid-v1" | key)[0..16]` (vector
 /// testing/vectors/l2-frank-dv-v1.json).
 Uint8List frankDesignationKid(List<int> ownerKey) => Uint8List.sublistView(
-    sha256(<int>[...utf8.encode('veritra-frank-dv-kid-v1'), ...ownerKey]),
-    0,
-    frankDesignationKidBytes);
+      sha256(<int>[...utf8.encode('veritra-frank-dv-kid-v1'), ...ownerKey]),
+      0,
+      frankDesignationKidBytes,
+    );
 
 /// Whether [designation] has an entry under [kid].
 bool designationNames(List<int> designation, List<int> kid) {

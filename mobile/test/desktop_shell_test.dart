@@ -209,14 +209,16 @@ void main() {
     );
   });
 
-  test('a message while the window is in the background raises a notification',
-      () async {
-    history(<LocalMessage>[_local('m1')]);
-    await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
-    expect(notifier.shown, hasLength(1));
-    expect(notifier.shown.single.title, 'Family');
-    expect(notifier.shown.single.body, 'secret words');
-  });
+  test(
+    'a message while the window is in the background raises a notification',
+    () async {
+      history(<LocalMessage>[_local('m1')]);
+      await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown, hasLength(1));
+      expect(notifier.shown.single.title, 'Family');
+      expect(notifier.shown.single.body, 'secret words');
+    },
+  );
 
   test('a message request stays silent until it is accepted', () async {
     state.conversations = <Conversation>[
@@ -239,22 +241,24 @@ void main() {
     expect(notifier.shown, isEmpty);
   });
 
-  test('a muted chat stays quiet, and so does one whose mute is unreadable',
-      () async {
-    history(<LocalMessage>[_local('m1')]);
-    state.mutedOnServer.add('conv_1');
-    await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
-    expect(notifier.shown, isEmpty);
+  test(
+    'a muted chat stays quiet, and so does one whose mute is unreadable',
+    () async {
+      history(<LocalMessage>[_local('m1')]);
+      state.mutedOnServer.add('conv_1');
+      await messages.handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      expect(notifier.shown, isEmpty);
 
-    // m2 has a stored message, so it reaches the mute lookup, which fails.
-    history(<LocalMessage>[_local('m1'), _local('m2')]);
-    state.mutedOnServer.clear();
-    state.muteReadable = false;
-    final readsBefore = state.muteReads;
-    await messages.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
-    expect(state.muteReads, readsBefore + 1);
-    expect(notifier.shown, isEmpty);
-  });
+      // m2 has a stored message, so it reaches the mute lookup, which fails.
+      history(<LocalMessage>[_local('m1'), _local('m2')]);
+      state.mutedOnServer.clear();
+      state.muteReadable = false;
+      final readsBefore = state.muteReads;
+      await messages.handle(<ReceivedMessageEnvelope>[_envelope('m2')]);
+      expect(state.muteReads, readsBefore + 1);
+      expect(notifier.shown, isEmpty);
+    },
+  );
 
   test('the same envelope notifies once its mute reads as not muted', () async {
     history(<LocalMessage>[_local('m1'), _local('m2')]);
@@ -293,8 +297,9 @@ void main() {
       final pending = NotificationSettings(store);
       final loading = pending.load();
       history(<LocalMessage>[_local('m1')]);
-      await notifierFor(pending)
-          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await notifierFor(
+        pending,
+      ).handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
       expectGeneric();
       expect(notifier.shown.single.body, isNot(contains('secret')));
       store.release.complete();
@@ -320,8 +325,9 @@ void main() {
       final empty = NotificationSettings(MemoryNotificationSettingsStore());
       await empty.load();
       history(<LocalMessage>[_local('m1')]);
-      await notifierFor(empty)
-          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await notifierFor(
+        empty,
+      ).handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
       expect(notifier.shown.single.body, 'secret words');
     });
 
@@ -334,28 +340,33 @@ void main() {
       await loading;
       expect(pending.hidePreview, isFalse);
       history(<LocalMessage>[_local('m1')]);
-      await notifierFor(pending)
-          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await notifierFor(
+        pending,
+      ).handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
       expect(notifier.shown.single.body, 'secret words');
     });
 
-    test('an explicit "show" is honoured even when the store is unreadable',
-        () async {
-      final unreadable = NotificationSettings(_UnreadableStore());
-      await unreadable.load();
-      await unreadable.setHidePreview(false);
-      history(<LocalMessage>[_local('m1')]);
-      await notifierFor(unreadable)
-          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
-      expect(notifier.shown.single.body, 'secret words');
-    });
+    test(
+      'an explicit "show" is honoured even when the store is unreadable',
+      () async {
+        final unreadable = NotificationSettings(_UnreadableStore());
+        await unreadable.load();
+        await unreadable.setHidePreview(false);
+        history(<LocalMessage>[_local('m1')]);
+        await notifierFor(
+          unreadable,
+        ).handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+        expect(notifier.shown.single.body, 'secret words');
+      },
+    );
 
     test('a saved "hide" still applies after the load', () async {
       final saved = NotificationSettings(MemoryNotificationSettingsStore(true));
       await saved.load();
       history(<LocalMessage>[_local('m1')]);
-      await notifierFor(saved)
-          .handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
+      await notifierFor(
+        saved,
+      ).handle(<ReceivedMessageEnvelope>[_envelope('m1')]);
       expectGeneric();
     });
   });
@@ -393,28 +404,30 @@ void main() {
         expect(notifier.shown, isEmpty);
       });
 
-      test('a sign-out that has started during ${wait.key} shows nothing',
-          () async {
-        // The session stays set for several awaits while sign-out runs.
-        final entered = Completer<void>();
-        final release = Completer<void>();
-        state.beforeLocalSessionClear = () async {
-          entered.complete();
-          await release.future;
-        };
-        final gate = Completer<void>();
-        wait.value(gate);
-        final pending = start();
-        await Future<void>.delayed(Duration.zero);
-        final signOut = state.logout();
-        await entered.future;
-        expect(state.session, isNotNull);
-        gate.complete();
-        await pending;
-        expect(notifier.shown, isEmpty);
-        release.complete();
-        await signOut;
-      });
+      test(
+        'a sign-out that has started during ${wait.key} shows nothing',
+        () async {
+          // The session stays set for several awaits while sign-out runs.
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          state.beforeLocalSessionClear = () async {
+            entered.complete();
+            await release.future;
+          };
+          final gate = Completer<void>();
+          wait.value(gate);
+          final pending = start();
+          await Future<void>.delayed(Duration.zero);
+          final signOut = state.logout();
+          await entered.future;
+          expect(state.session, isNotNull);
+          gate.complete();
+          await pending;
+          expect(notifier.shown, isEmpty);
+          release.complete();
+          await signOut;
+        },
+      );
 
       test('an account switch during ${wait.key} shows nothing', () async {
         final gate = Completer<void>();
@@ -481,82 +494,94 @@ void main() {
     });
   });
 
-  test('a kept mention alerts in a muted chat, and its switch turns that off',
-      () async {
-    state.mutedOnServer.add('conv_1');
-    final format = jsonEncode({
-      'mentions': [
-        {'account_id': 'acct_me', 'offset': 0, 'length': 3}
-      ]
-    });
-    history([_local('mention', body: '@me hello', formatJson: format)]);
-    await messages.handle([_envelope('mention')]);
-    expect(notifier.shown.single.body, '@me hello');
-    state.mentionsInMutedChats = false;
-    history([_local('disabled', body: '@me hello', formatJson: format)]);
-    await messages.handle([_envelope('disabled')]);
-    expect(notifier.shown, hasLength(1));
-    state.mentionsInMutedChats = true;
-    history([
-      _local('hidden', body: '@me hello', formatJson: format, hiddenAt: 1),
-      _local('edit',
-          body: '@me hello', kind: LocalMessageKind.action, formatJson: format)
-    ]);
-    await messages.handle([_envelope('hidden'), _envelope('edit')]);
-    expect(notifier.shown, hasLength(1));
-  });
+  test(
+    'a kept mention alerts in a muted chat, and its switch turns that off',
+    () async {
+      state.mutedOnServer.add('conv_1');
+      final format = jsonEncode({
+        'mentions': [
+          {'account_id': 'acct_me', 'offset': 0, 'length': 3},
+        ],
+      });
+      history([_local('mention', body: '@me hello', formatJson: format)]);
+      await messages.handle([_envelope('mention')]);
+      expect(notifier.shown.single.body, '@me hello');
+      state.mentionsInMutedChats = false;
+      history([_local('disabled', body: '@me hello', formatJson: format)]);
+      await messages.handle([_envelope('disabled')]);
+      expect(notifier.shown, hasLength(1));
+      state.mentionsInMutedChats = true;
+      history([
+        _local('hidden', body: '@me hello', formatJson: format, hiddenAt: 1),
+        _local(
+          'edit',
+          body: '@me hello',
+          kind: LocalMessageKind.action,
+          formatJson: format,
+        ),
+      ]);
+      await messages.handle([_envelope('hidden'), _envelope('edit')]);
+      expect(notifier.shown, hasLength(1));
+    },
+  );
 
   test('notification previews conceal spoiler text', () async {
     history([
-      _local('spoiler',
-          body: 'secret words',
-          formatJson: jsonEncode({
-            'entities': [
-              {'type': 'spoiler', 'offset': 0, 'length': 6}
-            ]
-          }))
+      _local(
+        'spoiler',
+        body: 'secret words',
+        formatJson: jsonEncode({
+          'entities': [
+            {'type': 'spoiler', 'offset': 0, 'length': 6},
+          ],
+        }),
+      ),
     ]);
     await messages.handle([_envelope('spoiler')]);
     expect(notifier.shown.single.body, englishL10n.w8HiddenSpoiler);
     expect(notifier.shown.single.body, isNot(contains('secret words')));
   });
 
-  test('own, edited-away, action, stale and repeated messages are skipped',
-      () async {
-    history(<LocalMessage>[
-      _local('own', account: 'acct_me', device: 'dev_me'),
-      _local('act', kind: LocalMessageKind.action),
-      _local('old', createdAt: _now.subtract(const Duration(hours: 1))),
-      _local('gone'),
-      _local('ok'),
-    ]);
-    await messages.handle(<ReceivedMessageEnvelope>[
-      _envelope('own', account: 'acct_me', device: 'dev_me'),
-      _envelope('act'),
-      _envelope('old', createdAt: _now.subtract(const Duration(hours: 1))),
-      _envelope('gone', deletedAt: _now),
-    ]);
-    expect(notifier.shown, isEmpty);
-    expect(state.muteReads, 0);
+  test(
+    'own, edited-away, action, stale and repeated messages are skipped',
+    () async {
+      history(<LocalMessage>[
+        _local('own', account: 'acct_me', device: 'dev_me'),
+        _local('act', kind: LocalMessageKind.action),
+        _local('old', createdAt: _now.subtract(const Duration(hours: 1))),
+        _local('gone'),
+        _local('ok'),
+      ]);
+      await messages.handle(<ReceivedMessageEnvelope>[
+        _envelope('own', account: 'acct_me', device: 'dev_me'),
+        _envelope('act'),
+        _envelope('old', createdAt: _now.subtract(const Duration(hours: 1))),
+        _envelope('gone', deletedAt: _now),
+      ]);
+      expect(notifier.shown, isEmpty);
+      expect(state.muteReads, 0);
 
-    await messages.handle(<ReceivedMessageEnvelope>[_envelope('ok')]);
-    await messages.handle(<ReceivedMessageEnvelope>[_envelope('ok')]);
-    expect(notifier.shown, hasLength(1));
-  });
+      await messages.handle(<ReceivedMessageEnvelope>[_envelope('ok')]);
+      await messages.handle(<ReceivedMessageEnvelope>[_envelope('ok')]);
+      expect(notifier.shown, hasLength(1));
+    },
+  );
 
-  test('a burst in one chat gives one notification with the newest text',
-      () async {
-    final earlier = _now.subtract(const Duration(seconds: 5));
-    history(<LocalMessage>[
-      _local('a', body: 'first', createdAt: earlier),
-      _local('b', body: 'last'),
-    ]);
-    await messages.handle(<ReceivedMessageEnvelope>[
-      _envelope('a', createdAt: earlier),
-      _envelope('b'),
-    ]);
-    expect(notifier.shown.single.body, 'last');
-  });
+  test(
+    'a burst in one chat gives one notification with the newest text',
+    () async {
+      final earlier = _now.subtract(const Duration(seconds: 5));
+      history(<LocalMessage>[
+        _local('a', body: 'first', createdAt: earlier),
+        _local('b', body: 'last'),
+      ]);
+      await messages.handle(<ReceivedMessageEnvelope>[
+        _envelope('a', createdAt: earlier),
+        _envelope('b'),
+      ]);
+      expect(notifier.shown.single.body, 'last');
+    },
+  );
 
   test('state forwards published messages to the listener', () async {
     messages.attach();
@@ -565,19 +590,27 @@ void main() {
     expect(state.onMessagesPublished, isNull);
   });
 
-  testWidgets('settings screen offers the hide preview switch on desktop',
-      (tester) async {
-    await tester.pumpWidget(NotificationSettingsScope(
-      settings: settings,
-      child: MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: SettingsScreen(state: state),
+  testWidgets('settings screen offers the hide preview switch on desktop', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      NotificationSettingsScope(
+        settings: settings,
+        child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: SettingsScreen(state: state),
+        ),
       ),
-    ));
+    );
     final tile = find.text('Hide message preview');
-    await tester.scrollUntilVisible(tile, 200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(
+      tile,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(tile);
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(tile);
     await tester.pump();
     expect(settings.hidePreview, isTrue);

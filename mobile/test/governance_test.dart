@@ -644,13 +644,14 @@ void main() {
         validateCommit(o, cancel, owner, before: crew, after: after).ok,
         isTrue,
       );
-      expect(
-        requiredRecord(o, owner, before: crew, after: after),
-        cancel,
-      );
+      expect(requiredRecord(o, owner, before: crew, after: after), cancel);
       // An owner cancel that also moves `ownerRev` is refused.
-      final stamped =
-          bump(o, byOwner: true, clearElection: true, joined: stamp);
+      final stamped = bump(
+        o,
+        byOwner: true,
+        clearElection: true,
+        joined: stamp,
+      );
       expect(
         validateCommit(o, stamped, owner, before: crew, after: after).reject,
         GovernanceReject.badShape,
@@ -1045,7 +1046,9 @@ void main() {
         joined: {owner: 0, bob: 1, carol: 2, dave: 12},
       );
       expect(
-          validateCommit(c, win, bob, before: before, after: after).ok, isTrue);
+        validateCommit(c, win, bob, before: before, after: after).ok,
+        isTrue,
+      );
     });
 
     test('a claim whose claimant left is cleared; the next member claims', () {
@@ -1102,40 +1105,44 @@ void main() {
       }) =>
           validateCommit(s, next, who, before: roster, after: after);
 
-      test('attack: stand-ins promoted while the owner was silent do not vote',
-          () {
-        var s = quiet();
-        GovernanceState step(GovernanceState next, String who) {
-          final r = commit(s, next, who);
-          expect(r.ok, isTrue, reason: '${r.reject}');
-          return s = next;
-        }
+      test(
+        'attack: stand-ins promoted while the owner was silent do not vote',
+        () {
+          var s = quiet();
+          GovernanceState step(GovernanceState next, String who) {
+            final r = commit(s, next, who);
+            expect(r.ok, isTrue, reason: '${r.reject}');
+            return s = next;
+          }
 
-        // The rogue admin promotes two stand-ins: allowed, as on the server.
-        step(bump(s, admins: {...s.admins, bob: 11, mod: 11}), admin);
-        const all = {admin, carol, bob, mod};
-        // Opening with them in the snapshot, or as one of them, is refused.
-        final stuffed = bump(s, election: vote(all, opened: 12));
-        expect(commit(s, stuffed, admin).reject, GovernanceReject.election);
-        expect(commit(s, stuffed, bob).reject, GovernanceReject.election);
-        final byBob = bump(s, election: vote(old, opened: 12));
-        expect(commit(s, byBob, bob).reject, GovernanceReject.election);
-        // Only the old admins are in the snapshot, so carol's vote is needed.
-        step(bump(s, election: vote(old, opened: 12)), admin);
-        step(bump(s, election: vote(old, opened: 12, votes: {admin: admin})),
-            admin);
-        // A stand-in cannot vote, nor decide.
-        final standIn = bump(
-          s,
-          election: vote(old, opened: 12, votes: {admin: admin, bob: admin}),
-        );
-        expect(commit(s, standIn, bob).reject, GovernanceReject.badShape);
-        final win = won(s, admin);
-        expect(commit(s, win, mod).reject, GovernanceReject.ownerChange);
-        expect(commit(s, win, admin).reject, GovernanceReject.election);
-        // Two of two decide, and carol is not a stand-in.
-        expect(commit(s, win, carol).ok, isTrue);
-      });
+          // The rogue admin promotes two stand-ins: allowed, as on the server.
+          step(bump(s, admins: {...s.admins, bob: 11, mod: 11}), admin);
+          const all = {admin, carol, bob, mod};
+          // Opening with them in the snapshot, or as one of them, is refused.
+          final stuffed = bump(s, election: vote(all, opened: 12));
+          expect(commit(s, stuffed, admin).reject, GovernanceReject.election);
+          expect(commit(s, stuffed, bob).reject, GovernanceReject.election);
+          final byBob = bump(s, election: vote(old, opened: 12));
+          expect(commit(s, byBob, bob).reject, GovernanceReject.election);
+          // Only the old admins are in the snapshot, so carol's vote is needed.
+          step(bump(s, election: vote(old, opened: 12)), admin);
+          step(
+            bump(s, election: vote(old, opened: 12, votes: {admin: admin})),
+            admin,
+          );
+          // A stand-in cannot vote, nor decide.
+          final standIn = bump(
+            s,
+            election: vote(old, opened: 12, votes: {admin: admin, bob: admin}),
+          );
+          expect(commit(s, standIn, bob).reject, GovernanceReject.badShape);
+          final win = won(s, admin);
+          expect(commit(s, win, mod).reject, GovernanceReject.ownerChange);
+          expect(commit(s, win, admin).reject, GovernanceReject.election);
+          // Two of two decide, and carol is not a stand-in.
+          expect(commit(s, win, carol).ok, isTrue);
+        },
+      );
 
       test('attack: a non-owner commit cannot move ownerRev', () {
         final s = quiet();
@@ -1185,11 +1192,8 @@ void main() {
         final changes = <String, GovernanceState Function({bool byOwner})>{
           'moderators': ({bool byOwner = false}) =>
               bump(s, byOwner: byOwner, moderators: {mod}),
-          'admins': ({bool byOwner = false}) => bump(
-                s,
-                byOwner: byOwner,
-                admins: {...s.admins, bob: 11},
-              ),
+          'admins': ({bool byOwner = false}) =>
+              bump(s, byOwner: byOwner, admins: {...s.admins, bob: 11}),
           'electors': ({bool byOwner = false}) =>
               bump(s, byOwner: byOwner, electors: {carol}),
           'posting': ({bool byOwner = false}) =>
@@ -1204,8 +1208,11 @@ void main() {
               ),
         };
         for (final e in changes.entries) {
-          expect(commit(s, e.value(byOwner: true), owner).ok, isTrue,
-              reason: e.key);
+          expect(
+            commit(s, e.value(byOwner: true), owner).ok,
+            isTrue,
+            reason: e.key,
+          );
           expect(
             commit(s, e.value(), owner).reject,
             GovernanceReject.badShape,
@@ -1258,8 +1265,13 @@ void main() {
         for (final (rec, after) in stamped) {
           final bumped = rec.copyWith(ownerRev: rec.rev);
           expect(
-            validateCommit(s, bumped, owner, before: roster, after: after)
-                .reject,
+            validateCommit(
+              s,
+              bumped,
+              owner,
+              before: roster,
+              after: after,
+            ).reject,
             GovernanceReject.badShape,
           );
         }
@@ -1282,8 +1294,9 @@ void main() {
 
       test('admins by ownerRev vote; since == ownerRev counts', () {
         // eve became admin at rev 4; the owner's last decision is rev 4 or 3.
-        GovernanceState withEve(int ownerRev) => quiet(ownerRev: ownerRev)
-            .copyWith(admins: {admin: 1, carol: 2, eve: 4});
+        GovernanceState withEve(int ownerRev) => quiet(
+              ownerRev: ownerRev,
+            ).copyWith(admins: {admin: 1, carol: 2, eve: 4});
         const crew = {...roster, eve};
         GovernanceCheck open(GovernanceState s, Set<String> who, String by) =>
             validateCommit(
@@ -1426,27 +1439,29 @@ void main() {
       });
 
       // Residuals, pinned so a change to them is deliberate.
-      test('residual: an admin from before ownerRev still wins alone, at once',
-          () {
-        // The owner left carol as admin when it last committed; carol is a
-        // snapshot of one and no clock binds a rogue carol.
-        var s = GovernanceState(
-          rev: 10,
-          owner: owner,
-          ownerRev: 5,
-          admins: {carol: 2},
-          joined: joinedHere,
-        );
-        GovernanceState step(GovernanceState next, String who) {
-          final r = commit(s, next, who);
-          expect(r.ok, isTrue, reason: '${r.reject}');
-          return s = next;
-        }
+      test(
+        'residual: an admin from before ownerRev still wins alone, at once',
+        () {
+          // The owner left carol as admin when it last committed; carol is a
+          // snapshot of one and no clock binds a rogue carol.
+          var s = GovernanceState(
+            rev: 10,
+            owner: owner,
+            ownerRev: 5,
+            admins: {carol: 2},
+            joined: joinedHere,
+          );
+          GovernanceState step(GovernanceState next, String who) {
+            final r = commit(s, next, who);
+            expect(r.ok, isTrue, reason: '${r.reject}');
+            return s = next;
+          }
 
-        step(bump(s, election: vote({carol})), carol);
-        step(won(s, carol), carol);
-        expect(s.owner, carol);
-      });
+          step(bump(s, election: vote({carol})), carol);
+          step(won(s, carol), carol);
+          expect(s.owner, carol);
+        },
+      );
 
       test('provoked owner commits do not help the rogue; a decision does', () {
         // The rogue admin promotes stand-ins and opens a throwaway election.
@@ -1477,30 +1492,32 @@ void main() {
         step(bump(s, election: vote(all, opened: 15)), bob);
       });
 
-      test('residual: a forced removal leaves D82 to the old admin who stays',
-          () {
-        // The owner chose carol and dave; admin is an older admin it did not
-        // flag. Forcing carol and dave out in the opening commit leaves admin
-        // a snapshot of one. C1/C5 do not yet stop a forced removal.
-        final s = GovernanceState(
-          rev: 10,
-          owner: owner,
-          ownerRev: 3,
-          admins: {admin: 1, carol: 2, dave: 3},
-          electors: {carol, dave},
-          joined: {owner: 0, admin: 1, carol: 2, dave: 3, bob: 5},
-        );
-        const crew = {owner, admin, carol, dave, bob};
-        const after = {owner, admin, bob};
-        final open = s
-            .removeAccount(carol)
-            .removeAccount(dave)
-            .copyWith(rev: 11, election: vote({admin}));
-        expect(
-          validateCommit(s, open, admin, before: crew, after: after).ok,
-          isTrue,
-        );
-      });
+      test(
+        'residual: a forced removal leaves D82 to the old admin who stays',
+        () {
+          // The owner chose carol and dave; admin is an older admin it did not
+          // flag. Forcing carol and dave out in the opening commit leaves admin
+          // a snapshot of one. C1/C5 do not yet stop a forced removal.
+          final s = GovernanceState(
+            rev: 10,
+            owner: owner,
+            ownerRev: 3,
+            admins: {admin: 1, carol: 2, dave: 3},
+            electors: {carol, dave},
+            joined: {owner: 0, admin: 1, carol: 2, dave: 3, bob: 5},
+          );
+          const crew = {owner, admin, carol, dave, bob};
+          const after = {owner, admin, bob};
+          final open = s
+              .removeAccount(carol)
+              .removeAccount(dave)
+              .copyWith(rev: 11, election: vote({admin}));
+          expect(
+            validateCommit(s, open, admin, before: crew, after: after).ok,
+            isTrue,
+          );
+        },
+      );
     });
   });
 }

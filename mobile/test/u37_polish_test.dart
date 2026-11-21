@@ -24,8 +24,9 @@ void main() {
     expect(durationWords(l10n, 604800), '7 days');
   });
 
-  testWidgets('an account notice also shows inside an open chat',
-      (tester) async {
+  testWidgets('an account notice also shows inside an open chat', (
+    tester,
+  ) async {
     setWindowSize(tester, phoneSize);
     final state = await connectedState();
     state.passkeyNotice = PasskeyNotice.added;

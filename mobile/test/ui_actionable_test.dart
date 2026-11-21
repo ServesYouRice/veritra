@@ -53,7 +53,8 @@ void main() {
   test('parseDeviceLinkCode extracts the code from a link URI', () {
     expect(
       parseDeviceLinkCode(
-          'veritra://device-link?code=AAAAAAAAAAAAAAAAAAAAAAAAAA'),
+        'veritra://device-link?code=AAAAAAAAAAAAAAAAAAAAAAAAAA',
+      ),
       'AAAAAAAAAAAAAAAAAAAAAAAAAA',
     );
   });
@@ -62,22 +63,24 @@ void main() {
     expect(parseDeviceLinkCode('  aaaaa-aaaaa-aaaaa-aaaaa-aaaaaa  '), 'A' * 26);
   });
 
-  test('device-link QR rejects unrelated URLs and accepts HTTPS origins only',
-      () {
-    expect(parseDeviceLinkCode('https://example.org/not-a-link'), isEmpty);
-    expect(
-      parseDeviceLinkOrigin(
-        'veritra://device-link?code=ABCD&origin=https%3A%2F%2Fchat.example.org',
-      ),
-      'https://chat.example.org',
-    );
-    expect(
-      parseDeviceLinkOrigin(
-        'veritra://device-link?code=ABCD&origin=http%3A%2F%2Flocalhost',
-      ),
-      isNull,
-    );
-  });
+  test(
+    'device-link QR rejects unrelated URLs and accepts HTTPS origins only',
+    () {
+      expect(parseDeviceLinkCode('https://example.org/not-a-link'), isEmpty);
+      expect(
+        parseDeviceLinkOrigin(
+          'veritra://device-link?code=ABCD&origin=https%3A%2F%2Fchat.example.org',
+        ),
+        'https://chat.example.org',
+      );
+      expect(
+        parseDeviceLinkOrigin(
+          'veritra://device-link?code=ABCD&origin=http%3A%2F%2Flocalhost',
+        ),
+        isNull,
+      );
+    },
+  );
 
   test('markNewestMessageRead clears the unread badge locally', () async {
     final api = _ReadApiClient();
@@ -98,26 +101,28 @@ void main() {
     expect(api.lastReadMessageId, 'm_newest');
   });
 
-  test('per-list loaded flags flip after refresh and reset on logout',
-      () async {
-    final api = _ReadApiClient();
-    final state = _connectedState(api);
-    expect(state.communitiesLoaded, isFalse);
-    expect(state.invitesLoaded, isFalse);
-    expect(state.devicesLoaded, isFalse);
+  test(
+    'per-list loaded flags flip after refresh and reset on logout',
+    () async {
+      final api = _ReadApiClient();
+      final state = _connectedState(api);
+      expect(state.communitiesLoaded, isFalse);
+      expect(state.invitesLoaded, isFalse);
+      expect(state.devicesLoaded, isFalse);
 
-    await state.refreshCommunities();
-    await state.refreshInvites();
-    await state.refreshDevices();
-    expect(state.communitiesLoaded, isTrue);
-    expect(state.invitesLoaded, isTrue);
-    expect(state.devicesLoaded, isTrue);
+      await state.refreshCommunities();
+      await state.refreshInvites();
+      await state.refreshDevices();
+      expect(state.communitiesLoaded, isTrue);
+      expect(state.invitesLoaded, isTrue);
+      expect(state.devicesLoaded, isTrue);
 
-    await state.logout();
-    expect(state.communitiesLoaded, isFalse);
-    expect(state.invitesLoaded, isFalse);
-    expect(state.devicesLoaded, isFalse);
-  });
+      await state.logout();
+      expect(state.communitiesLoaded, isFalse);
+      expect(state.invitesLoaded, isFalse);
+      expect(state.devicesLoaded, isFalse);
+    },
+  );
 }
 
 ReceivedMessageEnvelope _message(String id) {

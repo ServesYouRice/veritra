@@ -89,17 +89,22 @@ void main() {
         expect(entries, isNotEmpty);
         for (final entry in entries) {
           total++;
-          expect(seen.add(entry.emoji), isTrue,
-              reason: 'duplicate ${entry.name}');
+          expect(
+            seen.add(entry.emoji),
+            isTrue,
+            reason: 'duplicate ${entry.name}',
+          );
           expect(entry.name, isNotEmpty);
           expect(asSingleEmoji(entry.emoji), entry.emoji, reason: entry.name);
         }
       }
       expect(total, greaterThan(1500));
       expect(
-          emojiCatalog[EmojiGroup.flags]!
-              .any((entry) => entry.name == 'flag: germany'),
-          isTrue);
+        emojiCatalog[EmojiGroup.flags]!.any(
+          (entry) => entry.name == 'flag: germany',
+        ),
+        isTrue,
+      );
     });
 
     test('search finds emoji by every word of the name', () {
@@ -115,27 +120,30 @@ void main() {
         'pasted one', (tester) async {
       String? result;
       Future<void> open() async {
-        await tester.pumpWidget(MaterialApp(
-          home: Builder(
-            builder: (context) => Scaffold(
-              body: Center(
-                child: TextButton(
-                  onPressed: () async =>
-                      result = await showEmojiPicker(context),
-                  child: const Text('open'),
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Center(
+                  child: TextButton(
+                    onPressed: () async =>
+                        result = await showEmojiPicker(context),
+                    child: const Text('open'),
+                  ),
                 ),
               ),
             ),
           ),
-        ));
+        );
         await tester.tap(find.text('open'));
         await tester.pumpAndSettle();
       }
 
       await open();
       // Grouped list: tapping the first smiley.
-      await tester
-          .tap(find.text(emojiCatalog[EmojiGroup.smileys]!.first.emoji));
+      await tester.tap(
+        find.text(emojiCatalog[EmojiGroup.smileys]!.first.emoji),
+      );
       await tester.pumpAndSettle();
       expect(result, emojiCatalog[EmojiGroup.smileys]!.first.emoji);
 
@@ -270,36 +278,38 @@ void main() {
       expect((await store.loadDrafts())['conv_1']?.text, 'hello again');
     });
 
-    test('drafts and mutes: a session expiry keeps drafts, sign-out wipes both',
-        () async {
-      final store = createStore();
-      await store.saveDraft('conv_1', 'secret draft');
-      await store.saveConversationMute('conv_1', muted: true);
-      // Clearing the cache for a sign-out drops the drafts with it.
-      await store.clearCachedState(preserveOutbox: true);
-      expect(await store.loadDrafts(), isEmpty);
-      expect(await store.loadConversationMutes(), isEmpty);
+    test(
+      'drafts and mutes: a session expiry keeps drafts, sign-out wipes both',
+      () async {
+        final store = createStore();
+        await store.saveDraft('conv_1', 'secret draft');
+        await store.saveConversationMute('conv_1', muted: true);
+        // Clearing the cache for a sign-out drops the drafts with it.
+        await store.clearCachedState(preserveOutbox: true);
+        expect(await store.loadDrafts(), isEmpty);
+        expect(await store.loadConversationMutes(), isEmpty);
 
-      await store.saveDraft('conv_1', 'secret draft');
-      await store.saveConversationMute('conv_1', muted: true);
-      expect(await store.loadConversationMutes(), hasLength(1));
-      // A session that expired keeps the drafts for the next sign-in; the
-      // mute copies are refetched from the server.
-      await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
-      expect((await store.loadDrafts())['conv_1']?.text, 'secret draft');
-      expect(await store.loadConversationMutes(), isEmpty);
+        await store.saveDraft('conv_1', 'secret draft');
+        await store.saveConversationMute('conv_1', muted: true);
+        expect(await store.loadConversationMutes(), hasLength(1));
+        // A session that expired keeps the drafts for the next sign-in; the
+        // mute copies are refetched from the server.
+        await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
+        expect((await store.loadDrafts())['conv_1']?.text, 'secret draft');
+        expect(await store.loadConversationMutes(), isEmpty);
 
-      await store.saveDraft('conv_1', 'secret draft');
-      await store.saveConversationMute('conv_1', muted: true);
-      await store.clear();
-      expect(await store.loadDrafts(), isEmpty);
-      expect(await store.loadConversationMutes(), isEmpty);
-      // Not just hidden: the text is not in the file's rows.
-      final left = await databases.last
-          .customSelect('SELECT count(*) AS n FROM local_drafts')
-          .getSingle();
-      expect(left.read<int>('n'), 0);
-    });
+        await store.saveDraft('conv_1', 'secret draft');
+        await store.saveConversationMute('conv_1', muted: true);
+        await store.clear();
+        expect(await store.loadDrafts(), isEmpty);
+        expect(await store.loadConversationMutes(), isEmpty);
+        // Not just hidden: the text is not in the file's rows.
+        final left = await databases.last
+            .customSelect('SELECT count(*) AS n FROM local_drafts')
+            .getSingle();
+        expect(left.read<int>('n'), 0);
+      },
+    );
 
     test('a mute is kept until it ends, then forgotten', () async {
       final store = createStore();
@@ -312,7 +322,9 @@ void main() {
       expect(mutes.keys, unorderedEquals(<String>['timed', 'always']));
       expect(mutes['always'], isNull);
       expect(
-          mutes['timed']!.millisecondsSinceEpoch, soon.millisecondsSinceEpoch);
+        mutes['timed']!.millisecondsSinceEpoch,
+        soon.millisecondsSinceEpoch,
+      );
       await Future<void>.delayed(const Duration(milliseconds: 1300));
       mutes = await store.loadConversationMutes();
       expect(mutes.keys, <String>['always']);
@@ -354,13 +366,15 @@ void main() {
     for (final entry in stores.entries) {
       Future<(AppState, LocalStore, _MuteApi)> start() async {
         final store = entry.value(databases, directory);
-        await store.saveSession(const Session(
-          baseUrl: 'https://localhost:8080',
-          token: 'token',
-          accountId: 'acct_own',
-          deviceId: 'dev_own',
-          deviceSecret: 'secret',
-        ));
+        await store.saveSession(
+          const Session(
+            baseUrl: 'https://localhost:8080',
+            token: 'token',
+            accountId: 'acct_own',
+            deviceId: 'dev_own',
+            deviceSecret: 'secret',
+          ),
+        );
         await store.saveDraft('conv_1', 'unsent words', replyTo: 'dev:3');
         final api = _MuteApi();
         final state = AppState(
@@ -431,7 +445,9 @@ void main() {
         state.flushDrafts();
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(
-            (await store.loadDrafts())['conv_1']?.text, 'unsent words, more');
+          (await store.loadDrafts())['conv_1']?.text,
+          'unsent words, more',
+        );
         state.dispose();
       });
     }
@@ -444,12 +460,14 @@ void main() {
 
     Future<void> start() async {
       store = MemoryLocalStore();
-      await store.saveSession(const Session(
-        baseUrl: 'https://localhost:8080',
-        token: 'token',
-        accountId: 'acct_own',
-        deviceId: 'dev_own',
-      ));
+      await store.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_own',
+          deviceId: 'dev_own',
+        ),
+      );
       api = _MuteApi();
       state = AppState(
         apiClientFactory: (_) => api,
@@ -497,59 +515,74 @@ void main() {
       expect((await store.loadDrafts())['conv_1']?.text, 'unsaved');
     });
 
-    test('mute 8 hours, 1 week and always reach the server and the device',
-        () async {
-      await start();
-      await state.tryRestoreSession();
-      final before = DateTime.now().toUtc();
+    test(
+      'mute 8 hours, 1 week and always reach the server and the device',
+      () async {
+        await start();
+        await state.tryRestoreSession();
+        final before = DateTime.now().toUtc();
 
-      expect(await state.setConversationMute('conv_1', MuteDuration.eightHours),
-          isTrue);
-      expect(api.lastUntil!.difference(before).inMinutes,
-          inInclusiveRange(479, 481));
-      expect(state.isMuted('conv_1'), isTrue);
-      expect(state.mutedUntil('conv_1'), api.lastUntil);
-      expect((await store.loadConversationMutes())['conv_1'], api.lastUntil);
+        expect(
+          await state.setConversationMute('conv_1', MuteDuration.eightHours),
+          isTrue,
+        );
+        expect(
+          api.lastUntil!.difference(before).inMinutes,
+          inInclusiveRange(479, 481),
+        );
+        expect(state.isMuted('conv_1'), isTrue);
+        expect(state.mutedUntil('conv_1'), api.lastUntil);
+        expect((await store.loadConversationMutes())['conv_1'], api.lastUntil);
 
-      await state.setConversationMute('conv_1', MuteDuration.oneWeek);
-      expect(api.lastUntil!.difference(before).inHours,
-          inInclusiveRange(167, 169));
+        await state.setConversationMute('conv_1', MuteDuration.oneWeek);
+        expect(
+          api.lastUntil!.difference(before).inHours,
+          inInclusiveRange(167, 169),
+        );
 
-      await state.setConversationMute('conv_1', MuteDuration.always);
-      expect(api.lastMuted, isTrue);
-      expect(api.lastUntil, isNull);
-      expect(state.mutedUntil('conv_1'), isNull);
-      expect(state.isMuted('conv_1'), isTrue);
+        await state.setConversationMute('conv_1', MuteDuration.always);
+        expect(api.lastMuted, isTrue);
+        expect(api.lastUntil, isNull);
+        expect(state.mutedUntil('conv_1'), isNull);
+        expect(state.isMuted('conv_1'), isTrue);
 
-      await state.setConversationMute('conv_1', MuteDuration.off);
-      expect(state.isMuted('conv_1'), isFalse);
-      expect(await store.loadConversationMutes(), isEmpty);
-    });
+        await state.setConversationMute('conv_1', MuteDuration.off);
+        expect(state.isMuted('conv_1'), isFalse);
+        expect(await store.loadConversationMutes(), isEmpty);
+      },
+    );
 
-    test('a timed mute ends by itself on the device, also after a restart',
-        () async {
-      await start();
-      await store.saveConversationMute('ended',
+    test(
+      'a timed mute ends by itself on the device, also after a restart',
+      () async {
+        await start();
+        await store.saveConversationMute(
+          'ended',
           muted: true,
-          until: DateTime.now().toUtc().subtract(const Duration(minutes: 1)));
-      await store.saveConversationMute('later',
+          until: DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
+        );
+        await store.saveConversationMute(
+          'later',
           muted: true,
-          until: DateTime.now().toUtc().add(const Duration(hours: 1)));
-      await state.tryRestoreSession();
-      expect(state.isMuted('ended'), isFalse);
-      expect(state.isMuted('later'), isTrue);
+          until: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        );
+        await state.tryRestoreSession();
+        expect(state.isMuted('ended'), isFalse);
+        expect(state.isMuted('later'), isTrue);
 
-      var notified = 0;
-      state.addListener(() => notified++);
-      api.nextMute = ConversationMute(
+        var notified = 0;
+        state.addListener(() => notified++);
+        api.nextMute = ConversationMute(
           muted: true,
-          until: DateTime.now().toUtc().add(const Duration(milliseconds: 600)));
-      await state.loadConversationMuted('conv_1');
-      expect(state.isMuted('conv_1'), isTrue);
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      expect(state.isMuted('conv_1'), isFalse);
-      expect(notified, greaterThanOrEqualTo(2), reason: 'set, then ended');
-    });
+          until: DateTime.now().toUtc().add(const Duration(milliseconds: 600)),
+        );
+        await state.loadConversationMuted('conv_1');
+        expect(state.isMuted('conv_1'), isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        expect(state.isMuted('conv_1'), isFalse);
+        expect(notified, greaterThanOrEqualTo(2), reason: 'set, then ended');
+      },
+    );
 
     test('the server answer is the truth when it differs', () async {
       await start();
@@ -618,7 +651,9 @@ class _MuteApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       nextMute ?? const ConversationMute(muted: false);
 
   @override

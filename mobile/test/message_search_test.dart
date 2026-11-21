@@ -27,18 +27,25 @@ void main() {
   group('words and snippets', () {
     test('a query becomes plain words, however odd the input', () {
       expect(searchTerms('Hello, WORLD!'), <String>['hello', 'world']);
-      expect(searchTerms('  "quoted" NEAR( OR * - ^ :col '),
-          <String>['quoted', 'near', 'or', 'col']);
+      expect(searchTerms('  "quoted" NEAR( OR * - ^ :col '), <String>[
+        'quoted',
+        'near',
+        'or',
+        'col',
+      ]);
       expect(searchTerms('ćevapi Ђорђе 42'), <String>['ćevapi', 'ђорђе', '42']);
       expect(searchTerms('!!!'), isEmpty);
-      expect(searchTerms(List<String>.generate(20, (i) => 'w$i').join(' ')),
-          hasLength(maxSearchTerms));
+      expect(
+        searchTerms(List<String>.generate(20, (i) => 'w$i').join(' ')),
+        hasLength(maxSearchTerms),
+      );
       expect(ftsQueryFor(<String>['a', 'b"c']), '"a" "b""c"*');
     });
 
     test('a snippet marks the matches and keeps the text', () {
-      final snippet =
-          snippetFor('Meet me at the Station at noon', <String>['station']);
+      final snippet = snippetFor('Meet me at the Station at noon', <String>[
+        'station',
+      ]);
       expect(snippet, 'Meet me at the \u0001Station\u0002 at noon');
       final long = '${'word ' * 40}needle${' word' * 40}';
       final cut = snippetFor(long, <String>['needle']);
@@ -110,8 +117,9 @@ void main() {
     /// Every term the index still holds, as the index itself reports them.
     Future<Set<String>> indexedTerms(EncryptedLocalDatabase database) async {
       await database.customStatement(
-          'CREATE VIRTUAL TABLE IF NOT EXISTS temp.search_terms USING '
-          "fts5vocab(main, 'local_message_search', 'row')");
+        'CREATE VIRTUAL TABLE IF NOT EXISTS temp.search_terms USING '
+        "fts5vocab(main, 'local_message_search', 'row')",
+      );
       final rows = await database
           .customSelect('SELECT term FROM temp.search_terms')
           .get();
@@ -125,8 +133,10 @@ void main() {
           .getSingle();
       expect(row.read<int>('ok'), 1);
       final table = await database
-          .customSelect("SELECT sql FROM sqlite_master "
-              "WHERE name = 'local_message_search'")
+          .customSelect(
+            "SELECT sql FROM sqlite_master "
+            "WHERE name = 'local_message_search'",
+          )
           .getSingle();
       expect(table.read<String>('sql'), contains('fts5'));
     });
@@ -141,16 +151,26 @@ void main() {
         message('d', 'Привет, где станция?', at: 40),
       ]);
       // Newest first.
-      expect(
-          await found(store, 'station'), <String>['dev_peer:c', 'dev_peer:a']);
+      expect(await found(store, 'station'), <String>[
+        'dev_peer:c',
+        'dev_peer:a',
+      ]);
       expect(await found(store, 'STATION noon'), <String>['dev_peer:a']);
-      expect(await found(store, 'stat'), <String>['dev_peer:c', 'dev_peer:a'],
+      expect(
+          await found(store, 'stat'),
+          <String>[
+            'dev_peer:c',
+            'dev_peer:a',
+          ],
           reason: 'the last word may be unfinished');
       expect(await found(store, 'cevapi'), <String>['dev_peer:b']);
       expect(await found(store, 'ЧЕВАПИ'), isEmpty);
       expect(await found(store, 'станция'), <String>['dev_peer:d']);
-      expect(await found(store, 'dinner bus'), isEmpty,
-          reason: 'every word has to match');
+      expect(
+        await found(store, 'dinner bus'),
+        isEmpty,
+        reason: 'every word has to match',
+      );
       expect(await found(store, ''), isEmpty);
       expect(await found(store, '   '), isEmpty);
       final hit = (await store.searchMessages('noon')).single;
@@ -185,7 +205,9 @@ void main() {
       expect(await found(store, 'plain:'), <String>['dev_peer:a']);
       expect(await found(store, '"quote"'), <String>['dev_peer:a']);
       expect(
-          (await database.select(database.localMessages).get()), hasLength(1));
+        (await database.select(database.localMessages).get()),
+        hasLength(1),
+      );
     });
 
     test('only message text is indexed', () async {
@@ -193,8 +215,11 @@ void main() {
       final database = await open(store);
       await database.applyMessageEffects(<MessageEffect>[
         message('a', 'visible words'),
-        message('b', '[{"key":"secretattachmentkey"}]',
-            kind: LocalMessageKind.attachment),
+        message(
+          'b',
+          '[{"key":"secretattachmentkey"}]',
+          kind: LocalMessageKind.attachment,
+        ),
         message('c', 'unverifiable words', kind: LocalMessageKind.unverifiable),
         message('d', 'action words', kind: LocalMessageKind.action),
       ]);
@@ -229,8 +254,11 @@ void main() {
         ),
       ]);
       expect(await found(store, 'second'), isEmpty);
-      expect(await indexedTerms(database), isEmpty,
-          reason: 'deleted text leaves the index, not just the results');
+      expect(
+        await indexedTerms(database),
+        isEmpty,
+        reason: 'deleted text leaves the index, not just the results',
+      );
     });
 
     test('expired messages leave the index with the purge', () async {
@@ -238,13 +266,17 @@ void main() {
       final database = await open(store);
       final soon = DateTime.now().toUtc().add(const Duration(seconds: 2));
       await database.applyMessageEffects(<MessageEffect>[
-        message('gone', 'ephemeralsecret words',
-            expiresAt: soon.millisecondsSinceEpoch),
+        message(
+          'gone',
+          'ephemeralsecret words',
+          expiresAt: soon.millisecondsSinceEpoch,
+        ),
         message('kept', 'permanent words'),
       ]);
       expect(await found(store, 'ephemeralsecret'), <String>['dev_peer:gone']);
       await store.purgeExpiredMessages(
-          now: soon.add(const Duration(seconds: 1)));
+        now: soon.add(const Duration(seconds: 1)),
+      );
       expect(await found(store, 'ephemeralsecret'), isEmpty);
       expect(await found(store, 'words'), <String>['dev_peer:kept']);
       expect(await indexedTerms(database), <String>{'permanent', 'words'});
@@ -282,8 +314,9 @@ void main() {
       }
       await database.customStatement('DROP TABLE local_message_search');
       await database.customStatement('DROP INDEX local_messages_search_id');
-      await database
-          .customStatement('ALTER TABLE local_messages DROP COLUMN search_id');
+      await database.customStatement(
+        'ALTER TABLE local_messages DROP COLUMN search_id',
+      );
       await stripW8Schema(database);
       await database.customStatement('PRAGMA user_version = 11');
       await database.close();
@@ -295,39 +328,51 @@ void main() {
       // The backfill takes message text only: an attachment body (which
       // carries key material) is not indexed.
       expect(await found(upgraded, 'attachment'), isEmpty);
-      expect(await indexedTerms(reopened),
-          <String>{'written', 'before', 'the', 'index'});
+      expect(await indexedTerms(reopened), <String>{
+        'written',
+        'before',
+        'the',
+        'index',
+      });
       final version =
           await reopened.customSelect('PRAGMA user_version').getSingle();
-      expect(version.read<int>('user_version'),
-          EncryptedLocalDatabase.currentSchemaVersion);
+      expect(
+        version.read<int>('user_version'),
+        EncryptedLocalDatabase.currentSchemaVersion,
+      );
       // And it stays in step afterwards.
       await reopened.applyMessageEffects(<MessageEffect>[
         message('c', 'written after the index', at: 3),
       ]);
-      expect(
-          await found(upgraded, 'index'), <String>['dev_peer:c', 'dev_peer:a']);
+      expect(await found(upgraded, 'index'), <String>[
+        'dev_peer:c',
+        'dev_peer:a',
+      ]);
     });
 
-    test('text past its expiry is hidden even if its delete never ran',
-        () async {
-      final store = createStore();
-      final database = await open(store);
-      await database.applyMessageEffects(<MessageEffect>[
-        message('kept', 'visible phrase'),
-      ]);
-      // A row that outlived its expiry, as after a failed purge.
-      await database.customStatement(
-        'INSERT INTO local_messages (key, conversation_id, '
-        'sender_account_id, sender_device_id, kind, body, created_at, state, '
-        "expires_at) VALUES ('dev_peer:old', 'conv_1', 'acct_peer', "
-        "'dev_peer', 'text', 'stale phrase', 1, 'received', ?)",
-        <Object?>[DateTime.now().millisecondsSinceEpoch - 1000],
-      );
-      expect(await found(store, 'phrase'), <String>['dev_peer:kept']);
-      expect((await store.loadMessages('conv_1')).map((item) => item.key),
-          <String>['dev_peer:kept']);
-    });
+    test(
+      'text past its expiry is hidden even if its delete never ran',
+      () async {
+        final store = createStore();
+        final database = await open(store);
+        await database.applyMessageEffects(<MessageEffect>[
+          message('kept', 'visible phrase'),
+        ]);
+        // A row that outlived its expiry, as after a failed purge.
+        await database.customStatement(
+          'INSERT INTO local_messages (key, conversation_id, '
+          'sender_account_id, sender_device_id, kind, body, created_at, state, '
+          "expires_at) VALUES ('dev_peer:old', 'conv_1', 'acct_peer', "
+          "'dev_peer', 'text', 'stale phrase', 1, 'received', ?)",
+          <Object?>[DateTime.now().millisecondsSinceEpoch - 1000],
+        );
+        expect(await found(store, 'phrase'), <String>['dev_peer:kept']);
+        expect(
+          (await store.loadMessages('conv_1')).map((item) => item.key),
+          <String>['dev_peer:kept'],
+        );
+      },
+    );
   });
 
   test('the memory store searches the same way', () async {
@@ -340,37 +385,40 @@ void main() {
       ),
       0,
     );
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: 'm1',
-      conversationId: 'conv_1',
-      expectedCounter: 1,
-      expectedCursor: 0,
-      state: StoredCryptoState(
-        counter: 2,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: <int>[2],
-      ),
-      cursor: 1,
-      messageEffects: <MessageEffect>[
-        const InsertMessageEffect(
-          key: 'dev_peer:a',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_peer',
-          senderDeviceId: 'dev_peer',
-          kind: LocalMessageKind.text,
-          body: 'Meet at the Station',
-          createdAt: 1,
-          state: LocalMessageState.received,
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: 'm1',
+        conversationId: 'conv_1',
+        expectedCounter: 1,
+        expectedCursor: 0,
+        state: StoredCryptoState(
+          counter: 2,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: <int>[2],
         ),
-      ],
-    ));
+        cursor: 1,
+        messageEffects: <MessageEffect>[
+          const InsertMessageEffect(
+            key: 'dev_peer:a',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_peer',
+            senderDeviceId: 'dev_peer',
+            kind: LocalMessageKind.text,
+            body: 'Meet at the Station',
+            createdAt: 1,
+            state: LocalMessageState.received,
+          ),
+        ],
+      ),
+    );
     final hits = await store.searchMessages('station meet');
     expect(hits.single.key, 'dev_peer:a');
     expect(await store.searchMessages('absent'), isEmpty);
   });
 
-  testWidgets('opening a result scrolls to that message and marks it',
-      (tester) async {
+  testWidgets('opening a result scrolls to that message and marks it', (
+    tester,
+  ) async {
     final store = MemoryLocalStore();
     await store.saveCryptoState(
       StoredCryptoState(
@@ -380,32 +428,40 @@ void main() {
       ),
       0,
     );
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: 'm1',
-      conversationId: 'conv_1',
-      expectedCounter: 1,
-      expectedCursor: 0,
-      state: StoredCryptoState(
-        counter: 2,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: <int>[2],
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: 'm1',
+        conversationId: 'conv_1',
+        expectedCounter: 1,
+        expectedCursor: 0,
+        state: StoredCryptoState(
+          counter: 2,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: <int>[2],
+        ),
+        cursor: 1,
+        messageEffects: <MessageEffect>[
+          for (var i = 1; i <= 150; i++)
+            InsertMessageEffect(
+              key: 'dev_peer:m$i',
+              conversationId: 'conv_1',
+              senderAccountId: 'acct_peer',
+              senderDeviceId: 'dev_peer',
+              kind: LocalMessageKind.text,
+              body: 'message number $i',
+              createdAt: DateTime.utc(
+                2026,
+                10,
+                24,
+                8,
+                0,
+                i,
+              ).millisecondsSinceEpoch,
+              state: LocalMessageState.received,
+            ),
+        ],
       ),
-      cursor: 1,
-      messageEffects: <MessageEffect>[
-        for (var i = 1; i <= 150; i++)
-          InsertMessageEffect(
-            key: 'dev_peer:m$i',
-            conversationId: 'conv_1',
-            senderAccountId: 'acct_peer',
-            senderDeviceId: 'dev_peer',
-            kind: LocalMessageKind.text,
-            body: 'message number $i',
-            createdAt:
-                DateTime.utc(2026, 10, 24, 8, 0, i).millisecondsSinceEpoch,
-            state: LocalMessageState.received,
-          ),
-      ],
-    ));
+    );
     final state = AppState(
       apiClientFactory: (_) => _SearchApi(),
       cryptoService: _MlsStub(),
@@ -424,13 +480,15 @@ void main() {
     await state.refreshHistory('conv_1');
     expect(state.timelineFor('conv_1'), hasLength(150));
 
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(
-        state: state,
-        conversationId: 'conv_1',
-        initialMessageKey: 'dev_peer:m12',
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: state,
+          conversationId: 'conv_1',
+          initialMessageKey: 'dev_peer:m12',
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     // Message 12 is far back: it is on screen, and the newest is not.
     expect(find.text('message number 12'), findsOneWidget);
@@ -443,13 +501,15 @@ void main() {
 
     // A message this device no longer holds leaves the chat where it was.
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpWidget(MaterialApp(
-      home: ChatScreen(
-        state: state,
-        conversationId: 'conv_1',
-        initialMessageKey: 'dev_peer:gone',
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: state,
+          conversationId: 'conv_1',
+          initialMessageKey: 'dev_peer:gone',
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(find.text('message number 150'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
@@ -463,12 +523,14 @@ void main() {
 
     Future<void> start() async {
       store = MemoryLocalStore();
-      await store.saveSession(const Session(
-        baseUrl: 'https://localhost:8080',
-        token: 'token',
-        accountId: 'acct_own',
-        deviceId: 'dev_own',
-      ));
+      await store.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'token',
+          accountId: 'acct_own',
+          deviceId: 'dev_own',
+        ),
+      );
       await store.saveCryptoState(
         StoredCryptoState(
           counter: 1,
@@ -477,30 +539,32 @@ void main() {
         ),
         0,
       );
-      await store.commitMlsTransition(MlsStateTransition(
-        messageId: 'm1',
-        conversationId: 'conv_1',
-        expectedCounter: 1,
-        expectedCursor: 0,
-        state: StoredCryptoState(
-          counter: 2,
-          stateKey: List<int>.filled(32, 1),
-          sealedState: <int>[2],
-        ),
-        cursor: 1,
-        messageEffects: <MessageEffect>[
-          const InsertMessageEffect(
-            key: 'dev_peer:a',
-            conversationId: 'conv_1',
-            senderAccountId: 'acct_peer',
-            senderDeviceId: 'dev_peer',
-            kind: LocalMessageKind.text,
-            body: 'The launch code is swordfish',
-            createdAt: 1,
-            state: LocalMessageState.received,
+      await store.commitMlsTransition(
+        MlsStateTransition(
+          messageId: 'm1',
+          conversationId: 'conv_1',
+          expectedCounter: 1,
+          expectedCursor: 0,
+          state: StoredCryptoState(
+            counter: 2,
+            stateKey: List<int>.filled(32, 1),
+            sealedState: <int>[2],
           ),
-        ],
-      ));
+          cursor: 1,
+          messageEffects: <MessageEffect>[
+            const InsertMessageEffect(
+              key: 'dev_peer:a',
+              conversationId: 'conv_1',
+              senderAccountId: 'acct_peer',
+              senderDeviceId: 'dev_peer',
+              kind: LocalMessageKind.text,
+              body: 'The launch code is swordfish',
+              createdAt: 1,
+              state: LocalMessageState.received,
+            ),
+          ],
+        ),
+      );
       http = _RecordingHttpClient();
       api = _SearchApi(httpClient: http);
       state = AppState(
@@ -526,10 +590,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
       expect(find.text('Team'), findsOneWidget, reason: 'the chat name');
-      expect(find.textContaining('launch code', findRichText: true),
-          findsOneWidget);
-      expect(api.metadataQueries, isEmpty,
-          reason: 'message text must stay on this device');
+      expect(
+        find.textContaining('launch code', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        api.metadataQueries,
+        isEmpty,
+        reason: 'message text must stay on this device',
+      );
 
       // Switching mode never carries the words over to the server: the field
       // is cleared and nothing is asked until something new is typed.
@@ -538,13 +607,20 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
       expect(api.metadataQueries, isEmpty);
-      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
-          isEmpty);
-      await tester.enterText(find.byType(TextField), 'alice');
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      // A person is looked up as '@' and a username (a bare word may be a
+      // community name and stays on the device).
+      await tester.enterText(find.byType(TextField), '@alice');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
-      expect(api.metadataQueries, isEmpty,
-          reason: 'the account lookup waits for a submit');
+      expect(
+        api.metadataQueries,
+        isEmpty,
+        reason: 'the account lookup waits for a submit',
+      );
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
       expect(api.metadataQueries, <String>['alice']);
@@ -553,20 +629,28 @@ void main() {
       // client: none carried the words or the text they matched.
       for (final request in http.requests) {
         for (final secret in <String>['swordfish', 'launch code']) {
-          expect(request.toLowerCase(), isNot(contains(secret)),
-              reason: request);
+          expect(
+            request.toLowerCase(),
+            isNot(contains(secret)),
+            reason: request,
+          );
         }
       }
       // The spy does see what goes past the overrides.
       final before = http.requests.length;
-      await tester.runAsync(() => expectLater(
-          api.syncEvents('token', after: 0, limit: 1), throwsA(anything)));
+      await tester.runAsync(
+        () => expectLater(
+          api.syncEvents('token', after: 0, limit: 1),
+          throwsA(anything),
+        ),
+      );
       expect(http.requests.length, before + 1);
       state.dispose();
     });
 
-    testWidgets('tapping a result opens that chat at the message',
-        (tester) async {
+    testWidgets('tapping a result opens that chat at the message', (
+      tester,
+    ) async {
       await start();
       await tester.pumpWidget(app(SearchScreen(state: state)));
       await tester.enterText(find.byType(TextField), 'swordfish');
@@ -614,7 +698,9 @@ class _SearchApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       const ConversationMute(muted: false);
 
   @override

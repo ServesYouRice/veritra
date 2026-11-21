@@ -24,11 +24,8 @@ LinkPreviewResponse html(String body, {int status = 200, String? type}) =>
       contentType: type ?? 'text/html',
     );
 
-LinkPreviewResponse redirect(String to) => LinkPreviewResponse(
-      status: 302,
-      body: Uint8List(0),
-      location: to,
-    );
+LinkPreviewResponse redirect(String to) =>
+    LinkPreviewResponse(status: 302, body: Uint8List(0), location: to);
 
 LinkPreviewResponse image() => LinkPreviewResponse(
       status: 200,
@@ -99,8 +96,10 @@ void main() {
       expect(linkPreviewHostAllowed('evilgithub.com', mode), isFalse);
       expect(linkPreviewHostAllowed('github.com.evil.example', mode), isFalse);
       expect(linkPreviewHostAllowed('example.org', mode), isFalse);
-      expect(linkPreviewHostAllowed('example.org', LinkPreviewMode.anySite),
-          isTrue);
+      expect(
+        linkPreviewHostAllowed('example.org', LinkPreviewMode.anySite),
+        isTrue,
+      );
       expect(
         linkPreviewHostAllowed('github.com', LinkPreviewMode.off),
         isFalse,
@@ -203,8 +202,9 @@ void main() {
         'https://example.org/a': html(page),
         'https://example.org/img/card.png': image(),
       });
-      final preview = await service(transport)
-          .build('https://example.org/a', LinkPreviewMode.anySite);
+      final preview = await service(
+        transport,
+      ).build('https://example.org/a', LinkPreviewMode.anySite);
       expect(preview!.title, 'Veritra & friends');
       expect(preview.thumbnail, isNotNull);
     });
@@ -221,8 +221,9 @@ void main() {
         'https://github.com/r7': redirect('/r3'),
       };
       final transport = FakeTransport(routes);
-      final ok = await service(transport)
-          .build('https://github.com/r0', LinkPreviewMode.allowListed);
+      final ok = await service(
+        transport,
+      ).build('https://github.com/r0', LinkPreviewMode.allowListed);
       expect(ok!.title, 'Veritra & friends');
       expect(transport.requests.take(4).toList(), <String>[
         'https://github.com/r0',
@@ -230,8 +231,9 @@ void main() {
         'https://github.com/r2',
         'https://github.com/r3',
       ]);
-      final refused = await service(FakeTransport(routes))
-          .build('https://github.com/r4', LinkPreviewMode.allowListed);
+      final refused = await service(
+        FakeTransport(routes),
+      ).build('https://github.com/r4', LinkPreviewMode.allowListed);
       expect(refused, isNull);
     });
 
@@ -247,15 +249,19 @@ void main() {
       for (final start in <String>['a', 'c', 'e', 'g']) {
         expect(
           await builder.build(
-              'https://github.com/$start', LinkPreviewMode.allowListed),
+            'https://github.com/$start',
+            LinkPreviewMode.allowListed,
+          ),
           isNull,
           reason: start,
         );
       }
       expect(transport.requests, isNot(contains('https://example.org/d')));
       // The same off-list redirect is fine when any site is allowed.
-      final any =
-          await builder.build('https://github.com/c', LinkPreviewMode.anySite);
+      final any = await builder.build(
+        'https://github.com/c',
+        LinkPreviewMode.anySite,
+      );
       expect(any!.title, 'Veritra & friends');
     });
 
@@ -267,17 +273,18 @@ void main() {
         ),
         'https://cdn.example.net/i.png': image(),
       });
-      final preview =
-          await service(transport).build(link, LinkPreviewMode.allowListed);
+      final preview = await service(
+        transport,
+      ).build(link, LinkPreviewMode.allowListed);
       expect(preview!.title, 'T');
       expect(preview.thumbnail, isNull);
       expect(transport.requests, <String>[link]);
     });
 
     test('failures and odd responses mean no preview', () async {
-      Future<LinkPreview?> build(LinkPreviewResponse response) =>
-          service(FakeTransport(<String, LinkPreviewResponse>{link: response}))
-              .build(link, LinkPreviewMode.allowListed);
+      Future<LinkPreview?> build(LinkPreviewResponse response) => service(
+            FakeTransport(<String, LinkPreviewResponse>{link: response}),
+          ).build(link, LinkPreviewMode.allowListed);
       expect(await build(html(page, status: 404)), isNull);
       expect(await build(html(page, status: 500)), isNull);
       expect(await build(html(page, type: 'application/pdf')), isNull);

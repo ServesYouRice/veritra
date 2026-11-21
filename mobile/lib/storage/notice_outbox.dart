@@ -31,8 +31,11 @@ void _bounded(String value, [int maximum = 512]) {
 }
 
 class LocalNoticeOwner {
-  const LocalNoticeOwner(
-      {required this.origin, required this.accountId, required this.deviceId});
+  const LocalNoticeOwner({
+    required this.origin,
+    required this.accountId,
+    required this.deviceId,
+  });
   final String origin, accountId, deviceId;
   void validate() {
     _bounded(origin, 2048);
@@ -53,13 +56,17 @@ class LocalNoticeOwner {
       throw StateError('local notice owner changed');
   }
 
-  Map<String, Object?> toJson() =>
-      {'origin': origin, 'account': accountId, 'device': deviceId};
+  Map<String, Object?> toJson() => {
+        'origin': origin,
+        'account': accountId,
+        'device': deviceId,
+      };
   factory LocalNoticeOwner.fromJson(Map<String, Object?> json) =>
       LocalNoticeOwner(
-          origin: json['origin'] as String,
-          accountId: json['account'] as String,
-          deviceId: json['device'] as String);
+        origin: json['origin'] as String,
+        accountId: json['account'] as String,
+        deviceId: json['device'] as String,
+      );
   @override
   bool operator ==(Object other) =>
       other is LocalNoticeOwner &&
@@ -72,18 +79,19 @@ class LocalNoticeOwner {
 
 /// A private reference to an authenticated row, never a message/manifest copy.
 class LocalNoticeReference {
-  const LocalNoticeReference(
-      {required this.owner,
-      required this.eventId,
-      required this.messageKey,
-      required this.serverMessageId,
-      required this.conversationId,
-      this.channelId,
-      required this.senderAccountId,
-      required this.senderDeviceId,
-      required this.createdAt,
-      this.expiresAt,
-      this.queuedAt = 0});
+  const LocalNoticeReference({
+    required this.owner,
+    required this.eventId,
+    required this.messageKey,
+    required this.serverMessageId,
+    required this.conversationId,
+    this.channelId,
+    required this.senderAccountId,
+    required this.senderDeviceId,
+    required this.createdAt,
+    this.expiresAt,
+    this.queuedAt = 0,
+  });
   final LocalNoticeOwner owner;
   final int eventId, createdAt, queuedAt;
   final int? expiresAt;
@@ -93,8 +101,13 @@ class LocalNoticeReference {
       senderAccountId,
       senderDeviceId;
   final String? channelId;
-  String get id => jsonEncode(
-      [owner.origin, owner.accountId, owner.deviceId, eventId, messageKey]);
+  String get id => jsonEncode([
+        owner.origin,
+        owner.accountId,
+        owner.deviceId,
+        eventId,
+        messageKey,
+      ]);
   void validate() {
     owner.validate();
     for (final value in [
@@ -102,7 +115,7 @@ class LocalNoticeReference {
       serverMessageId,
       conversationId,
       senderAccountId,
-      senderDeviceId
+      senderDeviceId,
     ]) {
       _bounded(value);
     }
@@ -120,17 +133,18 @@ class LocalNoticeReference {
       (queuedAt > 0 && queuedAt < now - localNoticeFreshnessMs) ||
       (expiresAt != null && expiresAt! <= now);
   LocalNoticeReference queued(int now) => LocalNoticeReference(
-      owner: owner,
-      eventId: eventId,
-      messageKey: messageKey,
-      serverMessageId: serverMessageId,
-      conversationId: conversationId,
-      channelId: channelId,
-      senderAccountId: senderAccountId,
-      senderDeviceId: senderDeviceId,
-      createdAt: createdAt,
-      expiresAt: expiresAt,
-      queuedAt: now);
+        owner: owner,
+        eventId: eventId,
+        messageKey: messageKey,
+        serverMessageId: serverMessageId,
+        conversationId: conversationId,
+        channelId: channelId,
+        senderAccountId: senderAccountId,
+        senderDeviceId: senderDeviceId,
+        createdAt: createdAt,
+        expiresAt: expiresAt,
+        queuedAt: now,
+      );
   Map<String, Object?> toJson() => {
         'owner': owner.toJson(),
         'event': eventId,
@@ -142,33 +156,35 @@ class LocalNoticeReference {
         'sender_device': senderDeviceId,
         'created': createdAt,
         'expires': expiresAt,
-        'queued': queuedAt
+        'queued': queuedAt,
       };
   factory LocalNoticeReference.fromJson(Map<String, Object?> json) =>
       LocalNoticeReference(
-          owner: LocalNoticeOwner.fromJson(
-              Map<String, Object?>.from(json['owner'] as Map)),
-          eventId: json['event'] as int,
-          messageKey: json['key'] as String,
-          serverMessageId: json['server'] as String,
-          conversationId: json['conversation'] as String,
-          channelId: json['channel'] as String?,
-          senderAccountId: json['sender_account'] as String,
-          senderDeviceId: json['sender_device'] as String,
-          createdAt: json['created'] as int,
-          expiresAt: json['expires'] as int?,
-          queuedAt: json['queued'] as int);
+        owner: LocalNoticeOwner.fromJson(
+          Map<String, Object?>.from(json['owner'] as Map),
+        ),
+        eventId: json['event'] as int,
+        messageKey: json['key'] as String,
+        serverMessageId: json['server'] as String,
+        conversationId: json['conversation'] as String,
+        channelId: json['channel'] as String?,
+        senderAccountId: json['sender_account'] as String,
+        senderDeviceId: json['sender_device'] as String,
+        createdAt: json['created'] as int,
+        expiresAt: json['expires'] as int?,
+        queuedAt: json['queued'] as int,
+      );
 }
 
 class LocalNoticeDecision {
-  LocalNoticeDecision(
-      {required this.id,
-      required this.owner,
-      required this.createdAt,
-      this.state = 'pending',
-      required List<String> referenceIds,
-      required List<LocalNoticeReference> references})
-      : referenceIds = List.unmodifiable(referenceIds),
+  LocalNoticeDecision({
+    required this.id,
+    required this.owner,
+    required this.createdAt,
+    this.state = 'pending',
+    required List<String> referenceIds,
+    required List<LocalNoticeReference> references,
+  })  : referenceIds = List.unmodifiable(referenceIds),
         references = List.unmodifiable(references);
   final String id, state;
   final LocalNoticeOwner owner;
@@ -180,32 +196,38 @@ class LocalNoticeDecision {
         'owner': owner.toJson(),
         'created': createdAt,
         'state': state,
-        'reference_ids': referenceIds
+        'reference_ids': referenceIds,
       };
   factory LocalNoticeDecision.fromJson(
-          Map<String, Object?> json, List<LocalNoticeReference> refs) =>
+    Map<String, Object?> json,
+    List<LocalNoticeReference> refs,
+  ) =>
       LocalNoticeDecision(
-          id: json['id'] as String,
-          owner: LocalNoticeOwner.fromJson(
-              Map<String, Object?>.from(json['owner'] as Map)),
-          createdAt: json['created'] as int,
-          state: json['state'] as String,
-          referenceIds: (json['reference_ids'] as List).cast<String>(),
-          references: refs);
+        id: json['id'] as String,
+        owner: LocalNoticeOwner.fromJson(
+          Map<String, Object?>.from(json['owner'] as Map),
+        ),
+        createdAt: json['created'] as int,
+        state: json['state'] as String,
+        referenceIds: (json['reference_ids'] as List).cast<String>(),
+        references: refs,
+      );
   LocalNoticeDecision terminal(String status) => LocalNoticeDecision(
-      id: id,
-      owner: owner,
-      createdAt: createdAt,
-      state: status,
-      referenceIds: const [],
-      references: const []);
+        id: id,
+        owner: owner,
+        createdAt: createdAt,
+        state: status,
+        referenceIds: const [],
+        references: const [],
+      );
 }
 
 String newLocalNoticeDecisionId() {
   final random = Random.secure();
-  return List.generate(16, (_) => random.nextInt(256))
-      .map((b) => b.toRadixString(16).padLeft(2, '0'))
-      .join();
+  return List.generate(
+    16,
+    (_) => random.nextInt(256),
+  ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }
 
 void validateLocalNoticeDecisionId(String value) {
@@ -226,13 +248,14 @@ List<String> localNoticeIds(Iterable<String> input) {
 
 /// Called after effects, while the ratchet/cursor transaction still owns its
 /// fence. Pre-existing rows (including promoted imports) never produce notices.
-List<LocalNoticeReference> validLocalNoticeReferences(
-    {required Session? session,
-    required List<LocalNoticeReference> references,
-    required Set<String> previousKeys,
-    required Map<String, LocalMessage> rows,
-    required int cursor,
-    required int now}) {
+List<LocalNoticeReference> validLocalNoticeReferences({
+  required Session? session,
+  required List<LocalNoticeReference> references,
+  required Set<String> previousKeys,
+  required Map<String, LocalMessage> rows,
+  required int cursor,
+  required int now,
+}) {
   if (references.length > localNoticeBatchLimit)
     throw StateError('notice batch limit reached');
   final result = <String, LocalNoticeReference>{};
@@ -249,8 +272,10 @@ List<LocalNoticeReference> validLocalNoticeReferences(
         row.hiddenAt != null ||
         row.deletedAt != null ||
         row.editedAt != null ||
-        !const {LocalMessageKind.text, LocalMessageKind.attachment}
-            .contains(row.kind)) continue;
+        !const {
+          LocalMessageKind.text,
+          LocalMessageKind.attachment,
+        }.contains(row.kind)) continue;
     if (ref.eventId != cursor ||
         row.key != ref.messageKey ||
         row.serverMessageId != ref.serverMessageId ||
@@ -268,25 +293,30 @@ List<LocalNoticeReference> validLocalNoticeReferences(
 
 /// Test-store parity engine. Production SQL uses indexed rows/usage counters.
 class LocalNoticeState {
-  LocalNoticeState(
-      {Map<String, LocalNoticeReference>? references,
-      Map<String, LocalNoticeDecision>? decisions,
-      Map<String, String>? frozen})
-      : references = references ?? {},
+  LocalNoticeState({
+    Map<String, LocalNoticeReference>? references,
+    Map<String, LocalNoticeDecision>? decisions,
+    Map<String, String>? frozen,
+  })  : references = references ?? {},
         decisions = decisions ?? {},
         frozen = frozen ?? {};
   final Map<String, LocalNoticeReference> references;
   final Map<String, LocalNoticeDecision> decisions;
   final Map<String, String> frozen;
   LocalNoticeState copy() => LocalNoticeState(
-      references: Map.of(references),
-      decisions: Map.of(decisions),
-      frozen: Map.of(frozen));
+        references: Map.of(references),
+        decisions: Map.of(decisions),
+        frozen: Map.of(frozen),
+      );
   int get size =>
       references.values.fold(
-          0, (int n, r) => n + utf8.encode(jsonEncode(r.toJson())).length) +
+        0,
+        (int n, r) => n + utf8.encode(jsonEncode(r.toJson())).length,
+      ) +
       decisions.values.fold(
-          0, (int n, d) => n + utf8.encode(jsonEncode(d.toJson())).length);
+        0,
+        (int n, d) => n + utf8.encode(jsonEncode(d.toJson())).length,
+      );
   void checkCapacity({bool admission = false}) {
     if (references.length > localNoticeReferenceLimit ||
         decisions.length > localNoticeReferenceLimit ||
@@ -328,21 +358,25 @@ class LocalNoticeState {
     for (final d in decisions.values) {
       if (d.owner == owner && d.state == 'pending') {
         return LocalNoticeDecision(
-            id: d.id,
-            owner: d.owner,
-            createdAt: d.createdAt,
-            referenceIds: d.referenceIds,
-            references: d.referenceIds
-                .map((id) => references[id])
-                .whereType<LocalNoticeReference>()
-                .toList());
+          id: d.id,
+          owner: d.owner,
+          createdAt: d.createdAt,
+          referenceIds: d.referenceIds,
+          references: d.referenceIds
+              .map((id) => references[id])
+              .whereType<LocalNoticeReference>()
+              .toList(),
+        );
       }
     }
     return null;
   }
 
   LocalNoticeDecision? freeze(
-      LocalNoticeOwner owner, Iterable<String> input, int now) {
+    LocalNoticeOwner owner,
+    Iterable<String> input,
+    int now,
+  ) {
     final ids = localNoticeIds(input);
     if (ids.isEmpty) return null;
     final existing = decision(owner);
@@ -359,11 +393,12 @@ class LocalNoticeState {
       refs.add(r);
     }
     final d = LocalNoticeDecision(
-        id: newLocalNoticeDecisionId(),
-        owner: owner,
-        createdAt: now,
-        referenceIds: ids,
-        references: refs);
+      id: newLocalNoticeDecisionId(),
+      owner: owner,
+      createdAt: now,
+      referenceIds: ids,
+      references: refs,
+    );
     decisions[d.id] = d;
     for (final id in ids) {
       frozen[id] = d.id;

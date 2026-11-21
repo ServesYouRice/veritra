@@ -45,7 +45,7 @@ func TestReportToARepublishedKeyIsRefusedAtTheSameRevision(t *testing.T) {
 	store := reportStoreWithOwners(t)
 	first, second := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 
-	recipient, err := store.SetInstanceReportKey(ctx, "acct_a", first)
+	recipient, err := store.SetInstanceReportKey(ctx, "acct_a", first, nil)
 	if err != nil || recipient.KeyRev != 1 || recipient.InboxID != "acct_a" {
 		t.Fatalf("publish: %+v err=%v", recipient, err)
 	}
@@ -57,7 +57,7 @@ func TestReportToARepublishedKeyIsRefusedAtTheSameRevision(t *testing.T) {
 	if _, err := store.ReportInboxForConversation(ctx, "conv_dm", "acct_b"); !errors.Is(err, ErrReportInboxUnavailable) {
 		t.Fatalf("inbox after the only key's owner left: %v", err)
 	}
-	recipient, err = store.SetInstanceReportKey(ctx, "acct_c", second)
+	recipient, err = store.SetInstanceReportKey(ctx, "acct_c", second, nil)
 	if err != nil || recipient.KeyRev != 1 {
 		t.Fatalf("republish: %+v err=%v", recipient, err)
 	}
@@ -86,10 +86,10 @@ func TestOwnerLeavingDropsItsKeyAndCopies(t *testing.T) {
 	ctx := context.Background()
 	store := reportStoreWithOwners(t)
 	keyA, keyC := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
-	if _, err := store.SetInstanceReportKey(ctx, "acct_a", keyA); err != nil {
+	if _, err := store.SetInstanceReportKey(ctx, "acct_a", keyA, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetInstanceReportKey(ctx, "acct_c", keyC); err != nil {
+	if _, err := store.SetInstanceReportKey(ctx, "acct_c", keyC, nil); err != nil {
 		t.Fatal(err)
 	}
 	inbox, err := store.ReportInboxForConversation(ctx, "conv_dm", "acct_b")
@@ -130,7 +130,7 @@ func TestReportsArePrunedAfterNinetyDays(t *testing.T) {
 	ctx := context.Background()
 	store := reportStoreWithOwners(t)
 	key := bytes.Repeat([]byte{1}, 32)
-	if _, err := store.SetInstanceReportKey(ctx, "acct_a", key); err != nil {
+	if _, err := store.SetInstanceReportKey(ctx, "acct_a", key, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"rpt-store-00000001", "rpt-store-00000002"} {

@@ -25,7 +25,9 @@ import 'report_models.dart' show SenderFrankKey;
 /// The Rust checks, behind an interface so the pin logic is testable.
 abstract interface class DeviceListVerifier {
   DeviceListChainResult checkChain(
-      String accountId, List<List<int>> statements);
+    String accountId,
+    List<List<int>> statements,
+  );
 
   DeviceListSummary checkStep({
     required String accountId,
@@ -76,8 +78,10 @@ class DeviceListPage {
 /// Where lists come from (the server). Null means the account is unknown
 /// or not readable by this account (the server's 404).
 abstract interface class DeviceListSource {
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-      {required int after});
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  });
 }
 
 /// What this device knows about an account's list after a refresh.
@@ -93,6 +97,52 @@ enum DeviceListState {
 
   /// A validly signed statement disagreed with the pin (sticky).
   conflict,
+}
+
+/// A verified branch a conflict reset would pin
+/// ([DeviceListPins.prepareServedBranch]).
+class DeviceListResetPlan {
+  const DeviceListResetPlan._({
+    required this.accountId,
+    required this.chain,
+    required this.conflictedHead,
+    required this.newDevices,
+    required this.recoveryKeyChanges,
+    required List<Uint8List> statements,
+  }) : _statements = statements;
+
+  final String accountId;
+
+  /// The verified pin the reset writes.
+  final DeviceListPin chain;
+
+  /// The conflicted head the plan was made from.
+  final List<int> conflictedHead;
+
+  /// Devices (by pair) the branch lists that the conflicted pin does not
+  /// list now: what trusting it newly approves. A device the pinned branch
+  /// removed and the other lists again counts as new.
+  final int newDevices;
+
+  /// Whether the branch names another recovery key than the conflicted pin
+  /// (set, replaced or removed). The recovery key signs a recovery version
+  /// that replaces every device, so a branch can hand over the account
+  /// without listing a single new device yet.
+  final bool recoveryKeyChanges;
+
+  /// The verified chain, version 1 first, to check the fork proofs against
+  /// again at commit.
+  final List<Uint8List> _statements;
+}
+
+/// Why a conflict reset ([DeviceListPins.trustServedBranch]) changed
+/// nothing. The conflict stays as it was.
+class DeviceListResetRefused implements Exception {
+  const DeviceListResetRefused(this.reason);
+  final String reason;
+
+  @override
+  String toString() => 'DeviceListResetRefused($reason)';
 }
 
 class DeviceListStatus {
@@ -139,8 +189,10 @@ class DeviceListPins {
   /// Refreshes [accountId]'s pin from the server, at most once per
   /// [minRefresh] unless [force]. Never throws for anything the server
   /// sends: an answer that does not verify is [DeviceListState.unavailable].
-  Future<DeviceListStatus> refresh(String accountId,
-      {bool force = false}) async {
+  Future<DeviceListStatus> refresh(
+    String accountId, {
+    bool force = false,
+  }) async {
     final pin = await store.loadDeviceListPin(accountId);
     if (pin != null && pin.conflict) {
       return DeviceListStatus(DeviceListState.conflict, pin);
@@ -149,10 +201,11 @@ class DeviceListPins {
     final last = _lastFetch[accountId];
     if (!force && last != null && now.difference(last) < minRefresh) {
       return DeviceListStatus(
-          pin == null
-              ? (_lastState[accountId] ?? DeviceListState.unavailable)
-              : DeviceListState.ok,
-          pin);
+        pin == null
+            ? (_lastState[accountId] ?? DeviceListState.unavailable)
+            : DeviceListState.ok,
+        pin,
+      );
     }
     _lastFetch[accountId] = now;
     final DeviceListStatus status;
@@ -173,7 +226,9 @@ class DeviceListPins {
   }
 
   Future<List<({int version, Uint8List statement})>?> _fetchFrom(
-      String accountId, int after) async {
+    String accountId,
+    int after,
+  ) async {
     final out = <({int version, Uint8List statement})>[];
     var cursor = after;
     while (true) {
@@ -201,8 +256,11 @@ class DeviceListPins {
     }
   }
 
-  DeviceListPin _pinFrom(String accountId, DeviceListChainResult chain,
-          List<int> headStatement) =>
+  DeviceListPin _pinFrom(
+    String accountId,
+    DeviceListChainResult chain,
+    List<int> headStatement,
+  ) =>
       DeviceListPin(
         accountId: accountId,
         version: chain.head.version,
@@ -231,8 +289,10 @@ class DeviceListPins {
     final batchLength = statements.length < _deviceListNativeBatch
         ? statements.length
         : _deviceListNativeBatch;
-    final chain =
-        verifier.checkChain(accountId, statements.sublist(0, batchLength));
+    final chain = verifier.checkChain(
+      accountId,
+      statements.sublist(0, batchLength),
+    );
     var pin = _pinFrom(accountId, chain, statements[batchLength - 1]);
     for (final statement in statements.skip(batchLength)) {
       pin = _step(accountId, pin, statement);
@@ -249,37 +309,43 @@ class DeviceListPins {
     if (statements.isEmpty) {
       return const DeviceListStatus(DeviceListState.empty, null);
     }
-    final pin = _verifyChain(
-        accountId, [for (final item in statements) item.statement]);
+    final pin = _verifyChain(accountId, [
+      for (final item in statements) item.statement,
+    ]);
     if (!await store.saveDeviceListPin(pin, expectedVersion: null)) {
       // Another refresh pinned it meanwhile: take what is stored.
       final stored = await store.loadDeviceListPin(accountId);
       return DeviceListStatus(
-          stored == null
-              ? DeviceListState.unavailable
-              : stored.conflict
-                  ? DeviceListState.conflict
-                  : DeviceListState.ok,
-          stored);
+        stored == null
+            ? DeviceListState.unavailable
+            : stored.conflict
+                ? DeviceListState.conflict
+                : DeviceListState.ok,
+        stored,
+      );
     }
     return DeviceListStatus(DeviceListState.ok, pin);
   }
 
   /// Verifies a linked device's authenticated add without writing any pin.
   /// The caller journals the result before promoting the pending identity.
-  Future<List<Uint8List>> linkedAnchor(String accountId,
-      {required List<int> deviceId,
-      required List<int> signingKey,
-      required List<int> approverDeviceId,
-      required List<int> approverSigningKey}) async {
+  Future<List<Uint8List>> linkedAnchor(
+    String accountId, {
+    required List<int> deviceId,
+    required List<int> signingKey,
+    required List<int> approverDeviceId,
+    required List<int> approverSigningKey,
+  }) async {
     final fetched = await _fetchFrom(accountId, 0);
     if (fetched == null || fetched.isEmpty) {
       throw StateError('linked account list unavailable');
     }
     final statements = [for (final item in fetched) item.statement];
     final head = _verifyChain(accountId, statements);
-    final own = head.keys.where((key) =>
-        _same(key.deviceId, deviceId) && _same(key.signingKey, signingKey));
+    final own = head.keys.where(
+      (key) =>
+          _same(key.deviceId, deviceId) && _same(key.signingKey, signingKey),
+    );
     if (head.conflict ||
         own.length != 1 ||
         !own.single.listed ||
@@ -298,7 +364,7 @@ class DeviceListPins {
       statement: statements[index],
       history: [
         for (final key in previous.keys)
-          DeviceListPair(key.deviceId, key.signingKey)
+          DeviceListPair(key.deviceId, key.signingKey),
       ],
     );
     if (add.change != DeviceListChange.add ||
@@ -321,8 +387,10 @@ class DeviceListPins {
     // a different statement still has to pass the native step verifier.
     if (_same(pin.headStatement, statement)) return false;
     final next = _step(accountId, pin, statement);
-    final moved =
-        await store.saveDeviceListPin(next, expectedVersion: pin.version);
+    final moved = await store.saveDeviceListPin(
+      next,
+      expectedVersion: pin.version,
+    );
     invalidate(accountId);
     return moved;
   }
@@ -330,8 +398,11 @@ class DeviceListPins {
   /// Pins a whole verified chain as this device's own anchor (a newly
   /// linked device, whose head arrived authenticated with the link).
   /// [expectedHead] must be the chain's last statement.
-  Future<DeviceListPin> pinChain(String accountId, List<List<int>> statements,
-      {required List<int> expectedHead}) async {
+  Future<DeviceListPin> pinChain(
+    String accountId,
+    List<List<int>> statements, {
+    required List<int> expectedHead,
+  }) async {
     if (statements.isEmpty || !_same(statements.last, expectedHead)) {
       throw const FormatException('the chain does not end in the head');
     }
@@ -354,8 +425,12 @@ class DeviceListPins {
     return pin;
   }
 
-  DeviceListPin _step(String accountId, DeviceListPin pin, List<int> statement,
-      {DeviceListSummary? checked}) {
+  DeviceListPin _step(
+    String accountId,
+    DeviceListPin pin,
+    List<int> statement, {
+    DeviceListSummary? checked,
+  }) {
     final summary = checked ??
         verifier.checkStep(
           accountId: accountId,
@@ -369,37 +444,47 @@ class DeviceListPins {
     // L2-3: a franking key is one device's for the whole chain. The native
     // step check sees only the version before; the pin holds the rest.
     for (final frank in summary.frankKeys) {
-      if (pin.keys.any((key) =>
-          key.frankKey != null &&
-          _same(key.frankKey!, frank.key) &&
-          !_same(key.deviceId, frank.deviceId))) {
+      if (pin.keys.any(
+        (key) =>
+            key.frankKey != null &&
+            _same(key.frankKey!, frank.key) &&
+            !_same(key.deviceId, frank.deviceId),
+      )) {
         throw const NativeCryptoException(NativeCryptoError.deviceListRule);
       }
     }
     final keys = <DeviceListKeyRow>[];
     for (final key in pin.keys) {
-      final still = summary.entries.any((entry) =>
-          _same(entry.deviceId, key.deviceId) &&
-          _same(entry.signingKey, key.signingKey));
+      final still = summary.entries.any(
+        (entry) =>
+            _same(entry.deviceId, key.deviceId) &&
+            _same(entry.signingKey, key.signingKey),
+      );
       final listedFrank = still ? summary.frankKeyOf(key.deviceId) : null;
-      keys.add(key.listed && !still
-          ? key.removedAt(summary.version)
-          : listedFrank != null && key.frankKey == null
-              ? key.withFrankKey(listedFrank)
-              : key);
+      keys.add(
+        key.listed && !still
+            ? key.removedAt(summary.version)
+            : listedFrank != null && key.frankKey == null
+                ? key.withFrankKey(listedFrank)
+                : key,
+      );
     }
     for (final entry in summary.entries) {
-      final known = pin.keys.any((key) =>
-          _same(key.deviceId, entry.deviceId) &&
-          _same(key.signingKey, entry.signingKey));
+      final known = pin.keys.any(
+        (key) =>
+            _same(key.deviceId, entry.deviceId) &&
+            _same(key.signingKey, entry.signingKey),
+      );
       if (!known) {
-        keys.add(DeviceListKeyRow(
-          deviceId: entry.deviceId,
-          signingKey: entry.signingKey,
-          addedVersion: summary.version,
-          removedVersion: 0,
-          frankKey: summary.frankKeyOf(entry.deviceId),
-        ));
+        keys.add(
+          DeviceListKeyRow(
+            deviceId: entry.deviceId,
+            signingKey: entry.signingKey,
+            addedVersion: summary.version,
+            removedVersion: 0,
+            frankKey: summary.frankKeyOf(entry.deviceId),
+          ),
+        );
       }
     }
     return DeviceListPin(
@@ -453,10 +538,11 @@ class DeviceListPins {
     if (!await store.saveDeviceListPin(next, expectedVersion: pin.version)) {
       final stored = await store.loadDeviceListPin(accountId);
       return DeviceListStatus(
-          stored?.conflict ?? false
-              ? DeviceListState.conflict
-              : DeviceListState.ok,
-          stored ?? pin);
+        stored?.conflict ?? false
+            ? DeviceListState.conflict
+            : DeviceListState.ok,
+        stored ?? pin,
+      );
     }
     return DeviceListStatus(DeviceListState.ok, next);
   }
@@ -470,15 +556,19 @@ class DeviceListPins {
   /// nothing becomes sticky (owner decision 2026-11-08, L1-3 question 3),
   /// so a server cannot hold a contact's chats in conflict for good.
   Future<DeviceListStatus> _maybeConflict(
-      String accountId, DeviceListPin pin, List<int> other) async {
+    String accountId,
+    DeviceListPin pin,
+    List<int> other,
+  ) async {
     final whole = await _fetchFrom(accountId, 0);
     if (whole == null || whole.length < pin.version) {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
     final DeviceListPin chain;
     try {
-      chain =
-          _verifyChain(accountId, [for (final item in whole) item.statement]);
+      chain = _verifyChain(accountId, [
+        for (final item in whole) item.statement,
+      ]);
     } on NativeCryptoException {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
@@ -499,14 +589,163 @@ class DeviceListPins {
     return DeviceListStatus(DeviceListState.conflict, stored ?? pin);
   }
 
+  /// Step one of clearing [accountId]'s sticky conflict (design, "Pins,
+  /// rollback and forks": the app re-pins from the branch the contact's
+  /// devices show). Only another account's list is reset this way; the
+  /// caller refuses its own. Nothing is written here.
+  ///
+  /// The whole chain the server shows now is fetched and verified (native
+  /// chain and step checks, as at first sight). It must have the pinned
+  /// list identity and, at every version a fork proof was kept for, carry
+  /// one of that proof's two statements. A statement fixes its whole prefix
+  /// by `prev_hash`, so the reset can only pick one of the two branches a
+  /// listed key signed; a server holding no listed key cannot use it to
+  /// bring in a chain of its own.
+  ///
+  /// The plan says how many devices the chosen branch lists that the
+  /// conflicted pin does not list now, so the person is told before
+  /// they confirm; [commitServedBranch] then pins exactly this chain, never
+  /// one fetched after the confirmation.
+  ///
+  /// Throws [DeviceListResetRefused] otherwise.
+  Future<DeviceListResetPlan> prepareServedBranch(String accountId) async {
+    final stored = await store.loadDeviceListPin(accountId);
+    if (stored == null || !stored.conflict) {
+      throw const DeviceListResetRefused('no conflict to reset');
+    }
+    final proofs = await store.loadDeviceListConflicts(accountId);
+    if (proofs.isEmpty) {
+      throw const DeviceListResetRefused('no fork proof is kept');
+    }
+    _lastFetch[accountId] = _clock();
+    final List<({int version, Uint8List statement})>? fetched;
+    try {
+      fetched = await _fetchFrom(accountId, 0);
+    } on Object {
+      throw const DeviceListResetRefused('the list could not be read');
+    }
+    if (fetched == null || fetched.isEmpty) {
+      throw const DeviceListResetRefused('the list could not be read');
+    }
+    final statements = [for (final item in fetched) item.statement];
+    final DeviceListPin chain;
+    try {
+      chain = _verifyChain(accountId, statements);
+    } on Object {
+      throw const DeviceListResetRefused('the list does not verify');
+    }
+    if (!_same(chain.listId, stored.listId)) {
+      throw const DeviceListResetRefused('another list identity');
+    }
+    _checkProvenBranch(statements, proofs, stored);
+    final newDevices = chain.listed
+        .where(
+          (key) => !stored.listed.any(
+            (old) =>
+                _same(old.deviceId, key.deviceId) &&
+                _same(old.signingKey, key.signingKey),
+          ),
+        )
+        .length;
+    return DeviceListResetPlan._(
+      accountId: accountId,
+      chain: chain,
+      conflictedHead: stored.headStatement,
+      newDevices: newDevices,
+      recoveryKeyChanges: !_sameOptional(chain.recoveryKey, stored.recoveryKey),
+      statements: List.unmodifiable(statements),
+    );
+  }
+
+  /// [statements] must carry one statement of every proof at its version,
+  /// and, at the conflicted head's own version, that head or a statement a
+  /// proof recorded at exactly that version names.
+  ///
+  /// The second rule matters when the proof lags the head: a refresh that
+  /// found the fork at version v can mark the head conflicted after a
+  /// concurrent refresh moved it to v + n (`_maybeConflict` writes the
+  /// state on whatever head is stored). The proof at v alone would then
+  /// accept the pinned branch cut back to v (a rollback that approves again
+  /// what v + 1 .. v + n removed) or a branch that forks between v and the
+  /// head, which no proof covers. With the rule, a lagging proof allows
+  /// only the pinned head and what grows from it.
+  static void _checkProvenBranch(
+    List<Uint8List> statements,
+    List<DeviceListConflictProof> proofs,
+    DeviceListPin conflicted,
+  ) {
+    for (final proof in proofs) {
+      if (statements.length < proof.version ||
+          !proof.names(statements[proof.version - 1])) {
+        throw const DeviceListResetRefused('not one of the proven branches');
+      }
+    }
+    final version = conflicted.version;
+    if (version < 1 || statements.length < version) {
+      throw const DeviceListResetRefused('older than the pinned list');
+    }
+    final atHead = statements[version - 1];
+    if (!_same(atHead, conflicted.headStatement) &&
+        !proofs
+            .any((proof) => proof.version == version && proof.names(atHead))) {
+      throw const DeviceListResetRefused('not one of the proven branches');
+    }
+  }
+
+  /// Step two: replaces the conflicted pin with [plan]'s chain in one
+  /// compare-and-swap, only while the stored pin is still the conflicted
+  /// head the plan was made from. Any failure leaves the conflict exactly as
+  /// it was, so the account is never left without a pin. The fork proofs
+  /// are kept, and the first-pin time restarts (a re-pin is a new first
+  /// sight for report verdicts, review M2).
+  Future<DeviceListPin> commitServedBranch(DeviceListResetPlan plan) async {
+    final stored = await store.loadDeviceListPin(plan.accountId);
+    if (stored == null ||
+        !stored.conflict ||
+        !_same(stored.headStatement, plan.conflictedHead)) {
+      throw const DeviceListResetRefused('the pin changed meanwhile');
+    }
+    // A proof kept since the plan was made must hold for it too.
+    final proofs = await store.loadDeviceListConflicts(plan.accountId);
+    if (proofs.isEmpty) {
+      throw const DeviceListResetRefused('no fork proof is kept');
+    }
+    _checkProvenBranch(plan._statements, proofs, stored);
+    final now = _nowMs;
+    final chain = plan.chain.copyWith(checkedAt: now, pinnedAt: now);
+    if (!await store.replaceConflictedDeviceListPin(
+      chain,
+      plan.conflictedHead,
+    )) {
+      throw const DeviceListResetRefused('the pin changed meanwhile');
+    }
+    _lastState[plan.accountId] = DeviceListState.ok;
+    invalidate(plan.accountId);
+    return (await store.loadDeviceListPin(plan.accountId)) ?? chain;
+  }
+
+  /// [prepareServedBranch] and [commitServedBranch] at once, for callers
+  /// that show nothing in between.
+  Future<DeviceListPin> trustServedBranch(String accountId) async =>
+      commitServedBranch(await prepareServedBranch(accountId));
+
+  /// What the last refresh of [accountId] found, or null before any. Lets
+  /// a caller tell an account with no list yet ([DeviceListState.empty])
+  /// from one that could not be read.
+  DeviceListState? lastState(String accountId) => _lastState[accountId];
+
   Future<DeviceListStatus> _stored(String accountId) async {
     final pin = await store.loadDeviceListPin(accountId);
     if (pin == null) {
       return DeviceListStatus(
-          _lastState[accountId] ?? DeviceListState.unavailable, null);
+        _lastState[accountId] ?? DeviceListState.unavailable,
+        null,
+      );
     }
     return DeviceListStatus(
-        pin.conflict ? DeviceListState.conflict : DeviceListState.ok, pin);
+      pin.conflict ? DeviceListState.conflict : DeviceListState.ok,
+      pin,
+    );
   }
 
   /// The key the pin lists now for [deviceId] of [accountId], after a
@@ -514,8 +753,10 @@ class DeviceListPins {
   /// The add gate stages only with this key, never one the server sent.
   Future<Uint8List?> approvedKey(String accountId, String deviceId) async {
     final device = utf8.encode(deviceId);
-    final status =
-        await _refreshFor(accountId, (pin) => pin.listedKey(device) != null);
+    final status = await _refreshFor(
+      accountId,
+      (pin) => pin.listedKey(device) != null,
+    );
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null) return null;
     return pin.listedKey(device);
@@ -535,8 +776,10 @@ class DeviceListPins {
   Future<SenderFrankKey?> frankKeyOf(String accountId, String deviceId) async {
     final device = utf8.encode(deviceId);
     final before = await store.loadDeviceListPin(accountId);
-    final status =
-        await _refreshFor(accountId, (pin) => pin.frankKeyOf(device) != null);
+    final status = await _refreshFor(
+      accountId,
+      (pin) => pin.frankKeyOf(device) != null,
+    );
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null || pin.conflict) {
       return null;
@@ -546,15 +789,19 @@ class DeviceListPins {
     final stored =
         before == null ? null : await store.loadDeviceListPin(accountId);
     final pinnedMs = stored?.pinnedAt ?? stored?.checkedAt;
-    return SenderFrankKey(key,
-        pinnedAt: pinnedMs == null
-            ? _clock()
-            : DateTime.fromMillisecondsSinceEpoch(pinnedMs, isUtc: true));
+    return SenderFrankKey(
+      key,
+      pinnedAt: pinnedMs == null
+          ? _clock()
+          : DateTime.fromMillisecondsSinceEpoch(pinnedMs, isUtc: true),
+    );
   }
 
   /// Device inventory comes from the signed list, never a server device roster.
-  Future<List<DeviceListPair>> approvedDevices(String accountId,
-      {bool refreshFirst = true}) async {
+  Future<List<DeviceListPair>> approvedDevices(
+    String accountId, {
+    bool refreshFirst = true,
+  }) async {
     final status =
         refreshFirst ? await refresh(accountId) : await _stored(accountId);
     final pin = status.pin;
@@ -575,7 +822,9 @@ class DeviceListPins {
   /// have moved, so it may fetch again, bounded per account so that leaves a
   /// member invents cannot make this device hammer the server.
   Future<DeviceListStatus> _refreshFor(
-      String accountId, bool Function(DeviceListPin pin) satisfies) async {
+    String accountId,
+    bool Function(DeviceListPin pin) satisfies,
+  ) async {
     final status = await refresh(accountId);
     final pin = status.pin;
     // Only a stale pin is helped by fetching sooner; an unreachable or empty
@@ -597,8 +846,11 @@ class DeviceListPins {
   /// With [refreshFirst] false only the stored pin is read (no network), for
   /// a caller that is out of time.
   Future<LeafVerdict> judge(
-      List<int> accountId, List<int> deviceId, List<int> signingKey,
-      {bool refreshFirst = true}) async {
+    List<int> accountId,
+    List<int> deviceId,
+    List<int> signingKey, {
+    bool refreshFirst = true,
+  }) async {
     final String account;
     try {
       account = utf8.decode(accountId);
@@ -608,8 +860,10 @@ class DeviceListPins {
     }
     final DeviceListPin pin;
     final status = refreshFirst
-        ? await _refreshFor(account,
-            (pin) => pin.standing(deviceId, signingKey) == PinStanding.approved)
+        ? await _refreshFor(
+            account,
+            (pin) => pin.standing(deviceId, signingKey) == PinStanding.approved,
+          )
         : await _stored(account);
     switch (status.state) {
       case DeviceListState.empty:
@@ -638,3 +892,6 @@ bool _same(List<int> a, List<int> b) {
   }
   return true;
 }
+
+bool _sameOptional(List<int>? a, List<int>? b) =>
+    a == null || b == null ? a == b : _same(a, b);

@@ -45,24 +45,31 @@ void main() {
     expect(crypto, isNot(isA<MlsConversationCryptoService>()));
   });
 
-  test('release crypto errors surface as the encryption engine message',
-      () async {
-    final crypto = UnavailableCryptoService();
-    for (final call in <Future<Object?> Function()>[
-      () => crypto.createEnrollmentCredential(reservation),
-      () => crypto.encrypt('conv_1', 'hello'),
-    ]) {
-      expect(describeError(await thrownBy(call), englishL10n),
-          englishL10n.errorEncryptionUnavailable);
-    }
-    // The device-link error names neither MLS nor encryption, so it reads
-    // as its own capitalised sentence (today's behaviour, pinned here). The
-    // v2 SAS derivation it was pinned with was retired in ABI 18 (L1-3).
-    final locator = await thrownBy(() => crypto.deviceLinkLocator(<int>[1]));
-    for (final error in <Object>[locator]) {
-      expect(describeError(error, englishL10n), (error as StateError).message);
-    }
-  });
+  test(
+    'release crypto errors surface as the encryption engine message',
+    () async {
+      final crypto = UnavailableCryptoService();
+      for (final call in <Future<Object?> Function()>[
+        () => crypto.createEnrollmentCredential(reservation),
+        () => crypto.encrypt('conv_1', 'hello'),
+      ]) {
+        expect(
+          describeError(await thrownBy(call), englishL10n),
+          englishL10n.errorEncryptionUnavailable,
+        );
+      }
+      // The device-link error names neither MLS nor encryption, so it reads
+      // as its own capitalised sentence (today's behaviour, pinned here). The
+      // v2 SAS derivation it was pinned with was retired in ABI 18 (L1-3).
+      final locator = await thrownBy(() => crypto.deviceLinkLocator(<int>[1]));
+      for (final error in <Object>[locator]) {
+        expect(
+          describeError(error, englishL10n),
+          (error as StateError).message,
+        );
+      }
+    },
+  );
 
   test('release crypto cannot register: nothing is sent or stored', () async {
     final api = _RegisterApi();
@@ -76,7 +83,11 @@ void main() {
     addTearDown(state.dispose);
 
     await state.registerWithInvite(
-        'https://chat.example.org', 'INVITE', 'alice', 'alice-password-123');
+      'https://chat.example.org',
+      'INVITE',
+      'alice',
+      'alice-password-123',
+    );
 
     expect(api.reservations, 1, reason: 'the enrollment was reserved');
     expect(api.registrations, 0, reason: 'no credential, no registration');
@@ -94,7 +105,8 @@ class _RegisterApi extends ApiClient {
 
   @override
   Future<EnrollmentReservation> reserveRegistrationEnrollment(
-      String inviteCode) async {
+    String inviteCode,
+  ) async {
     reservations++;
     return const EnrollmentReservation(
       id: 'enr_1',

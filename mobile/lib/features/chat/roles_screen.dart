@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/roles/governance.dart';
+import '../../core/roles/governance_commands.dart';
 import '../../crypto/crypto_service.dart' show GovernanceView;
 import '../../l10n/l10n.dart';
 import '../../ui/confirm.dart';
@@ -33,6 +34,7 @@ class RolesScreen extends StatefulWidget {
 class _RolesScreenState extends State<RolesScreen> {
   GovernanceView? _view;
   bool _loaded = false;
+  bool _early = false;
 
   AppState get state => widget.state;
 
@@ -51,9 +53,12 @@ class _RolesScreenState extends State<RolesScreen> {
 
   Future<void> _reload() async {
     final view = await state.governanceViewFor(widget.conversationId);
+    final early =
+        view != null && await state.ownerChangedEarly(widget.conversationId);
     if (!mounted) return;
     setState(() {
       _view = view;
+      _early = early;
       _loaded = true;
     });
   }
@@ -106,16 +111,24 @@ class _RolesScreenState extends State<RolesScreen> {
       children.add(Text(l10n.rolesNoRecord));
     } else {
       final record = view.record;
-      children.add(Text(
-        l10n.rolesDetail,
-        style: theme.textTheme.bodySmall
-            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-      ));
+      children.add(
+        Text(
+          l10n.rolesDetail,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
       if (error != null) {
-        children.add(Padding(
-          padding: const EdgeInsets.only(top: BoneSpacing.sm),
-          child: Text(error, style: TextStyle(color: theme.colorScheme.error)),
-        ));
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(top: BoneSpacing.sm),
+            child: Text(
+              error,
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+        );
       }
       final accounts = view.roster.toList()
         ..sort((a, b) {
@@ -126,27 +139,35 @@ class _RolesScreenState extends State<RolesScreen> {
           return ja == jb ? a.compareTo(b) : ja.compareTo(jb);
         });
       children.add(SectionHeader(l10n.rolesTitle));
-      children.add(TileGroup(children: <Widget>[
-        for (final account in accounts)
-          _RoleTile(
-            label: account == self
-                ? l10n.rolesYou(_name(account))
-                : _name(account),
-            role: record.roleOf(account),
-            elector: record.electors.contains(account),
-            actions: busy || self == null
-                ? const <_RoleAction>[]
-                : _actionsFor(context, record, view.roster, self, account),
-          ),
-      ]));
+      children.add(
+        TileGroup(
+          children: <Widget>[
+            for (final account in accounts)
+              _RoleTile(
+                label: account == self
+                    ? l10n.rolesYou(_name(account))
+                    : _name(account),
+                role: record.roleOf(account),
+                elector: record.electors.contains(account),
+                actions: busy || self == null
+                    ? const <_RoleAction>[]
+                    : _actionsFor(context, record, view.roster, self, account),
+              ),
+          ],
+        ),
+      );
       children.add(SectionHeader(l10n.rolesOwnership));
       children.add(_ownership(context, record, view, self, busy));
     }
     return Scaffold(
       appBar: LargeTitleBar(title: l10n.rolesTitle),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(BoneSpacing.gutter, BoneSpacing.sm,
-            BoneSpacing.gutter, BoneSpacing.xl),
+        padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.gutter,
+          BoneSpacing.sm,
+          BoneSpacing.gutter,
+          BoneSpacing.xl,
+        ),
         children: children,
       ),
     );
@@ -154,24 +175,31 @@ class _RolesScreenState extends State<RolesScreen> {
 
   /// What [self] may do to [account] under the record: the receivers' own
   /// rules (`validateTransition`), so a refused commit is never offered.
-  List<_RoleAction> _actionsFor(BuildContext context, GovernanceState record,
-      Set<String> roster, String self, String account) {
+  List<_RoleAction> _actionsFor(
+    BuildContext context,
+    GovernanceState record,
+    Set<String> roster,
+    String self,
+    String account,
+  ) {
     final l10n = context.l10n;
     final id = widget.conversationId;
     final actions = <_RoleAction>[];
     if (account == self) {
       if (record.roleOf(self) != BuiltInRole.owner &&
           record.roleOf(self) != BuiltInRole.member) {
-        actions.add(_RoleAction(
+        actions.add(
+          _RoleAction(
             l10n.rolesStepDown,
             () => _confirmThenRun(
-                  context,
-                  title: l10n.rolesStepDownTitle,
-                  message: l10n.rolesStepDownMessage,
-                  confirmLabel: l10n.rolesStepDown,
-                  action: () =>
-                      state.setVerifiedRole(id, self, BuiltInRole.member),
-                )));
+              context,
+              title: l10n.rolesStepDownTitle,
+              message: l10n.rolesStepDownMessage,
+              confirmLabel: l10n.rolesStepDown,
+              action: () => state.setVerifiedRole(id, self, BuiltInRole.member),
+            ),
+          ),
+        );
       }
       return actions;
     }
@@ -189,78 +217,130 @@ class _RolesScreenState extends State<RolesScreen> {
           BuiltInRole.moderator => l10n.rolesMakeModerator,
           _ => l10n.rolesMakeMember,
         };
-        actions.add(_RoleAction(
+        actions.add(
+          _RoleAction(
             label,
             () => _confirmThenRun(
-                  context,
-                  title: l10n.rolesChangeTitle(_name(account)),
-                  message: l10n.rolesChangeMessage(
-                      _name(account), roleLabel(l10n, role.name)),
-                  confirmLabel: l10n.rolesChangeConfirm,
-                  action: () => state.setVerifiedRole(id, account, role),
-                )));
+              context,
+              title: l10n.rolesChangeTitle(_name(account)),
+              message: l10n.rolesChangeMessage(
+                _name(account),
+                roleLabel(l10n, role.name),
+              ),
+              confirmLabel: l10n.rolesChangeConfirm,
+              action: () => state.setVerifiedRole(id, account, role),
+            ),
+          ),
+        );
       }
     }
     if (record.owner == self && record.admins.containsKey(account)) {
       final elector = record.electors.contains(account);
-      actions.add(_RoleAction(
+      actions.add(
+        _RoleAction(
           elector ? l10n.rolesElectorOff : l10n.rolesElectorOn,
-          () => _run(() => state.setElector(id, account, !elector))));
-      actions.add(_RoleAction(l10n.rolesTransfer, () async {
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            content: Text(l10n.rolesTransferConfirm(_name(account))),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child:
-                    Text(MaterialLocalizations.of(context).cancelButtonLabel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: Text(l10n.rolesTransfer),
-              ),
-            ],
-          ),
-        );
-        if (ok == true) await _run(() => state.transferOwnership(id, account));
-      }));
+          () => _run(() => state.setElector(id, account, !elector)),
+        ),
+      );
+      actions.add(
+        _RoleAction(l10n.rolesTransfer, () async {
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              content: Text(l10n.rolesTransferConfirm(_name(account))),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(
+                    MaterialLocalizations.of(context).cancelButtonLabel,
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(l10n.rolesTransfer),
+                ),
+              ],
+            ),
+          );
+          if (ok == true)
+            await _run(() => state.transferOwnership(id, account));
+        }),
+      );
     }
     return actions;
   }
 
-  Widget _ownership(BuildContext context, GovernanceState record,
-      GovernanceView view, String? self, bool busy) {
+  Widget _ownership(
+    BuildContext context,
+    GovernanceState record,
+    GovernanceView view,
+    String? self,
+    bool busy,
+  ) {
     final l10n = context.l10n;
     final id = widget.conversationId;
     final election = record.election;
     final tiles = <Widget>[];
+    // D81: a handover this device's own clocks would have refused.
+    if (_early) {
+      tiles.add(
+        ListTile(
+          leading: Icon(
+            Icons.warning_amber_rounded,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          title: Text(l10n.rolesEarlyWin),
+        ),
+      );
+    }
+    // The design's prompt: admins the owner has not marked as electors
+    // cannot vote (or only under D82's ownerRev rule).
+    if (self != null &&
+        self == record.owner &&
+        record.admins.keys.any(
+          (a) => view.roster.contains(a) && !record.electors.contains(a),
+        )) {
+      tiles.add(ListTile(subtitle: Text(l10n.rolesElectorHint)));
+    }
     if (election == null) {
       tiles.add(ListTile(title: Text(l10n.rolesElectionNone)));
-      // Offered where the local rules would build it; the command checks
-      // the 30 days against this device's own clock and refuses otherwise.
+      // Offered only where the command itself would build it (the 30 days
+      // on this device's own clock, and who may open: an elector, D82's
+      // admins by ownerRev, or with no admin the longest-serving member).
       final observed = view.observations;
-      final admins = record.admins.keys.where(view.roster.contains).toList();
-      final mayOpen = self != null &&
-          self != record.owner &&
-          observed != null &&
-          mayOpenElectionNow(
-              now: DateTime.now().toUtc(),
-              lastOwnerActivity: observed.lastOwnerActivity) &&
-          (admins.isEmpty || record.admins.containsKey(self));
+      var mayOpen = false;
+      if (self != null && self != record.owner && observed != null) {
+        try {
+          GovernanceCommands(
+            state: record,
+            actor: self,
+            members: view.roster,
+          ).openElection(observed, DateTime.now().toUtc());
+          mayOpen = true;
+        } catch (_) {
+          mayOpen = false;
+        }
+      }
       if (mayOpen) {
-        tiles.add(ListTile(
-          leading: const Icon(Icons.how_to_vote_outlined),
-          title: Text(l10n.rolesStartElection),
-          onTap: busy ? null : () => _run(() => state.openOwnerElection(id)),
-        ));
+        tiles.add(
+          ListTile(
+            leading: const Icon(Icons.how_to_vote_outlined),
+            title: Text(l10n.rolesStartElection),
+            onTap: busy ? null : () => _run(() => state.openOwnerElection(id)),
+          ),
+        );
       }
     } else {
-      tiles.add(ListTile(
-        title: Text(l10n.rolesElectionOpen(
-            '${election.votes.length}', '${election.electorate.length}')),
-      ));
+      tiles.add(
+        ListTile(
+          title: Text(
+            l10n.rolesElectionOpen(
+              '${election.votes.length}',
+              '${election.electorate.length}',
+            ),
+          ),
+        ),
+      );
       if (self != null && self == record.owner) {
         tiles.add(ListTile(subtitle: Text(l10n.rolesOwnerCancelNote)));
       }
@@ -272,22 +352,26 @@ class _RolesScreenState extends State<RolesScreen> {
           ..sort();
         final candidates = admins.isEmpty ? <String>[self] : admins;
         for (final candidate in candidates) {
-          tiles.add(ListTile(
-            leading: const Icon(Icons.how_to_vote_outlined),
-            title: Text(l10n.rolesVoteFor(_name(candidate))),
-            onTap: busy
-                ? null
-                : () => _run(() => state.voteForOwner(id, candidate)),
-          ));
+          tiles.add(
+            ListTile(
+              leading: const Icon(Icons.how_to_vote_outlined),
+              title: Text(l10n.rolesVoteFor(_name(candidate))),
+              onTap: busy
+                  ? null
+                  : () => _run(() => state.voteForOwner(id, candidate)),
+            ),
+          );
         }
       }
       if (self != null &&
           (self == record.owner || election.electorate.contains(self))) {
-        tiles.add(ListTile(
-          leading: const Icon(Icons.close),
-          title: Text(l10n.rolesCloseElection),
-          onTap: busy ? null : () => _run(() => state.closeOwnerElection(id)),
-        ));
+        tiles.add(
+          ListTile(
+            leading: const Icon(Icons.close),
+            title: Text(l10n.rolesCloseElection),
+            onTap: busy ? null : () => _run(() => state.closeOwnerElection(id)),
+          ),
+        );
       }
     }
     return TileGroup(children: tiles);
@@ -317,12 +401,15 @@ class _RoleTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     return ListTile(
-      title: Row(children: <Widget>[
-        Flexible(
-            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis)),
-        const SizedBox(width: BoneSpacing.sm),
-        StatusPill(label: roleLabel(l10n, role.name)),
-      ]),
+      title: Row(
+        children: <Widget>[
+          Flexible(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: BoneSpacing.sm),
+          StatusPill(label: roleLabel(l10n, role.name)),
+        ],
+      ),
       subtitle: elector ? Text(l10n.rolesElector) : null,
       trailing: actions.isEmpty
           ? null

@@ -60,21 +60,23 @@ void main() {
     expect(calls, isNot(contains('notify')));
   });
 
-  test('the check runs after setup, before the notification goes out',
-      () async {
-    final notifier = PluginDesktopNotifier(appName: 'Veritra');
-    var asked = 0;
-    await notifier.show(
-      title: 'Veritra',
-      body: 'secret words',
-      stillWanted: () {
-        asked++;
-        return true;
-      },
-    );
-    expect(asked, 1);
-    expect(calls, contains('notify'));
-  });
+  test(
+    'the check runs after setup, before the notification goes out',
+    () async {
+      final notifier = PluginDesktopNotifier(appName: 'Veritra');
+      var asked = 0;
+      await notifier.show(
+        title: 'Veritra',
+        body: 'secret words',
+        stillWanted: () {
+          asked++;
+          return true;
+        },
+      );
+      expect(asked, 1);
+      expect(calls, contains('notify'));
+    },
+  );
 
   test('a notification with no check is shown', () async {
     final notifier = PluginDesktopNotifier(appName: 'Veritra');

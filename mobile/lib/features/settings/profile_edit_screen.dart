@@ -121,23 +121,33 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     setState(() => _saving = true);
     final bool ok;
     if (widget.isGroup) {
-      ok = await state.saveGroupProfile(widget.conversationId!,
-          name: name.isEmpty ? null : name, photo: _photo);
+      ok = await state.saveGroupProfile(
+        widget.conversationId!,
+        name: name.isEmpty ? null : name,
+        photo: _photo,
+      );
     } else {
       ok = await state.saveOwnProfile(
-          name: name.isEmpty ? null : name, photo: _photo);
+        name: name.isEmpty ? null : name,
+        photo: _photo,
+      );
     }
     if (!mounted) return;
     setState(() => _saving = false);
     final messenger = ScaffoldMessenger.of(context);
     if (ok) {
-      messenger
-          .showSnackBar(SnackBar(content: Text(context.l10n.profileSaved)));
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.l10n.profileSaved)),
+      );
       Navigator.of(context).maybePop();
     } else {
-      messenger.showSnackBar(SnackBar(
+      messenger.showSnackBar(
+        SnackBar(
           content: Text(
-              state.errorFor(Ops.profile) ?? context.l10n.profileSaveInvalid)));
+            state.errorFor(Ops.profile) ?? context.l10n.profileSaveInvalid,
+          ),
+        ),
+      );
     }
   }
 
@@ -230,8 +240,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             inputFormatters: <TextInputFormatter>[
               // Control and direction characters never reach the field; the
               // check on save is for whatever a paste still brings.
-              FilteringTextInputFormatter.deny(RegExp(
-                  '[\\u0000-\\u001f\\u007f-\\u009f\\u200e\\u200f\\u061c\\u202a-\\u202e\\u2066-\\u2069]')),
+              FilteringTextInputFormatter.deny(
+                RegExp(
+                  '[\\u0000-\\u001f\\u007f-\\u009f\\u200e\\u200f\\u061c\\u202a-\\u202e\\u2066-\\u2069]',
+                ),
+              ),
             ],
             decoration: InputDecoration(
               labelText: widget.isGroup

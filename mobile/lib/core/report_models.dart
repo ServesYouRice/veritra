@@ -107,8 +107,10 @@ class ReportCopyRow {
       inboxKind: _id(json['inbox_kind']),
       inboxId: _id(json['inbox_id']),
       keyRev: rev,
-      recipientPublicKey:
-          _bytes(json['recipient_public_key'], length: _reportKeyBytes),
+      recipientPublicKey: _bytes(
+        json['recipient_public_key'],
+        length: _reportKeyBytes,
+      ),
       conversationId: _id(json['conversation_id']),
       reporterAccountId: _id(json['reporter_account_id']),
       sealed: _bytes(json['sealed'], max: _maxSealedBytes),

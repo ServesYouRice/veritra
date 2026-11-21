@@ -132,10 +132,29 @@ type inviteRow struct {
 	createdBy string
 }
 
+// inviteAnchorGroupTx is the MLS group an invitation to target admits to
+// (v3): a group's own conversation, or the shared conversation of a community
+// with the C0 layout. A legacy community has none and gets "".
+func inviteAnchorGroupTx(ctx context.Context, q queryRower, target MembershipTarget) (string, error) {
+	if target.Kind != domain.InviteTargetCommunity {
+		return target.ID, nil
+	}
+	layout, err := communityLayoutOf(ctx, q, target.ID)
+	if err != nil || !layout.active {
+		return "", err
+	}
+	return layout.sharedConversationID, nil
+}
+
 // inviteBindingTx reads what the creating device bound invitation id to.
 func inviteBindingTx(ctx context.Context, q queryRower, invite inviteRow) (domain.InviteBinding, error) {
 	binding := domain.InviteBinding{TargetKind: invite.target.Kind, TargetID: invite.target.ID, InviterAccountID: invite.createdBy}
-	err := q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag, binding_signature FROM membership_invites WHERE id = ?`, invite.id).
+	anchor, err := inviteAnchorGroupTx(ctx, q, invite.target)
+	if err != nil {
+		return domain.InviteBinding{}, err
+	}
+	binding.AnchorGroupID = anchor
+	err = q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag, binding_signature FROM membership_invites WHERE id = ?`, invite.id).
 		Scan(&binding.InviterDeviceID, &binding.InviterSigningKey, &binding.Tag, &binding.Signature)
 	return binding, err
 }
@@ -226,8 +245,13 @@ func targetNameTx(ctx context.Context, q queryRower, target MembershipTarget) (s
 // device's v2 signature (64 bytes). The server cannot check the tag (that
 // needs the secret) or the signature (that needs the origin the link names);
 // it keeps both for the joiner.
+//
+// AnchorGroupID is the MLS group the app signed (v3): it must be the one the
+// server derives for the target (inviteAnchorGroupTx), so an honest app that
+// holds a stale mapping learns at once. Nothing new is stored.
 type CreateMembershipInviteInput struct {
 	Target            MembershipTarget
+	AnchorGroupID     string
 	CreatedBy         string
 	CreatedByDeviceID string
 	SigningKey        []byte
@@ -260,6 +284,13 @@ func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembersh
 	defer tx.Rollback()
 	if err := inviteAdminRoleTx(ctx, tx, input.Target, input.CreatedBy); err != nil {
 		return domain.MembershipInvite{}, err
+	}
+	anchor, err := inviteAnchorGroupTx(ctx, tx, input.Target)
+	if err != nil {
+		return domain.MembershipInvite{}, err
+	}
+	if anchor != input.AnchorGroupID {
+		return domain.MembershipInvite{}, ErrInvalidInput
 	}
 	// The binding names a live device of the creating account, with the
 	// signing key the server has on record for it.
@@ -427,69 +458,105 @@ func blockedPairTx(ctx context.Context, q queryRower, a, b string) (bool, error)
 	return n > 0, err
 }
 
+// JoinRequestNoticeEventType is the account event each owner and admin of a
+// target gets when a new join request is filed for it. Its payload is empty:
+// no requester, username, target id or name, so the app can only say "New
+// join request" (owner decision 2026-11-21). The admins read the list itself
+// through the authenticated route.
+const JoinRequestNoticeEventType = "account.join_request"
+
+// JoinRequestNotice is one admin told of a new request: the account and the
+// id of its event, for the realtime publish and the generic push wake.
+type JoinRequestNotice struct {
+	AccountID string
+	EventID   int64
+}
+
+// FiledJoinRequest is the outcome of FileJoinRequest.
+type FiledJoinRequest struct {
+	Request domain.JoinRequest
+	Created bool
+	// Notices names the owners and admins told of a newly created request;
+	// empty when the request already existed.
+	Notices []JoinRequestNotice
+}
+
 // RequestToJoin files a pending request for the invitation behind locator.
 // created is false when the account already had a pending request for the
 // target, which is returned unchanged. Nothing is granted until approval.
 func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (request domain.JoinRequest, created bool, err error) {
+	filed, err := s.FileJoinRequest(ctx, accountID, locator)
+	return filed.Request, filed.Created, err
+}
+
+// FileJoinRequest is RequestToJoin that also records, in the same
+// transaction, one content-free JoinRequestNoticeEventType event for each
+// owner and admin of the target when the request is new.
+func (s *Store) FileJoinRequest(ctx context.Context, accountID, locator string) (FiledJoinRequest, error) {
+	request, created, notices, err := s.requestToJoin(ctx, accountID, locator)
+	return FiledJoinRequest{Request: request, Created: created, Notices: notices}, err
+}
+
+func (s *Store) requestToJoin(ctx context.Context, accountID, locator string) (request domain.JoinRequest, created bool, notices []JoinRequestNotice, err error) {
 	if !validLocator(locator) {
-		return domain.JoinRequest{}, false, ErrNotFound
+		return domain.JoinRequest{}, false, nil, ErrNotFound
 	}
 	id, err := domain.NewID("jreq")
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	defer tx.Rollback()
 	invite, err := usableInviteTx(ctx, tx, `locator_hash = ?`, hashLocator(locator))
 	if err != nil {
-		return domain.JoinRequest{}, false, mapUnavailableToNotFound(err)
+		return domain.JoinRequest{}, false, nil, mapUnavailableToNotFound(err)
 	}
 	// A block between the requester and the inviter looks like any other
 	// unusable link.
 	if blocked, err := blockedPairTx(ctx, tx, accountID, invite.createdBy); err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	} else if blocked {
-		return domain.JoinRequest{}, false, ErrNotFound
+		return domain.JoinRequest{}, false, nil, ErrNotFound
 	}
 	member, err := isTargetMemberTx(ctx, tx, invite.target, accountID)
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	if member {
-		return domain.JoinRequest{}, false, ErrAlreadyMember
+		return domain.JoinRequest{}, false, nil, ErrAlreadyMember
 	}
 	// C5: a banned account's request looks like any other unusable link.
 	if invite.target.Kind == domain.InviteTargetCommunity {
 		if banned, err := communityBannedTx(ctx, tx, invite.target.ID, accountID); err != nil {
-			return domain.JoinRequest{}, false, err
+			return domain.JoinRequest{}, false, nil, err
 		} else if banned {
-			return domain.JoinRequest{}, false, ErrNotFound
+			return domain.JoinRequest{}, false, nil, ErrNotFound
 		}
 	}
 	binding, err := inviteBindingTx(ctx, tx, invite)
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	community, conversation := invite.target.columns()
 	var existingID, existingInvite string
 	var existingCreated string
 	err = tx.QueryRowContext(ctx, `SELECT id, invite_id, created_at FROM membership_join_requests WHERE account_id = ? AND status = 'pending' AND community_id IS ? AND conversation_id IS ?`, accountID, community, conversation).Scan(&existingID, &existingInvite, &existingCreated)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	if err == nil {
 		// A pending request whose own invitation is no longer usable is
 		// replaced; otherwise the same request stands.
 		if _, usableErr := usableInviteTx(ctx, tx, `id = ?`, existingInvite); usableErr == nil {
-			return domain.JoinRequest{ID: existingID, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: parseTime(existingCreated), Binding: &binding}, false, nil
+			return domain.JoinRequest{ID: existingID, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: parseTime(existingCreated), Binding: &binding}, false, nil, nil
 		} else if !errors.Is(usableErr, ErrMembershipInviteUnavailable) {
-			return domain.JoinRequest{}, false, usableErr
+			return domain.JoinRequest{}, false, nil, usableErr
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE membership_join_requests SET status = 'cancelled', decided_at = ? WHERE id = ? AND status = 'pending'`, nowString(), existingID); err != nil {
-			return domain.JoinRequest{}, false, err
+			return domain.JoinRequest{}, false, nil, err
 		}
 	}
 	// Both caps count only requests that could still be approved, so dead
@@ -498,27 +565,101 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 	now := time.Now().UTC()
 	own, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id WHERE r.account_id = ? AND r.status = 'pending' AND `+usableInviteSQL, accountID, formatTime(now))
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	forTarget, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id JOIN accounts ra ON ra.id = r.account_id AND ra.deleted_at IS NULL WHERE r.community_id IS ? AND r.conversation_id IS ? AND r.status = 'pending' AND `+usableInviteSQL, community, conversation, formatTime(now))
 	if err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
 	if own >= maxPendingRequestsPerAccount || forTarget >= maxPendingRequestsPerTarget {
-		return domain.JoinRequest{}, false, ErrJoinRequestLimit
+		return domain.JoinRequest{}, false, nil, ErrJoinRequestLimit
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_join_requests(id, invite_id, community_id, conversation_id, account_id, status, created_at) VALUES(?, ?, ?, ?, ?, 'pending', ?)`, id, invite.id, community, conversation, accountID, formatTime(now)); err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
+	}
+	notices, err = joinRequestNoticesTx(ctx, tx, invite.target, accountID, formatTime(now))
+	if err != nil {
+		return domain.JoinRequest{}, false, nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.JoinRequest{}, false, err
+		return domain.JoinRequest{}, false, nil, err
 	}
-	return domain.JoinRequest{ID: id, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: now, Binding: &binding}, true, nil
+	return domain.JoinRequest{ID: id, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: now, Binding: &binding}, true, notices, nil
+}
+
+// maxJoinRequestNotices bounds the admins told of one request; a target with
+// more owners and admins tells the earliest ones.
+const maxJoinRequestNotices = 50
+
+// joinRequestNoticeQuiet is how long an owner or admin who was just told of a
+// join request is not told again. The notice names nothing, so a second one
+// inside the window adds nothing the first did not say, and without it anyone
+// holding an invitation link could push every admin of the target on each
+// cancel-and-refile (or decline-and-refile) round, as often as the write
+// budget allows. It is per account, across targets and requesters, so more
+// requesters cannot raise it either. The cost: an admin who dismissed the
+// notice inside the window is not pushed again for a later request; the list
+// still shows it.
+const joinRequestNoticeQuiet = 10 * time.Minute
+
+// joinRequestNoticesTx records the content-free notice event for every active
+// owner and admin of target except the requester, leaving out anyone already
+// told within joinRequestNoticeQuiet of now.
+func joinRequestNoticesTx(ctx context.Context, tx *sql.Tx, target MembershipTarget, requester, now string) ([]JoinRequestNotice, error) {
+	community, conversation := target.columns()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.account_id
+		FROM memberships m
+		JOIN accounts a ON a.id = m.account_id AND a.status = 'active' AND a.deleted_at IS NULL
+		WHERE m.community_id IS ? AND m.conversation_id IS ? AND m.role IN ('`+domain.RoleOwner+`', '`+domain.RoleAdmin+`')
+		  AND m.account_id <> ?
+		ORDER BY m.created_at, m.account_id
+		LIMIT ?`, community, conversation, requester, maxJoinRequestNotices)
+	if err != nil {
+		return nil, err
+	}
+	var admins []string
+	for rows.Next() {
+		var admin string
+		if err := rows.Scan(&admin); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		admins = append(admins, admin)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	quietSince := formatTime(parseTime(now).Add(-joinRequestNoticeQuiet))
+	notices := make([]JoinRequestNotice, 0, len(admins))
+	for _, admin := range admins {
+		admin := admin
+		var recent int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sync_events WHERE account_id = ? AND event_type = ? AND created_at > ?)`, admin, JoinRequestNoticeEventType, quietSince).Scan(&recent); err != nil {
+			return nil, err
+		}
+		if recent != 0 {
+			continue
+		}
+		eventID, err := insertSyncEvent(ctx, tx, JoinRequestNoticeEventType, &admin, "", struct{}{}, now)
+		if err != nil {
+			return nil, err
+		}
+		notices = append(notices, JoinRequestNotice{AccountID: admin, EventID: eventID})
+	}
+	return notices, nil
 }
 
 // ListJoinRequests lists the pending requests for a target, with usernames,
 // for its owners and admins. A request whose invitation can no longer be used
 // (revoked, expired, used up, creator no longer owner or admin) is left out: approving it would fail.
+// While a community's invitations are paused (C5) the requests are still
+// listed, so admins can decline them (owner decision 2026-11-21); approving
+// stays refused until the pause ends (usableInviteTx), and
+// CommunityInvitesPausedUntil tells the app to say so.
 func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, actorAccountID string) ([]domain.JoinRequest, error) {
 	if !target.valid() {
 		return nil, ErrInvalidInput
@@ -551,6 +692,28 @@ func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, a
 		requests = append(requests, request)
 	}
 	return requests, rows.Err()
+}
+
+// CommunityInvitesPausedUntil returns the end of a running pause of the
+// community's invitations (C5), or nil when they are not paused. A target
+// that is not a community is never paused.
+func (s *Store) CommunityInvitesPausedUntil(ctx context.Context, target MembershipTarget) (*time.Time, error) {
+	if target.Kind != domain.InviteTargetCommunity {
+		return nil, nil
+	}
+	var paused sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT invites_paused_until FROM communities WHERE id = ?`, target.ID).Scan(&paused)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil || !paused.Valid {
+		return nil, err
+	}
+	end := parseTime(paused.String)
+	if !end.After(time.Now().UTC()) {
+		return nil, nil
+	}
+	return &end, nil
 }
 
 // ListOwnJoinRequests lists the account's most recent requests, so the app

@@ -33,9 +33,7 @@ class ReadReceiptsTile extends StatelessWidget {
         subtitle: preferences.saveFailed
             ? Text(
                 l10n.settingsReadReceiptsNotSaved,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               )
             : null,
         value: preferences.sendReadReceipts,

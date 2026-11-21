@@ -37,8 +37,10 @@ void main() {
       );
       expect(conversationTitle(englishL10n, alice), '@alice');
       expect(conversationTitle(englishL10n, bob), '@bob');
-      expect(conversationTitle(englishL10n, alice),
-          isNot(conversationTitle(englishL10n, bob)));
+      expect(
+        conversationTitle(englishL10n, alice),
+        isNot(conversationTitle(englishL10n, bob)),
+      );
     });
 
     test('a DM without a username still distinguishes the peer', () {
@@ -53,8 +55,10 @@ void main() {
         peerAccountId: 'acct_0000000000000002',
       );
       expect(conversationTitle(englishL10n, one), isNot('Direct message'));
-      expect(conversationTitle(englishL10n, one),
-          isNot(conversationTitle(englishL10n, two)));
+      expect(
+        conversationTitle(englishL10n, one),
+        isNot(conversationTitle(englishL10n, two)),
+      );
     });
 
     test('peer identity survives a snapshot round trip', () {
@@ -80,8 +84,9 @@ void main() {
       expect(conversationTitle(englishL10n, conversation), contains('acct_'));
     });
 
-    testWidgets('the chat list renders distinct rows for two DMs',
-        (tester) async {
+    testWidgets('the chat list renders distinct rows for two DMs', (
+      tester,
+    ) async {
       final state = _connectedState(_FakeApi())
         ..conversations = <Conversation>[
           Conversation(
@@ -106,74 +111,78 @@ void main() {
       expect(find.text('Direct message'), findsNothing);
     });
 
-    test('starting a DM reuses the existing conversation with that peer',
-        () async {
-      final api = _FakeApi();
-      final state = _connectedState(api)
-        ..conversations = <Conversation>[
-          Conversation(
-            id: 'conv_1',
-            kind: 'dm',
-            peerAccountId: 'acct_alice',
-            peerUsername: 'alice',
-          ),
-        ];
+    test(
+      'starting a DM reuses the existing conversation with that peer',
+      () async {
+        final api = _FakeApi();
+        final state = _connectedState(api)
+          ..conversations = <Conversation>[
+            Conversation(
+              id: 'conv_1',
+              kind: 'dm',
+              peerAccountId: 'acct_alice',
+              peerUsername: 'alice',
+            ),
+          ];
 
-      final result = await state.startConversation(
-        kind: 'dm',
-        memberAccountIds: <String>['acct_alice'],
-      );
+        final result = await state.startConversation(
+          kind: 'dm',
+          memberAccountIds: <String>['acct_alice'],
+        );
 
-      expect(result?.id, 'conv_1');
-      expect(api.createdConversations, isEmpty);
-      expect(state.conversations, hasLength(1));
-    });
+        expect(result?.id, 'conv_1');
+        expect(api.createdConversations, isEmpty);
+        expect(state.conversations, hasLength(1));
+      },
+    );
   });
 
   group('message history', () {
-    test('the newest page records the cursor and older pages prepend',
-        () async {
-      final api = _FakeApi()
-        ..pages = <String?, MessagePage>{
-          null: MessagePage(
-            messages: <ReceivedMessageEnvelope>[
-              _message('m_30', '2026-06-03T12:00:00Z'),
-              _message('m_29', '2026-06-03T11:00:00Z'),
-            ],
-            nextBefore: 'm_29',
-          ),
-          'm_29': MessagePage(
-            messages: <ReceivedMessageEnvelope>[
-              _message('m_28', '2026-06-03T10:00:00Z'),
-            ],
-          ),
-        };
-      final state = _connectedState(api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'conv_1', kind: 'group'),
-        ];
+    test(
+      'the newest page records the cursor and older pages prepend',
+      () async {
+        final api = _FakeApi()
+          ..pages = <String?, MessagePage>{
+            null: MessagePage(
+              messages: <ReceivedMessageEnvelope>[
+                _message('m_30', '2026-06-03T12:00:00Z'),
+                _message('m_29', '2026-06-03T11:00:00Z'),
+              ],
+              nextBefore: 'm_29',
+            ),
+            'm_29': MessagePage(
+              messages: <ReceivedMessageEnvelope>[
+                _message('m_28', '2026-06-03T10:00:00Z'),
+              ],
+            ),
+          };
+        final state = _connectedState(api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'conv_1', kind: 'group'),
+          ];
 
-      await state.loadMessages('conv_1');
-      expect(state.hasMoreHistory('conv_1'), isTrue);
-      expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
-        'm_30',
-        'm_29',
-      ]);
+        await state.loadMessages('conv_1');
+        expect(state.hasMoreHistory('conv_1'), isTrue);
+        expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
+          'm_30',
+          'm_29',
+        ]);
 
-      await state.loadOlderMessages('conv_1');
+        await state.loadOlderMessages('conv_1');
 
-      expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
-        'm_30',
-        'm_29',
-        'm_28',
-      ]);
-      // The server reported no further cursor, so the UI can stop offering
-      // "load older" instead of looping forever.
-      expect(state.hasMoreHistory('conv_1'), isFalse);
+        expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
+          'm_30',
+          'm_29',
+          'm_28',
+        ]);
+        // The server reported no further cursor, so the UI can stop offering
+        // "load older" instead of looping forever.
+        expect(state.hasMoreHistory('conv_1'), isFalse);
 
-      await state.loadOlderMessages('conv_1');
-      expect(api.pageRequests, <String?>[null, 'm_29']);
-    });
+        await state.loadOlderMessages('conv_1');
+        expect(api.pageRequests, <String?>[null, 'm_29']);
+      },
+    );
 
     test('a repeated older page does not duplicate messages', () async {
       final api = _FakeApi()
@@ -205,66 +214,71 @@ void main() {
       ]);
     });
 
-    test('refetching the newest page keeps already-loaded older history',
-        () async {
-      final api = _FakeApi()
-        ..pages = <String?, MessagePage>{
-          null: MessagePage(
-            messages: <ReceivedMessageEnvelope>[
-              _message('m_2', '2026-06-03T12:00:00Z'),
-            ],
-            nextBefore: 'm_2',
-          ),
-          'm_2': MessagePage(
-            messages: <ReceivedMessageEnvelope>[
-              _message('m_1', '2026-06-03T11:00:00Z'),
-            ],
-          ),
-        };
-      final state = _connectedState(api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'conv_1', kind: 'group'),
-        ];
+    test(
+      'refetching the newest page keeps already-loaded older history',
+      () async {
+        final api = _FakeApi()
+          ..pages = <String?, MessagePage>{
+            null: MessagePage(
+              messages: <ReceivedMessageEnvelope>[
+                _message('m_2', '2026-06-03T12:00:00Z'),
+              ],
+              nextBefore: 'm_2',
+            ),
+            'm_2': MessagePage(
+              messages: <ReceivedMessageEnvelope>[
+                _message('m_1', '2026-06-03T11:00:00Z'),
+              ],
+            ),
+          };
+        final state = _connectedState(api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'conv_1', kind: 'group'),
+          ];
 
-      await state.loadMessages('conv_1');
-      await state.loadOlderMessages('conv_1');
-      await state.loadMessages('conv_1');
+        await state.loadMessages('conv_1');
+        await state.loadOlderMessages('conv_1');
+        await state.loadMessages('conv_1');
 
-      expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
-        'm_2',
-        'm_1',
-      ]);
-    });
+        expect(state.messagesFor('conv_1').map((m) => m.id), <String>[
+          'm_2',
+          'm_1',
+        ]);
+      },
+    );
 
-    test('a failed older page is reported and does not consume the cursor',
-        () async {
-      final api = _FakeApi()
-        ..pages = <String?, MessagePage>{
-          null: MessagePage(
-            messages: <ReceivedMessageEnvelope>[
-              _message('m_2', '2026-06-03T12:00:00Z'),
-            ],
-            nextBefore: 'm_2',
-          ),
-        }
-        ..failPages = <String?>{'m_2'};
-      final state = _connectedState(api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'conv_1', kind: 'group'),
-        ];
+    test(
+      'a failed older page is reported and does not consume the cursor',
+      () async {
+        final api = _FakeApi()
+          ..pages = <String?, MessagePage>{
+            null: MessagePage(
+              messages: <ReceivedMessageEnvelope>[
+                _message('m_2', '2026-06-03T12:00:00Z'),
+              ],
+              nextBefore: 'm_2',
+            ),
+          }
+          ..failPages = <String?>{'m_2'};
+        final state = _connectedState(api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'conv_1', kind: 'group'),
+          ];
 
-      await state.loadMessages('conv_1');
-      await state.loadOlderMessages('conv_1');
+        await state.loadMessages('conv_1');
+        await state.loadOlderMessages('conv_1');
 
-      expect(state.messageLoadError('conv_1'), isNotNull);
-      expect(state.hasMoreHistory('conv_1'), isTrue);
-      expect(state.isLoadingOlder('conv_1'), isFalse);
-    });
+        expect(state.messageLoadError('conv_1'), isNotNull);
+        expect(state.hasMoreHistory('conv_1'), isTrue);
+        expect(state.isLoadingOlder('conv_1'), isFalse);
+      },
+    );
   });
 
   group('membership', () {
-    testWidgets('a DM leads with the person: no roster, roles or add-member',
-        (tester) async {
+    testWidgets('a DM leads with the person: no roster, roles or add-member', (
+      tester,
+    ) async {
       final api = _FakeApi()
         ..members = <ConversationMember>[
           ConversationMember(
@@ -289,9 +303,9 @@ void main() {
           ),
         ];
 
-      await tester.pumpWidget(_app(
-        ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       // The page opens on the other person; a chat of two lists no members and
@@ -305,8 +319,9 @@ void main() {
       expect(find.text('Add member'), findsNothing);
     });
 
-    testWidgets('a remove control is hidden when the actor cannot use it',
-        (tester) async {
+    testWidgets('a remove control is hidden when the actor cannot use it', (
+      tester,
+    ) async {
       // The signed-in account (acct_owner) is a moderator here. The roster
       // names its role too: C4 reads the actor's role from it (roleOf) ahead
       // of the conversation's currentRole.
@@ -333,9 +348,9 @@ void main() {
           Conversation(id: 'conv_1', kind: 'group', currentRole: 'moderator'),
         ];
 
-      await tester.pumpWidget(_app(
-        ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       // A moderator outranks neither an owner nor an admin, and never
@@ -365,9 +380,9 @@ void main() {
           Conversation(id: 'conv_1', kind: 'group', currentRole: 'owner'),
         ];
 
-      await tester.pumpWidget(_app(
-        ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       // U15: the role is written under the name, and Remove sits in a
@@ -376,19 +391,24 @@ void main() {
       expect(find.byTooltip('Moderate @alice'), findsOneWidget);
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
-      await tester
-          .tap(find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'));
+      await tester.tap(
+        find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'),
+      );
       await tester.pumpAndSettle();
-      final confirm = tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Remove'));
-      expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
-          Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.error);
+      final confirm = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Remove'),
+      );
+      expect(
+        confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
+        Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.error,
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
 
       expect(api.removedMembers, <String>['acct_alice']);
-      expect(state.membersFor('conv_1').map((m) => m.accountId),
-          <String>['acct_owner']);
+      expect(state.membersFor('conv_1').map((m) => m.accountId), <String>[
+        'acct_owner',
+      ]);
     });
 
     test('leaving drops the conversation and its local state', () async {
@@ -412,23 +432,25 @@ void main() {
       expect(state.selectedConversationId, isNull);
     });
 
-    test('a failed leave keeps the conversation and reports scoped error',
-        () async {
-      final api = _FakeApi()..failMemberWrites = true;
-      final state = _connectedState(api)
-        ..conversations = <Conversation>[
-          Conversation(id: 'conv_1', kind: 'group'),
-        ];
+    test(
+      'a failed leave keeps the conversation and reports scoped error',
+      () async {
+        final api = _FakeApi()..failMemberWrites = true;
+        final state = _connectedState(api)
+          ..conversations = <Conversation>[
+            Conversation(id: 'conv_1', kind: 'group'),
+          ];
 
-      final ok = await state.leaveConversation('conv_1');
+        final ok = await state.leaveConversation('conv_1');
 
-      expect(ok, isFalse);
-      expect(state.conversations, hasLength(1));
-      expect(state.errorFor(Ops.members), isNotNull);
-      // The failure is scoped: unrelated controls stay usable.
-      expect(state.errorFor(Ops.send), isNull);
-      expect(state.busy, isFalse);
-    });
+        expect(ok, isFalse);
+        expect(state.conversations, hasLength(1));
+        expect(state.errorFor(Ops.members), isNotNull);
+        // The failure is scoped: unrelated controls stay usable.
+        expect(state.errorFor(Ops.send), isNull);
+        expect(state.busy, isFalse);
+      },
+    );
   });
 
   group('blocking', () {
@@ -455,9 +477,9 @@ void main() {
       final api = _FakeApi()..conversationList = <Conversation>[dm];
       final state = _connectedState(api)..conversations = <Conversation>[dm];
 
-      await tester.pumpWidget(_app(
-        ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       await tester.scrollUntilVisible(
@@ -484,8 +506,9 @@ void main() {
       expect(find.text('Block @alice'), findsOneWidget);
     });
 
-    testWidgets('the blocked-accounts screen lists blocks and unblocks them',
-        (tester) async {
+    testWidgets('the blocked-accounts screen lists blocks and unblocks them', (
+      tester,
+    ) async {
       final api = _FakeApi()
         ..blocks = <BlockedAccount>[
           BlockedAccount(accountId: 'acct_alice', username: 'alice'),
@@ -511,17 +534,18 @@ void main() {
   });
 
   group('notification mute', () {
-    testWidgets('the mute switch reflects and updates server state',
-        (tester) async {
+    testWidgets('the mute switch reflects and updates server state', (
+      tester,
+    ) async {
       final api = _FakeApi();
       final state = _connectedState(api)
         ..conversations = <Conversation>[
           Conversation(id: 'conv_1', kind: 'group', currentRole: 'owner'),
         ];
 
-      await tester.pumpWidget(_app(
-        ConversationDetailsScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ConversationDetailsScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       expect(state.isMuted('conv_1'), isFalse);
@@ -541,8 +565,9 @@ void main() {
   });
 
   group('connection state', () {
-    testWidgets('the banner is hidden while online and shown when offline',
-        (tester) async {
+    testWidgets('the banner is hidden while online and shown when offline', (
+      tester,
+    ) async {
       final state = _connectedState(_FakeApi())
         ..connectionStatus = ConnectionStatus.online;
 
@@ -554,16 +579,14 @@ void main() {
       await tester.pump();
 
       expect(find.text('Offline'), findsOneWidget);
-      expect(
-        find.textContaining('queued on this device'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('queued on this device'), findsOneWidget);
     });
   });
 
   group('composer', () {
-    testWidgets('an unrelated busy operation does not disable sending',
-        (tester) async {
+    testWidgets('an unrelated busy operation does not disable sending', (
+      tester,
+    ) async {
       final api = _FakeApi();
       final state = _connectedState(api)
         ..conversations = <Conversation>[
@@ -572,9 +595,9 @@ void main() {
         // A long-running unrelated action used to disable every control.
         ..busy = true;
 
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       final sendButton = tester.widget<IconButton>(
@@ -613,69 +636,77 @@ void main() {
           ],
         };
       await store.saveCryptoState(
-          StoredCryptoState(
-              counter: 1,
-              stateKey: List<int>.filled(32, 1),
-              sealedState: <int>[1]),
-          0);
-      await store.commitMlsTransition(MlsStateTransition(
-        messageId: 'event:1',
-        conversationId: 'conv_1',
-        expectedCounter: 1,
-        expectedCursor: 0,
-        state: StoredCryptoState(
+        StoredCryptoState(
+          counter: 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: <int>[1],
+        ),
+        0,
+      );
+      await store.commitMlsTransition(
+        MlsStateTransition(
+          messageId: 'event:1',
+          conversationId: 'conv_1',
+          expectedCounter: 1,
+          expectedCursor: 0,
+          state: StoredCryptoState(
             counter: 2,
             stateKey: List<int>.filled(32, 1),
-            sealedState: <int>[2]),
-        cursor: 1,
-        messageEffects: const <MessageEffect>[
-          InsertMessageEffect(
-            key: 'dev_other:m1',
-            conversationId: 'conv_1',
-            senderAccountId: 'acct_other',
-            senderDeviceId: 'dev_other',
-            kind: LocalMessageKind.text,
-            body: 'decrypted hello',
-            createdAt: 1,
-            state: LocalMessageState.received,
+            sealedState: <int>[2],
           ),
-          InsertMessageEffect(
-            key: 'dev_other:m2',
-            conversationId: 'conv_1',
-            senderAccountId: 'acct_other',
-            senderDeviceId: 'dev_other',
-            kind: LocalMessageKind.action,
-            createdAt: 2,
-            state: LocalMessageState.received,
-          ),
-          ReactionEffect(
-            targetKey: 'dev_other:m1',
-            reactorAccountId: 'acct_owner',
-            reaction: '🎉',
-            at: 2,
-          ),
-        ],
-      ));
+          cursor: 1,
+          messageEffects: const <MessageEffect>[
+            InsertMessageEffect(
+              key: 'dev_other:m1',
+              conversationId: 'conv_1',
+              senderAccountId: 'acct_other',
+              senderDeviceId: 'dev_other',
+              kind: LocalMessageKind.text,
+              body: 'decrypted hello',
+              createdAt: 1,
+              state: LocalMessageState.received,
+            ),
+            InsertMessageEffect(
+              key: 'dev_other:m2',
+              conversationId: 'conv_1',
+              senderAccountId: 'acct_other',
+              senderDeviceId: 'dev_other',
+              kind: LocalMessageKind.action,
+              createdAt: 2,
+              state: LocalMessageState.received,
+            ),
+            ReactionEffect(
+              targetKey: 'dev_other:m1',
+              reactorAccountId: 'acct_owner',
+              reaction: '🎉',
+              at: 2,
+            ),
+          ],
+        ),
+      );
       await state.refreshHistory('conv_1');
 
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pump();
 
       expect(find.text('decrypted hello'), findsOneWidget);
       expect(find.text('🎉'), findsOneWidget);
       // m2 is an action and draws nothing; m3 has no local record and keeps
       // its bars, so exactly two message bubbles remain.
-      Finder bubbleLabelled(String prefix) => find.byWidgetPredicate((widget) =>
-          widget is Semantics &&
-          (widget.properties.label?.startsWith(prefix) ?? false));
+      Finder bubbleLabelled(String prefix) => find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                (widget.properties.label?.startsWith(prefix) ?? false),
+          );
       expect(bubbleLabelled('Message from'), findsOneWidget);
       expect(bubbleLabelled('Encrypted message from'), findsOneWidget);
     });
 
-    testWidgets('Enter sends on desktop and Shift+Enter does not',
-        (tester) async {
+    testWidgets('Enter sends on desktop and Shift+Enter does not', (
+      tester,
+    ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final api = _FakeApi();
@@ -683,9 +714,9 @@ void main() {
         ..conversations = <Conversation>[
           Conversation(id: 'conv_1', kind: 'group'),
         ];
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), 'line one');
@@ -710,9 +741,9 @@ void main() {
           Conversation(id: 'conv_1', kind: 'group'),
         ];
 
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), 'first');
@@ -725,7 +756,9 @@ void main() {
       expect(composerText(), isEmpty);
       expect(
         find.descendant(
-            of: find.byType(TextField), matching: find.text('first')),
+          of: find.byType(TextField),
+          matching: find.text('first'),
+        ),
         findsNothing,
       );
 
@@ -852,7 +885,9 @@ class _FakeApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: mutedConversations[conversationId] ?? false);
 
   @override

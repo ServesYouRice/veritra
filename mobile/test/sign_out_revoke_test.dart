@@ -30,8 +30,10 @@ void main() {
     answer = true;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
-      requests.add('${request.method} ${request.uri.path} '
-          '${request.headers.value(HttpHeaders.authorizationHeader)}');
+      requests.add(
+        '${request.method} ${request.uri.path} '
+        '${request.headers.value(HttpHeaders.authorizationHeader)}',
+      );
       await request.drain<void>();
       if (!answer) return; // Hold the reply; the client gives up.
       try {
@@ -84,25 +86,28 @@ void main() {
     expect(stored?.deviceId, 'dev_owner');
   });
 
-  test('relinking after a sync failure revokes the token on the server',
-      () async {
-    final (:state, :store) = signedIn();
-    await store.saveSession(state.session!);
-    state.syncRecovery = SyncRecovery(
-      kind: SyncFailureKind.cursorExpired,
-      recordedAt: DateTime.utc(2026, 10, 31),
-    );
-    await state.relinkAfterSyncRecovery(confirmed: true);
+  test(
+    'relinking after a sync failure revokes the token on the server',
+    () async {
+      final (:state, :store) = signedIn();
+      await store.saveSession(state.session!);
+      state.syncRecovery = SyncRecovery(
+        kind: SyncFailureKind.cursorExpired,
+        recordedAt: DateTime.utc(2026, 10, 31),
+      );
+      await state.relinkAfterSyncRecovery(confirmed: true);
 
-    expect(requests, contains('POST /api/v1/auth/logout Bearer owner-token'));
-    expect(state.session, isNull);
-    expect(await store.loadSession(), isNull);
-  });
+      expect(requests, contains('POST /api/v1/auth/logout Bearer owner-token'));
+      expect(state.session, isNull);
+      expect(await store.loadSession(), isNull);
+    },
+  );
 
   test('a server that does not answer still lets sign-out finish', () async {
     answer = false;
-    final (:state, :store) =
-        signedIn(revokeTimeout: const Duration(milliseconds: 300));
+    final (:state, :store) = signedIn(
+      revokeTimeout: const Duration(milliseconds: 300),
+    );
     await store.saveSession(state.session!);
     final watch = Stopwatch()..start();
     await state.logout().timeout(const Duration(seconds: 10));

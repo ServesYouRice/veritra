@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../../core/app_state.dart';
 import '../../core/errors.dart';
 import '../../core/reports_service.dart';
+import '../../crypto/report_body.dart';
 import '../../crypto/report_key_pins.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
+import 'report_reason_labels.dart';
 
 /// C6 step 4: report one received message to the instance owners
 /// (docs/designs/C6-reports-franking.md, D95).
@@ -18,6 +20,10 @@ import '../../ui/widgets/large_title_bar.dart';
 /// to the moderators of its verified role record (C4), sealed to the keys
 /// they announced over MLS: no codes and no tap. Moderators whose key has
 /// not reached this device are counted, and get no copy.
+///
+/// U33: the person picks one reason from a fixed list before sending; it is
+/// sealed with the message (report body v3) and survives the reloads after
+/// trusting a key.
 class ReportMessageScreen extends StatefulWidget {
   const ReportMessageScreen({
     required this.state,
@@ -43,6 +49,10 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
   String? _message;
   String? _preview;
   bool _pinning = false;
+
+  /// The chosen reason. [_load] never clears it, so trusting a key (which
+  /// reloads the plan) keeps the person's choice.
+  ReportReason? _reason;
 
   @override
   void initState() {
@@ -122,12 +132,14 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
 
   Future<void> _send() async {
     final service = _service;
-    if (service == null || _phase != _Phase.ready) return;
+    final reason = _reason;
+    if (service == null || reason == null || _phase != _Phase.ready) return;
     setState(() => _phase = _Phase.sending);
     try {
       await service.file(
         conversationId: widget.conversationId,
         messageKey: widget.messageKey,
+        reason: reason,
       );
       if (!mounted) return;
       setState(() => _phase = _Phase.sent);
@@ -157,8 +169,9 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       appBar: LargeTitleBar(title: l10n.c6ReportTitle),
       body: SafeArea(
         child: switch (_phase) {
-          _Phase.loading =>
-            const Center(child: CircularProgressIndicator.adaptive()),
+          _Phase.loading => const Center(
+              child: CircularProgressIndicator.adaptive(),
+            ),
           _Phase.blocked => _Notice(
               icon: Icons.report_gmailerrorred_outlined,
               text: _message ?? l10n.errorGeneric,
@@ -180,8 +193,10 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
               children: <Widget>[
                 Text(l10n.c6ReportIntro, style: theme.textTheme.bodyMedium),
                 const SizedBox(height: BoneSpacing.lg),
-                Text(l10n.c6ReportPreviewLabel,
-                    style: theme.textTheme.labelLarge),
+                Text(
+                  l10n.c6ReportPreviewLabel,
+                  style: theme.textTheme.labelLarge,
+                ),
                 const SizedBox(height: BoneSpacing.sm),
                 Container(
                   padding: const EdgeInsets.all(BoneSpacing.md),
@@ -197,10 +212,15 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
                 ),
                 const SizedBox(height: BoneSpacing.lg),
                 ..._recipients(context),
+                const SizedBox(height: BoneSpacing.lg),
+                // The reason sits right above Send, which waits for it.
+                ..._reasons(context),
                 if (_message != null) ...<Widget>[
                   const SizedBox(height: BoneSpacing.md),
-                  Text(_message!,
-                      style: TextStyle(color: theme.colorScheme.error)),
+                  Text(
+                    _message!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
                 ],
                 const SizedBox(height: BoneSpacing.xl),
                 _action(context),
@@ -211,6 +231,37 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
     );
   }
 
+  /// The fixed list of reasons (U33). No free text: the reason is a claim
+  /// shown beside the revealed message, never part of what is proven.
+  List<Widget> _reasons(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final sending = _phase == _Phase.sending;
+    return <Widget>[
+      Text(l10n.c6ReportReasonLabel, style: theme.textTheme.labelLarge),
+      const SizedBox(height: BoneSpacing.xs),
+      RadioGroup<ReportReason>(
+        groupValue: _reason,
+        onChanged: (value) {
+          if (!sending && value != null) setState(() => _reason = value);
+        },
+        child: Column(
+          children: <Widget>[
+            for (final reason in ReportReason.values)
+              RadioListTile<ReportReason>(
+                key: Key('report-reason-${reason.name}'),
+                value: reason,
+                contentPadding: EdgeInsets.zero,
+                enabled: !sending,
+                title: Text(reportReasonLabel(l10n, reason)),
+              ),
+          ],
+        ),
+      ),
+      Text(l10n.c6ReportReasonNote, style: theme.textTheme.bodySmall),
+    ];
+  }
+
   List<Widget> _recipients(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
@@ -219,24 +270,32 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
     if (plan.isCommunity) {
       // Moderator keys are trusted only over MLS: nothing to compare.
       return <Widget>[
-        Text(l10n.c6ReportModeratorCount(plan.check.recipients.length),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.c6ReportModeratorCount(plan.check.recipients.length),
+          style: theme.textTheme.bodyMedium,
+        ),
         if (plan.unconfirmed.isNotEmpty) ...<Widget>[
           const SizedBox(height: BoneSpacing.sm),
-          Text(l10n.c6ReportModeratorsUnconfirmed(plan.unconfirmed.length),
-              style: theme.textTheme.bodyMedium),
+          Text(
+            l10n.c6ReportModeratorsUnconfirmed(plan.unconfirmed.length),
+            style: theme.textTheme.bodyMedium,
+          ),
         ],
       ];
     }
     final unsure = plan.check.recipients
-        .where((r) =>
-            r.status == ReportKeyStatus.unpinned ||
-            r.status == ReportKeyStatus.changed)
+        .where(
+          (r) =>
+              r.status == ReportKeyStatus.unpinned ||
+              r.status == ReportKeyStatus.changed,
+        )
         .toList();
     if (unsure.isEmpty && plan.check.missing.isEmpty) {
       return <Widget>[
-        Text(l10n.c6ReportRecipientCount(plan.check.recipients.length),
-            style: theme.textTheme.bodyMedium),
+        Text(
+          l10n.c6ReportRecipientCount(plan.check.recipients.length),
+          style: theme.textTheme.bodyMedium,
+        ),
       ];
     }
     return <Widget>[
@@ -246,19 +305,26 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       const SizedBox(height: BoneSpacing.sm),
       for (final r in unsure) ...<Widget>[
         SelectableText(
-          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId),
-              reportKeyFingerprint(r.recipient.publicKey)),
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+          l10n.c6ReportOwnerKey(
+            shortId(r.recipient.inboxId),
+            reportKeyFingerprint(r.recipient.publicKey),
+          ),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
         ),
         if (r.status == ReportKeyStatus.changed)
-          Text(l10n.c6ReportKeyChanged,
-              style: TextStyle(color: theme.colorScheme.error)),
+          Text(
+            l10n.c6ReportKeyChanged,
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
         const SizedBox(height: BoneSpacing.sm),
       ],
       if (plan.check.missing.isNotEmpty)
-        Text(l10n.c6ReportKeyMissing,
-            style: TextStyle(color: theme.colorScheme.error)),
+        Text(
+          l10n.c6ReportKeyMissing,
+          style: TextStyle(color: theme.colorScheme.error),
+        ),
     ];
   }
 
@@ -272,13 +338,15 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
         child: Text(l10n.c6ReportTrust),
       );
     }
+    // A reason must be chosen first (U33).
     return FilledButton(
-      onPressed: _phase == _Phase.sending ? null : _send,
+      onPressed: _phase == _Phase.sending || _reason == null ? null : _send,
       child: _phase == _Phase.sending
           ? const SizedBox(
               height: 20,
               width: 20,
-              child: CircularProgressIndicator(strokeWidth: 2))
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
           : Text(l10n.c6ReportSend),
     );
   }

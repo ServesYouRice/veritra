@@ -20,26 +20,15 @@ import 'test_crypto_service.dart';
 
 void main() {
   test('tabs keep their word from 320dp up to text scale 1.3 (U11)', () {
-    expect(
-      shouldShowFloatingNavLabels(width: 319, textScale: 1),
-      isFalse,
-    );
-    expect(
-      shouldShowFloatingNavLabels(width: 320, textScale: 1),
-      isTrue,
-    );
-    expect(
-      shouldShowFloatingNavLabels(width: 320, textScale: 1.3),
-      isTrue,
-    );
-    expect(
-      shouldShowFloatingNavLabels(width: 500, textScale: 1.31),
-      isFalse,
-    );
+    expect(shouldShowFloatingNavLabels(width: 319, textScale: 1), isFalse);
+    expect(shouldShowFloatingNavLabels(width: 320, textScale: 1), isTrue);
+    expect(shouldShowFloatingNavLabels(width: 320, textScale: 1.3), isTrue);
+    expect(shouldShowFloatingNavLabels(width: 500, textScale: 1.31), isFalse);
   });
 
-  testWidgets('tabs show their word at 320dp and text scale 1.3 (U11)',
-      (tester) async {
+  testWidgets('tabs show their word at 320dp and text scale 1.3 (U11)', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -58,17 +47,20 @@ void main() {
         username: 'owner',
       );
     addTearDown(state.dispose);
-    await tester.pumpWidget(MaterialApp(
-      theme: veritraLightTheme(),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(textScaler: const TextScaler.linear(1.3)),
-        child: child!,
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: veritraLightTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.3)),
+          child: child!,
+        ),
+        home: AppShell(state: state),
       ),
-      home: AppShell(state: state),
-    ));
+    );
     await tester.pump();
 
     expect(tester.takeException(), isNull);
@@ -86,11 +78,12 @@ void main() {
   });
 
   test('the micro type remains readable at the accessibility floor', () {
-    expect(BoneType.micro.fontSize, 11);
+    expect(BoneType.micro.fontSize, 12.5);
   });
 
-  testWidgets('shared headings and pills expose stable semantic labels',
-      (tester) async {
+  testWidgets('shared headings and pills expose stable semantic labels', (
+    tester,
+  ) async {
     final semantics = tester.ensureSemantics();
     await tester.pumpWidget(
       MaterialApp(
@@ -98,10 +91,7 @@ void main() {
         home: const Column(
           children: <Widget>[
             SectionHeader('Notifications'),
-            StatusPill(
-              label: '1d',
-              semanticsLabel: 'Expires after 1 day',
-            ),
+            StatusPill(label: '1d', semanticsLabel: 'Expires after 1 day'),
           ],
         ),
       ),
@@ -112,8 +102,9 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('connect fields expose labels independent of their hints',
-      (tester) async {
+  testWidgets('connect fields expose labels independent of their hints', (
+    tester,
+  ) async {
     final semantics = tester.ensureSemantics();
     // ConnectScreen's form is a lazy ListView. On the default 800x600 test
     // surface the credential fields fall below the fold and are never built,
@@ -137,8 +128,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('welcome-account')));
     await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey<String>('welcome-signed-in-before')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('welcome-signed-in-before')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.bySemanticsLabel(RegExp('Username')), findsWidgets);
@@ -147,8 +139,9 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('shared text surfaces build at 320dp and 200 percent text',
-      (tester) async {
+  testWidgets('shared text surfaces build at 320dp and 200 percent text', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -159,8 +152,9 @@ void main() {
         home: Builder(
           // Only the text scale is overridden; the size comes from the view.
           builder: (context) => MediaQuery(
-            data: MediaQuery.of(context)
-                .copyWith(textScaler: TextScaler.linear(2.0)),
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(2.0)),
             child: const Column(
               key: column,
               mainAxisSize: MainAxisSize.min,
@@ -176,10 +170,11 @@ void main() {
 
     expect(tester.getSize(find.byKey(column)).width, 320);
     expect(
-        MediaQuery.of(tester.element(find.byType(SectionHeader)))
-            .textScaler
-            .scale(10),
-        20);
+      MediaQuery.of(
+        tester.element(find.byType(SectionHeader)),
+      ).textScaler.scale(10),
+      20,
+    );
     expect(tester.takeException(), isNull);
   });
 }

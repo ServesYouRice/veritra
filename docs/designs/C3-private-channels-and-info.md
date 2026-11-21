@@ -1,7 +1,11 @@
 # C3: private channels and encrypted community info (design)
 
-**Status: steps 1-2 and a tested sender/fetch slice of step 3 built
-(2026-11-09); C3 remains partial.** See [local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
+**Status (2026-11-21): steps 1-4, conversion (D127, behind
+`PRIVATE_MESSENGER_C7_HISTORY`) and private channel membership under the
+verified C4 record are built; see "Private channel membership" at the end.
+Left: the "admins restrict channel info" flag in the C4 record, and an
+end-to-end run against a real server before G25.** Earlier:
+[local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
 Written 2026-11-01 against `main`
 at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 [W11](W11-profiles.md) (encrypted record mechanism).
@@ -10,8 +14,9 @@ at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 
 - **Private channel = its own MLS group** (C0). Who can see it is exactly
   who is in that group. C3 adds the rules for listing, naming and key
-  delivery. Admins pick the members; there are no per-channel role
-  overrides (C4 is built-in roles only, D80).
+  delivery. Owners, admins and moderators pick the members (moderators
+  since the owner's 2026-11-21 decision, below); there are no per-channel
+  role overrides (C4 is built-in roles only, D80).
 - **Names, topics and icons** of the community, each category and each
   channel live in **encrypted info records**, one per subject. This is
   W11's record mechanism with three more subject kinds. The server stores
@@ -517,7 +522,12 @@ community has no shared group, so no info key home and only placeholders.
 The owner turned the layout on by default (2026-11-11), demos included;
 `PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0` turns it off (operations.md). The app
 searches community and channel names in its own decrypted records; the
-server's metadata search finds accounts only. A "Categories and icon"
+server's metadata search finds accounts only. Since 2026-11-21 (owner) the
+search box sends an account lookup only for a query that clearly names a
+person, `@` and a username or an account ID: a bare word may be a one-word
+community name, so it is searched on the device only and never sent
+(`accountLookupQuery`; `mobile/test/search_community_name_network_test.dart`
+records every request the app opens). A "Categories and icon"
 screen sets the community icon, creates and renames categories, and places
 channels (open: community record; private: the channel's own record); the
 community card groups channels by category. Key freshness: see docs/crypto.md
@@ -567,3 +577,61 @@ cannot edit channel info. Rules from the first review that still bind:
   asks again.
 - Info envelopes carry no `frank_commit` while every other message does, so
   the server can tell these control messages apart (as with C7's).
+
+## Private channel membership (2026-11-21)
+
+**Gap.** Who can read a private channel is who is in its MLS group, and
+every member's app added whatever accounts the server listed for the
+channel's conversation (reconcile after a three-minute fallback, and the
+creator's first commit). A hostile server that listed an outsider (any
+account, a community member or not) and waited for one honest device to
+reconcile made the channel readable: later posts, the channel's info key
+(add delivery), its C7 handover.
+
+**Rule** (docs/crypto.md, change log "C3 private channel membership"):
+
+- A new account enters a private channel's group only by a commit from the
+  owner, an admin or a moderator under the community's verified C4 record,
+  from a leaf its account's L1 list approves. Every member's app checks this on each
+  commit and holds (never refuses) one that fails: the promotion in the
+  shared group may not have arrived yet. New devices of accounts already
+  in the group need no role.
+- An owner's, admin's or moderator's app commits a new account only when
+  its own user picked it (creating the channel, adding a member, or ticking
+  readers in an open-to-private conversion), and only while its account
+  still holds one of those roles when the add is staged (a moderator
+  demoted since the pick adds nobody). An account the server proposes that
+  nobody here picked is left out before any key package is claimed. Plain
+  members never add a new account.
+- A group the app has once seen as a private channel stays one for this
+  rule (a local pin), whatever the server says later.
+
+Moderators add (owner decision, 2026-11-21): the first version let only
+owners and admins add, and a moderator's add, which the server allows
+(`CanManageMembers`), stayed pending for good. Moderators may now add as
+well as remove (D115's removal and rotation rules are unchanged: only
+owners and admins rotate the info key, except D122's no-admin channel).
+One threshold, `privateChannelAddMinRole` (moderator), serves both the
+receiver and the producer, so the two cannot drift apart. The newcomer
+gets the channel's info key as any newcomer does: the adding device's add
+delivery (a moderator's key counts for a newcomer that holds no fresh
+owner's or admin's key, the private-channel stand-in rule in "C3 key
+freshness"), and owners and admins answer its key request. No test yet
+covers a moderator's add delivery end to end.
+
+**Residuals.** The first label and the shared-group mapping come from the
+server (the topology residual above); the server learns picks as it already
+learns the member list.
+
+**Tests.** `mobile/test/c3_private_membership_native_test.dart` (real
+OpenMLS devices): a member's app refuses an unpicked account and an admin's
+adds only its picks; a member's commit that adds an outsider is held by
+every reader, and the outsider who joined that fork cannot read what the
+readers post next; a server label switched off after the pin does not
+switch the rule off; an admin's and a moderator's add waits for the
+promotion and then merges; a moderator's add of its pick is accepted by
+every reader while a plain member's is held; a moderator demoted to member
+is held by readers that hold the demotion and, once its own device holds
+it, adds nobody; a reader's new device joins by a plain member's commit.
+Removing either guard fails them, and so does setting the threshold to
+admin or to member in either function.

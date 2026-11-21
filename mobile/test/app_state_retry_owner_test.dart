@@ -19,16 +19,19 @@ void main() {
 
   test('a token rotation keeps the MLS wake for a refused bundle', () async {
     final h = await _Harness.start(
-        refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
-        configure: (state) =>
-            state.mlsRetryBase = const Duration(milliseconds: 800));
+      refuseOnce: <Object>[ApiException(422, '{"error":"invalid_input"}')],
+      configure: (state) =>
+          state.mlsRetryBase = const Duration(milliseconds: 800),
+    );
     await _waitFor(() => h.crypto.abandoned == 1);
     // The rotated session's own catch-up reaches the change while it still
     // backs off; only the wake brings it back.
     expect(await h.state.reauthenticate('password'), isTrue);
     expect(h.state.session!.token, isNot('token'));
-    await _waitFor(() => h.crypto.completed == 1,
-        timeout: const Duration(seconds: 5));
+    await _waitFor(
+      () => h.crypto.completed == 1,
+      timeout: const Duration(seconds: 5),
+    );
     expect(h.api.claims, hasLength(2));
     h.state.dispose();
   });
@@ -99,24 +102,28 @@ class _Harness {
 Future<void> _queue(LocalStore store, List<PendingMlsMessage> messages) async {
   if (messages.isEmpty) return;
   final counter = (await store.loadCryptoState())?.counter ?? 0;
-  await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-    expectedCounter: counter,
-    expectedCursor: await store.loadSyncCursor(),
-    state: StoredCryptoState(
-      counter: counter + 1,
-      stateKey: List<int>.filled(32, 1),
-      sealedState: const <int>[1],
+  await store.commitOutgoingMlsTransition(
+    OutgoingMlsStateTransition(
+      expectedCounter: counter,
+      expectedCursor: await store.loadSyncCursor(),
+      state: StoredCryptoState(
+        counter: counter + 1,
+        stateKey: List<int>.filled(32, 1),
+        sealedState: const <int>[1],
+      ),
+      messages: messages,
     ),
-    messages: messages,
-  ));
+  );
 }
 
 /// A request yields to timers, as real I/O does; a loop of requests that
 /// never waits would otherwise starve every timer in the test.
 Future<void> _network() => Future<void>.delayed(Duration.zero);
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -162,7 +169,10 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<String?> reauthenticate(
-          String token, String password, String deviceSecret) async =>
+    String token,
+    String password,
+    String deviceSecret,
+  ) async =>
       'token_${++tokens}';
 
   @override
@@ -206,8 +216,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <String, Object?>{'enabled': false};
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-      {int after = 0, int limit = 100}) async {
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
     await _network();
     syncCalls++;
     return const <SyncEvent>[];
@@ -239,7 +252,10 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
-      String token, String conversationId, List<String> deviceIds) async {
+    String token,
+    String conversationId,
+    List<String> deviceIds,
+  ) async {
     await _network();
     claimCalls++;
     final failure = claimFailures[conversationId];
@@ -333,7 +349,8 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: epochOf(conversationId), pending: false);
 
   @override
@@ -404,7 +421,9 @@ class _Crypto implements MlsConversationCryptoService {
 
   @override
   Future<MessageEnvelope> encrypt(
-          String conversationId, String plaintext) async =>
+    String conversationId,
+    String plaintext,
+  ) async =>
       MessageEnvelope(
         conversationId: conversationId,
         idempotencyKey: 'app_${DateTime.now().microsecondsSinceEpoch}',

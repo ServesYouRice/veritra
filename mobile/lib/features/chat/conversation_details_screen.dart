@@ -89,8 +89,11 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
             (self == null ? null : state.roleOf(conversationId, self)) ??
                 conversation.currentRole ??
                 'member';
-        final canManage =
-            const <String>{'owner', 'admin', 'moderator'}.contains(myRole);
+        final canManage = const <String>{
+          'owner',
+          'admin',
+          'moderator',
+        }.contains(myRole);
         // A DM is a fixed pair. Adding a third account would silently turn it
         // into a group the other person never agreed to, so membership
         // editing is not offered here at all.
@@ -108,10 +111,17 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
             ),
             children: <Widget>[
               _DetailsHeader(
-                avatar: conversationAvatar(context, conversation,
-                    radius: 44, profiles: state.profiles),
-                title: conversationTitle(l10n, conversation,
-                    profiles: state.profiles),
+                avatar: conversationAvatar(
+                  context,
+                  conversation,
+                  radius: 44,
+                  profiles: state.profiles,
+                ),
+                title: conversationTitle(
+                  l10n,
+                  conversation,
+                  profiles: state.profiles,
+                ),
                 subtitle: _headerSubtitle(l10n, conversation),
               ),
               const SizedBox(height: BoneSpacing.lg),
@@ -136,9 +146,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     icon: Icons.search,
                     label: l10n.chatListSearch,
                     onTap: () => Navigator.of(context).push(
-                      sharedAxisRoute<void>(
-                        (_) => SearchScreen(state: state),
-                      ),
+                      sharedAxisRoute<void>((_) => SearchScreen(state: state)),
                     ),
                   ),
                   if (isDm && !state.readOnlyWithoutPeer(conversationId))
@@ -154,8 +162,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                                 label: l10n.detailsActionCall,
                                 onTap: calls.busy
                                     ? null
-                                    : () =>
-                                        unawaited(calls.start(conversation.id)),
+                                    : () => unawaited(
+                                          calls.start(conversation.id),
+                                        ),
                               ),
                             ),
                     ),
@@ -254,10 +263,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                               !isDm &&
                               member.accountId != state.session?.accountId &&
                               _outranks(
-                                  myRole,
-                                  state.roleOf(
-                                          conversationId, member.accountId) ??
-                                      member.role),
+                                myRole,
+                                state.roleOf(
+                                      conversationId,
+                                      member.accountId,
+                                    ) ??
+                                    member.role,
+                              ),
                           busy: state.isBusy(Ops.members),
                           onRemove: () => _confirmRemove(context, member),
                         ),
@@ -268,9 +280,11 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                       ListTile(
                         leading: const Icon(Icons.person_add_outlined),
                         title: Text(l10n.detailsAddMember),
-                        subtitle: Text(canManage
-                            ? l10n.detailsAddMemberDetail
-                            : l10n.detailsAddMemberNoPermission),
+                        subtitle: Text(
+                          canManage
+                              ? l10n.detailsAddMemberDetail
+                              : l10n.detailsAddMemberNoPermission,
+                        ),
                         onTap: state.isBusy(Ops.members) || !canManage
                             ? null
                             : () => _addMember(context, myRole),
@@ -304,8 +318,10 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               // C1: invitation links and join requests of a group, for its
               // owners and admins. A DM or a community channel has none.
               if (conversation.isGroup &&
-                  const <String>{'owner', 'admin'}
-                      .contains(myRole)) ...<Widget>[
+                  const <String>{
+                    'owner',
+                    'admin',
+                  }.contains(myRole)) ...<Widget>[
                 const SizedBox(height: BoneSpacing.sm),
                 TileGroup(
                   children: <Widget>[
@@ -355,9 +371,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     ),
                   ListTile(
                     leading: const Icon(Icons.logout),
-                    title: Text(
-                      isDm ? l10n.detailsLeaveDm : l10n.detailsLeave,
-                    ),
+                    title: Text(isDm ? l10n.detailsLeaveDm : l10n.detailsLeave),
                     subtitle: Text(l10n.detailsLeaveDetail),
                     onTap: state.isBusy(Ops.members)
                         ? null
@@ -457,7 +471,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
       .where((entry) => (_rank[actorRole] ?? 0) > entry.value)
       .map((entry) => entry.key)
       .toList(growable: false)
-    ..sort((left, right) => (_rank[left] ?? 0).compareTo(_rank[right] ?? 0));
+    ..sort(
+      (left, right) => (_rank[left] ?? 0).compareTo(_rank[right] ?? 0),
+    );
 
   static const _retentionOptions = <_RetentionOption>[
     _RetentionOption(null, _retentionOff),
@@ -613,8 +629,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     }
     final error = state.errorFor(Ops.mute);
     if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -642,10 +659,12 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(ok
-            ? context.l10n.detailsRemoved(label)
-            : state.errorFor(Ops.members) ??
-                context.l10n.detailsRemoveFailed(label)),
+        content: Text(
+          ok
+              ? context.l10n.detailsRemoved(label)
+              : state.errorFor(Ops.members) ??
+                  context.l10n.detailsRemoveFailed(label),
+        ),
       ),
     );
   }
@@ -671,8 +690,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
     }
     final error = state.errorFor(Ops.members);
     if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -739,9 +759,9 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
 
   void _copy(BuildContext context, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.settingsCopied(label))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.settingsCopied(label))));
   }
 
   Future<void> _addMember(BuildContext context, String actorRole) async {
@@ -890,9 +910,7 @@ class _ActionRow extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final action in actions) Flexible(child: action),
-      ],
+      children: <Widget>[for (final action in actions) Flexible(child: action)],
     );
   }
 }
@@ -1108,8 +1126,9 @@ class _InlineError extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.error),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
             ),
           ),
         ],

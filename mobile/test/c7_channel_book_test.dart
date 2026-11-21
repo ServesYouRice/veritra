@@ -43,8 +43,10 @@ void main() {
         sig: Uint8List(64)..[0] = seq + 1,
       );
 
-  ({C7ChannelBook book, C7Record create}) fullChannel(
-      {int epoch = 5, int fill = 7}) {
+  ({C7ChannelBook book, C7Record create}) fullChannel({
+    int epoch = 5,
+    int fill = 7,
+  }) {
     final create = record(
       seq: 0,
       prev: zero32,
@@ -84,12 +86,17 @@ void main() {
       expect(C7GenerationEntry.decode(Uint8List(c7EntryBytes)), isNull);
       final base = C7GenerationEntry(epoch: 3, keyCommit: key(4)).encode();
       expect(
-          () => C7GenerationEntry.decode(Uint8List.fromList(base)..[127] = 1),
-          throwsFormatException);
-      expect(() => C7GenerationEntry.decode(Uint8List.fromList(base)..[47] = 1),
-          throwsFormatException);
-      expect(() => C7GenerationEntry.decode(base.sublist(1)),
-          throwsFormatException);
+        () => C7GenerationEntry.decode(Uint8List.fromList(base)..[127] = 1),
+        throwsFormatException,
+      );
+      expect(
+        () => C7GenerationEntry.decode(Uint8List.fromList(base)..[47] = 1),
+        throwsFormatException,
+      );
+      expect(
+        () => C7GenerationEntry.decode(base.sublist(1)),
+        throwsFormatException,
+      );
     });
   });
 
@@ -115,14 +122,18 @@ void main() {
 
     test('a full record without its key is keyless and seals nothing', () {
       final create = record(
-          seq: 0,
-          prev: zero32,
-          mode: c7ModeFull,
-          reason: c7ReasonCreate,
-          chkKey: key(7));
+        seq: 0,
+        prev: zero32,
+        mode: c7ModeFull,
+        reason: c7ReasonCreate,
+        chkKey: key(7),
+      );
       final step = C7ChannelBook.genesis(channel, groupId).applyRecord(
-          create, create.encode(),
-          source: C7Source.report, key: key(8));
+        create,
+        create.encode(),
+        source: C7Source.report,
+        key: key(8),
+      );
       expect(step.book.status, C7Status.keyless);
       expect(step.book.sealGenAt(5), isNull);
       expect(step.book.snapshot(5).key, isNull);
@@ -154,20 +165,32 @@ void main() {
 
     test('a slot with the held key confirms only above the miss epoch', () {
       final book = fullChannel().book.markUnsure(6);
-      final entry =
-          C7GenerationEntry(epoch: 5, keyCommit: c7ChkCommitOf(key(7)));
+      final entry = C7GenerationEntry(
+        epoch: 5,
+        keyCommit: c7ChkCommitOf(key(7)),
+      );
       expect(book.confirmedBySlot(6, key(7), entry).status, C7Status.unsure);
-      expect(book.confirmedBySlot(7, key(8), entry).status, C7Status.unsure,
-          reason: 'a key this device does not hold');
+      expect(
+        book.confirmedBySlot(7, key(8), entry).status,
+        C7Status.unsure,
+        reason: 'a key this device does not hold',
+      );
       expect(book.confirmedBySlot(7, key(7), entry).status, C7Status.ok);
     });
 
     test('a switch to members_from_join ends the period and its keys', () {
       final (:book, :create) = fullChannel();
       final off = record(
-          seq: 1, prev: create.hash(), mode: c7ModeMembersFromJoin, epoch: 6);
-      final step =
-          book.applyRecord(off, off.encode(), source: C7Source.proposalLive);
+        seq: 1,
+        prev: create.hash(),
+        mode: c7ModeMembersFromJoin,
+        epoch: 6,
+      );
+      final step = book.applyRecord(
+        off,
+        off.encode(),
+        source: C7Source.proposalLive,
+      );
       expect(step.row, C7Row.apply);
       expect(step.book.gens, isEmpty);
       expect(step.book.pastGens, [5]);
@@ -176,11 +199,12 @@ void main() {
 
     test('a report whose entry commits to the slot key gives two gens', () {
       final create = record(
-          seq: 0,
-          prev: zero32,
-          mode: c7ModeFull,
-          reason: c7ReasonCreate,
-          chkKey: key(7));
+        seq: 0,
+        prev: zero32,
+        mode: c7ModeFull,
+        reason: c7ReasonCreate,
+        chkKey: key(7),
+      );
       final entry = C7GenerationEntry(
         epoch: 8,
         keyCommit: c7ChkCommitOf(key(9)),
@@ -188,22 +212,29 @@ void main() {
         previousKey: key(7),
       );
       final step = C7ChannelBook.genesis(channel, groupId).applyRecord(
-          create, create.encode(),
-          source: C7Source.report, key: key(9), entry: entry);
+        create,
+        create.encode(),
+        source: C7Source.report,
+        key: key(9),
+        entry: entry,
+      );
       expect(step.book.status, C7Status.ok);
-      expect(step.book.gens.map((gen) => (gen.epoch, gen.close)),
-          [(5, 8), (8, null)]);
+      expect(step.book.gens.map((gen) => (gen.epoch, gen.close)), [
+        (5, 8),
+        (8, null),
+      ]);
       expect(step.book.sealGenAt(8)!.key, key(9));
       expect(step.book.genAt(groupId, 6)!.key, key(7));
     });
 
     test('a wrap reaching before the record is not a key', () {
       final create = record(
-          seq: 0,
-          prev: zero32,
-          mode: c7ModeFull,
-          reason: c7ReasonCreate,
-          chkKey: key(7));
+        seq: 0,
+        prev: zero32,
+        mode: c7ModeFull,
+        reason: c7ReasonCreate,
+        chkKey: key(7),
+      );
       final entry = C7GenerationEntry(
         epoch: 8,
         keyCommit: c7ChkCommitOf(key(9)),
@@ -211,36 +242,55 @@ void main() {
         previousKey: key(7),
       );
       final step = C7ChannelBook.genesis(channel, groupId).applyRecord(
-          create, create.encode(),
-          source: C7Source.report, key: key(9), entry: entry);
+        create,
+        create.encode(),
+        source: C7Source.report,
+        key: key(9),
+        entry: entry,
+      );
       expect(step.book.status, C7Status.keyless);
     });
 
     test('a pending proposal is lost when another record takes its seq', () {
       final (:book, :create) = fullChannel();
       final mine = record(
-          seq: 1,
-          prev: create.hash(),
-          mode: c7ModeMembersFromJoin,
-          epoch: 6,
-          actor: 'dev-me');
+        seq: 1,
+        prev: create.hash(),
+        mode: c7ModeMembersFromJoin,
+        epoch: 6,
+        actor: 'dev-me',
+      );
       final theirs = record(
-          seq: 1,
-          prev: create.hash(),
-          mode: c7ModeFull,
-          epoch: 6,
-          chkKey: key(3));
+        seq: 1,
+        prev: create.hash(),
+        mode: c7ModeFull,
+        epoch: 6,
+        chkKey: key(3),
+      );
       final pending = book.copyWith(
-          pending: C7Pending(
-              actionId: 'a1', sentAtMs: 1, record: mine.encode(), key: key(0)));
-      final step = pending.applyRecord(theirs, theirs.encode(),
-          source: C7Source.proposalLive, key: key(3));
+        pending: C7Pending(
+          actionId: 'a1',
+          sentAtMs: 1,
+          record: mine.encode(),
+          key: key(0),
+        ),
+      );
+      final step = pending.applyRecord(
+        theirs,
+        theirs.encode(),
+        source: C7Source.proposalLive,
+        key: key(3),
+      );
       expect(step.book.pending, isNull);
       expect(step.book.ownNotice, 'lost');
       expect(step.book.lastOwn, C7OwnOutcome.lost);
       // The own record then comes back and loses the race (row 4).
-      final echo = step.book.applyRecord(mine, mine.encode(),
-          source: C7Source.proposalLive, ownProposal: true);
+      final echo = step.book.applyRecord(
+        mine,
+        mine.encode(),
+        source: C7Source.proposalLive,
+        ownProposal: true,
+      );
       expect(echo.row, C7Row.lostRace);
       expect(echo.book.ownNotice, 'lost');
     });
@@ -279,7 +329,8 @@ void main() {
       expect(back.duties[5]!.dueAtMs, 2000);
       expect(back.snapshots[5]![channel]!.key, key(7));
       final v1 = C7GroupState.decode(
-          '{"v":1,"floor":3,"root_epoch":3,"root":"${base64Encode(key(1))}"}');
+        '{"v":1,"floor":3,"root_epoch":3,"root":"${base64Encode(key(1))}"}',
+      );
       expect(v1.floor, 3);
       expect(v1.root, key(1));
       expect(C7GroupState.decode('{"v":3,"floor":1}').floor, 0);
@@ -292,8 +343,10 @@ void main() {
       }
       expect(state.snapshots.keys.toList()..sort(), [3, 4, 5, 6]);
       expect(state.duties.keys.toList()..sort(), [3, 4, 5, 6]);
-      final settled =
-          state.withDuty(6, const C7SyncDuty(dueAtMs: 6, settled: true));
+      final settled = state.withDuty(
+        6,
+        const C7SyncDuty(dueAtMs: 6, settled: true),
+      );
       expect(settled.duties[6]!.settled, isTrue);
       expect(settled.duties[5]!.settled, isFalse);
     });

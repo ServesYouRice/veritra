@@ -11,9 +11,14 @@ the app, 90-day or dismissed retention, unfranked payloads accepted behind a
 switch. The community moderator inbox is built (2026-11-11, "Community
 moderator inbox" below), and moderator keys are trusted through MLS with no
 tap ("Moderator keys over MLS"). A private channel's reports go only to
-its own moderator members ("Private channels"). Not done: the owner's way to
-verify without the server learning the envelope id, and the app's report
-screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
+its own moderator members ("Private channels"). The report screens (step
+4) are built, with the recipient's check against the server record
+(`GET /reports/{id}/envelope`, which tells the server the envelope id at
+review time only, to that recipient). The report form offers reasons, sealed
+in body v3 ("Report reasons"). Replacing the seed from one inbox moves every
+inbox that listed the old key, and key publishes are compare-and-swap
+(2026-11-21, "Seed replacement"). Left: the
+independent review of the whole C6 wiring (G25).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
 
 ## Goal
@@ -316,9 +321,9 @@ Costs, for the owner to weigh (also in `testing/evidence/C6-wiring.md`):
   body and comparing it with the commitment the server recorded for the
   envelope. Fetching that envelope's metadata means telling the server the
   envelope id at review time (not at filing, and only to an owner, for one
-  envelope of a conversation that has a report). That route is not built;
-  until it is, and once the envelope is gone, a report cannot show
-  "verified against what the server recorded" (G1). Owner question.
+  envelope of a conversation that has a report). That route was built in
+  step 4 (`GET /reports/{id}/envelope`, below); once the envelope is gone, a
+  report cannot show "verified against what the server recorded" (G1).
 
 ## Step 4 outcome (report screens)
 
@@ -405,10 +410,61 @@ owners ("one key and one sealed copy per owner") is applied to moderators.
   their inbox from the community screen (flag icon), the same screen as the
   owner's inbox with the community's routes.
 
-Left (after "Moderator keys over MLS" below): replacing the seed from one
-inbox screen does not republish the account's other inboxes (a moderator
-inbox then shows "replaced elsewhere" and offers to publish this device's
-key; the owner inbox needs a replace); the independent review.
+Left (after "Moderator keys over MLS" below): the independent review.
+
+**Seed replacement (2026-11-21).** Replacing the seed from one inbox screen
+now moves every other inbox of the account (the instance owners' inbox for
+an owner, and each community's moderator inbox) that still lists the old
+seed's key to the new key, in the same step. An inbox listing a key another
+device holds is left alone. Per inbox it is best effort: one that fails
+reads "replaced elsewhere" on its screen, which offers to publish this
+device's key. Test: `c6_reports_service_test.dart` ("replacing the seed from
+one inbox moves every inbox ..."), which fails with the move removed. The
+move runs only after the new key is published and never throws, so a
+failure there cannot put the old seed back while the server lists the new
+key; a seed that no longer yields a key can still be replaced (nothing is
+moved then).
+
+**Compare-and-swap on key publishes (owner decision, 2026-11-21).** A
+device of the account no longer overwrites a key another device published
+or replaced since this device read it.
+
+- **Wire.** Both key PUTs (instance and community) take
+  `expected_public_key` beside `public_key`: the 32-byte key the device saw
+  listed when the person decided, or null when it saw none. A different
+  current key (or a key where none was expected, or none where one was) is
+  refused with 409 `report_key_changed` in the existing error envelope; any
+  other length is 400 `invalid_public_key`. Publishing the key already
+  listed changes nothing and succeeds whatever was expected, so a retry
+  after a lost response is safe. The check and the write share one
+  transaction on the server's single writer connection. The comparison is
+  on key bytes, not `key_rev`: a revision restarts at 1 when an inbox row
+  is dropped and published again, a key does not repeat.
+- **Old clients.** An app from before the field sends none, which reads as
+  "expects none" (the conservative reading): its first publish and a
+  republish of its own key still work; its replace, and its move of other
+  inboxes, are refused until it is updated. A new app against a server
+  from before the field gets 400 `invalid_json` on key publishes (the
+  server refuses unknown fields), so server and app upgrade together.
+- **App.** The owner screen passes the listed key from the `keyStatus` it
+  showed (`OwnerReportKeyStatus.listedKey`) to `createKey` and
+  `publishKey`; the service never re-reads it, so the check covers the
+  whole time the person was deciding. On `report_key_changed`
+  (`ReportsService.isKeyConflict`) nothing was published: `createKey` puts
+  the previous seed back as for any failed publish, the screen says that
+  another device changed the key meanwhile, reloads, and the person decides
+  again from what is listed now. The seed move after a replace
+  (`_moveOtherInboxes`) sends the old key it just checked as the
+  expectation, so an inbox another device changed between that check and
+  the PUT is refused and left alone.
+- **Tests.** `server/internal/httpapi/report_key_cas_test.go` (both
+  inboxes: a stale replace, a replace without expectation, and one
+  expecting none are refused and leave the other device's key; a first
+  publish without expectation and a same-key retry succeed; fails with the
+  check removed); `mobile/test/c6_reports_service_test.dart` ("a replace
+  that lost the race ...", and every seed move names the old key);
+  `mobile/test/c6_report_screens_test.dart` ("a key another device
+  published meanwhile is not overwritten ...").
 
 ## Moderator keys over MLS (2026-11-11)
 
@@ -558,6 +614,84 @@ channels) are unchanged.
   `c6_native_report_key_test.dart` (the roster read over real OpenMLS) and
   `TestPrivateChannelReportsRouteOnlyToItsMembers`. No wire, ABI, local
   schema or server migration change.
+
+## Report reasons (U33, report body v3, 2026-11-14)
+
+The UI audit item U33 (owner-approved) asks that the report form offer
+reasons. A reason travels inside the sealed body, so it needs a new body
+version. Design and build on branch `u33-report-reasons`.
+
+- **A fixed list, no free text.** The reporter picks exactly one reason;
+  "Something else" covers the rest. Free text is left out: it is not needed
+  to triage, it would be the reporter's own words sitting next to the
+  revealed message and its verdict (easy to read as part of what was
+  checked), and it would hand every moderator a channel for whatever a
+  reporter wants to send them.
+
+  | Code | Reason (`ReportReason`) | English label |
+  |---|---|---|
+  | 1 | `spam` | Spam or scam |
+  | 2 | `harassment` | Harassment or bullying |
+  | 3 | `hate` | Hate speech |
+  | 4 | `violence` | Threats or violence |
+  | 5 | `sexual` | Sexual content |
+  | 6 | `childSafety` | Puts a child at risk |
+  | 7 | `selfHarm` | Self-harm or suicide |
+  | 8 | `privateInfo` | Shares someone's private information |
+  | 9 | `other` | Something else |
+
+- **Body v3.** The new app always writes version 3: version 1's seven
+  fields plus `reason`, or version 2's nine fields plus `reason` for a
+  sealed message (the pair `sender_account_id` and `designation`, both or
+  neither). `reason` is a JSON integer from 1 to 9: one digit, so the
+  sealed copy has the same size whatever the reason, and the server cannot
+  tell reasons apart by length. `encode` refuses a body without a reason
+  and never writes version 1 or 2 again.
+- **Old bodies still open.** `decode` accepts version 1 (exactly 7 fields),
+  version 2 (exactly 9) and version 3 (exactly 8, or 10 with the sealed
+  pair). A version 1 or 2 body has no reason and reads "No reason given. Reports from older app versions carry none.";
+  a `reason` member in one is refused.
+- **Fail closed.** The reason set is fixed per body version: a reason
+  added later is a new body version (v4), never a new value under v3. Writers then emit the lowest body version whose reason set holds the chosen reason, so a report with a v3 reason stays readable to v3-era recipients. So a
+  v3 body whose `reason` is missing, not an integer (`3.0`, `"3"`), or
+  outside 1 to 9 is refused whole, as malformed (`invalidBody`, "damaged"),
+  never shown with a guessed or blank reason. An unknown version is refused
+  the same way. Consequence for rollout: an owner or moderator on a build
+  from before v3 shows a v3 report as damaged. No such build is released
+  (the release gate), so this is accepted.
+- **Server sees ciphertext only.** The reason is inside the HPKE seal of
+  every copy; the AEAD covers it, so the aad stays v2 and no route, column
+  or log changes. The reason never changes anything the server can see:
+  the inbox kind (from the conversation), the recipient set (the verified
+  record, the pins and the announcements), the number of copies or when
+  the report is filed. Any routing by reason (say, child-safety reports
+  also to the instance owner) would show the server the reason's class
+  through the copy set; that is an owner question and is not built.
+- **Same reason for every recipient.** One body is sealed once per
+  recipient, so each instance owner's copy (a DM or group) and each
+  verified moderator's copy (a community, or only the moderators in a
+  private channel) carries the same reason. Both inboxes show it the same
+  way. Nothing acts on a reason automatically (open item 6).
+- **Not evidence.** The reason is the reporter's claim. It is not franked
+  and not part of the commitment, so a check against the server record
+  says nothing about it. The inbox row reads "Reporter's reason: …" and the
+  report reads "Reason given by the reporter: …", beside the reporter's
+  name and away from the verdict, with
+  the line "The check covers the message only, not the reason." It never
+  feeds the verdict or the next step. A report that cannot be opened shows
+  no reason (it is inside the seal).
+- **Nothing stored.** The reporter's device does not keep the reason
+  (schema 27 stays ids only); the recipient holds it in memory while a
+  screen shows the report.
+- **No wire, ABI, local schema or server migration change.** The body is
+  opaque to Rust (`pm_crypto_report_seal` bounds 256 KiB of plaintext; the
+  largest v3 body is about 90 KiB) and to Go (the `sealed` length check is
+  the same bound), so only the Dart codec and screens change.
+- Tests: `c6_report_body_pins_test.dart` (v3 round trip with and without
+  the sealed pair, literal v1 and v2 bodies, every malformed reason, equal
+  lengths for every reason), `c6_report_screens_test.dart` (the form needs
+  a reason and keeps it across the trust reload; the inbox and detail show
+  it; a literal v1 body opens with "No reason given. Reports from older app versions carry none.").
 
 ## Owner decisions (2026-11-01)
 

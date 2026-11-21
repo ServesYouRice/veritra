@@ -5,6 +5,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart'
+    show BackupHeaderInfo, OpenedBackup;
 import 'package:private_messenger/storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import 'package:private_messenger/storage/local_store.dart';
@@ -19,6 +21,14 @@ const k0Origin = 'https://chat.example.org';
 
 /// The recovery key the fake crypto knows, in its canonical display.
 const k0Display = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCDEFGHJKMNPQRSTVWX';
+
+/// U37: a second valid key the fake crypto knows, with its own key id: an
+/// older key that was replaced.
+const k0OtherDisplay = 'ZYXWVTSRQPNMKJHGFEDCBA9876543210ZYXWVTSRQPNMKJHGFEDC';
+
+/// The key id the fake derives for [k0Display] and for [k0OtherDisplay].
+final Uint8List k0RkId = Uint8List.fromList(List<int>.filled(16, 0xB2));
+final Uint8List k0OtherRkId = Uint8List.fromList(List<int>.filled(16, 0xD4));
 
 ApiException k0Error(int status, String code) =>
     ApiException(status, '{"error":"$code"}');
@@ -40,6 +50,9 @@ class K0Crypto extends TestOnlyCryptoService
   static Uint8List entropy() =>
       Uint8List.fromList(List<int>.generate(30, (i) => i + 1));
 
+  static Uint8List otherEntropy() =>
+      Uint8List.fromList(List<int>.generate(30, (i) => i + 101));
+
   Uint8List _hand(Uint8List value) {
     handedOut.add(value);
     return value;
@@ -54,19 +67,35 @@ class K0Crypto extends TestOnlyCryptoService
   @override
   Future<Uint8List> decodeRecoveryKey(String text) async {
     decodedTexts.add(text);
+    if (text.toUpperCase() == k0OtherDisplay) return _hand(otherEntropy());
     if (text.toUpperCase() != k0Display) {
       throw const FormatException('invalid key');
     }
     return _hand(entropy());
   }
 
+  /// Every rk_pub handed out, to check that it was wiped.
+  final List<Uint8List> derivedPubs = <Uint8List>[];
+
   @override
-  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async =>
-      RecoveryKeyValues(
-        rkPub: Uint8List.fromList(List<int>.filled(32, 0xC3)),
-        rkId: Uint8List.fromList(List<int>.filled(16, 0xB2)),
-        rkAuthPub: Uint8List.fromList(List<int>.filled(32, 0xA1)),
-      );
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async {
+    final other = _sameBytes(value, otherEntropy());
+    final rkPub = Uint8List.fromList(List<int>.filled(32, other ? 0xE5 : 0xC3));
+    derivedPubs.add(rkPub);
+    return RecoveryKeyValues(
+      rkPub: rkPub,
+      rkId: Uint8List.fromList(other ? k0OtherRkId : k0RkId),
+      rkAuthPub: Uint8List.fromList(List<int>.filled(32, other ? 0xF6 : 0xA1)),
+    );
+  }
+
+  static bool _sameBytes(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) return false;
+    }
+    return true;
+  }
 
   @override
   Future<Uint8List> signRecoveryProof({
@@ -83,7 +112,8 @@ class K0Crypto extends TestOnlyCryptoService
 
   @override
   Future<EnrollmentCredential> createEnrollmentCredential(
-      EnrollmentReservation reservation) async {
+    EnrollmentReservation reservation,
+  ) async {
     enrollments++;
     pendingIdentity = true;
     return super.createEnrollmentCredential(reservation);
@@ -99,7 +129,11 @@ class K0Crypto extends TestOnlyCryptoService
       sealedState: const <int>[4, 4, 4],
       changes: const <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: 1, recordId: <int>[1], generation: 1, sealed: <int>[5]),
+          kind: 1,
+          recordId: <int>[1],
+          generation: 1,
+          sealed: <int>[5],
+        ),
       ],
     );
   }
@@ -127,10 +161,11 @@ class K0Crypto extends TestOnlyCryptoService
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override
@@ -139,6 +174,22 @@ class K0Crypto extends TestOnlyCryptoService
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// A [K0Crypto] in a build that can open K1 backups: the recovery follow-up
+/// then starts with the restore step (K1-4).
+class K0RestoringCrypto extends K0Crypto implements BackupOpenCryptoService {
+  @override
+  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
+
+  @override
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) async =>
+      throw UnimplementedError();
 }
 
 /// A [K0Crypto] that promotes the way the native engine does: one store
@@ -161,7 +212,11 @@ class K0PromotingCrypto extends K0Crypto
       sealedState: const <int>[4, 4, 4],
       changes: const <CryptoRecordChange>[
         CryptoRecordChange(
-            kind: 1, recordId: <int>[], generation: 1, sealed: <int>[5]),
+          kind: 1,
+          recordId: <int>[],
+          generation: 1,
+          sealed: <int>[5],
+        ),
       ],
     );
   }
@@ -173,14 +228,16 @@ class K0PromotingCrypto extends K0Crypto
     required String promotionId,
     HistoryTransferProgress? transfer,
   }) async {
-    final outcome = await store.promotePendingEnrollment(EnrollmentPromotion(
-      kind: kind,
-      session: session,
-      promotionId: promotionId,
-      expectedState: resumed.last,
-      promotedAt: DateTime.now().toUtc(),
-      transfer: transfer,
-    ));
+    final outcome = await store.promotePendingEnrollment(
+      EnrollmentPromotion(
+        kind: kind,
+        session: session,
+        promotionId: promotionId,
+        expectedState: resumed.last,
+        promotedAt: DateTime.now().toUtc(),
+        transfer: transfer,
+      ),
+    );
     promotions.add(outcome);
     pendingIdentity = false;
     return outcome;
@@ -189,8 +246,10 @@ class K0PromotingCrypto extends K0Crypto
 
 /// One account's recovery state on the server side.
 class K0Server {
-  RecoveryKeyStatus status =
-      const RecoveryKeyStatus(available: true, configured: false);
+  RecoveryKeyStatus status = const RecoveryKeyStatus(
+    available: true,
+    configured: false,
+  );
   bool recentAuth = false;
   bool requireRecentAuth = true;
   String reservationAccount = 'acct_me';
@@ -199,8 +258,14 @@ class K0Server {
   /// When set, a status read waits for it (a poll in flight).
   Completer<void>? statusGate;
 
+  /// When set, a recovery key status read throws it (offline).
+  Object? statusFailure;
+
   /// When set, a cancel throws it after the recent-auth check.
   Object? cancelFailure;
+
+  /// When set, a cancel waits for it first (a cancel in flight).
+  Completer<void>? cancelGate;
   final List<Object> statusAnswers = <Object>[];
   final List<String> reserved = <String>[];
   final List<Map<String, Object?>> claims = <Map<String, Object?>>[];
@@ -231,14 +296,18 @@ class K0Api extends ApiClient with LegacySyncPageFake {
   @override
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async {
     server.statusReads++;
+    final failure = server.statusFailure;
+    if (failure != null) throw failure;
     return server.status;
   }
 
   @override
-  Future<RecoveryKeyStatus> putRecoveryKey(String token,
-      {required List<int> rkAuthPub,
-      required List<int> rkId,
-      List<int>? deviceList}) async {
+  Future<RecoveryKeyStatus> putRecoveryKey(
+    String token, {
+    required List<int> rkAuthPub,
+    required List<int> rkId,
+    List<int>? deviceList,
+  }) async {
     if (server.requireRecentAuth && !server.recentAuth) {
       throw k0Error(403, 'recent_auth_required');
     }
@@ -247,13 +316,19 @@ class K0Api extends ApiClient with LegacySyncPageFake {
       'rk_id': List<int>.of(rkId),
     });
     server.status = RecoveryKeyStatus(
-        available: true, configured: true, setAt: DateTime.utc(2026, 11, 1));
+      available: true,
+      configured: true,
+      setAt: DateTime.utc(2026, 11, 1),
+    );
     return server.status;
   }
 
   @override
   Future<String?> reauthenticate(
-      String token, String password, String deviceSecret) async {
+    String token,
+    String password,
+    String deviceSecret,
+  ) async {
     if (password != 'pw') throw k0Error(401, 'invalid_credentials');
     server.recentAuth = true;
     return null;
@@ -297,14 +372,17 @@ class K0Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<AccountRecoveryStatus> accountRecoveryStatus(
-      String requestId, String claimToken) async {
+    String requestId,
+    String claimToken,
+  ) async {
     server.recoveryPolls++;
     final gate = server.statusGate;
     if (gate != null) await gate.future;
     if (server.statusAnswers.isEmpty) {
       return AccountRecoveryStatus(
-          phase: AccountRecoveryPhase.waiting,
-          readyAt: DateTime.utc(2099, 11, 8, 10));
+        phase: AccountRecoveryPhase.waiting,
+        readyAt: DateTime.utc(2099, 11, 8, 10),
+      );
     }
     final next = server.statusAnswers.removeAt(0);
     if (next is AccountRecoveryStatus) return next;
@@ -313,12 +391,15 @@ class K0Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<void> cancelAccountRecovery(String token, String requestId) async {
+    await server.cancelGate?.future;
     if (!server.recentAuth) throw k0Error(403, 'recent_auth_required');
     final failure = server.cancelFailure;
     if (failure != null) throw failure;
     server.cancels.add(requestId);
     server.status = RecoveryKeyStatus(
-        available: true, configured: server.status.configured);
+      available: true,
+      configured: server.status.configured,
+    );
   }
 
   @override
@@ -358,16 +439,22 @@ class K0Api extends ApiClient with LegacySyncPageFake {
   }) async {}
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       server.events
           .where((event) => event.id > after)
           .take(limit)
           .toList(growable: false);
 
   @override
-  Future<List<MlsMessage>> mlsMessages(String token,
-          {int after = 0, int limit = 100}) async =>
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
       const <MlsMessage>[];
 
   @override
@@ -404,8 +491,12 @@ class K0QuietSync implements SyncService {
 
 /// An app over [store] talking to [server]; [apis] collects every client
 /// the app made (one per origin it connected to).
-AppState k0App(K0Server server, LocalStore store, CryptoService crypto,
-        {List<K0Api>? apis}) =>
+AppState k0App(
+  K0Server server,
+  LocalStore store,
+  CryptoService crypto, {
+  List<K0Api>? apis,
+}) =>
     AppState(
       apiClientFactory: (url) {
         final api = K0Api(server, url);

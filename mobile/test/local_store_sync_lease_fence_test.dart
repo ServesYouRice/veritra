@@ -70,39 +70,45 @@ void main() {
     await second.acquireSyncLease(lease(2));
 
     await expectLater(
-      first.commitSyncEvent(SyncEventCommit(
-        eventKey: 'sync:fenced',
-        conversationId: 'conv_1',
-        expectedCursor: 0,
-        cursor: 1,
-        envelope: envelope('msg_fenced', 'received_fenced'),
-      )),
+      first.commitSyncEvent(
+        SyncEventCommit(
+          eventKey: 'sync:fenced',
+          conversationId: 'conv_1',
+          expectedCursor: 0,
+          cursor: 1,
+          envelope: envelope('msg_fenced', 'received_fenced'),
+        ),
+      ),
       throwsStateError,
     );
 
     expect(await second.loadSyncCursor(), 0);
     expect(await second.hasProcessedMlsMessage('sync:fenced'), isFalse);
     expect(
-        (await second.loadSnapshot())?.messagesByConversation['conv_1'] ??
-            const <ReceivedMessageEnvelope>[],
-        isEmpty);
+      (await second.loadSnapshot())?.messagesByConversation['conv_1'] ??
+          const <ReceivedMessageEnvelope>[],
+      isEmpty,
+    );
 
     // The holder can still commit the same cursor step, and only its event
     // is stored.
-    await second.commitSyncEvent(SyncEventCommit(
-      eventKey: 'sync:holder',
-      conversationId: 'conv_1',
-      expectedCursor: 0,
-      cursor: 1,
-      envelope: envelope('msg_holder', 'received_holder'),
-    ));
+    await second.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'sync:holder',
+        conversationId: 'conv_1',
+        expectedCursor: 0,
+        cursor: 1,
+        envelope: envelope('msg_holder', 'received_holder'),
+      ),
+    );
     expect(await second.loadSyncCursor(), 1);
     expect(await second.hasProcessedMlsMessage('sync:fenced'), isFalse);
     expect(await second.hasProcessedMlsMessage('sync:holder'), isTrue);
     expect(
-        (await second.loadSnapshot())
-            ?.messagesByConversation['conv_1']
-            ?.map((m) => m.id),
-        <String>['msg_holder']);
+      (await second.loadSnapshot())?.messagesByConversation['conv_1']?.map(
+            (m) => m.id,
+          ),
+      <String>['msg_holder'],
+    );
   });
 }

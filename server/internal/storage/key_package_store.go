@@ -7,12 +7,9 @@ import (
 	"errors"
 	"time"
 
-	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/mlswire"
 )
-
-var ErrKeyPackageUnavailable = errors.New("an active conversation device has no available key package")
 
 // ErrKeyPackageClaimLimit means the account has claimed as many key packages
 // of one device as it may in KeyPackageClaimWindow.
@@ -211,86 +208,6 @@ func (s *Store) PublishDeviceKeyPackages(ctx context.Context, deviceID string, p
 			return nil, err
 		}
 		result = append(result, domain.DeviceKeyPackage{ID: id, DeviceID: deviceID, KeyPackage: input.KeyPackage, Ciphersuite: input.Ciphersuite, CreatedAt: createdAt, ExpiresAt: input.ExpiresAt})
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID, requesterAccountID, requesterDeviceID string) ([]domain.DeviceKeyPackage, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	var member bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`, conversationID, requesterAccountID).Scan(&member); err != nil {
-		return nil, err
-	}
-	if !member {
-		return nil, ErrNotMember
-	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT d.id, d.account_id
-		FROM devices d
-		JOIN memberships cm ON cm.account_id = d.account_id
-		WHERE cm.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
-		  AND `+deviceOnHeadSQL("d.account_id", "d.id")+`
-		ORDER BY d.account_id, d.id`, conversationID, requesterDeviceID)
-	if err != nil {
-		return nil, err
-	}
-	type target struct{ deviceID, accountID string }
-	var targets []target
-	for rows.Next() {
-		var item target
-		if err := rows.Scan(&item.deviceID, &item.accountID); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		targets = append(targets, item)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	claimedAt := time.Now().UTC()
-	result := make([]domain.DeviceKeyPackage, 0, len(targets))
-	for _, target := range targets {
-		// A group is created with every device or not at all, so one device
-		// over its limit refuses the whole claim (the transaction rolls back
-		// what was claimed before it).
-		allowed, err := s.keyPackageClaimAllowed(ctx, tx, target.deviceID, target.accountID, requesterAccountID, claimedAt)
-		if err != nil {
-			return nil, err
-		}
-		if !allowed {
-			return nil, s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
-		}
-		item, createdAt, expiresAt, err := claimListedKeyPackage(ctx, tx, target.accountID, target.deviceID, claimedAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrKeyPackageUnavailable
-		}
-		if err != nil {
-			return nil, err
-		}
-		updated, err := tx.ExecContext(ctx, `UPDATE device_key_packages SET claimed_at = ?, claimed_by_device_id = ? WHERE id = ? AND claimed_at IS NULL`, formatTime(claimedAt), requesterDeviceID, item.ID)
-		if err != nil {
-			return nil, err
-		}
-		count, err := updated.RowsAffected()
-		if err != nil || count != 1 {
-			return nil, ErrKeyPackageUnavailable
-		}
-		item.DeviceID = target.deviceID
-		item.AccountID = target.accountID
-		item.CreatedAt = parseTime(createdAt)
-		item.ExpiresAt = parseTime(expiresAt)
-		result = append(result, item)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

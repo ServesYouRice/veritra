@@ -13,33 +13,37 @@ final _communities = <Community>[
 final _channels = <String, List<Channel>>{
   'comm_club': <Channel>[
     Channel(
-        id: 'chan_general',
-        communityId: 'comm_club',
-        name: '',
-        kind: 'open',
-        conversationId: 'conv_shared',
-        layoutGeneration: 1),
+      id: 'chan_general',
+      communityId: 'comm_club',
+      name: '',
+      kind: 'open',
+      conversationId: 'conv_shared',
+      layoutGeneration: 1,
+    ),
     Channel(
-        id: 'chan_secret',
-        communityId: 'comm_club',
-        name: '',
-        kind: 'private',
-        conversationId: 'conv_secret',
-        layoutGeneration: 1),
+      id: 'chan_secret',
+      communityId: 'comm_club',
+      name: '',
+      kind: 'private',
+      conversationId: 'conv_secret',
+      layoutGeneration: 1,
+    ),
     Channel(
-        id: 'chan_board',
-        communityId: 'comm_club',
-        name: '',
-        kind: 'private',
-        conversationId: 'conv_board',
-        layoutGeneration: 1),
+      id: 'chan_board',
+      communityId: 'comm_club',
+      name: '',
+      kind: 'private',
+      conversationId: 'conv_board',
+      layoutGeneration: 1,
+    ),
   ],
   'comm_other': <Channel>[
     Channel(
-        id: 'chan_legacy',
-        communityId: 'comm_other',
-        name: '',
-        kind: 'private'),
+      id: 'chan_legacy',
+      communityId: 'comm_other',
+      name: '',
+      kind: 'private',
+    ),
   ],
 };
 
@@ -58,11 +62,17 @@ final _conversations = <Conversation>[
   Conversation(id: 'conv_shared', kind: 'community_shared'),
   Conversation(id: 'conv_secret', kind: 'community_channel'),
   Conversation(
-      id: 'conv_legacy', kind: 'community_channel', channelId: 'chan_legacy'),
+    id: 'conv_legacy',
+    kind: 'community_channel',
+    channelId: 'chan_legacy',
+  ),
 ];
 
-List<MetadataSearchResult> _search(String query,
-        {List<Conversation>? conversations, int limit = maxLocalNameHits}) =>
+List<MetadataSearchResult> _search(
+  String query, {
+  List<Conversation>? conversations,
+  int limit = maxLocalNameHits,
+}) =>
     searchCommunityNames(
       query,
       communities: _communities,
@@ -91,13 +101,20 @@ void main() {
   test('a private channel shows only while this account is in it', () {
     expect(_search('board'), isEmpty, reason: 'not in the board conversation');
     expect(
-        _search('board', conversations: <Conversation>[
+      _search(
+        'board',
+        conversations: <Conversation>[
           ..._conversations,
           Conversation(id: 'conv_board', kind: 'community_channel'),
-        ]).map((hit) => hit.id),
-        <String>['chan_board']);
-    expect(_search('secrets', conversations: const <Conversation>[]), isEmpty,
-        reason: 'a record kept on the device outlives the membership');
+        ],
+      ).map((hit) => hit.id),
+      <String>['chan_board'],
+    );
+    expect(
+      _search('secrets', conversations: const <Conversation>[]),
+      isEmpty,
+      reason: 'a record kept on the device outlives the membership',
+    );
   });
 
   test('the server name and placeholders never match', () {

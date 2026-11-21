@@ -17,11 +17,12 @@ class _Writer implements K1SecondCopyWriter {
   bool fail = false;
 
   @override
-  Future<void> write(
-      {required String folder,
-      required String accountId,
-      required String deviceId,
-      required Uint8List ciphertext}) async {
+  Future<void> write({
+    required String folder,
+    required String accountId,
+    required String deviceId,
+    required Uint8List ciphertext,
+  }) async {
     if (fail) throw const FileSystemException('disk full');
     folders.add(folder);
     written.add(Uint8List.fromList(ciphertext));
@@ -82,26 +83,32 @@ void main() {
       addTearDown(() => dir.delete(recursive: true));
       const writer = FileK1SecondCopyWriter();
       await writer.write(
-          folder: dir.path,
-          accountId: 'acct/1',
-          deviceId: 'dev_1',
-          ciphertext: Uint8List.fromList(<int>[1, 2, 3]));
+        folder: dir.path,
+        accountId: 'acct/1',
+        deviceId: 'dev_1',
+        ciphertext: Uint8List.fromList(<int>[1, 2, 3]),
+      );
       await writer.write(
-          folder: dir.path,
-          accountId: 'acct/1',
-          deviceId: 'dev_1',
-          ciphertext: Uint8List.fromList(<int>[9, 9]));
+        folder: dir.path,
+        accountId: 'acct/1',
+        deviceId: 'dev_1',
+        ciphertext: Uint8List.fromList(<int>[9, 9]),
+      );
       final names = dir.listSync().map((e) => e.uri.pathSegments.last).toList();
       expect(names, <String>['veritra-backup-acct_1-dev_1.vhc']);
-      expect(
-          File('${dir.path}/${names.single}').readAsBytesSync(), <int>[9, 9]);
+      expect(File('${dir.path}/${names.single}').readAsBytesSync(), <int>[
+        9,
+        9,
+      ]);
       await expectLater(
-          writer.write(
-              folder: '${dir.path}/missing',
-              accountId: 'a',
-              deviceId: 'd',
-              ciphertext: Uint8List(1)),
-          throwsA(isA<FileSystemException>()));
+        writer.write(
+          folder: '${dir.path}/missing',
+          accountId: 'a',
+          deviceId: 'd',
+          ciphertext: Uint8List(1),
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
     });
   });
 
@@ -140,47 +147,51 @@ void main() {
 
     tearDown(() => state.dispose());
 
-    test('confirming: a match schedules the next ask, a miss does not',
-        () async {
-      expect(state.k1ConfirmDue, isFalse);
-      now = now.add(const Duration(days: 3));
-      expect(state.k1ConfirmDue, isTrue);
-      expect(await state.confirmK1Key('not a key'), isFalse);
-      expect(state.k1ConfirmDue, isTrue);
-      expect(await state.confirmK1Key(k0Display), isTrue);
-      expect(state.k1ConfirmDue, isFalse);
-      now = now.add(const Duration(days: 14));
-      expect(state.k1ConfirmDue, isTrue);
-      for (var i = 0; i < 3; i++) {
-        await state.postponeK1Confirm();
-        now = now.add(const Duration(days: 7));
-      }
-      expect(state.k1ConfirmBadge, isTrue);
-      expect(state.k1BackupNeedsAttention, isTrue);
-      expect(await state.confirmK1Key(k0Display), isTrue);
-      expect(state.k1ConfirmBadge, isFalse);
-    });
+    test(
+      'confirming: a match schedules the next ask, a miss does not',
+      () async {
+        expect(state.k1ConfirmDue, isFalse);
+        now = now.add(const Duration(days: 3));
+        expect(state.k1ConfirmDue, isTrue);
+        expect(await state.confirmK1Key('not a key'), isFalse);
+        expect(state.k1ConfirmDue, isTrue);
+        expect(await state.confirmK1Key(k0Display), isTrue);
+        expect(state.k1ConfirmDue, isFalse);
+        now = now.add(const Duration(days: 14));
+        expect(state.k1ConfirmDue, isTrue);
+        for (var i = 0; i < 3; i++) {
+          await state.postponeK1Confirm();
+          now = now.add(const Duration(days: 7));
+        }
+        expect(state.k1ConfirmBadge, isTrue);
+        expect(state.k1BackupNeedsAttention, isTrue);
+        expect(await state.confirmK1Key(k0Display), isTrue);
+        expect(state.k1ConfirmBadge, isFalse);
+      },
+    );
 
-    test('the second copy is the same ciphertext, and its failure is its own',
-        () async {
-      await state.setK1SecondCopyFolder('/picked');
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(writer.folders, <String>['/picked']);
-      expect(writer.written.single, uploads.last.bytes);
-      expect(state.k1BackupState!.secondCopyAt, isNotNull);
-      expect(state.k1BackupState!.secondCopyFailed, isFalse);
+    test(
+      'the second copy is the same ciphertext, and its failure is its own',
+      () async {
+        await state.setK1SecondCopyFolder('/picked');
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(writer.folders, <String>['/picked']);
+        expect(writer.written.single, uploads.last.bytes);
+        expect(state.k1BackupState!.secondCopyAt, isNotNull);
+        expect(state.k1BackupState!.secondCopyFailed, isFalse);
 
-      writer.fail = true;
-      expect(await state.runK1BackupIfDue(force: true), isTrue);
-      expect(state.k1BackupState!.secondCopyFailed, isTrue);
-      expect(state.k1BackupState!.lastError, isNull);
+        writer.fail = true;
+        expect(await state.runK1BackupIfDue(force: true), isTrue);
+        expect(state.k1BackupState!.secondCopyFailed, isTrue);
+        expect(state.k1BackupState!.lastError, isNull);
 
-      await state.setK1SecondCopyFolder(null);
-      final count = uploads.length;
-      writer.fail = false;
-      await state.runK1BackupIfDue(force: true);
-      expect(uploads.length, count + 1);
-      expect(writer.written, hasLength(1));
-    });
+        await state.setK1SecondCopyFolder(null);
+        final count = uploads.length;
+        writer.fail = false;
+        await state.runK1BackupIfDue(force: true);
+        expect(uploads.length, count + 1);
+        expect(writer.written, hasLength(1));
+      },
+    );
   });
 }

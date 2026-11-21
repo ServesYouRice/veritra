@@ -8,6 +8,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/features/communities/membership_screens.dart';
 import 'package:private_messenger/features/communities/moderation_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -138,7 +139,14 @@ void main() {
     testWidgets('a created link is shown once and can be copied',
         (tester) async {
       final api = _Api();
-      final state = _state(api);
+      // v3: the community's shared group, which this device is in.
+      final state = _state(api)
+        ..communities = <Community>[
+          Community(
+              id: 'comm_1', name: 'Club', sharedConversationId: 'conv_s1'),
+        ];
+      (state.cryptoService as TestOnlyCryptoService)
+          .memberKeys['conv_s1|acct_owner|dev_owner'] = testDeviceSigningKey;
       String? copied;
       tester.binding.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -172,7 +180,7 @@ void main() {
           .widgetList<SelectableText>(find.byType(SelectableText))
           .single
           .data!;
-      expect(shown, startsWith('$_origin/join#v2.'));
+      expect(shown, startsWith('$_origin/join#v3.'));
       final made =
           MembershipInviteLink.tryParse(shown, expectedOrigin: _origin)!;
       expect(made.locator, url);
@@ -184,6 +192,7 @@ void main() {
           made.bindingTag(
             kind: InviteTargetKind.community,
             targetId: 'comm_1',
+            anchorGroupId: 'conv_s1',
             inviterAccountId: 'acct_owner',
             inviterDeviceId: 'dev_owner',
             inviterSigningKey: testDeviceSigningKey,
@@ -196,6 +205,7 @@ void main() {
             made.bindingMessage(
               kind: InviteTargetKind.community,
               targetId: 'comm_1',
+              anchorGroupId: 'conv_s1',
               inviterAccountId: 'acct_owner',
               inviterDeviceId: 'dev_owner',
               inviterSigningKey: testDeviceSigningKey,
@@ -299,7 +309,108 @@ void main() {
     });
   });
 
+  // Owner decision 2026-11-21: while invitations are paused the requests are
+  // listed; Approve is off and Decline still works.
+  testWidgets('paused invitations: requests listed, Decline only',
+      (tester) async {
+    final api = _Api()
+      ..pausedUntil = DateTime.utc(2030)
+      ..pending = <JoinRequest>[
+        JoinRequest(
+          id: 'jreq_1',
+          kind: InviteTargetKind.community,
+          status: JoinRequestStatus.pending,
+          createdAt: DateTime.utc(2026, 11, 7),
+          targetId: 'comm_1',
+          accountId: 'acct_alice',
+          username: 'alice',
+        ),
+      ];
+    final state = _state(api);
+    await tester.pumpWidget(_app(Scaffold(
+      body: SingleChildScrollView(
+        child: JoinRequestsPanel(
+          state: state,
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+        ),
+      ),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('@alice'), findsOneWidget);
+    expect(
+      find.text('Invitations are paused. You can decline requests now and '
+          'approve them once the pause ends.'),
+      findsOneWidget,
+    );
+    final approve = tester.widget<FilledButton>(
+        find.byKey(const ValueKey<String>('join-approve-jreq_1')));
+    expect(approve.onPressed, isNull);
+    await tester.tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
+    await tester.pumpAndSettle();
+    expect(api.decisions, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
+    await tester.pumpAndSettle();
+    expect(api.decisions, <String>['jreq_1:reject']);
+    expect(find.text('No one is waiting.'), findsOneWidget);
+  });
+
   group('moderation (C5)', () {
+    // Owner decision 2026-11-21: admins lift the timeout of someone who left.
+    testWidgets('an admin lifts the timeout of someone who left',
+        (tester) async {
+      final api = _Api()
+        ..departed = <CommunityTimeout>[
+          CommunityTimeout(
+            accountId: 'acct_carol',
+            username: 'carol',
+            timeoutUntil: DateTime.utc(2030),
+          ),
+          // A current member's timeout (C5 rejoin gap) is the member
+          // screen's, never listed as "after leaving".
+          CommunityTimeout(
+            accountId: 'acct_dave',
+            username: 'dave',
+            timeoutUntil: DateTime.utc(2030),
+            member: true,
+          ),
+        ];
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Timed out after leaving'.toUpperCase()),
+        200,
+      );
+      expect(find.text('@carol'), findsOneWidget);
+      expect(find.text('@dave'), findsNothing);
+      await tester.tap(find.byTooltip('Lift timeout for @carol'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>['timeout:comm_1:acct_carol:0']);
+      expect(find.text('@carol'), findsNothing);
+      expect(find.text('@dave'), findsNothing);
+      expect(find.text('No one who left is timed out.'), findsOneWidget);
+    });
+
+    testWidgets('a failed read of departed timeouts fails the screen',
+        (tester) async {
+      final api = _Api()..failDeparted = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('No one who left is timed out.'), findsNothing);
+    });
+
     // U5: a failed read never shows as an empty or default state.
     testWidgets(
         'when moderation fails to load it says so with Retry and guesses nothing',
@@ -353,16 +464,38 @@ void main() {
         (tester) async {
       final api = _Api();
       final state = _state(api);
+      // U9: "Lift timeout" is offered only while the shared record shows a
+      // running timeout for the member.
+      var timedOut = false;
+      state.governanceOverrideForTesting = (_) => timedOut
+          ? GovernanceState(
+              rev: 3,
+              owner: 'acct_owner',
+              ownerRev: 1,
+              joined: const {'acct_owner': 1, 'acct_alice': 2},
+              timeouts: {
+                'acct_alice': MemberTimeout(
+                    epoch: 4,
+                    fromMs: DateTime.now().millisecondsSinceEpoch,
+                    untilMs: DateTime.now()
+                        .add(const Duration(hours: 1))
+                        .millisecondsSinceEpoch),
+              },
+            )
+          : null;
       await tester.pumpWidget(_app(CommunityDetailsScreen(
         state: state,
-        community: Community(id: 'comm_1', name: 'Club'),
+        community: Community(
+            id: 'comm_1', name: 'Club', sharedConversationId: 'shared'),
       )));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
+      expect(find.text('Lift timeout'), findsNothing);
       await tester.tap(find.text('Time out…'));
       await tester.pumpAndSettle();
+      timedOut = true; // the record shows it once the screen reloads
       await tester.tap(find.text('1 hour'));
       await tester.pumpAndSettle();
       expect(api.moderation, <String>['timeout:comm_1:acct_alice:3600']);
@@ -755,6 +888,7 @@ class _Api extends ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required String anchorGroupId,
     required List<int> signingKey,
     required String bindingTag,
     required List<int> bindingSignature,
@@ -821,13 +955,29 @@ class _Api extends ApiClient {
   Future<List<JoinRequest>> listOwnJoinRequests(String token) async =>
       List<JoinRequest>.of(own);
 
+  DateTime? pausedUntil;
+  List<CommunityTimeout> departed = <CommunityTimeout>[];
+  bool failDeparted = false;
+
   @override
   Future<List<JoinRequest>> listJoinRequests(
     String token,
     InviteTargetKind kind,
     String targetId,
   ) async =>
-      List<JoinRequest>.of(pending);
+      JoinRequestList(
+        List<JoinRequest>.of(pending),
+        invitesPausedUntil: pausedUntil,
+      );
+
+  @override
+  Future<List<CommunityTimeout>> communityTimeouts(
+    String token,
+    String communityId,
+  ) async {
+    if (failDeparted) throw ApiException(500, '{"error":"internal"}');
+    return List<CommunityTimeout>.of(departed);
+  }
 
   @override
   Future<void> revokeMembershipInvite(String token, String inviteId) async {
@@ -894,6 +1044,9 @@ class _Api extends ApiClient {
   Future<DateTime?> setMemberTimeout(
       String token, String communityId, String accountId, int seconds) async {
     moderation.add('timeout:$communityId:$accountId:$seconds');
+    if (seconds == 0) {
+      departed = departed.where((d) => d.accountId != accountId).toList();
+    }
     return null;
   }
 

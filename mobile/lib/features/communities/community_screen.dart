@@ -227,9 +227,17 @@ class CommunityScreen extends StatelessWidget {
           label: context.l10n.communityChannelName);
       if (name != null && name.isNotEmpty) {
         await state.createChannel(community.id, name);
-        if (context.mounted && state.error != null) {
+        if (!context.mounted) return;
+        final skipped = state.lastChannelSkippedMembers;
+        if (state.error != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.error!)),
+          );
+        } else if (skipped > 0) {
+          // D134: members in too many chats were left out, not refused.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(context.l10n.channelMembersSkipped(skipped))),
           );
         }
       }
@@ -238,63 +246,81 @@ class CommunityScreen extends StatelessWidget {
     await CreateChannelScreen.open(context, state, community);
   }
 
+  /// The trimmed name, or null when cancelled.
   Future<String?> _promptForName(
     BuildContext context, {
     required String title,
     required String label,
-  }) async {
-    final controller = TextEditingController();
-    try {
-      final confirmed = await showDialog<bool>(
+  }) =>
+      showDialog<String>(
         context: context,
-        builder: (dialogContext) => ValueListenableBuilder<TextEditingValue>(
-          valueListenable: controller,
-          builder: (context, value, _) {
-            // Checked here so the reason sits under the field; an empty name
-            // used to close the dialog and do nothing.
-            final error = infoNameError(value.text, l10n: context.l10n);
-            // An untouched field reads as a prompt, not an error; Create
-            // still stays disabled until the name is valid.
-            final shown = value.text.isEmpty ? null : error;
-            void submit() {
-              if (error == null) Navigator.of(dialogContext).pop(true);
-            }
-
-            return AlertDialog(
-              title: Text(title),
-              content: TextField(
-                controller: controller,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                textCapitalization: TextCapitalization.words,
-                onSubmitted: (_) => submit(),
-                decoration: InputDecoration(
-                  labelText: label,
-                  errorText: shown,
-                ),
-              ),
-              actions: <Widget>[
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(context.l10n.commonCancel),
-                ),
-                FilledButton(
-                  onPressed: error == null ? submit : null,
-                  child: Text(context.l10n.commonCreate),
-                ),
-              ],
-            );
-          },
-        ),
+        builder: (_) => _NamePrompt(title: title, label: label),
       );
-      if (confirmed != true) {
-        return null;
-      }
-      return controller.text.trim();
-    } finally {
-      controller.dispose();
-    }
+}
+
+/// The name dialog owns its controller, so it is disposed only once the
+/// dialog has left the tree: disposing it when the dialog's future completed
+/// broke the exit animation, which still rebuilds the field.
+class _NamePrompt extends StatefulWidget {
+  const _NamePrompt({required this.title, required this.label});
+
+  final String title;
+  final String label;
+
+  @override
+  State<_NamePrompt> createState() => _NamePromptState();
+}
+
+class _NamePromptState extends State<_NamePrompt> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) =>
+      ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _controller,
+        builder: (context, value, _) {
+          // Checked here so the reason sits under the field; an empty name
+          // used to close the dialog and do nothing.
+          final error = infoNameError(value.text, l10n: context.l10n);
+          // An untouched field reads as a prompt, not an error; Create
+          // still stays disabled until the name is valid.
+          final shown = value.text.isEmpty ? null : error;
+          void submit() {
+            if (error == null) Navigator.of(context).pop(value.text.trim());
+          }
+
+          return AlertDialog(
+            title: Text(widget.title),
+            content: TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              textCapitalization: TextCapitalization.words,
+              onSubmitted: (_) => submit(),
+              decoration: InputDecoration(
+                labelText: widget.label,
+                errorText: shown,
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(context.l10n.commonCancel),
+              ),
+              FilledButton(
+                onPressed: error == null ? submit : null,
+                child: Text(context.l10n.commonCreate),
+              ),
+            ],
+          );
+        },
+      );
 }
 
 class _CommunityCard extends StatelessWidget {

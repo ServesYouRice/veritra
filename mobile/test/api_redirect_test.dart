@@ -88,32 +88,39 @@ void main() {
 
         void expectNotFollowed() {
           expect(pair.hits, isEmpty, reason: 'the redirect was followed');
-          expect(pair.originMethods, hasLength(1),
-              reason: 'the origin saw a second request');
+          expect(
+            pair.originMethods,
+            hasLength(1),
+            reason: 'the origin saw a second request',
+          );
         }
 
-        test('recoverEncryptedBackup does not forward the recovery token',
-            () async {
-          await expectLater(
-            client.recoverEncryptedBackup(recoveryToken),
-            throwsA(_redirectStatus(status)),
-          );
-          expectNotFollowed();
-        });
+        test(
+          'recoverEncryptedBackup does not forward the recovery token',
+          () async {
+            await expectLater(
+              client.recoverEncryptedBackup(recoveryToken),
+              throwsA(_redirectStatus(status)),
+            );
+            expectNotFollowed();
+          },
+        );
 
-        test('completeDeviceLinkClaim does not forward the claim token',
-            () async {
-          await expectLater(
-            client.completeDeviceLinkClaim(
-              'link_1',
-              'claim-token',
-              List<int>.filled(32, 1),
-              List<int>.filled(32, 2),
-            ),
-            throwsA(_redirectStatus(status)),
-          );
-          expectNotFollowed();
-        });
+        test(
+          'completeDeviceLinkClaim does not forward the claim token',
+          () async {
+            await expectLater(
+              client.completeDeviceLinkClaim(
+                'link_1',
+                'claim-token',
+                List<int>.filled(32, 1),
+                List<int>.filled(32, 2),
+              ),
+              throwsA(_redirectStatus(status)),
+            );
+            expectNotFollowed();
+          },
+        );
 
         test('a JSON request with a bearer token is not redirected', () async {
           await expectLater(
@@ -175,21 +182,23 @@ void main() {
         expect(pair.originMethods, <String>['POST']);
       });
 
-      test('uploadEncryptedBackup does not forward the recovery token',
-          () async {
-        await expectLater(
-          client.uploadEncryptedBackup(
-            'token',
-            _body(16),
-            ciphertextLength: 16,
-            recoveryToken: recoveryToken,
-            cryptoMetadata: metadata,
-          ),
-          throwsA(_redirectStatus(303)),
-        );
-        expect(pair.hits, isEmpty);
-        expect(pair.originMethods, <String>['POST']);
-      });
+      test(
+        'uploadEncryptedBackup does not forward the recovery token',
+        () async {
+          await expectLater(
+            client.uploadEncryptedBackup(
+              'token',
+              _body(16),
+              ciphertextLength: 16,
+              recoveryToken: recoveryToken,
+              cryptoMetadata: metadata,
+            ),
+            throwsA(_redirectStatus(303)),
+          );
+          expect(pair.hits, isEmpty);
+          expect(pair.originMethods, <String>['POST']);
+        },
+      );
     });
   }
 }

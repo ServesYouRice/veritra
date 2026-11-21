@@ -23,12 +23,20 @@ class _Screen {
 final _screens = <_Screen>[
   const _Screen('connect', connected: false),
   const _Screen('chats', connected: true),
-  _Screen('chat', connected: true, open: (tester) async {
-    await tester.tap(find.text('@alice'));
-  }),
-  _Screen('settings', connected: true, open: (tester) async {
-    await tester.tap(find.byIcon(Icons.settings_outlined));
-  }),
+  _Screen(
+    'chat',
+    connected: true,
+    open: (tester) async {
+      await tester.tap(find.text('@alice'));
+    },
+  ),
+  _Screen(
+    'settings',
+    connected: true,
+    open: (tester) async {
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+    },
+  ),
 ];
 
 const _sizes = <String, Size>{'phone': phoneSize, 'wide': wideSize};
@@ -47,21 +55,20 @@ void main() {
           setWindowSize(tester, size.value);
           final AppState state =
               screen.connected ? await connectedState() : disconnectedState();
-          await tester.pumpWidget(veritraTestApp(
-            state: state,
-            themeMode: theme.value,
-            disableAnimations: true,
-          ));
+          await tester.pumpWidget(
+            veritraTestApp(
+              state: state,
+              themeMode: theme.value,
+              disableAnimations: true,
+            ),
+          );
           await tester.pumpAndSettle();
           if (screen.open != null) {
             await screen.open!(tester);
             await tester.pumpAndSettle();
           }
 
-          await expectLater(
-            find.byType(MaterialApp),
-            matchesGoldenFile(file),
-          );
+          await expectLater(find.byType(MaterialApp), matchesGoldenFile(file));
         }, skip: goldenSkipReason != null);
       }
     }

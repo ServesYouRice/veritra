@@ -24,38 +24,52 @@ void main() {
 
   MemberReceipt receipt(String id, {DateTime? delivered, DateTime? read}) =>
       MemberReceipt(
-          accountId: id, deliveredThrough: delivered, readThrough: read);
+        accountId: id,
+        deliveredThrough: delivered,
+        readThrough: read,
+      );
 
   group('ticks', () {
     test('a message nobody has fetched stays sent', () {
       expect(
-          tickForReceipts(<MemberReceipt>[receipt('a')], created,
-              showRead: true),
-          MessageTick.sent);
-      expect(tickForReceipts(const <MemberReceipt>[], created, showRead: true),
-          MessageTick.sent);
+        tickForReceipts(<MemberReceipt>[receipt('a')], created, showRead: true),
+        MessageTick.sent,
+      );
+      expect(
+        tickForReceipts(const <MemberReceipt>[], created, showRead: true),
+        MessageTick.sent,
+      );
     });
 
     test('a DM goes sent, delivered, read', () {
       expect(
-          tickForReceipts(
-              <MemberReceipt>[receipt('a', delivered: created)], created,
-              showRead: true),
-          MessageTick.delivered);
+        tickForReceipts(
+          <MemberReceipt>[receipt('a', delivered: created)],
+          created,
+          showRead: true,
+        ),
+        MessageTick.delivered,
+      );
       expect(
-          tickForReceipts(<MemberReceipt>[
-            receipt('a', delivered: created, read: created)
-          ], created, showRead: true),
-          MessageTick.read);
+        tickForReceipts(
+          <MemberReceipt>[receipt('a', delivered: created, read: created)],
+          created,
+          showRead: true,
+        ),
+        MessageTick.read,
+      );
     });
 
     test('a cursor before the message does not cover it', () {
       final before = created.subtract(const Duration(microseconds: 1));
       expect(
-          tickForReceipts(<MemberReceipt>[
-            receipt('a', delivered: before, read: before)
-          ], created, showRead: true),
-          MessageTick.sent);
+        tickForReceipts(
+          <MemberReceipt>[receipt('a', delivered: before, read: before)],
+          created,
+          showRead: true,
+        ),
+        MessageTick.sent,
+      );
     });
 
     test('a member who joined after the message is not asked', () {
@@ -65,17 +79,22 @@ void main() {
       );
       final early = receipt('early', delivered: created, read: created);
       expect(
-          tickForReceipts(<MemberReceipt>[early, late], created,
-              showRead: true),
-          MessageTick.read);
+        tickForReceipts(<MemberReceipt>[early, late], created, showRead: true),
+        MessageTick.read,
+      );
       // A message sent after they joined does count them.
       final newer = created.add(const Duration(minutes: 2));
       expect(
-          tickForReceipts(<MemberReceipt>[
+        tickForReceipts(
+          <MemberReceipt>[
             receipt('early', delivered: newer, read: newer),
-            late
-          ], newer, showRead: true),
-          MessageTick.sent);
+            late,
+          ],
+          newer,
+          showRead: true,
+        ),
+        MessageTick.sent,
+      );
     });
 
     test('a group needs every other member', () {
@@ -85,25 +104,39 @@ void main() {
         receipt('c'),
       ];
       expect(
-          tickForReceipts(receipts, created, showRead: true), MessageTick.sent);
+        tickForReceipts(receipts, created, showRead: true),
+        MessageTick.sent,
+      );
       expect(
-          tickForReceipts(<MemberReceipt>[...receipts.take(2)], created,
-              showRead: true),
-          MessageTick.delivered);
+        tickForReceipts(
+          <MemberReceipt>[...receipts.take(2)],
+          created,
+          showRead: true,
+        ),
+        MessageTick.delivered,
+      );
       expect(
-          tickForReceipts(<MemberReceipt>[
+        tickForReceipts(
+          <MemberReceipt>[
             receipt('a', delivered: created, read: created),
             receipt('b', delivered: created, read: created),
-          ], created, showRead: true),
-          MessageTick.read);
+          ],
+          created,
+          showRead: true,
+        ),
+        MessageTick.read,
+      );
     });
 
     test('with your own receipts off you see delivery only', () {
       expect(
-          tickForReceipts(<MemberReceipt>[
-            receipt('a', delivered: created, read: created)
-          ], created, showRead: false),
-          MessageTick.delivered);
+        tickForReceipts(
+          <MemberReceipt>[receipt('a', delivered: created, read: created)],
+          created,
+          showRead: false,
+        ),
+        MessageTick.delivered,
+      );
     });
 
     test('the fixture decodes', () {
@@ -111,12 +144,16 @@ void main() {
         File('test/fixtures/api/v1/responses.json').readAsStringSync(),
       ) as Map<String, Object?>;
       final rows = ((fixture['receipts_page']! as Map)['receipts']! as List)
-          .map((row) =>
-              MemberReceipt.fromJson(Map<String, Object?>.from(row as Map)))
+          .map(
+            (row) =>
+                MemberReceipt.fromJson(Map<String, Object?>.from(row as Map)),
+          )
           .toList();
       expect(rows[0].accountId, 'acct_peer');
-      expect(rows[0].deliveredThrough,
-          DateTime.utc(2026, 6, 2, 12, 30, 0, 123, 456));
+      expect(
+        rows[0].deliveredThrough,
+        DateTime.utc(2026, 6, 2, 12, 30, 0, 123, 456),
+      );
       expect(rows[0].readThrough, DateTime.utc(2026, 6, 2, 12, 29));
       expect(rows[0].memberSince, DateTime.utc(2026, 6, 1, 8));
       expect(rows[1].deliveredThrough, isNull);
@@ -125,8 +162,9 @@ void main() {
   });
 
   group('typing state', () {
-    testWidgets('a fresh signal extends the window, silence ends it',
-        (tester) async {
+    testWidgets('a fresh signal extends the window, silence ends it', (
+      tester,
+    ) async {
       final typing = TypingState();
       addTearDown(typing.dispose);
       typing.remoteTyping('c1', 'a');
@@ -198,9 +236,7 @@ void main() {
 
     test('delivery announcements are read once after a burst', () async {
       final api = _Api()
-        ..receipts = <MemberReceipt>[
-          receipt('acct_peer', delivered: created),
-        ];
+        ..receipts = <MemberReceipt>[receipt('acct_peer', delivered: created)];
       final state = _state(api)..selectedConversationId = 'c1';
       addTearDown(state.dispose);
       for (var i = 0; i < 5; i++) {
@@ -212,12 +248,15 @@ void main() {
       await pumpEventQueue();
       expect(api.receiptReads, 0, reason: 'waits for the burst to end');
       await Future<void>.delayed(
-          AppState.receiptsRefreshDebounce + const Duration(milliseconds: 100));
+        AppState.receiptsRefreshDebounce + const Duration(milliseconds: 100),
+      );
       await pumpEventQueue();
       expect(api.receiptReads, 1);
       expect(state.receipts.receiptsFor('c1').single.accountId, 'acct_peer');
-      expect(state.receipts.tickFor('c1', created, showRead: true),
-          MessageTick.delivered);
+      expect(
+        state.receipts.tickFor('c1', created, showRead: true),
+        MessageTick.delivered,
+      );
     });
 
     test('typing is sent throttled, and not to large conversations', () async {
@@ -267,12 +306,15 @@ void main() {
         cryptoService: TestOnlyCryptoService(),
         localStore: MemoryLocalStore(),
         syncServiceFactory: (_, __) => _QuietSync(),
-        receiptPreferences:
-            ReceiptPreferences(MemoryReceiptPreferenceStore(false)),
+        receiptPreferences: ReceiptPreferences(
+          MemoryReceiptPreferenceStore(false),
+        ),
       )
         ..api = api
         ..session = _session
-        ..conversations = <Conversation>[Conversation(id: 'c1', kind: 'group')]
+        ..conversations = <Conversation>[
+          Conversation(id: 'c1', kind: 'group'),
+        ]
         ..messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
           'c1': <ReceivedMessageEnvelope>[_message('m1', created)],
         };
@@ -291,28 +333,29 @@ void main() {
     });
 
     test(
-        'ticks are offered in DMs and small groups, not channels or big groups',
-        () {
-      final state = _state(_Api())
-        ..conversations = <Conversation>[
-          Conversation(id: 'dm', kind: 'dm'),
-          Conversation(id: 'group', kind: 'group'),
-          Conversation(id: 'big', kind: 'group'),
-          Conversation(id: 'channel', kind: 'community_channel'),
-        ]
-        ..membersByConversation = <String, List<ConversationMember>>{
-          'big': [
-            for (var i = 0; i <= tickMaxMembers; i++)
-              ConversationMember(accountId: 'a$i', role: 'member'),
-          ],
-        };
-      addTearDown(state.dispose);
-      expect(state.ticksApply('dm'), isTrue);
-      expect(state.ticksApply('group'), isTrue);
-      expect(state.ticksApply('big'), isFalse);
-      expect(state.ticksApply('channel'), isFalse);
-      expect(state.ticksApply('unknown'), isFalse);
-    });
+      'ticks are offered in DMs and small groups, not channels or big groups',
+      () {
+        final state = _state(_Api())
+          ..conversations = <Conversation>[
+            Conversation(id: 'dm', kind: 'dm'),
+            Conversation(id: 'group', kind: 'group'),
+            Conversation(id: 'big', kind: 'group'),
+            Conversation(id: 'channel', kind: 'community_channel'),
+          ]
+          ..membersByConversation = <String, List<ConversationMember>>{
+            'big': [
+              for (var i = 0; i <= tickMaxMembers; i++)
+                ConversationMember(accountId: 'a$i', role: 'member'),
+            ],
+          };
+        addTearDown(state.dispose);
+        expect(state.ticksApply('dm'), isTrue);
+        expect(state.ticksApply('group'), isTrue);
+        expect(state.ticksApply('big'), isFalse);
+        expect(state.ticksApply('channel'), isFalse);
+        expect(state.ticksApply('unknown'), isFalse);
+      },
+    );
 
     test('reconnecting reads the cursors again but still catches up', () async {
       final api = _Api()
@@ -344,23 +387,34 @@ void main() {
           home: Scaffold(body: child),
         );
 
-    testWidgets('the typing line names one, two and several people',
-        (tester) async {
+    testWidgets('the typing line names one, two and several people', (
+      tester,
+    ) async {
       final state = _state(_Api())
         ..membersByConversation = <String, List<ConversationMember>>{
           'c1': <ConversationMember>[
             ConversationMember(accountId: 'acct_me', role: 'member'),
             ConversationMember(
-                accountId: 'acct_a', role: 'member', username: 'alice'),
+              accountId: 'acct_a',
+              role: 'member',
+              username: 'alice',
+            ),
             ConversationMember(
-                accountId: 'acct_b', role: 'member', username: 'bob'),
+              accountId: 'acct_b',
+              role: 'member',
+              username: 'bob',
+            ),
             ConversationMember(
-                accountId: 'acct_c', role: 'member', username: 'carol'),
+              accountId: 'acct_c',
+              role: 'member',
+              username: 'carol',
+            ),
           ],
         };
       addTearDown(state.dispose);
-      await tester
-          .pumpWidget(host(TypingLine(state: state, conversationId: 'c1')));
+      await tester.pumpWidget(
+        host(TypingLine(state: state, conversationId: 'c1')),
+      );
       expect(find.textContaining('typing'), findsNothing);
       state.typing.remoteTyping('c1', 'acct_a');
       await tester.pump();
@@ -375,8 +429,9 @@ void main() {
       expect(find.textContaining('typing'), findsNothing);
     });
 
-    testWidgets('no typing line in a conversation over the limit',
-        (tester) async {
+    testWidgets('no typing line in a conversation over the limit', (
+      tester,
+    ) async {
       final state = _state(_Api())
         ..membersByConversation = <String, List<ConversationMember>>{
           'big': [
@@ -386,8 +441,9 @@ void main() {
         };
       addTearDown(state.dispose);
       state.typing.remoteTyping('big', 'a1');
-      await tester
-          .pumpWidget(host(TypingLine(state: state, conversationId: 'big')));
+      await tester.pumpWidget(
+        host(TypingLine(state: state, conversationId: 'big')),
+      );
       expect(find.textContaining('typing'), findsNothing);
       await tester.pump(typingExpiry + const Duration(seconds: 1));
     });
@@ -396,21 +452,27 @@ void main() {
       final state = _state(_Api());
       addTearDown(state.dispose);
       MessageTick? seen;
-      await tester.pumpWidget(host(MessageTickBuilder(
-        state: state,
-        conversationId: 'c1',
-        createdAt: created,
-        enabled: true,
-        builder: (context, tick) {
-          seen = tick;
-          return tick == null
-              ? const SizedBox.shrink()
-              : Column(children: <Widget>[
-                  MessageTickIcon(tick: tick),
-                  Text(messageTickLabel(context.l10n, tick)),
-                ]);
-        },
-      )));
+      await tester.pumpWidget(
+        host(
+          MessageTickBuilder(
+            state: state,
+            conversationId: 'c1',
+            createdAt: created,
+            enabled: true,
+            builder: (context, tick) {
+              seen = tick;
+              return tick == null
+                  ? const SizedBox.shrink()
+                  : Column(
+                      children: <Widget>[
+                        MessageTickIcon(tick: tick),
+                        Text(messageTickLabel(context.l10n, tick)),
+                      ],
+                    );
+            },
+          ),
+        ),
+      );
       expect(seen, MessageTick.sent);
       expect(find.byIcon(Icons.done), findsOneWidget);
       expect(find.text('Sent'), findsOneWidget);
@@ -430,24 +492,34 @@ void main() {
       // U29: the three ticks differ by shape, not only by colour.
       expect(MessageTick.values.map(messageTickGlyph).toSet(), hasLength(3));
       final icon = tester.widget<Icon>(find.byIcon(Icons.visibility));
-      expect(icon.color,
-          Theme.of(tester.element(find.byType(Column))).colorScheme.primary);
+      expect(
+        icon.color,
+        Theme.of(tester.element(find.byType(Column))).colorScheme.primary,
+      );
 
       await state.receiptPreferences.setSendReadReceipts(false);
       await tester.pump();
-      expect(seen, MessageTick.delivered,
-          reason: 'receipts off hides the read state');
+      expect(
+        seen,
+        MessageTick.delivered,
+        reason: 'receipts off hides the read state',
+      );
     });
 
-    testWidgets('the settings switch tells the server and follows the answer',
-        (tester) async {
+    testWidgets('the settings switch tells the server and follows the answer', (
+      tester,
+    ) async {
       final api = _Api();
       final state = _state(api);
       addTearDown(state.dispose);
-      await tester.pumpWidget(host(ReadReceiptsTile(
-        preferences: state.receiptPreferences,
-        onChanged: state.setSendReadReceipts,
-      )));
+      await tester.pumpWidget(
+        host(
+          ReadReceiptsTile(
+            preferences: state.receiptPreferences,
+            onChanged: state.setSendReadReceipts,
+          ),
+        ),
+      );
       expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
       await tester.tap(find.byType(Switch));
       await tester.pump();
@@ -516,7 +588,9 @@ class _Api extends ApiClient {
 
   @override
   Future<List<MemberReceipt>> listReceipts(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     receiptReads++;
     return receipts;
   }
@@ -527,12 +601,18 @@ class _Api extends ApiClient {
 
   @override
   Future<void> markRead(
-          String token, String conversationId, String messageId) async =>
+    String token,
+    String conversationId,
+    String messageId,
+  ) async =>
       reads.add('public:$messageId');
 
   @override
   Future<void> markReadPrivate(
-          String token, String conversationId, String messageId) async =>
+    String token,
+    String conversationId,
+    String messageId,
+  ) async =>
       reads.add('private:$messageId');
 }
 

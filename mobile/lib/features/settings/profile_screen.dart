@@ -111,7 +111,8 @@ class ProfileScreen extends StatelessWidget {
                   leading: const Icon(Icons.badge_outlined),
                   title: Text(l10n.profileEditTile),
                   subtitle: Text(
-                      state.profiles?.own?.name ?? l10n.profileDisplayNameHint),
+                    state.profiles?.own?.name ?? l10n.profileDisplayNameHint,
+                  ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => ProfileEditScreen.account(state: state),
@@ -166,21 +167,25 @@ class ProfileScreen extends StatelessWidget {
               ),
             ],
           ),
-          SectionHeader(l10n.profileSectionEncryption),
-          TileGroup(
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.lock_clock_outlined),
-                title: Text(l10n.profileEncryptionPending),
-                subtitle: Text(
-                  l10n.profileEncryptionPendingDetail,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+          // U9: the notice says profile editing is unavailable, so it shows
+          // only while that is true.
+          if (!state.profilesAvailable) ...<Widget>[
+            SectionHeader(l10n.profileSectionEncryption),
+            TileGroup(
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.lock_clock_outlined),
+                  title: Text(l10n.profileEncryptionPending),
+                  subtitle: Text(
+                    l10n.profileEncryptionPendingDetail,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -215,10 +220,7 @@ class _IdentityRow extends StatelessWidget {
         : theme.textTheme.bodyMedium;
     return ListTile(
       leading: ExcludeSemantics(child: Icon(icon)),
-      title: Text(
-        label.toUpperCase(),
-        style: theme.textTheme.labelSmall,
-      ),
+      title: Text(label.toUpperCase(), style: theme.textTheme.labelSmall),
       subtitle: Text(value, style: valueStyle),
       trailing: copyValue == null
           ? null

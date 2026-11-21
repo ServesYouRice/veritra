@@ -27,26 +27,30 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a caught-up pass prunes key packages, at most once per interval',
-      () async {
-    final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
-    final harness = await _Harness.start(api);
-    await harness.waitFor(() => harness.state.lastSyncedAt != null);
-    expect(harness.crypto.prunes, 1);
+  test(
+    'a caught-up pass prunes key packages, at most once per interval',
+    () async {
+      final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
+      final harness = await _Harness.start(api);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(harness.crypto.prunes, 1);
 
-    final passes = api.syncCalls;
-    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => api.syncCalls > passes);
-    await harness.waitFor(() => harness.state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.prunes, 1);
-    harness.dispose();
-  });
+      final passes = api.syncCalls;
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => api.syncCalls > passes);
+      await harness.waitFor(() => harness.state.syncError == null);
+      await harness.settle();
+      expect(harness.crypto.prunes, 1);
+      harness.dispose();
+    },
+  );
 
   test('a failed prune never stops sync', () async {
     final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.pruneError = StateError('prune'));
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) => crypto.pruneError = StateError('prune'),
+    );
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
     expect(harness.crypto.prunes, 1);
     expect(harness.state.syncRecovery, isNull);
@@ -54,39 +58,46 @@ void main() {
     harness.dispose();
   });
 
-  test('leaving drops the group and that conversation\'s unsent messages',
-      () async {
-    final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
-    final harness = await _Harness.start(api);
-    final state = harness.state;
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    expect(harness.crypto.deleted, isEmpty);
-    await harness.store.enqueueEnvelope(_outgoing('conv_1', 'out_1'));
-    await harness.store.enqueueEnvelope(_outgoing('conv_2', 'out_2'));
+  test(
+    'leaving drops the group and that conversation\'s unsent messages',
+    () async {
+      final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
+      final harness = await _Harness.start(api);
+      final state = harness.state;
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      expect(harness.crypto.deleted, isEmpty);
+      await harness.store.enqueueEnvelope(_outgoing('conv_1', 'out_1'));
+      await harness.store.enqueueEnvelope(_outgoing('conv_2', 'out_2'));
 
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    expect(api.left, <String>['conv_1']);
-    // The group goes in the next pass, before it reads events.
-    await harness.waitFor(() => harness.crypto.deleted.isNotEmpty);
-    expect(harness.crypto.deleted, <String>['conv_1']);
-    expect(
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      expect(api.left, <String>['conv_1']);
+      // The group goes in the next pass, before it reads events.
+      await harness.waitFor(() => harness.crypto.deleted.isNotEmpty);
+      expect(harness.crypto.deleted, <String>['conv_1']);
+      expect(
         (await harness.store.pendingEnvelopes()).map((e) => e.idempotencyKey),
-        <String>['out_2']);
-    // Done once: later passes do not delete it again.
-    await harness.waitFor(() async =>
-        !(await harness.store.loadSetting('mls.left_conversations') ?? '')
-            .contains('conv_1'));
-    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.deleted, <String>['conv_1']);
-    harness.dispose();
-  });
+        <String>['out_2'],
+      );
+      // Done once: later passes do not delete it again.
+      await harness.waitFor(
+        () async =>
+            !(await harness.store.loadSetting('mls.left_conversations') ?? '')
+                .contains('conv_1'),
+      );
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncError == null);
+      await harness.settle();
+      expect(harness.crypto.deleted, <String>['conv_1']);
+      harness.dispose();
+    },
+  );
 
   test('a failed group drop is tried again by the next pass', () async {
     final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.deleteFailures = 1);
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) => crypto.deleteFailures = 1,
+    );
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
     expect(await harness.state.leaveConversation('conv_1'), isTrue);
     await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
@@ -101,50 +112,57 @@ void main() {
     harness.dispose();
   });
 
-  test('a failed drop stops a re-add Welcome; Retry drops, then joins',
-      () async {
-    final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.deleteFailures = 3);
-    final state = harness.state;
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+  test(
+    'a failed drop stops a re-add Welcome; Retry drops, then joins',
+    () async {
+      final api = _ScriptedApi();
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.deleteFailures = 3,
+      );
+      final state = harness.state;
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
 
-    // Added back while the old group is still stored: the drop is tried
-    // before the Welcome and fails, so sync stops there with Retry.
-    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncRecovery != null);
-    expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
-    expect(state.syncRecovery!.eventId, 4);
-    expect(state.syncRecovery!.choices, contains(SyncRecoveryChoice.retry));
-    expect(harness.crypto.deleteAttempts, 3);
-    expect(harness.crypto.groups, contains('conv_1'));
-    expect(harness.crypto.joined, isEmpty);
-    expect(await harness.store.loadSyncCursor(), 0);
+      // Added back while the old group is still stored: the drop is tried
+      // before the Welcome and fails, so sync stops there with Retry.
+      api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncRecovery != null);
+      expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
+      expect(state.syncRecovery!.eventId, 4);
+      expect(state.syncRecovery!.choices, contains(SyncRecoveryChoice.retry));
+      expect(harness.crypto.deleteAttempts, 3);
+      expect(harness.crypto.groups, contains('conv_1'));
+      expect(harness.crypto.joined, isEmpty);
+      expect(await harness.store.loadSyncCursor(), 0);
 
-    await state.retrySyncRecovery();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
-    expect(harness.crypto.deleted, <String>['conv_1']);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    expect(harness.crypto.groups, contains('conv_1'));
-    expect(state.syncRecovery, isNull);
+      await state.retrySyncRecovery();
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 4,
+      );
+      expect(harness.crypto.deleted, <String>['conv_1']);
+      expect(harness.crypto.joined, <String>['conv_1']);
+      expect(harness.crypto.groups, contains('conv_1'));
+      expect(state.syncRecovery, isNull);
 
-    // The rejoined group stays.
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.deleted, <String>['conv_1']);
-    expect(harness.crypto.groups, contains('conv_1'));
-    harness.dispose();
-  });
+      // The rejoined group stays.
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncError == null);
+      await harness.settle();
+      expect(harness.crypto.deleted, <String>['conv_1']);
+      expect(harness.crypto.groups, contains('conv_1'));
+      harness.dispose();
+    },
+  );
 
   test('the drop runs before a re-add Welcome in the same pass', () async {
     final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.deleteFailures = 2);
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) => crypto.deleteFailures = 2,
+    );
     final state = harness.state;
     await harness.waitFor(() => state.lastSyncedAt != null);
     expect(await state.leaveConversation('conv_1'), isTrue);
@@ -153,82 +171,96 @@ void main() {
     // The pass-start drop fails again; the one before the Welcome works.
     api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
     state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    await harness.waitFor(
+      () async => await harness.store.loadSyncCursor() == 4,
+    );
     expect(harness.crypto.deleteAttempts, 3);
     expect(harness.crypto.deleted, <String>['conv_1']);
     expect(harness.crypto.joined, <String>['conv_1']);
-    expect(await harness.store.loadSetting('mls.left_conversations'),
-        isNot(contains('conv_1')));
+    expect(
+      await harness.store.loadSetting('mls.left_conversations'),
+      isNot(contains('conv_1')),
+    );
     harness.dispose();
   });
 
-  test('a note write that fails stops the Welcome; the rejoined group stays',
-      () async {
-    final api = _ScriptedApi();
-    final store = _NoteStore();
-    final harness = await _Harness.start(api, store: store);
-    final state = harness.state;
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    // The leave is noted, then every note write fails for a while: the
-    // pass-start drop deletes the group but cannot clear the note, and the
-    // drop before the Welcome cannot either.
-    store.failNoteWrites = 1000;
-    store.allowNoteWrites = 1;
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    await harness.waitFor(() => harness.crypto.deleted.isNotEmpty);
-    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncRecovery != null);
-    expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
-    expect(harness.crypto.joined, isEmpty);
+  test(
+    'a note write that fails stops the Welcome; the rejoined group stays',
+    () async {
+      final api = _ScriptedApi();
+      final store = _NoteStore();
+      final harness = await _Harness.start(api, store: store);
+      final state = harness.state;
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      // The leave is noted, then every note write fails for a while: the
+      // pass-start drop deletes the group but cannot clear the note, and the
+      // drop before the Welcome cannot either.
+      store.failNoteWrites = 1000;
+      store.allowNoteWrites = 1;
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      await harness.waitFor(() => harness.crypto.deleted.isNotEmpty);
+      api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncRecovery != null);
+      expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
+      expect(harness.crypto.joined, isEmpty);
 
-    store.failNoteWrites = 0;
-    await state.retrySyncRecovery();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    final drops = harness.crypto.deleteAttempts;
-    // Later passes find no note: the joined group is not dropped.
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.deleteAttempts, drops);
-    expect(harness.crypto.groups, contains('conv_1'));
-    harness.dispose();
-  });
+      store.failNoteWrites = 0;
+      await state.retrySyncRecovery();
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 4,
+      );
+      expect(harness.crypto.joined, <String>['conv_1']);
+      final drops = harness.crypto.deleteAttempts;
+      // Later passes find no note: the joined group is not dropped.
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncError == null);
+      await harness.settle();
+      expect(harness.crypto.deleteAttempts, drops);
+      expect(harness.crypto.groups, contains('conv_1'));
+      harness.dispose();
+    },
+  );
 
-  test('a Welcome that joins nothing (D74) clears the note only by the drop',
-      () async {
-    final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.deleteFailures = 2);
-    final state = harness.state;
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+  test(
+    'a Welcome that joins nothing (D74) clears the note only by the drop',
+    () async {
+      final api = _ScriptedApi();
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.deleteFailures = 2,
+      );
+      final state = harness.state;
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
 
-    harness.crypto.unavailableWelcomes.add('mls_4');
-    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
-    // The old group went with the note, so the next re-add can join.
-    expect(harness.crypto.groups, isNot(contains('conv_1')));
-    expect(harness.crypto.joined, isEmpty);
+      harness.crypto.unavailableWelcomes.add('mls_4');
+      api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 4,
+      );
+      // The old group went with the note, so the next re-add can join.
+      expect(harness.crypto.groups, isNot(contains('conv_1')));
+      expect(harness.crypto.joined, isEmpty);
 
-    api.events = <SyncEvent>[...api.events, _welcomeEvent(5, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    harness.dispose();
-  });
+      api.events = <SyncEvent>[...api.events, _welcomeEvent(5, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 5,
+      );
+      expect(harness.crypto.joined, <String>['conv_1']);
+      harness.dispose();
+    },
+  );
 
   test('a -9 Welcome with a failing drop keeps the note', () async {
     final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.deleteFailures = 3);
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) => crypto.deleteFailures = 3,
+    );
     final state = harness.state;
     await harness.waitFor(() => state.lastSyncedAt != null);
     expect(await state.leaveConversation('conv_1'), isTrue);
@@ -237,157 +269,199 @@ void main() {
     api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
     state.handleAppLifecycleState(AppLifecycleState.resumed);
     await harness.waitFor(() => state.syncRecovery != null);
-    expect(await harness.store.loadSetting('mls.left_conversations'),
-        contains('conv_1'));
+    expect(
+      await harness.store.loadSetting('mls.left_conversations'),
+      contains('conv_1'),
+    );
     expect(harness.crypto.groups, contains('conv_1'));
     harness.dispose();
   });
-  test('a leave racing a pass that holds an older add-Welcome keeps no group',
-      () async {
-    // The add-Welcome (event 5) was fetched by a pass that is still under
-    // way when the user leaves; the server's leave event is 6. Without the
-    // floor the pass joins the group after the leave cleared its note.
-    final gate = Completer<void>();
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
-      ..latestEventId = 6
-      ..mlsGate = gate;
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.groups.remove('conv_1'));
-    final state = harness.state;
-    await api.mlsGateReached.future;
-    expect(harness.crypto.joined, isEmpty);
+  test(
+    'a leave racing a pass that holds an older add-Welcome keeps no group',
+    () async {
+      // The add-Welcome (event 5) was fetched by a pass that is still under
+      // way when the user leaves; the server's leave event is 6. Without the
+      // floor the pass joins the group after the leave cleared its note.
+      final gate = Completer<void>();
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+        ..latestEventId = 6
+        ..mlsGate = gate;
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.groups.remove('conv_1'),
+      );
+      final state = harness.state;
+      await api.mlsGateReached.future;
+      expect(harness.crypto.joined, isEmpty);
 
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    expect(api.left, <String>['conv_1']);
-    gate.complete();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    await harness.settle();
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      expect(api.left, <String>['conv_1']);
+      gate.complete();
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 5,
+      );
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      await harness.settle();
 
-    // Skipped: nothing joined, and no group left behind by the pass.
-    expect(harness.crypto.joined, isEmpty);
-    expect(harness.crypto.groups, isNot(contains('conv_1')));
-    expect(state.syncRecovery, isNull);
-    // The key package it used is still replaced.
-    expect(await harness.store.loadSetting('mls.key_package_need'),
-        contains('"welcome":"mls_5"'));
+      // Skipped: nothing joined, and no group left behind by the pass.
+      expect(harness.crypto.joined, isEmpty);
+      expect(harness.crypto.groups, isNot(contains('conv_1')));
+      expect(state.syncRecovery, isNull);
+      // The key package it used is still replaced.
+      expect(
+        await harness.store.loadSetting('mls.key_package_need'),
+        contains('"welcome":"mls_5"'),
+      );
 
-    // A re-add after the leave (event 8) is not older and joins.
-    api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 8);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    expect(harness.crypto.groups, contains('conv_1'));
-    // The rejoined group stays.
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() => state.syncError == null);
-    await harness.settle();
-    expect(harness.crypto.groups, contains('conv_1'));
-    harness.dispose();
-  });
+      // A re-add after the leave (event 8) is not older and joins.
+      api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 8,
+      );
+      expect(harness.crypto.joined, <String>['conv_1']);
+      expect(harness.crypto.groups, contains('conv_1'));
+      // The rejoined group stays.
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => state.syncError == null);
+      await harness.settle();
+      expect(harness.crypto.groups, contains('conv_1'));
+      harness.dispose();
+    },
+  );
 
-  test('the leave event id is the exact floor: a re-add above it joins',
-      () async {
-    // The leave response reports event 6. The server's newest event is 9
-    // by the time anything else is asked, and a re-add Welcome (event 8)
-    // sits above the leave but at or below that bound: the old bound
-    // would have skipped it, the exact floor does not.
-    final gate = Completer<void>();
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
-      ..leaveEventId = 6
-      ..latestEventId = 9
-      ..mlsGate = gate;
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.groups.remove('conv_1'));
-    final state = harness.state;
-    await api.mlsGateReached.future;
-    expect(await state.leaveConversation('conv_1'), isTrue);
-    expect(await harness.store.loadSetting('mls.left_floors'),
-        contains('"conv_1":6'));
-    gate.complete();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    await harness.settle();
-    // The older Welcome (5) is skipped.
-    expect(harness.crypto.joined, isEmpty);
-    expect(harness.crypto.groups, isNot(contains('conv_1')));
+  test(
+    'the leave event id is the exact floor: a re-add above it joins',
+    () async {
+      // The leave response reports event 6. The server's newest event is 9
+      // by the time anything else is asked, and a re-add Welcome (event 8)
+      // sits above the leave but at or below that bound: the old bound
+      // would have skipped it, the exact floor does not.
+      final gate = Completer<void>();
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+        ..leaveEventId = 6
+        ..latestEventId = 9
+        ..mlsGate = gate;
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.groups.remove('conv_1'),
+      );
+      final state = harness.state;
+      await api.mlsGateReached.future;
+      expect(await state.leaveConversation('conv_1'), isTrue);
+      expect(
+        await harness.store.loadSetting('mls.left_floors'),
+        contains('"conv_1":6'),
+      );
+      gate.complete();
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 5,
+      );
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      await harness.settle();
+      // The older Welcome (5) is skipped.
+      expect(harness.crypto.joined, isEmpty);
+      expect(harness.crypto.groups, isNot(contains('conv_1')));
 
-    api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 8);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    expect(harness.crypto.groups, contains('conv_1'));
-    harness.dispose();
-  });
+      api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 8,
+      );
+      expect(harness.crypto.joined, <String>['conv_1']);
+      expect(harness.crypto.groups, contains('conv_1'));
+      harness.dispose();
+    },
+  );
 
-  test('the leave event id stands alone: no bound read, no fetched page',
-      () async {
-    // The bound request fails, and the pass holds a page up to event 12,
-    // above the leave (6). Neither may raise the floor above the leave.
-    final gate = Completer<void>();
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_welcomeEvent(12, 'conv_1')]
-      ..leaveEventId = 6
-      ..latestFails = true
-      ..mlsGate = gate;
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.groups.remove('conv_1'));
-    await api.mlsGateReached.future;
-    expect(await harness.state.leaveConversation('conv_1'), isTrue);
-    expect(await harness.store.loadSetting('mls.left_floors'),
-        contains('"conv_1":6'));
-    gate.complete();
-    // A Welcome above the leave is a re-add, so it joins.
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 12);
-    expect(harness.crypto.joined, <String>['conv_1']);
-    harness.dispose();
-  });
+  test(
+    'the leave event id stands alone: no bound read, no fetched page',
+    () async {
+      // The bound request fails, and the pass holds a page up to event 12,
+      // above the leave (6). Neither may raise the floor above the leave.
+      final gate = Completer<void>();
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_welcomeEvent(12, 'conv_1')]
+        ..leaveEventId = 6
+        ..latestFails = true
+        ..mlsGate = gate;
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.groups.remove('conv_1'),
+      );
+      await api.mlsGateReached.future;
+      expect(await harness.state.leaveConversation('conv_1'), isTrue);
+      expect(
+        await harness.store.loadSetting('mls.left_floors'),
+        contains('"conv_1":6'),
+      );
+      gate.complete();
+      // A Welcome above the leave is a re-add, so it joins.
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 12,
+      );
+      expect(harness.crypto.joined, <String>['conv_1']);
+      harness.dispose();
+    },
+  );
 
   test('a pass fetched page counts only for the session it ran under', () {
     // Same session: the page the pass holds stands in for the bound.
     expect(
-        passFetchedFloor(
-            fetchedThrough: 5, fetchedGeneration: 3, sessionGeneration: 3),
-        5);
+      passFetchedFloor(
+        fetchedThrough: 5,
+        fetchedGeneration: 3,
+        sessionGeneration: 3,
+      ),
+      5,
+    );
     // The session changed since: that pass says nothing about this one.
     expect(
-        passFetchedFloor(
-            fetchedThrough: 5, fetchedGeneration: 3, sessionGeneration: 4),
-        0);
+      passFetchedFloor(
+        fetchedThrough: 5,
+        fetchedGeneration: 3,
+        sessionGeneration: 4,
+      ),
+      0,
+    );
     // No pass has run yet.
     expect(
-        passFetchedFloor(
-            fetchedThrough: 0, fetchedGeneration: -1, sessionGeneration: 1),
-        0);
+      passFetchedFloor(
+        fetchedThrough: 0,
+        fetchedGeneration: -1,
+        sessionGeneration: 1,
+      ),
+      0,
+    );
   });
 
-  test('when the server cannot date the leave, the held page sets the floor',
-      () async {
-    // The bound request fails, so the newest id the pass fetched (5, beyond
-    // the committed cursor 0) stands in for it.
-    final gate = Completer<void>();
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
-      ..latestFails = true
-      ..mlsGate = gate;
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.groups.remove('conv_1'));
-    await api.mlsGateReached.future;
-    expect(await harness.state.leaveConversation('conv_1'), isTrue);
-    gate.complete();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
-    expect(harness.crypto.joined, isEmpty);
-    expect(harness.crypto.groups, isNot(contains('conv_1')));
-    harness.dispose();
-  });
+  test(
+    'when the server cannot date the leave, the held page sets the floor',
+    () async {
+      // The bound request fails, so the newest id the pass fetched (5, beyond
+      // the committed cursor 0) stands in for it.
+      final gate = Completer<void>();
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+        ..latestFails = true
+        ..mlsGate = gate;
+      final harness = await _Harness.start(
+        api,
+        configure: (crypto) => crypto.groups.remove('conv_1'),
+      );
+      await api.mlsGateReached.future;
+      expect(await harness.state.leaveConversation('conv_1'), isTrue);
+      gate.complete();
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 5,
+      );
+      expect(harness.crypto.joined, isEmpty);
+      expect(harness.crypto.groups, isNot(contains('conv_1')));
+      harness.dispose();
+    },
+  );
 
   test('a leave does not skip another conversation\'s Welcome', () async {
     final gate = Completer<void>();
@@ -395,13 +469,16 @@ void main() {
       ..events = <SyncEvent>[_welcomeEvent(5, 'conv_2')]
       ..latestEventId = 6
       ..mlsGate = gate;
-    final harness = await _Harness.start(api,
-        configure: (crypto) => crypto.groups.remove('conv_2'));
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) => crypto.groups.remove('conv_2'),
+    );
     await api.mlsGateReached.future;
     expect(await harness.state.leaveConversation('conv_1'), isTrue);
     gate.complete();
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    await harness.waitFor(
+      () async => await harness.store.loadSyncCursor() == 5,
+    );
     expect(harness.crypto.joined, <String>['conv_2']);
     harness.dispose();
   });
@@ -411,19 +488,24 @@ void main() {
     final harness = await _Harness.start(api);
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
     expect(await harness.state.leaveConversation('conv_1'), isTrue);
-    expect(await harness.store.loadSetting('mls.left_floors'),
-        contains('"conv_1":6'));
+    expect(
+      await harness.store.loadSetting('mls.left_floors'),
+      contains('"conv_1":6'),
+    );
     harness.dispose();
 
     // A new process on the same store: the older Welcome is still skipped.
     final again = _ScriptedApi()
       ..latestEventId = 6
       ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')];
-    final restarted = await _Harness.start(again,
-        store: harness.store as MemoryLocalStore,
-        configure: (crypto) => crypto.groups.remove('conv_1'));
-    await restarted
-        .waitFor(() async => await restarted.store.loadSyncCursor() == 5);
+    final restarted = await _Harness.start(
+      again,
+      store: harness.store as MemoryLocalStore,
+      configure: (crypto) => crypto.groups.remove('conv_1'),
+    );
+    await restarted.waitFor(
+      () async => await restarted.store.loadSyncCursor() == 5,
+    );
     expect(restarted.crypto.joined, isEmpty);
     restarted.dispose();
   });
@@ -453,8 +535,10 @@ void main() {
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
     await harness.settle();
     expect(crypto.staged, isEmpty);
-    await harness.store
-        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    await harness.store.saveSetting(
+      governanceLeaveSignedOutSetting('conv_1'),
+      '1',
+    );
     expect(await harness.state.leaveConversation('conv_1'), isFalse);
     await harness.waitFor(() => crypto.staged.contains('conv_1'));
     expect(crypto.staged, isNot(contains('conv_2')));
@@ -467,8 +551,10 @@ void main() {
     final harness = await _Harness.start(api, selfUpdates: true);
     final crypto = harness.crypto as _SelfUpdatingCrypto;
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
-    await harness.store
-        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    await harness.store.saveSetting(
+      governanceLeaveSignedOutSetting('conv_1'),
+      '1',
+    );
     final leaving = harness.state.leaveConversation('conv_1');
     await api.leaveReached.future;
     // A sync pass while the server holds the leave stages nothing there.
@@ -490,74 +576,101 @@ void main() {
   // next commit, so a commit of the leaver's still queued when it sends
   // member_leave would void a real leave. The leaver sends nothing until
   // its MLS queue for that group is empty.
-  test('a governing leaver with MLS work queued sends no leave proof',
-      () async {
-    final store = _QueueStore();
-    final api = _ScriptedApi();
-    final harness = await _Harness.start(api,
-        store: store, selfUpdates: true, governing: true);
-    final crypto = harness.crypto as _LeavingAdminCrypto;
-    await harness.waitFor(() => harness.state.lastSyncedAt != null);
-    await harness.settle();
-    store.queued = PendingMlsMessage(
-      idempotencyKey: 'commit_waiting',
-      conversationId: 'conv_1',
-      kind: 'mls_commit_bundle',
-      payload: const <int>[1],
-      attemptCount: 1,
-      nextAttemptAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
-      failureClass: 'retryable:503',
-    );
-    expect(await harness.state.leaveConversation('conv_1'), isFalse);
-    expect(harness.state.errorFor(Ops.members),
-        'Could not tell the group you are leaving. Try again.');
-    expect(crypto.leaveProofsSent, isEmpty,
-        reason: 'no proof goes out ahead of the queued commit');
-    expect(api.left, isEmpty);
-    // Once the queue is empty the proof goes out.
-    store.queued = null;
-    await harness.state.leaveConversation('conv_1');
-    expect(crypto.leaveProofsSent, contains(AppPayloadType.memberLeave));
-    harness.dispose();
-  });
+  test(
+    'a governing leaver with MLS work queued sends no leave proof',
+    () async {
+      final store = _QueueStore();
+      final api = _ScriptedApi();
+      final harness = await _Harness.start(
+        api,
+        store: store,
+        selfUpdates: true,
+        governing: true,
+      );
+      final crypto = harness.crypto as _LeavingAdminCrypto;
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      await harness.settle();
+      store.queued = PendingMlsMessage(
+        idempotencyKey: 'commit_waiting',
+        conversationId: 'conv_1',
+        kind: 'mls_commit_bundle',
+        payload: const <int>[1],
+        attemptCount: 1,
+        nextAttemptAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+        failureClass: 'retryable:503',
+      );
+      expect(await harness.state.leaveConversation('conv_1'), isFalse);
+      expect(
+        harness.state.errorFor(Ops.members),
+        'Could not tell the group you are leaving. Try again.',
+      );
+      expect(
+        crypto.leaveProofsSent,
+        isEmpty,
+        reason: 'no proof goes out ahead of the queued commit',
+      );
+      expect(api.left, isEmpty);
+      // Once the queue is empty the proof goes out.
+      store.queued = null;
+      await harness.state.leaveConversation('conv_1');
+      expect(crypto.leaveProofsSent, contains(AppPayloadType.memberLeave));
+      harness.dispose();
+    },
+  );
 
   // The void has its own spacing: a backoff an unrelated periodic
   // self-update left behind does not hold it back (owner decision A: the
   // server lets the void past the interval).
-  test('a cancelled leave is voided at once despite a periodic backoff',
-      () async {
-    final api = _ScriptedApi()..refuseLeave = true;
-    final store = MemoryLocalStore();
-    final policy = MlsSelfUpdatePolicy(accountId: 'acct_me', deviceId: 'dev_me')
-      ..recordBackoff('conv_1', DateTime.now(), const Duration(hours: 6));
-    await store.saveSetting(
-        '${MlsSelfUpdatePolicy.settingName}:dev_me', policy.encode());
-    final harness = await _Harness.start(api, store: store, selfUpdates: true);
-    final crypto = harness.crypto as _SelfUpdatingCrypto;
-    await harness.waitFor(() => harness.state.lastSyncedAt != null);
-    await harness.settle();
-    expect(crypto.staged, isEmpty, reason: 'the periodic backoff holds');
-    await harness.store
-        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
-    expect(await harness.state.leaveConversation('conv_1'), isFalse);
-    await harness.waitFor(() => crypto.staged.contains('conv_1'));
-    harness.dispose();
-  });
+  test(
+    'a cancelled leave is voided at once despite a periodic backoff',
+    () async {
+      final api = _ScriptedApi()..refuseLeave = true;
+      final store = MemoryLocalStore();
+      final policy = MlsSelfUpdatePolicy(
+        accountId: 'acct_me',
+        deviceId: 'dev_me',
+      )..recordBackoff('conv_1', DateTime.now(), const Duration(hours: 6));
+      await store.saveSetting(
+        '${MlsSelfUpdatePolicy.settingName}:dev_me',
+        policy.encode(),
+      );
+      final harness = await _Harness.start(
+        api,
+        store: store,
+        selfUpdates: true,
+      );
+      final crypto = harness.crypto as _SelfUpdatingCrypto;
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      await harness.settle();
+      expect(crypto.staged, isEmpty, reason: 'the periodic backoff holds');
+      await harness.store.saveSetting(
+        governanceLeaveSignedOutSetting('conv_1'),
+        '1',
+      );
+      expect(await harness.state.leaveConversation('conv_1'), isFalse);
+      await harness.waitFor(() => crypto.staged.contains('conv_1'));
+      harness.dispose();
+    },
+  );
 
   test('a leave the server took needs no void', () async {
     final api = _ScriptedApi();
     final harness = await _Harness.start(api, selfUpdates: true);
     final crypto = harness.crypto as _SelfUpdatingCrypto;
     await harness.waitFor(() => harness.state.lastSyncedAt != null);
-    await harness.store
-        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    await harness.store.saveSetting(
+      governanceLeaveSignedOutSetting('conv_1'),
+      '1',
+    );
     expect(await harness.state.leaveConversation('conv_1'), isTrue);
     // Neutralized, not left for a pass that still lists the conversation
     // (a community's shared conversation stays listed after its leave).
     expect(
-        await harness.store
-            .loadSetting(governanceLeaveSignedOutSetting('conv_1')),
-        '');
+      await harness.store.loadSetting(
+        governanceLeaveSignedOutSetting('conv_1'),
+      ),
+      '',
+    );
     final passes = api.syncCalls;
     harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
     await harness.waitFor(() => api.syncCalls > passes);
@@ -567,63 +680,80 @@ void main() {
     harness.dispose();
   });
 
-  test('a group over its size limit stops sync and offers to leave it',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[
-        _envelopeEvent(4, 'm_big'),
-        _envelopeEvent(5, 'm_other', conversationId: 'conv_2'),
-      ];
-    final harness = await _Harness.start(api,
+  test(
+    'a group over its size limit stops sync and offers to leave it',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _envelopeEvent(4, 'm_big'),
+          _envelopeEvent(5, 'm_other', conversationId: 'conv_2'),
+        ];
+      final harness = await _Harness.start(
+        api,
         configure: (crypto) => crypto.applyErrors['m_big'] =
-            const CryptoRecordLimitExceeded(conversationId: 'conv_1'));
-    final state = harness.state;
-    await harness.waitFor(() => state.syncRecovery != null);
-    final recovery = state.syncRecovery!;
-    expect(recovery.kind, SyncFailureKind.recordLimit);
-    expect(recovery.conversationId, 'conv_1');
-    expect(recovery.eventId, 4);
-    expect(recovery.choices, contains(SyncRecoveryChoice.leaveConversation));
-    expect(state.syncError, state.l10n.syncErrorRecordLimit);
-    // Fail closed: nothing after the stopped event was applied.
-    expect(await harness.store.loadSyncCursor(), 0);
-    expect(harness.crypto.applied, <String>['m_big']);
-    // The record survives a restart.
-    expect((await harness.store.loadSyncRecovery())!.kind,
-        SyncFailureKind.recordLimit);
+            const CryptoRecordLimitExceeded(conversationId: 'conv_1'),
+      );
+      final state = harness.state;
+      await harness.waitFor(() => state.syncRecovery != null);
+      final recovery = state.syncRecovery!;
+      expect(recovery.kind, SyncFailureKind.recordLimit);
+      expect(recovery.conversationId, 'conv_1');
+      expect(recovery.eventId, 4);
+      expect(recovery.choices, contains(SyncRecoveryChoice.leaveConversation));
+      expect(state.syncError, state.l10n.syncErrorRecordLimit);
+      // Fail closed: nothing after the stopped event was applied.
+      expect(await harness.store.loadSyncCursor(), 0);
+      expect(harness.crypto.applied, <String>['m_big']);
+      // The record survives a restart.
+      expect(
+        (await harness.store.loadSyncRecovery())!.kind,
+        SyncFailureKind.recordLimit,
+      );
 
-    // Leaving needs confirmation.
-    expect(() => state.leaveConversationAfterSyncRecovery(confirmed: false),
-        throwsArgumentError);
-    // The server no longer sends the left conversation's events.
-    api.onLeave = (id) => api.events = api.events
-        .where((event) => event.conversationId != id)
-        .toList(growable: false);
-    expect(await state.leaveConversationAfterSyncRecovery(confirmed: true),
-        isTrue);
-    await harness
-        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
-    await harness.waitFor(() => state.syncRecovery == null);
-    expect(harness.crypto.deleted, <String>['conv_1']);
-    expect(harness.crypto.applied, <String>['m_big', 'm_other']);
-    expect(await harness.store.loadSyncRecovery(), isNull);
-    harness.dispose();
-  });
+      // Leaving needs confirmation.
+      expect(
+        () => state.leaveConversationAfterSyncRecovery(confirmed: false),
+        throwsArgumentError,
+      );
+      // The server no longer sends the left conversation's events.
+      api.onLeave = (id) => api.events = api.events
+          .where((event) => event.conversationId != id)
+          .toList(growable: false);
+      expect(
+        await state.leaveConversationAfterSyncRecovery(confirmed: true),
+        isTrue,
+      );
+      await harness.waitFor(
+        () async => await harness.store.loadSyncCursor() == 5,
+      );
+      await harness.waitFor(() => state.syncRecovery == null);
+      expect(harness.crypto.deleted, <String>['conv_1']);
+      expect(harness.crypto.applied, <String>['m_big', 'm_other']);
+      expect(await harness.store.loadSyncRecovery(), isNull);
+      harness.dispose();
+    },
+  );
 
   test('the device record over its limit offers no leave', () async {
     final api = _ScriptedApi()..events = <SyncEvent>[_envelopeEvent(4, 'm1')];
-    final harness = await _Harness.start(api,
-        configure: (crypto) =>
-            crypto.applyErrors['m1'] = const CryptoRecordLimitExceeded());
+    final harness = await _Harness.start(
+      api,
+      configure: (crypto) =>
+          crypto.applyErrors['m1'] = const CryptoRecordLimitExceeded(),
+    );
     final state = harness.state;
     await harness.waitFor(() => state.syncRecovery != null);
     expect(state.syncRecovery!.kind, SyncFailureKind.recordLimit);
     expect(state.syncRecovery!.conversationId, isNull);
-    expect(state.syncRecovery!.choices,
-        isNot(contains(SyncRecoveryChoice.leaveConversation)));
+    expect(
+      state.syncRecovery!.choices,
+      isNot(contains(SyncRecoveryChoice.leaveConversation)),
+    );
     expect(state.syncError, state.l10n.syncErrorRecordLimitDevice);
-    expect(await state.leaveConversationAfterSyncRecovery(confirmed: true),
-        isFalse);
+    expect(
+      await state.leaveConversationAfterSyncRecovery(confirmed: true),
+      isFalse,
+    );
     expect(api.left, isEmpty);
     harness.dispose();
   });
@@ -638,11 +768,15 @@ void main() {
     for (final locale in locales) {
       final l10n = lookupAppLocalizations(locale);
       final group = describeError(
-          const CryptoRecordLimitExceeded(conversationId: 'conv_1'),
-          l10n,
-          false);
-      final device =
-          describeError(const CryptoRecordLimitExceeded(), l10n, false);
+        const CryptoRecordLimitExceeded(conversationId: 'conv_1'),
+        l10n,
+        false,
+      );
+      final device = describeError(
+        const CryptoRecordLimitExceeded(),
+        l10n,
+        false,
+      );
       expect(group, l10n.errorConversationTooLarge);
       expect(device, l10n.errorCryptoRecordLimit);
       expect(group, isNot(l10n.errorGeneric));
@@ -655,29 +789,37 @@ void main() {
       );
       expect(recovery.localizedMessage(l10n), l10n.syncErrorRecordLimit);
       // The record round-trips.
-      expect(SyncRecovery.decode(recovery.encode())!.kind,
-          SyncFailureKind.recordLimit);
+      expect(
+        SyncRecovery.decode(recovery.encode())!.kind,
+        SyncFailureKind.recordLimit,
+      );
     }
     // The message names no id, and neither does the exception's text.
     expect(
-        const CryptoRecordLimitExceeded(conversationId: 'conv_secret')
-            .toString(),
-        isNot(contains('conv_secret')));
+      const CryptoRecordLimitExceeded(conversationId: 'conv_secret').toString(),
+      isNot(contains('conv_secret')),
+    );
   });
 
   test('the native error maps to the app error, naming only a group', () {
     expect(
-        recordLimitFromNative(NativeRecordLimitException(2, 'conv_1'.codeUnits))
-            .conversationId,
-        'conv_1');
+      recordLimitFromNative(
+        NativeRecordLimitException(2, 'conv_1'.codeUnits),
+      ).conversationId,
+      'conv_1',
+    );
     expect(
-        recordLimitFromNative(const NativeRecordLimitException(1, <int>[]))
-            .conversationId,
-        isNull);
+      recordLimitFromNative(
+        const NativeRecordLimitException(1, <int>[]),
+      ).conversationId,
+      isNull,
+    );
     expect(
-        recordLimitFromNative(const NativeRecordLimitException(3, <int>[7, 8]))
-            .conversationId,
-        isNull);
+      recordLimitFromNative(
+        const NativeRecordLimitException(3, <int>[7, 8]),
+      ).conversationId,
+      isNull,
+    );
   });
 }
 
@@ -696,8 +838,11 @@ const _session = Session(
   deviceSecret: 'secret',
 );
 
-SyncEvent _envelopeEvent(int id, String messageId,
-        {String conversationId = 'conv_1'}) =>
+SyncEvent _envelopeEvent(
+  int id,
+  String messageId, {
+  String conversationId = 'conv_1',
+}) =>
     SyncEvent(
       id: id,
       type: 'message.envelope.created',
@@ -734,11 +879,13 @@ class _Harness {
   final LocalStore store;
   final _FakeMlsCrypto crypto;
 
-  static Future<_Harness> start(_ScriptedApi api,
-      {void Function(_FakeMlsCrypto crypto)? configure,
-      MemoryLocalStore? store,
-      bool selfUpdates = false,
-      bool governing = false}) async {
+  static Future<_Harness> start(
+    _ScriptedApi api, {
+    void Function(_FakeMlsCrypto crypto)? configure,
+    MemoryLocalStore? store,
+    bool selfUpdates = false,
+    bool governing = false,
+  }) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
     final crypto = governing
@@ -862,7 +1009,10 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<int?> removeConversationMember(
-      String token, String conversationId, String accountId) async {
+    String token,
+    String conversationId,
+    String accountId,
+  ) async {
     final gate = leaveGate;
     if (gate != null) {
       if (!leaveReached.isCompleted) leaveReached.complete();
@@ -888,7 +1038,9 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<ReceivedMessageEnvelope> message(
-          String token, String messageId) async =>
+    String token,
+    String messageId,
+  ) async =>
       throw ApiException(404, '{"error":"not_found"}');
 
   MlsMessage _mls(SyncEvent event) => MlsMessage(
@@ -923,10 +1075,13 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
-      _mls(events.firstWhere((event) =>
-          event.type == 'mls.message.created' &&
-          (event.payload as Map)['mls_message_id'] == messageId));
+  Future<MlsMessage> mlsMessage(String token, String messageId) async => _mls(
+        events.firstWhere(
+          (event) =>
+              event.type == 'mls.message.created' &&
+              (event.payload as Map)['mls_message_id'] == messageId,
+        ),
+      );
 }
 
 class _FakeMlsCrypto
@@ -947,16 +1102,20 @@ class _FakeMlsCrypto
 
   @override
   Future<List<int>?> processApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId) async {
+    ReceivedMessageEnvelope envelope,
+    int syncEventId,
+  ) async {
     applied.add(envelope.id);
     final error = applyErrors.remove(envelope.id);
     if (error != null) throw error;
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'application:$syncEventId:${envelope.id}',
-      conversationId: envelope.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'application:$syncEventId:${envelope.id}',
+        conversationId: envelope.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: syncEventId,
+      ),
+    );
     return null;
   }
 
@@ -979,12 +1138,14 @@ class _FakeMlsCrypto
       groups.add(message.conversationId);
       joined.add(message.conversationId);
     }
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'mls:${message.syncEventId}:${message.id}',
-      conversationId: message.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: message.syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'mls:${message.syncEventId}:${message.id}',
+        conversationId: message.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: message.syncEventId,
+      ),
+    );
   }
 
   @override
@@ -1008,14 +1169,16 @@ class _FakeMlsCrypto
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       null;
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override
@@ -1062,9 +1225,11 @@ class _LeavingAdminCrypto extends _SelfUpdatingCrypto
   @override
   Future<void> stageRoleChange(
     String groupId,
-    GovernanceState Function(GovernanceCommands commands,
-            GovernanceObservations? observed, DateTime now)
-        build,
+    GovernanceState Function(
+      GovernanceCommands commands,
+      GovernanceObservations? observed,
+      DateTime now,
+    ) build,
   ) async =>
       throw UnimplementedError('stageRoleChange');
 

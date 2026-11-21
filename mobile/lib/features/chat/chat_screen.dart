@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show File;
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart' show XFile;
@@ -31,12 +30,14 @@ import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/account_recovery_banner.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../calls/room_screen.dart';
 import '../search/search_screen.dart';
+import 'approval_hold_banners.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
 import 'formatted_message.dart';
@@ -134,6 +135,7 @@ class _ChatScreenState extends State<ChatScreen> {
     scroll.addListener(_maybeLoadOlder);
     scroll.addListener(_trackLatest);
     _scheduleJump();
+    unawaited(widget.state.refreshApprovalHoldSummary(widget.conversationId));
   }
 
   void _scheduleJump() {
@@ -238,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.addListener(_noticeTyping);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
     unawaited(_attachments.clear());
+    unawaited(widget.state.refreshApprovalHoldSummary(widget.conversationId));
   }
 
   @override
@@ -430,24 +433,23 @@ class _ChatScreenState extends State<ChatScreen> {
                               builder: (context, _) => Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: <Widget>[
-                                  IconButton(
+                                  BarAction(
                                       key: const Key('chat-call-voice'),
-                                      tooltip: context.l10n.callStartVoice,
+                                      label: context.l10n.callStartVoice,
                                       onPressed: calls.busy
                                           ? null
                                           : () => unawaited(
                                               calls.start(conversation.id)),
-                                      icon: const Icon(Icons.call_outlined)),
-                                  IconButton(
+                                      icon: Icons.call_outlined),
+                                  BarAction(
                                       key: const Key('chat-call-video'),
-                                      tooltip: context.l10n.callStartVideo,
+                                      label: context.l10n.callStartVideo,
                                       onPressed: calls.busy
                                           ? null
                                           : () => unawaited(calls.start(
                                               conversation.id,
                                               withVideo: true)),
-                                      icon:
-                                          const Icon(Icons.videocam_outlined)),
+                                      icon: Icons.videocam_outlined),
                                 ],
                               ),
                             ),
@@ -499,10 +501,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   children: <Widget>[
                     // U37: the account notices (a recovery waiting, a leaked
                     // password, a passkey change) also show inside an open
-                    // chat. In the wide layout the shell's own banners are
-                    // already on screen, so only a pushed chat adds them.
-                    if (widget.showBackButton)
-                      AccountRecoveryBanner(state: widget.state),
+                    // chat, unfolded as in the shell. In the wide layout the
+                    // shell's own banners are already on screen, so only a
+                    // pushed chat adds them.
+                    if (widget.showBackButton) ...<Widget>[
+                      RecoveryAttemptCard(state: widget.state),
+                      PasswordLeakBanner(state: widget.state),
+                      PasskeyNoticeBanner(state: widget.state),
+                    ],
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
                       Material(
                         color: Theme.of(context)
@@ -554,7 +560,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     else if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
-                      const _PausedConversationNotice()
+                      _PausedConversationNotice(
+                        state: widget.state,
+                        conversationId: conversation.id,
+                      )
                     else if (conversation != null &&
                         widget.state.sendHeldForRemoval(conversation.id))
                       const _RemovalHoldNotice(),
@@ -759,6 +768,12 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: const <Widget>[SizedBox.shrink()],
           )
         : null;
+    // L1 (D94): which account's devices hold this chat, and what to do.
+    final holdBanners = ApprovalHoldBanners(
+      state: widget.state,
+      conversationId: conversationId,
+      memberName: (accountId) => _memberName(conversationId, accountId),
+    );
     if (messages.isEmpty && pending.isEmpty) {
       final Widget empty;
       if (loading) {
@@ -778,13 +793,17 @@ class _ChatScreenState extends State<ChatScreen> {
               : context.l10n.chatEmptyMessageGroup,
         );
       }
-      if (renewalBanner == null) return empty;
-      return Column(children: <Widget>[renewalBanner, Expanded(child: empty)]);
+      return Column(children: <Widget>[
+        if (renewalBanner != null) renewalBanner,
+        holdBanners,
+        Expanded(child: empty),
+      ]);
     }
     final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
         if (renewalBanner != null) renewalBanner,
+        holdBanners,
         // L1: an approved device of a member has stayed out of the group
         // for an hour (the server gave no key package, or kept it out).
         for (final accountId in notJoined)
@@ -1030,6 +1049,21 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: Text(context.l10n.chatDeleteForEveryone),
                 onTap: () => Navigator.of(sheetContext).pop('delete'),
               ),
+            // U19: said once here, not on each action.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+                BoneSpacing.gutter,
+                BoneSpacing.md,
+              ),
+              child: Text(
+                context.l10n.w8MessageActionsLocalNote,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
           ],
         )),
       ),
@@ -1080,7 +1114,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'star') {
       await state.toggleMessageStar(message);
     } else if (action == 'hide') {
-      await state.deleteMessageForMe(message);
+      await _deleteForMe(message);
     } else if (action == 'report') {
       await Navigator.of(context).push<void>(MaterialPageRoute<void>(
         builder: (_) => ReportMessageScreen(
@@ -1199,6 +1233,41 @@ class _ChatScreenState extends State<ChatScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error)));
     }
+  }
+
+  /// U16 (D133): "Delete for me" hides the message at once and offers Undo.
+  /// When the snackbar closes any other way (its time is up, it is swiped
+  /// away, or the next one replaces it) the delete is final.
+  Future<void> _deleteForMe(LocalMessage message) async {
+    final state = widget.state;
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final hidden = await state.deleteMessageForMe(message);
+    if (!hidden) return;
+    // Clear the queue too, so a snackbar waiting behind the current one
+    // cannot take the place of the Undo window.
+    messenger.clearSnackBars();
+    final controller = messenger.showSnackBar(SnackBar(
+      key: const Key('delete-for-me-undo'),
+      content: Text(l10n.w8DeletedForMe),
+      persist: false,
+      duration: AppState.deleteForMeUndoShown,
+      action: SnackBarAction(
+        label: l10n.commonUndo,
+        onPressed: () async {
+          final restored = await state.undoDeleteForMe(message);
+          if (!restored) {
+            messenger.showSnackBar(
+                SnackBar(content: Text(l10n.w8DeleteForMeUndoFailed)));
+          }
+        },
+      ),
+    ));
+    unawaited(controller.closed.then((reason) {
+      if (reason != SnackBarClosedReason.action) {
+        return state.finishDeleteForMe(message.key);
+      }
+    }));
   }
 
   Future<String?> _editDialog(String current) {
@@ -1321,6 +1390,9 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
     state.channelKeyRenewalStuck(conversationId),
+    ...state.approvalHoldAccounts(conversationId),
+    state.approvalHoldRechecking(conversationId),
+    ...state.incompleteJoinAccounts(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,
@@ -1623,8 +1695,8 @@ class _MessageList extends StatelessWidget {
                     ? context.l10n.channelHistoryFormerMemberUnnamed
                     : _senderLabel(senderAccountId),
                 onLoadVoiceNote: state.attachmentsAvailable
-                    ? (entry) => decryptVoiceNote(state, entry,
-                        conversationId: conversationId)
+                    ? (entry, inMemory) => decryptVoiceNote(state, entry,
+                        conversationId: conversationId, inMemory: inMemory)
                     : null,
                 onOpenAttachment: state.attachmentsAvailable
                     ? (entry) => openAttachment(
@@ -1793,6 +1865,7 @@ class _PendingMessageBubble extends StatelessWidget {
     final terminal = state == OutboxDeliveryState.terminal;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final warning = VeritraStateColors.of(context).warning;
     final l10n = context.l10n;
     return Semantics(
       liveRegion: true,
@@ -1807,12 +1880,13 @@ class _PendingMessageBubble extends StatelessWidget {
           margin: const EdgeInsets.symmetric(vertical: 3),
           padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
           decoration: BoxDecoration(
-            color: sending
-                ? BoneColors.ownBubble(theme.brightness)
-                : scheme.errorContainer,
+            // A failed send is not an emergency (U17): the bubble stays your
+            // own tone, with an amber border and icon, and the words stay in
+            // the normal text colour.
+            color: BoneColors.ownBubble(theme.brightness),
             borderRadius: _bubbleRadius(mine: true),
             border: Border.all(
-              color: sending ? scheme.outlineVariant : scheme.error,
+              color: sending ? scheme.outlineVariant : warning,
             ),
           ),
           child: Column(
@@ -1824,8 +1898,7 @@ class _PendingMessageBubble extends StatelessWidget {
                   child: Text(
                     text!,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      color:
-                          sending ? scheme.onSurface : scheme.onErrorContainer,
+                      color: scheme.onSurface,
                     ),
                   ),
                 ),
@@ -1836,9 +1909,9 @@ class _PendingMessageBubble extends StatelessWidget {
                   key: const Key('pending-not-sent-retry'),
                   onPressed: onRetry,
                   style: TextButton.styleFrom(
-                    foregroundColor: scheme.onErrorContainer,
+                    foregroundColor: scheme.onSurface,
                   ),
-                  icon: const Icon(Icons.error_outline, size: 18),
+                  icon: Icon(Icons.error_outline, size: 18, color: warning),
                   label: Text(l10n.chatPendingNotSentRetry),
                 )
               else
@@ -1854,7 +1927,7 @@ class _PendingMessageBubble extends StatelessWidget {
                       Icon(
                         Icons.error_outline,
                         size: 18,
-                        color: scheme.onErrorContainer,
+                        color: warning,
                       ),
                     const SizedBox(width: BoneSpacing.sm),
                     Text(
@@ -1862,9 +1935,7 @@ class _PendingMessageBubble extends StatelessWidget {
                           ? l10n.chatPendingSending
                           : l10n.chatPendingTerminal,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: sending
-                            ? scheme.onSurface
-                            : scheme.onErrorContainer,
+                        color: scheme.onSurface,
                       ),
                     ),
                   ],
@@ -1875,7 +1946,7 @@ class _PendingMessageBubble extends StatelessWidget {
                   failureMessage!,
                   textAlign: TextAlign.end,
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onErrorContainer,
+                    color: scheme.onSurface,
                   ),
                 ),
               ],
@@ -2071,8 +2142,10 @@ class _MessageBubble extends StatelessWidget {
   /// Opens one attachment of an attachment message.
   final void Function(AttachmentEntry entry)? onOpenAttachment;
 
-  /// Decrypts a voice note to a temporary file for inline playback.
-  final Future<File> Function(AttachmentEntry entry)? onLoadVoiceNote;
+  /// Decrypts a voice note for inline playback, in memory when the player
+  /// can take bytes and the note is small, else to a temporary file.
+  final Future<DecryptedVoice> Function(AttachmentEntry entry, bool inMemory)?
+      onLoadVoiceNote;
   final void Function(String accountId)? onMention;
   final bool starred;
   final bool copiedHistory;
@@ -2235,7 +2308,7 @@ class _MessageBubble extends StatelessWidget {
           VoiceNoteTile(
             key: ValueKey<String>('voice-${entry.id}'),
             entry: entry,
-            load: () => onLoadVoiceNote!(entry),
+            load: (inMemory) => onLoadVoiceNote!(entry, inMemory),
           )
         else
           AttachmentTile(
@@ -2401,14 +2474,18 @@ class _MessageBubble extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
+                          // Amber, not red (U17): the message is withheld
+                          // and the words say why; nothing here is a
+                          // threat in progress.
                           Icon(Icons.gpp_maybe_outlined,
-                              size: 16, color: scheme.error),
+                              size: 16,
+                              color: VeritraStateColors.of(context).warning),
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
                               l10n.chatSenderUnverified,
                               style: theme.textTheme.bodyMedium?.copyWith(
-                                color: scheme.error,
+                                color: scheme.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -2930,30 +3007,98 @@ class _Composer extends StatelessWidget {
   }
 }
 
-/// Shown when the server rejected an encryption update for this
-/// conversation (I34). The update stays queued so later messages cannot
-/// overtake it; sending here is paused until the device recovers.
+/// Shown when an encryption update for this conversation failed for good
+/// (I34): the server refused it or this device could not send it. The
+/// update stays queued so later messages cannot overtake it, and sending
+/// here waits until the person tries it again or discards it (D134).
 class _PausedConversationNotice extends StatelessWidget {
-  const _PausedConversationNotice();
+  const _PausedConversationNotice({
+    required this.state,
+    required this.conversationId,
+  });
+
+  final AppState state;
+  final String conversationId;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final busy = state.isBusy(Ops.mlsUpdate);
+    // The update as the last outbox pass found it: Discard acts on that one
+    // only, and is not offered for a group's first update (D134).
+    final paused = state.pausedMlsUpdate(conversationId);
+    final discardable = paused?.discardable ?? false;
     return Semantics(
       liveRegion: true,
+      container: true,
       child: Container(
+        key: const ValueKey('mls-paused-notice'),
         width: double.infinity,
         color: scheme.errorContainer,
         padding: const EdgeInsets.symmetric(
           horizontal: BoneSpacing.gutter,
           vertical: BoneSpacing.sm,
         ),
-        child: Text(
-          context.l10n.chatPausedNotice,
-          style: TextStyle(color: scheme.onErrorContainer),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              discardable
+                  ? context.l10n.chatPausedNotice
+                  : context.l10n.chatPausedNoticeRetryOnly,
+              style: TextStyle(color: scheme.onErrorContainer),
+            ),
+            Wrap(
+              spacing: BoneSpacing.sm,
+              children: <Widget>[
+                TextButton(
+                  key: const ValueKey('mls-paused-retry'),
+                  onPressed: busy ? null : () => _retry(context),
+                  child: Text(context.l10n.bannerTryAgain),
+                ),
+                if (discardable)
+                  TextButton(
+                    key: const ValueKey('mls-paused-discard'),
+                    onPressed: busy
+                        ? null
+                        : () => _discard(context, paused!.idempotencyKey),
+                    child: Text(context.l10n.chatPausedDiscard),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  Future<void> _retry(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await state.retryMlsUpdate(conversationId);
+    _showError(messenger);
+  }
+
+  Future<void> _discard(BuildContext context, String idempotencyKey) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final note = context.l10n.chatPausedRoleChangeNotMade;
+    final outcome =
+        await state.discardMlsUpdate(conversationId, idempotencyKey);
+    if (outcome == MlsUpdateDiscard.roleChangeNotMade) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(note)));
+      return;
+    }
+    _showError(messenger);
+  }
+
+  void _showError(ScaffoldMessengerState messenger) {
+    final error = state.errorFor(Ops.mlsUpdate);
+    if (error == null) return;
+    state.clearError(Ops.mlsUpdate);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error)));
   }
 }
 
@@ -2971,13 +3116,17 @@ class _SyncPausedNotice extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final pause = state.conversationPauseFor(conversationId);
     final choices = pause?.choices ?? const <SyncRecoveryChoice>[];
+    // Messages that are only waiting for a confirmation are calm (U17): a
+    // neutral strip with an amber icon. A paused conversation that needs a
+    // choice keeps the error tone.
+    final held = pause?.held == true;
     return Semantics(
       liveRegion: true,
       container: true,
       child: Container(
         key: const ValueKey('sync-paused-notice'),
         width: double.infinity,
-        color: scheme.errorContainer,
+        color: held ? scheme.surfaceContainerHigh : scheme.errorContainer,
         padding: const EdgeInsets.symmetric(
           horizontal: BoneSpacing.gutter,
           vertical: BoneSpacing.sm,
@@ -2985,12 +3134,26 @@ class _SyncPausedNotice extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              pause?.held == true
-                  ? context.l10n.chatSyncHeldNotice
-                  : context.l10n.chatSyncPausedNotice,
-              style: TextStyle(color: scheme.onErrorContainer),
-            ),
+            if (held)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(Icons.schedule,
+                      size: 18, color: VeritraStateColors.of(context).warning),
+                  const SizedBox(width: BoneSpacing.md),
+                  Expanded(
+                    child: Text(
+                      context.l10n.chatSyncHeldNotice,
+                      style: TextStyle(color: scheme.onSurface),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Text(
+                context.l10n.chatSyncPausedNotice,
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
             Wrap(
               spacing: BoneSpacing.sm,
               children: <Widget>[

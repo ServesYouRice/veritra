@@ -37,9 +37,12 @@ type Limits struct {
 	// chunk framing, see MaxAttachmentCiphertext.
 	AttachmentBytes int64
 	// SocketsPerIPv6Prefix caps the realtime sockets of all addresses in one
-	// IPv6 /64 (an office or home network); one address always gets at most
-	// 20.
+	// IPv6 /64 (an office or home network); one IPv6 address always gets at
+	// most 20.
 	SocketsPerIPv6Prefix int
+	// SocketsPerIPv4Address caps the realtime sockets of one IPv4 address,
+	// which every client behind one NAT shares.
+	SocketsPerIPv4Address int
 }
 
 const mib = 1 << 20
@@ -68,6 +71,11 @@ const (
 	DefaultAttachmentMiB         = 48 // what the app encrypts at most
 	MaxAttachmentMiB             = 48
 	DefaultSocketsPerIPv6Prefix  = 200
+	DefaultSocketsPerIPv4Address = 20
+	// MinSocketsPerIPv4Address is the sockets one device may hold, so a
+	// device behind a NAT of its own is never refused for its own sockets.
+	// Keep it equal to realtime.maxConnectionsPerDevice.
+	MinSocketsPerIPv4Address     = 3
 	PendingDeviceLinksPerAccount = 3
 	// MaxBackupCiphertext is the largest K1 backup the app can seal: the
 	// 64 MiB padded snapshot, 20 bytes of framing per 1 MiB chunk and the
@@ -95,6 +103,7 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
 	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
 	{"PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX", 20, 10_000, 1, func(l *Limits, v int64) { l.SocketsPerIPv6Prefix = int(v) }},
+	{"PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV4_ADDRESS", MinSocketsPerIPv4Address, 10_000, 1, func(l *Limits, v int64) { l.SocketsPerIPv4Address = int(v) }},
 }
 
 func loadLimits() (Limits, error) {
@@ -110,7 +119,15 @@ func loadLimits() (Limits, error) {
 		}
 		setting.set(&limits, value*setting.scale)
 	}
-	if err := limits.WithDefaults().Validate(); err != nil {
+	checked := limits.WithDefaults()
+	if limits.AccountStorageBytes == 0 && checked.InstanceStorageBytes != 0 {
+		// An unset account limit follows a smaller instance limit, as the
+		// store does (storage.resolveLimits), so lowering the instance limit
+		// for a smaller volume needs no second setting. An account limit
+		// set above the instance limit is still refused below.
+		checked.AccountStorageBytes = min(checked.AccountStorageBytes, checked.InstanceStorageBytes)
+	}
+	if err := checked.Validate(); err != nil {
 		return Limits{}, err
 	}
 	return limits, nil
@@ -151,6 +168,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.SocketsPerIPv6Prefix == 0 {
 		l.SocketsPerIPv6Prefix = DefaultSocketsPerIPv6Prefix
+	}
+	if l.SocketsPerIPv4Address == 0 {
+		l.SocketsPerIPv4Address = DefaultSocketsPerIPv4Address
 	}
 	return l
 }

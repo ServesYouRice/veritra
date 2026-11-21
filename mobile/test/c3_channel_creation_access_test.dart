@@ -50,7 +50,9 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> communityMembers(
-      String token, String communityId) async {
+    String token,
+    String communityId,
+  ) async {
     if (failRoster) throw ApiException(503, '');
     if (roster != null) return roster!();
     return [ConversationMember(accountId: 'alice', role: role)];
@@ -69,10 +71,11 @@ void main() {
     )
       ..api = api
       ..session = const Session(
-          baseUrl: 'https://example.test',
-          token: 'token',
-          accountId: 'alice',
-          deviceId: 'device');
+        baseUrl: 'https://example.test',
+        token: 'token',
+        accountId: 'alice',
+        deviceId: 'device',
+      );
     addTearDown(state.dispose);
     return state;
   }
@@ -98,17 +101,20 @@ void main() {
   }
 
   Future<void> show(WidgetTester tester, AppState state) async {
-    await tester.pumpWidget(MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: CommunityScreen(state: state),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: CommunityScreen(state: state),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
   for (final role in ['owner', 'admin', 'moderator', 'member']) {
-    testWidgets('$role channel creation entry follows the refreshed roster',
-        (tester) async {
+    testWidgets('$role channel creation entry follows the refreshed roster', (
+      tester,
+    ) async {
       final api = _Api()..role = role;
       final state = stateFor(api);
       await state.refreshCommunities();
@@ -124,8 +130,9 @@ void main() {
     });
   }
 
-  testWidgets('legacy communities also hide creation from moderators',
-      (tester) async {
+  testWidgets('legacy communities also hide creation from moderators', (
+    tester,
+  ) async {
     final api = _Api()
       ..listed = [Community(id: 'community', name: 'Legacy club')]
       ..role = 'moderator';
@@ -143,47 +150,51 @@ void main() {
   });
 
   testWidgets(
-      'refresh hides stale access, then reflects demotion and promotion',
-      (tester) async {
-    final api = _Api();
-    final state = stateFor(api);
-    await state.refreshCommunities();
-    await show(tester, state);
-    final pending = Completer<List<ConversationMember>>();
-    api.roster = () => pending.future;
-    final refresh = state.refreshCommunities();
-    await tester.pump();
-    expect(await newChannelOffered(tester), isFalse);
-    pending
-        .complete([ConversationMember(accountId: 'alice', role: 'moderator')]);
-    await refresh;
-    await tester.pumpAndSettle();
-    expect(await newChannelOffered(tester), isFalse);
-    api.roster = null;
-    api.role = 'admin';
-    await state.refreshCommunities();
-    await tester.pumpAndSettle();
-    expect(await newChannelOffered(tester), isTrue);
-  });
+    'refresh hides stale access, then reflects demotion and promotion',
+    (tester) async {
+      final api = _Api();
+      final state = stateFor(api);
+      await state.refreshCommunities();
+      await show(tester, state);
+      final pending = Completer<List<ConversationMember>>();
+      api.roster = () => pending.future;
+      final refresh = state.refreshCommunities();
+      await tester.pump();
+      expect(await newChannelOffered(tester), isFalse);
+      pending.complete([
+        ConversationMember(accountId: 'alice', role: 'moderator'),
+      ]);
+      await refresh;
+      await tester.pumpAndSettle();
+      expect(await newChannelOffered(tester), isFalse);
+      api.roster = null;
+      api.role = 'admin';
+      await state.refreshCommunities();
+      await tester.pumpAndSettle();
+      expect(await newChannelOffered(tester), isTrue);
+    },
+  );
 
-  test('list or roster failure keeps channels but clears creation access',
-      () async {
-    final api = _Api();
-    final state = stateFor(api);
-    await state.refreshCommunities();
-    expect(state.mayCreateCommunityChannel('community'), isTrue);
-    api.failRoster = true;
-    await state.refreshCommunities();
-    expect(state.communities.single.name, 'Club');
-    expect(state.mayCreateCommunityChannel('community'), isFalse);
-    api.failRoster = false;
-    await state.refreshCommunities();
-    expect(state.mayCreateCommunityChannel('community'), isTrue);
-    api.failList = true;
-    await state.refreshCommunities();
-    expect(state.communities.single.name, 'Club');
-    expect(state.mayCreateCommunityChannel('community'), isFalse);
-  });
+  test(
+    'list or roster failure keeps channels but clears creation access',
+    () async {
+      final api = _Api();
+      final state = stateFor(api);
+      await state.refreshCommunities();
+      expect(state.mayCreateCommunityChannel('community'), isTrue);
+      api.failRoster = true;
+      await state.refreshCommunities();
+      expect(state.communities.single.name, 'Club');
+      expect(state.mayCreateCommunityChannel('community'), isFalse);
+      api.failRoster = false;
+      await state.refreshCommunities();
+      expect(state.mayCreateCommunityChannel('community'), isTrue);
+      api.failList = true;
+      await state.refreshCommunities();
+      expect(state.communities.single.name, 'Club');
+      expect(state.mayCreateCommunityChannel('community'), isFalse);
+    },
+  );
 
   test('an older roster cannot overwrite a newer refresh', () async {
     final api = _Api();
@@ -218,45 +229,51 @@ void main() {
     final old = state.refreshCommunities();
     await started.future;
     state.session = const Session(
-        baseUrl: 'https://example.test',
-        token: 'another-token',
-        accountId: 'alice',
-        deviceId: 'device');
+      baseUrl: 'https://example.test',
+      token: 'another-token',
+      accountId: 'alice',
+      deviceId: 'device',
+    );
     expect(state.mayCreateCommunityChannel('community'), isFalse);
     pending.complete([ConversationMember(accountId: 'alice', role: 'owner')]);
     await old;
     expect(state.mayCreateCommunityChannel('community'), isFalse);
   });
 
-  test('creating a community loads creation rights without manual refresh',
-      () async {
-    final api = _Api();
-    final state = stateFor(api);
-    final rosterRead = Completer<void>();
-    api.roster = () async {
-      rosterRead.complete();
-      return [ConversationMember(accountId: 'alice', role: 'owner')];
-    };
-    final created = await state.createCommunity('New club');
-    expect(created?.id, 'created');
-    await rosterRead.future;
-    await Future<void>.delayed(Duration.zero);
-    expect(state.mayCreateCommunityChannel('created'), isTrue);
-  });
+  test(
+    'creating a community loads creation rights without manual refresh',
+    () async {
+      final api = _Api();
+      final state = stateFor(api);
+      final rosterRead = Completer<void>();
+      api.roster = () async {
+        rosterRead.complete();
+        return [ConversationMember(accountId: 'alice', role: 'owner')];
+      };
+      final created = await state.createCommunity('New club');
+      expect(created?.id, 'created');
+      await rosterRead.future;
+      await Future<void>.delayed(Duration.zero);
+      expect(state.mayCreateCommunityChannel('created'), isTrue);
+    },
+  );
 
-  test('missing viewer and removed communities have no creation entry',
-      () async {
-    final api = _Api();
-    final state = stateFor(api);
-    api.roster =
-        () async => [ConversationMember(accountId: 'bob', role: 'owner')];
-    await state.refreshCommunities();
-    expect(state.mayCreateCommunityChannel('community'), isFalse);
-    api.roster = null;
-    await state.refreshCommunities();
-    expect(state.mayCreateCommunityChannel('community'), isTrue);
-    api.listed = [];
-    await state.refreshCommunities();
-    expect(state.mayCreateCommunityChannel('community'), isFalse);
-  });
+  test(
+    'missing viewer and removed communities have no creation entry',
+    () async {
+      final api = _Api();
+      final state = stateFor(api);
+      api.roster = () async => [
+            ConversationMember(accountId: 'bob', role: 'owner'),
+          ];
+      await state.refreshCommunities();
+      expect(state.mayCreateCommunityChannel('community'), isFalse);
+      api.roster = null;
+      await state.refreshCommunities();
+      expect(state.mayCreateCommunityChannel('community'), isTrue);
+      api.listed = [];
+      await state.refreshCommunities();
+      expect(state.mayCreateCommunityChannel('community'), isFalse);
+    },
+  );
 }

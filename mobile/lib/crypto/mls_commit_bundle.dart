@@ -45,7 +45,9 @@ class MlsCommitBundle {
       revocationDeviceId == null &&
       !roleChange;
 
-  Map<String, Object?> toRequestJson(String idempotencyKey) =>
+  Map<String, Object?> toRequestJson(
+    String idempotencyKey,
+  ) =>
       <String, Object?>{
         'epoch': epoch,
         'idempotency_key': idempotencyKey,
@@ -58,10 +60,12 @@ class MlsCommitBundle {
         if (roleChange) 'role_change': true,
       };
 
-  List<int> encode() => utf8.encode(jsonEncode(<String, Object?>{
-        'version': 1,
-        ...toRequestJson(''),
-      }..remove('idempotency_key')));
+  List<int> encode() => utf8.encode(
+        jsonEncode(
+          <String, Object?>{'version': 1, ...toRequestJson('')}
+            ..remove('idempotency_key'),
+        ),
+      );
 
   static MlsCommitBundle decode(List<int> bytes) {
     final json = jsonDecode(utf8.decode(bytes));
@@ -90,8 +94,10 @@ class MlsCommitBundle {
     );
   }
 
-  static Map<String, String> _refJson(MlsDeviceRef ref) =>
-      <String, String>{'account_id': ref.accountId, 'device_id': ref.deviceId};
+  static Map<String, String> _refJson(MlsDeviceRef ref) => <String, String>{
+        'account_id': ref.accountId,
+        'device_id': ref.deviceId,
+      };
 }
 
 /// One `GET /api/v1/mls/pending-changes` read, with the response-level flag

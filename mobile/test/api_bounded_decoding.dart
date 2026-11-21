@@ -13,7 +13,8 @@ import 'package:private_messenger/core/models.dart';
 const _fixtureDir = 'test/fixtures/api/v1';
 
 Map<String, Object?> _fixture(String name) => Map<String, Object?>.from(
-    jsonDecode(File('$_fixtureDir/$name').readAsStringSync()) as Map);
+      jsonDecode(File('$_fixtureDir/$name').readAsStringSync()) as Map,
+    );
 
 Map<String, Object?> _map(Object? value) =>
     Map<String, Object?>.from(value! as Map);
@@ -51,7 +52,8 @@ class _ScriptedServer {
   String get baseUrl => 'http://${_server.address.address}:${_server.port}';
 
   static Future<_ScriptedServer> start(
-      FutureOr<void> Function(HttpRequest request, int index) handle) async {
+    FutureOr<void> Function(HttpRequest request, int index) handle,
+  ) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final scripted = _ScriptedServer._(server);
     server.listen((request) async {
@@ -95,10 +97,16 @@ void boundedDecodingTests() {
   test('every server error code has a typed client mapping', () {
     final server = _serverErrorCodes();
     expect(server.length, greaterThan(50));
-    expect(server.difference(apiErrorKinds.keys.toSet()), isEmpty,
-        reason: 'server codes without a client mapping');
-    expect(apiErrorKinds.keys.toSet().difference(server), isEmpty,
-        reason: 'client mappings for codes the server no longer writes');
+    expect(
+      server.difference(apiErrorKinds.keys.toSet()),
+      isEmpty,
+      reason: 'server codes without a client mapping',
+    );
+    expect(
+      apiErrorKinds.keys.toSet().difference(server),
+      isEmpty,
+      reason: 'client mappings for codes the server no longer writes',
+    );
   });
 
   test('versioned error-code fixture matches the client mapping', () {
@@ -156,26 +164,32 @@ void boundedDecodingTests() {
         // A binary error page far above the error-body bound.
         request.response.add(List<int>.generate(512 * 1024, (i) => i % 256));
       } else {
-        request.response.write(jsonEncode(<String, Object?>{
-          'error': 'forbidden',
-          'detail': sentinel,
-        }));
+        request.response.write(
+          jsonEncode(<String, Object?>{
+            'error': 'forbidden',
+            'detail': sentinel,
+          }),
+        );
       }
     });
     final client = await _clientFor(server);
 
     await expectLater(
       client.conversations('token'),
-      throwsA(isA<ApiException>()
-          .having((e) => e.statusCode, 'statusCode', 500)
-          .having((e) => e.serverCode, 'serverCode', isNull)
-          .having((e) => e.kind, 'kind', ApiErrorKind.server)),
+      throwsA(
+        isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 500)
+            .having((e) => e.serverCode, 'serverCode', isNull)
+            .having((e) => e.kind, 'kind', ApiErrorKind.server),
+      ),
     );
     await expectLater(
       client.listInvites('token'),
-      throwsA(isA<ApiException>()
-          .having((e) => e.serverCode, 'serverCode', 'forbidden')
-          .having((e) => e, 'text', _hides(sentinel))),
+      throwsA(
+        isA<ApiException>()
+            .having((e) => e.serverCode, 'serverCode', 'forbidden')
+            .having((e) => e, 'text', _hides(sentinel)),
+      ),
     );
   });
 
@@ -188,9 +202,11 @@ void boundedDecodingTests() {
     final client = await _clientFor(server);
     await expectLater(
       client.downloadEncryptedAttachment('token', 'att_1'),
-      throwsA(isA<ApiException>()
-          .having((e) => e.statusCode, 'statusCode', 404)
-          .having((e) => e.kind, 'kind', ApiErrorKind.notFound)),
+      throwsA(
+        isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 404)
+            .having((e) => e.kind, 'kind', ApiErrorKind.notFound),
+      ),
     );
     await expectLater(
       client.recoverEncryptedBackup(List<int>.filled(32, 1)),
@@ -267,8 +283,10 @@ void boundedDecodingTests() {
         reason: 'body $i',
       );
     }
-    expect(describeError(const ApiResponseException()),
-        'The server returned an unexpected response.');
+    expect(
+      describeError(const ApiResponseException()),
+      'The server returned an unexpected response.',
+    );
   });
 
   test('oversized success bodies are refused', () async {
@@ -279,8 +297,10 @@ void boundedDecodingTests() {
       request.response.write('"}');
     });
     final client = await _clientFor(server);
-    await expectLater(client.conversations('token'),
-        throwsA(isA<ApiResponseTooLargeException>()));
+    await expectLater(
+      client.conversations('token'),
+      throwsA(isA<ApiResponseTooLargeException>()),
+    );
   });
 
   test('list pagination has a page cap and rejects a stuck cursor', () async {
@@ -297,7 +317,9 @@ void boundedDecodingTests() {
     final client = await _clientFor(server);
 
     await expectLater(
-        client.conversations('token'), throwsA(isA<ApiResponseException>()));
+      client.conversations('token'),
+      throwsA(isA<ApiResponseException>()),
+    );
     expect(server.requests, hasLength(2));
 
     stuck = false;
@@ -316,8 +338,12 @@ void boundedDecodingTests() {
     await client.mlsMessages('token', limit: 0);
     await client.listMessagePage('token', 'conv_1', limit: 1000);
     await client.searchMetadata('token', 'q', limit: 500, offset: -4);
-    expect(server.requests.map((uri) => uri.queryParameters['limit']),
-        <String>['200', '1', '200', '50']);
+    expect(server.requests.map((uri) => uri.queryParameters['limit']), <String>[
+      '200',
+      '1',
+      '200',
+      '50',
+    ]);
     expect(server.requests.last.queryParameters['offset'], '0');
   });
 
@@ -327,10 +353,15 @@ void boundedDecodingTests() {
     final rows = (_map(fixture['conversations_page'])['conversations']! as List)
         .map((row) => Conversation.fromJson(_map(row)))
         .toList();
+    expect(rows.map((c) => c.id), <String>[
+      'conv_dm',
+      'conv_group',
+      'conv_far',
+    ]);
     expect(
-        rows.map((c) => c.id), <String>['conv_dm', 'conv_group', 'conv_far']);
-    expect(
-        rows[0].lastMessageAt, DateTime.utc(2026, 6, 2, 12, 30, 0, 123, 456));
+      rows[0].lastMessageAt,
+      DateTime.utc(2026, 6, 2, 12, 30, 0, 123, 456),
+    );
     expect(rows[0].peerUsername, 'peer');
     expect(rows[1].createdAt, DateTime.utc(2026, 6, 1, 8));
     expect(rows[1].createdAt!.isUtc, isTrue);
@@ -339,16 +370,19 @@ void boundedDecodingTests() {
     expect(rows[2].lastMessageAt, isNull, reason: 'over-long timestamp');
 
     final device = Device.fromJson(
-        _map((_map(fixture['devices_page'])['devices']! as List)[0]));
+      _map((_map(fixture['devices_page'])['devices']! as List)[0]),
+    );
     expect(device.lastSeenAt, DateTime.utc(2026, 6, 2, 10));
 
     final message = ReceivedMessageEnvelope.fromJson(
-        _map((_map(fixture['message_page'])['messages']! as List)[0]));
+      _map((_map(fixture['message_page'])['messages']! as List)[0]),
+    );
     expect(message.ciphertext, <int>[1, 2, 3]);
     expect(message.expiresAt, DateTime.utc(2026, 6, 9, 12, 30));
 
     final event = SyncEvent.fromJson(
-        _map((_map(fixture['sync_events'])['events']! as List)[0]));
+      _map((_map(fixture['sync_events'])['events']! as List)[0]),
+    );
     expect(event.id, 7);
 
     final mls = _map(_map(fixture['mls_message'])['mls_message']);
@@ -382,7 +416,8 @@ void boundedDecodingTests() {
         <String, Object?>{...removal, 'event_id': bad},
     ];
     final server = await _ScriptedServer.start(
-        (request, index) => _respondJson(request, bodies[index]));
+      (request, index) => _respondJson(request, bodies[index]),
+    );
     final client = await _clientFor(server);
     final seen = <int?>[
       for (var i = 0; i < bodies.length; i++)
@@ -404,28 +439,44 @@ void boundedDecodingTests() {
         'crypto_protocol': 'p',
         'created_at': '2026-06-01T00:00:00Z',
       }),
-      throwsA(isA<FormatException>()
-          .having((e) => e.toString(), 'text', isNot(contains(sentinel)))),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.toString(),
+          'text',
+          isNot(contains(sentinel)),
+        ),
+      ),
     );
   });
 
   test('implementation errors map to safe sentences', () {
     const generic = 'Something went wrong. Please try again.';
     expect(describeError(StateError('No element')), generic);
-    expect(describeError(StateError('sync events are not strictly ordered')),
-        generic);
-    expect(describeError(StateError('attachments are unavailable')),
-        'This action is unavailable in this build.');
+    expect(
+      describeError(StateError('sync events are not strictly ordered')),
+      generic,
+    );
+    expect(
+      describeError(StateError('attachments are unavailable')),
+      'This action is unavailable in this build.',
+    );
     const sentence = 'Password login requires this device to be linked first.';
     expect(describeError(StateError(sentence)), sentence);
-    expect(describeError(const ApiResponseTooLargeException()),
-        'The server returned an unexpected response.');
+    expect(
+      describeError(const ApiResponseTooLargeException()),
+      'The server returned an unexpected response.',
+    );
     final client = ApiClient(baseUrl: 'https://example.test');
     addTearDown(client.close);
     expect(
       () => client.recoverEncryptedBackup(List<int>.filled(5, 0x41)),
-      throwsA(isA<ArgumentError>()
-          .having((e) => e.toString(), 'text', isNot(contains('65')))),
+      throwsA(
+        isA<ArgumentError>().having(
+          (e) => e.toString(),
+          'text',
+          isNot(contains('65')),
+        ),
+      ),
     );
   });
 
@@ -457,9 +508,15 @@ void boundedDecodingTests() {
     final page = await client.mlsMessages('token', limit: 200);
     expect(page, hasLength(1));
     expect(page.single.payload, hasLength(4 * 1024 * 1024));
-    expect(
-      server.requests.map((uri) => uri.queryParameters['limit']),
-      <String>['200', '100', '50', '25', '12', '6', '3', '1'],
-    );
+    expect(server.requests.map((uri) => uri.queryParameters['limit']), <String>[
+      '200',
+      '100',
+      '50',
+      '25',
+      '12',
+      '6',
+      '3',
+      '1',
+    ]);
   });
 }

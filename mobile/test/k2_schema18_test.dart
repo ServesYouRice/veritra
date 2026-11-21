@@ -31,15 +31,17 @@ StoredCryptoState _frozenState() => StoredCryptoState(
       sealedState: List<int>.from(_root),
       changes: [
         CryptoRecordChange(
-            kind: cryptoRecordKindDevice,
-            recordId: const [],
-            generation: 1,
-            sealed: utf8.encode('device-record')),
+          kind: cryptoRecordKindDevice,
+          recordId: const [],
+          generation: 1,
+          sealed: utf8.encode('device-record'),
+        ),
         CryptoRecordChange(
-            kind: cryptoRecordKindKeyPackage,
-            recordId: const [7, 7],
-            generation: 1,
-            sealed: _recordSealed),
+          kind: cryptoRecordKindKeyPackage,
+          recordId: const [7, 7],
+          generation: 1,
+          sealed: _recordSealed,
+        ),
       ],
     );
 
@@ -130,8 +132,9 @@ Future<File> _tempFile() async {
 }
 
 Future<int> _version(EncryptedLocalDatabase db) async =>
-    (await db.customSelect('PRAGMA user_version').getSingle())
-        .read<int>('user_version');
+    (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+      'user_version',
+    );
 
 /// Fails the next statement [fails] accepts, inside its transaction, while
 /// [armed]: a crash at that stage.
@@ -175,7 +178,7 @@ PendingEnrollmentRow _row(PendingEnrollment p) {
             kind: c.kind,
             recordId: c.recordId,
             generation: c.generation,
-            sealed: c.sealed
+            sealed: c.sealed,
           ),
       ],
     ),
@@ -184,13 +187,20 @@ PendingEnrollmentRow _row(PendingEnrollment p) {
 
 /// A schema 17 database: [session] with an MLS state when [withState], and
 /// a pending K2 link for dev_new.
-Future<void> _schema17(File file,
-    {required Session session, required bool withState}) async {
+Future<void> _schema17(
+  File file, {
+  required Session session,
+  required bool withState,
+}) async {
   final db = EncryptedLocalDatabase(NativeDatabase(file));
   await db.writeSessionJson(_sessionJson(session));
   if (withState) {
     await db.writeCryptoState(
-        counter: 6, stateKey: List.filled(32, 2), sealedState: [6], cursor: 9);
+      counter: 6,
+      stateKey: List.filled(32, 2),
+      sealedState: [6],
+      cursor: 9,
+    );
   }
   await db.writePendingEnrollment(_row(_pendingLink()));
   await stripK2TransferSchema(db);
@@ -216,92 +226,119 @@ void main() {
     test('a fresh database has the ledger and transfer tables', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion,
-          greaterThanOrEqualTo(18));
+      expect(
+        EncryptedLocalDatabase.currentSchemaVersion,
+        greaterThanOrEqualTo(18),
+      );
       expect(await db.readHistoryTransfers(), isEmpty);
       expect(
-          await db.readEnrollmentPromotions(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          isEmpty);
+        await db.readEnrollmentPromotions(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ),
+        isEmpty,
+      );
       expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
-    test('17 to 18 keeps a pending link another session is waiting on',
-        () async {
-      final file = await _tempFile();
-      await _schema17(file, session: _otherSession, withState: true);
-      final db = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(db.close);
-      expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
-      expect((await db.readCryptoState())?.counter, 6);
-      expect(await db.readCursor(), 9);
-      expect(
+    test(
+      '17 to 18 keeps a pending link another session is waiting on',
+      () async {
+        final file = await _tempFile();
+        await _schema17(file, session: _otherSession, withState: true);
+        final db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
+        expect((await db.readCryptoState())?.counter, 6);
+        expect(await db.readCursor(), 9);
+        expect(
           await db.readEnrollmentPromotions(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          isEmpty);
-      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
-    });
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isEmpty,
+        );
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
+      },
+    );
 
-    test('17 to 18 keeps an activation still owed (same session, no state)',
-        () async {
-      final file = await _tempFile();
-      await _schema17(file, session: _newSession, withState: false);
-      final db = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(db.close);
-      expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
-      expect(
+    test(
+      '17 to 18 keeps an activation still owed (same session, no state)',
+      () async {
+        final file = await _tempFile();
+        await _schema17(file, session: _newSession, withState: false);
+        final db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
+        expect(
           await db.readEnrollmentPromotions(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          isEmpty);
-    });
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isEmpty,
+        );
+      },
+    );
 
-    test('17 to 18 ledgers a pending identity that is already active',
-        () async {
-      final file = await _tempFile();
-      await _schema17(file, session: _newSession, withState: true);
-      final db = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(db.close);
-      final ledger = await db.readEnrollmentPromotions(
-          accountId: 'acct_me', deviceId: 'dev_new');
-      expect(ledger.single.promotionId, promotionIdSchemaUpgrade);
-      expect(ledger.single.kind, PendingEnrollment.kindDeviceLinkV3);
-      expect(ledger.single.origin, _origin);
-      expect(await db.readPendingEnrollment(), isNull);
-      expect(
+    test(
+      '17 to 18 ledgers a pending identity that is already active',
+      () async {
+        final file = await _tempFile();
+        await _schema17(file, session: _newSession, withState: true);
+        final db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        final ledger = await db.readEnrollmentPromotions(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        );
+        expect(ledger.single.promotionId, promotionIdSchemaUpgrade);
+        expect(ledger.single.kind, PendingEnrollment.kindDeviceLinkV3);
+        expect(ledger.single.origin, _origin);
+        expect(await db.readPendingEnrollment(), isNull);
+        expect(
           await db
               .customSelect('SELECT * FROM local_pending_enrollment_records')
               .get(),
-          isEmpty);
-      // The active state is untouched.
-      expect((await db.readCryptoState())?.counter, 6);
-      expect(await db.readCursor(), 9);
-    });
+          isEmpty,
+        );
+        // The active state is untouched.
+        expect((await db.readCryptoState())?.counter, 6);
+        expect(await db.readCursor(), 9);
+      },
+    );
 
     test('17 to 18 ledgers an active identity that later signed out', () async {
       final file = await _tempFile();
-      await _schema17(file,
-          session: const Session(
-              baseUrl: _origin,
-              token: '',
-              accountId: 'acct_me',
-              deviceId: 'dev_new',
-              deviceSecret: 'secret_new'),
-          withState: true);
+      await _schema17(
+        file,
+        session: const Session(
+          baseUrl: _origin,
+          token: '',
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          deviceSecret: 'secret_new',
+        ),
+        withState: true,
+      );
       final db = EncryptedLocalDatabase(NativeDatabase(file));
       addTearDown(db.close);
       expect(
-          (await db.readEnrollmentPromotions(
-                  accountId: 'acct_me', deviceId: 'dev_new'))
-              .single
-              .promotionId,
-          promotionIdSchemaUpgrade);
+        (await db.readEnrollmentPromotions(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ))
+            .single
+            .promotionId,
+        promotionIdSchemaUpgrade,
+      );
       expect(await db.readPendingEnrollment(), isNull);
       expect((await db.readCryptoState())?.counter, 6);
     });
 
     final stages = <String, bool Function(String)>{
-      'create ledger': (s) => s
-          .startsWith('CREATE TABLE IF NOT EXISTS local_enrollment_promotions'),
+      'create ledger': (s) => s.startsWith(
+            'CREATE TABLE IF NOT EXISTS local_enrollment_promotions',
+          ),
       'create transfers': (s) =>
           s.startsWith('CREATE TABLE IF NOT EXISTS local_history_transfers'),
       'ledger insert': (s) =>
@@ -312,83 +349,104 @@ void main() {
       'version': (s) => s.startsWith('PRAGMA user_version ='),
     };
     for (final stage in stages.entries) {
-      test('a crash after ${stage.key} keeps schema 17 and the pending row',
-          () async {
-        final file = await _tempFile();
-        await _schema17(file, session: _newSession, withState: true);
+      test(
+        'a crash after ${stage.key} keeps schema 17 and the pending row',
+        () async {
+          final file = await _tempFile();
+          await _schema17(file, session: _newSession, withState: true);
 
-        final failing = _FailAt(NativeDatabase(file), stage.value);
-        await expectLater(failing.readCryptoState(), throwsA(anything));
-        expect(failing.upgradeStarted, isTrue);
-        await failing.close();
+          final failing = _FailAt(NativeDatabase(file), stage.value);
+          await expectLater(failing.readCryptoState(), throwsA(anything));
+          expect(failing.upgradeStarted, isTrue);
+          await failing.close();
 
-        final raw = sqlite3.open(file.path);
-        try {
-          expect(raw.select('PRAGMA user_version').single['user_version'], 17);
+          final raw = sqlite3.open(file.path);
+          try {
+            expect(
+              raw.select('PRAGMA user_version').single['user_version'],
+              17,
+            );
+            expect(
+              raw.select(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name IN ('local_enrollment_promotions', "
+                "'local_history_transfers')",
+              ),
+              isEmpty,
+            );
+            final pending =
+                raw.select('SELECT * FROM local_pending_enrollment').single;
+            expect(pending['device_id'], 'dev_new');
+            expect(pending['state_key'], _stateKey);
+            expect(pending['state_root'], _root);
+            expect(
+              raw.select('SELECT * FROM local_pending_enrollment_records'),
+              hasLength(2),
+            );
+          } finally {
+            raw.close();
+          }
+
+          final db = EncryptedLocalDatabase(NativeDatabase(file));
+          addTearDown(db.close);
+          expect(await db.readPendingEnrollment(), isNull);
           expect(
-              raw.select("SELECT name FROM sqlite_master WHERE type='table' "
-                  "AND name IN ('local_enrollment_promotions', "
-                  "'local_history_transfers')"),
-              isEmpty);
-          final pending =
-              raw.select('SELECT * FROM local_pending_enrollment').single;
-          expect(pending['device_id'], 'dev_new');
-          expect(pending['state_key'], _stateKey);
-          expect(pending['state_root'], _root);
-          expect(raw.select('SELECT * FROM local_pending_enrollment_records'),
-              hasLength(2));
-        } finally {
-          raw.close();
-        }
-
-        final db = EncryptedLocalDatabase(NativeDatabase(file));
-        addTearDown(db.close);
-        expect(await db.readPendingEnrollment(), isNull);
-        expect(
             (await db.readEnrollmentPromotions(
-                    accountId: 'acct_me', deviceId: 'dev_new'))
+              accountId: 'acct_me',
+              deviceId: 'dev_new',
+            ))
                 .single
                 .promotionId,
-            promotionIdSchemaUpgrade);
-        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
-      });
+            promotionIdSchemaUpgrade,
+          );
+          expect(
+            await _version(db),
+            EncryptedLocalDatabase.currentSchemaVersion,
+          );
+        },
+      );
     }
 
-    test('16 to 18 moves a K0 claim, then ledgers it if already active',
-        () async {
-      // K0 R4's v1 setting for dev_new, whose session and state are stored:
-      // schema 16 code activated it and stopped before deleting the claim.
-      const legacy = '{"v":1,"origin":"https://chat.example.org",'
-          '"username":"alice","account_id":"acct_me","device_id":"dev_new",'
-          '"device_name":"Phone","request_id":"arr_1",'
-          '"claim_token":"$_claimToken","device_secret":"s",'
-          '"ready_at":"2099-11-08T12:30:00.000Z","needs_login":false,'
-          '"mls":{"counter":1,'
-          '"key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
-          '"root":"cm9vdC12MS1maXh0dXJl","records":[]}}';
-      final file = await _tempFile();
-      var db = EncryptedLocalDatabase(NativeDatabase(file));
-      await db.writeSessionJson(_sessionJson(_newSession));
-      await db.writeCryptoState(
+    test(
+      '16 to 18 moves a K0 claim, then ledgers it if already active',
+      () async {
+        // K0 R4's v1 setting for dev_new, whose session and state are stored:
+        // schema 16 code activated it and stopped before deleting the claim.
+        const legacy = '{"v":1,"origin":"https://chat.example.org",'
+            '"username":"alice","account_id":"acct_me","device_id":"dev_new",'
+            '"device_name":"Phone","request_id":"arr_1",'
+            '"claim_token":"$_claimToken","device_secret":"s",'
+            '"ready_at":"2099-11-08T12:30:00.000Z","needs_login":false,'
+            '"mls":{"counter":1,'
+            '"key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
+            '"root":"cm9vdC12MS1maXh0dXJl","records":[]}}';
+        final file = await _tempFile();
+        var db = EncryptedLocalDatabase(NativeDatabase(file));
+        await db.writeSessionJson(_sessionJson(_newSession));
+        await db.writeCryptoState(
           counter: 3,
           stateKey: List.filled(32, 2),
           sealedState: [6],
-          cursor: 4);
-      await db.writeMetadata('setting:k0.pending_recovery', legacy);
-      await stripPendingEnrollmentSchema(db);
-      await db.customStatement('PRAGMA user_version = 16');
-      await db.close();
+          cursor: 4,
+        );
+        await db.writeMetadata('setting:k0.pending_recovery', legacy);
+        await stripPendingEnrollmentSchema(db);
+        await db.customStatement('PRAGMA user_version = 16');
+        await db.close();
 
-      db = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(db.close);
-      expect(await db.readPendingEnrollment(), isNull);
-      expect(await db.readMetadata('setting:k0.pending_recovery'), isNull);
-      final ledger = await db.readEnrollmentPromotions(
-          accountId: 'acct_me', deviceId: 'dev_new');
-      expect(ledger.single.kind, PendingEnrollment.kindAccountRecovery);
-      expect((await db.readCryptoState())?.counter, 3);
-      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
-    });
+        db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        expect(await db.readPendingEnrollment(), isNull);
+        expect(await db.readMetadata('setting:k0.pending_recovery'), isNull);
+        final ledger = await db.readEnrollmentPromotions(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        );
+        expect(ledger.single.kind, PendingEnrollment.kindAccountRecovery);
+        expect((await db.readCryptoState())?.counter, 3);
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
+      },
+    );
 
     test('a downgrade to 17 and a re-upgrade keep the ledger', () async {
       final file = await _tempFile();
@@ -404,16 +462,21 @@ void main() {
         expectedState: _row(_pendingLink()).state!,
         promotedAt: 1,
       );
-      expect(await db.promotePendingEnrollment(request),
-          EnrollmentPromotionOutcome.promoted);
+      expect(
+        await db.promotePendingEnrollment(request),
+        EnrollmentPromotionOutcome.promoted,
+      );
       await db.customStatement('PRAGMA user_version = 17');
       await db.close();
       db = EncryptedLocalDatabase(NativeDatabase(file));
       addTearDown(db.close);
       expect(
-          await db.readEnrollmentPromotions(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          hasLength(1));
+        await db.readEnrollmentPromotions(
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+        ),
+        hasLength(1),
+      );
       expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
   });
@@ -453,75 +516,95 @@ void main() {
         );
         db.armed = true;
         await expectLater(
-            db.promotePendingEnrollment(request), throwsA(isA<StateError>()));
+          db.promotePendingEnrollment(request),
+          throwsA(isA<StateError>()),
+        );
 
         expect(await db.readCryptoState(), isNull);
         expect(await db.readCryptoRecords(), isEmpty);
         expect(jsonDecode((await db.readSessionJson())!)['token'], '');
         expect(
-            await db.readEnrollmentPromotions(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isEmpty);
+          await db.readEnrollmentPromotions(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isEmpty,
+        );
         expect(await db.readHistoryTransfers(), isEmpty);
         final pending = await db.readPendingEnrollment();
         expect(pending?.state?.root, _root);
         expect(pending?.state?.records, hasLength(2));
 
         // The retry after the crash promotes.
-        expect(await db.promotePendingEnrollment(request),
-            EnrollmentPromotionOutcome.promoted);
+        expect(
+          await db.promotePendingEnrollment(request),
+          EnrollmentPromotionOutcome.promoted,
+        );
         expect((await db.readCryptoState())?.counter, 1);
         expect(await db.readHistoryTransfers(), hasLength(1));
       });
     }
 
-    test('a crash while replacing a signed-out identity keeps it whole',
-        () async {
-      final file = await _tempFile();
-      final db = _FailAt(NativeDatabase(file),
+    test(
+      'a crash while replacing a signed-out identity keeps it whole',
+      () async {
+        final file = await _tempFile();
+        final db = _FailAt(
+          NativeDatabase(file),
           (s) => s.startsWith('INSERT INTO local_accounts'),
-          armed: false);
-      addTearDown(db.close);
-      final signedOut = jsonEncode({
-        'base_url': _origin,
-        'token': '',
-        'account_id': 'acct_me',
-        'device_id': 'dev_old',
-      });
-      await db.writeSessionJson(signedOut);
-      await db.writeCryptoState(
+          armed: false,
+        );
+        addTearDown(db.close);
+        final signedOut = jsonEncode({
+          'base_url': _origin,
+          'token': '',
+          'account_id': 'acct_me',
+          'device_id': 'dev_old',
+        });
+        await db.writeSessionJson(signedOut);
+        await db.writeCryptoState(
           counter: 7,
           stateKey: List.filled(32, 7),
           sealedState: [7],
-          cursor: 5);
-      await db.writePendingEnrollment(_row(_pendingLink()));
-      final request = EnrollmentPromotionRequest(
-        kind: PendingEnrollment.kindDeviceLinkV3,
-        origin: _origin,
-        accountId: 'acct_me',
-        deviceId: 'dev_new',
-        promotionId: 'request-digest-1',
-        session: jsonDecode(_sessionJson(_newSession)) as Map<String, Object?>,
-        expectedState: _row(_pendingLink()).state!,
-        promotedAt: 1,
-      );
-      db.armed = true;
-      await expectLater(
-          db.promotePendingEnrollment(request), throwsA(isA<StateError>()));
-      expect(await db.readSessionJson(), signedOut);
-      expect((await db.readCryptoState())?.counter, 7);
-      expect(await db.readCursor(), 5);
-      expect(
+          cursor: 5,
+        );
+        await db.writePendingEnrollment(_row(_pendingLink()));
+        final request = EnrollmentPromotionRequest(
+          kind: PendingEnrollment.kindDeviceLinkV3,
+          origin: _origin,
+          accountId: 'acct_me',
+          deviceId: 'dev_new',
+          promotionId: 'request-digest-1',
+          session:
+              jsonDecode(_sessionJson(_newSession)) as Map<String, Object?>,
+          expectedState: _row(_pendingLink()).state!,
+          promotedAt: 1,
+        );
+        db.armed = true;
+        await expectLater(
+          db.promotePendingEnrollment(request),
+          throwsA(isA<StateError>()),
+        );
+        expect(await db.readSessionJson(), signedOut);
+        expect((await db.readCryptoState())?.counter, 7);
+        expect(await db.readCursor(), 5);
+        expect(
           await db.readEnrollmentPromotions(
-              accountId: 'acct_me', deviceId: 'dev_new'),
-          isEmpty);
-      expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isEmpty,
+        );
+        expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
 
-      expect(await db.promotePendingEnrollment(request),
-          EnrollmentPromotionOutcome.promoted);
-      expect((await db.readCryptoState())?.counter, 1);
-      expect(await db.readCursor(), 0);
-    });
+        expect(
+          await db.promotePendingEnrollment(request),
+          EnrollmentPromotionOutcome.promoted,
+        );
+        expect((await db.readCryptoState())?.counter, 1);
+        expect(await db.readCursor(), 0);
+      },
+    );
 
     test('a signed-in identity of another device is never replaced', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
@@ -529,7 +612,8 @@ void main() {
       await db.writeSessionJson(_sessionJson(_otherSession));
       await db.writePendingEnrollment(_row(_pendingLink()));
       await expectLater(
-          db.promotePendingEnrollment(EnrollmentPromotionRequest(
+        db.promotePendingEnrollment(
+          EnrollmentPromotionRequest(
             kind: PendingEnrollment.kindDeviceLinkV3,
             origin: _origin,
             accountId: 'acct_me',
@@ -539,8 +623,10 @@ void main() {
                 jsonDecode(_sessionJson(_newSession)) as Map<String, Object?>,
             expectedState: _row(_pendingLink()).state!,
             promotedAt: 1,
-          )),
-          throwsA(isA<EnrollmentPromotionRefused>()));
+          ),
+        ),
+        throwsA(isA<EnrollmentPromotionRefused>()),
+      );
       expect(await db.readSessionJson(), _sessionJson(_otherSession));
     });
 
@@ -561,17 +647,21 @@ void main() {
       await db.promotePendingEnrollment(request);
       // As an older build (schema 17 code after a downgrade) might leave it.
       await db.customStatement(
-          'INSERT INTO local_pending_enrollment (singleton, kind, origin, '
-          'account_id, device_id, payload_json, state_counter, state_key, '
-          "state_root) VALUES (1, 'k2_link_v3', ?, 'acct_me', 'dev_new', "
-          "'{}', 1, ?, ?)",
-          [_origin, _stateKey, _root]);
+        'INSERT INTO local_pending_enrollment (singleton, kind, origin, '
+        'account_id, device_id, payload_json, state_counter, state_key, '
+        "state_root) VALUES (1, 'k2_link_v3', ?, 'acct_me', 'dev_new', "
+        "'{}', 1, ?, ?)",
+        [_origin, _stateKey, _root],
+      );
       expect(await db.readPendingEnrollment(), isNull);
       expect(
-          await db.customSelect('SELECT * FROM local_pending_enrollment').get(),
-          isEmpty);
-      await expectLater(db.writePendingEnrollment(_row(_pendingLink())),
-          throwsA(isA<PendingEnrollmentConflict>()));
+        await db.customSelect('SELECT * FROM local_pending_enrollment').get(),
+        isEmpty,
+      );
+      await expectLater(
+        db.writePendingEnrollment(_row(_pendingLink())),
+        throwsA(isA<PendingEnrollmentConflict>()),
+      );
     });
   });
 
@@ -610,9 +700,9 @@ void main() {
       Future<void> promoted({HistoryTransferProgress? transfer}) async {
         await store.savePendingEnrollment(_pendingLink());
         expect(
-            await store
-                .promotePendingEnrollment(_promotion(transfer: transfer)),
-            EnrollmentPromotionOutcome.promoted);
+          await store.promotePendingEnrollment(_promotion(transfer: transfer)),
+          EnrollmentPromotionOutcome.promoted,
+        );
       }
 
       test('promotes the frozen identity in one step', () async {
@@ -629,43 +719,64 @@ void main() {
         final records = await store.loadCryptoRecords();
         expect(records, hasLength(2));
         expect(
-            records.any((r) =>
+          records.any(
+            (r) =>
                 r.kind == cryptoRecordKindKeyPackage &&
-                r.sealed.toString() == _recordSealed.toString()),
-            isTrue);
+                r.sealed.toString() == _recordSealed.toString(),
+          ),
+          isTrue,
+        );
         expect(await store.loadSyncCursor(), 0);
         expect(await store.loadPendingEnrollment(), isNull);
         expect(
-            await store.isEnrollmentPromoted(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isTrue);
-        expect((await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
-            HistoryTransferStage.awaitingHandoff);
+          await store.isEnrollmentPromoted(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isTrue,
+        );
+        expect(
+          (await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
+          HistoryTransferStage.awaitingHandoff,
+        );
       });
 
-      test('a retry after a lost outcome never reopens the frozen state',
-          () async {
-        await promoted();
-        // The identity moves on.
-        final next = StoredCryptoState(
+      test(
+        'a retry after a lost outcome never reopens the frozen state',
+        () async {
+          await promoted();
+          // The identity moves on.
+          final next = StoredCryptoState(
             counter: 2,
             stateKey: List<int>.from(_stateKey),
-            sealedState: utf8.encode('root-2'));
-        await store.commitLocalMlsState(
-            expectedCounter: 1, expectedCursor: 0, state: next);
-        expect(await store.promotePendingEnrollment(_promotion()),
-            EnrollmentPromotionOutcome.alreadyPromoted);
-        expect((await store.loadCryptoState())!.counter, 2);
-        expect((await store.loadCryptoState())!.sealedState,
-            utf8.encode('root-2'));
-        await expectLater(
+            sealedState: utf8.encode('root-2'),
+          );
+          await store.commitLocalMlsState(
+            expectedCounter: 1,
+            expectedCursor: 0,
+            state: next,
+          );
+          expect(
+            await store.promotePendingEnrollment(_promotion()),
+            EnrollmentPromotionOutcome.alreadyPromoted,
+          );
+          expect((await store.loadCryptoState())!.counter, 2);
+          expect(
+            (await store.loadCryptoState())!.sealedState,
+            utf8.encode('root-2'),
+          );
+          await expectLater(
             store.promotePendingEnrollment(_promotion(promotionId: 'other')),
-            throwsA(isA<EnrollmentPromotionRefused>()));
-        await expectLater(
+            throwsA(isA<EnrollmentPromotionRefused>()),
+          );
+          await expectLater(
             store.promotePendingEnrollment(
-                _promotion(kind: PendingEnrollment.kindAccountRecovery)),
-            throwsA(isA<EnrollmentPromotionRefused>()));
-      });
+              _promotion(kind: PendingEnrollment.kindAccountRecovery),
+            ),
+            throwsA(isA<EnrollmentPromotionRefused>()),
+          );
+        },
+      );
 
       // Finding 4: each path that empties the MLS state but keeps the
       // identity promoted.
@@ -677,23 +788,33 @@ void main() {
       };
       for (final emptier in emptiers.entries) {
         test('after ${emptier.key} the frozen identity stays dead', () async {
-          await store.saveSnapshot(const <Conversation>[],
-              const <String, List<ReceivedMessageEnvelope>>{}, 0);
+          await store.saveSnapshot(
+            const <Conversation>[],
+            const <String, List<ReceivedMessageEnvelope>>{},
+            0,
+          );
           await promoted(transfer: _incoming());
           await emptier.value(store);
           expect(await store.loadCryptoState(), isNull);
           expect(await store.loadHistoryTransfers(), isEmpty);
           expect(
-              await store.isEnrollmentPromoted(
-                  accountId: 'acct_me', deviceId: 'dev_new'),
-              isTrue);
+            await store.isEnrollmentPromoted(
+              accountId: 'acct_me',
+              deviceId: 'dev_new',
+            ),
+            isTrue,
+          );
           // No path brings the frozen state back.
-          await expectLater(store.savePendingEnrollment(_pendingLink()),
-              throwsA(isA<PendingEnrollmentConflict>()));
+          await expectLater(
+            store.savePendingEnrollment(_pendingLink()),
+            throwsA(isA<PendingEnrollmentConflict>()),
+          );
           expect(await store.loadPendingEnrollment(), isNull);
           final sessionBefore = await store.loadSession();
-          expect(await store.promotePendingEnrollment(_promotion()),
-              EnrollmentPromotionOutcome.alreadyPromoted);
+          expect(
+            await store.promotePendingEnrollment(_promotion()),
+            EnrollmentPromotionOutcome.alreadyPromoted,
+          );
           expect(await store.loadCryptoState(), isNull);
           expect((await store.loadSession())?.token, sessionBefore?.token);
           // A new enrollment of another device is unaffected.
@@ -703,51 +824,70 @@ void main() {
       }
 
       test('refuses without a matching pending identity', () async {
-        await expectLater(store.promotePendingEnrollment(_promotion()),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+        await expectLater(
+          store.promotePendingEnrollment(_promotion()),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         await store.savePendingEnrollment(_pendingLink());
         // Another frozen state than the one opened.
         final changed = _frozenState();
         await expectLater(
-            store.promotePendingEnrollment(_promotion(
-                state: StoredCryptoState(
-                    counter: 1,
-                    stateKey: changed.stateKey,
-                    sealedState: utf8.encode('another root'),
-                    changes: changed.changes))),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+          store.promotePendingEnrollment(
+            _promotion(
+              state: StoredCryptoState(
+                counter: 1,
+                stateKey: changed.stateKey,
+                sealedState: utf8.encode('another root'),
+                changes: changed.changes,
+              ),
+            ),
+          ),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         // A session for another device than the pending one.
         await expectLater(
-            store.promotePendingEnrollment(_promotion(session: _otherSession)),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+          store.promotePendingEnrollment(_promotion(session: _otherSession)),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         // Another kind than the pending one.
         await expectLater(
-            store.promotePendingEnrollment(
-                _promotion(kind: PendingEnrollment.kindAccountRecovery)),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+          store.promotePendingEnrollment(
+            _promotion(kind: PendingEnrollment.kindAccountRecovery),
+          ),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         expect(await store.loadCryptoState(), isNull);
         expect((await store.loadPendingEnrollment())?.deviceId, 'dev_new');
         expect(
-            await store.isEnrollmentPromoted(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isFalse);
+          await store.isEnrollmentPromoted(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isFalse,
+        );
       });
 
       test('refuses over another active identity', () async {
         await store.saveSession(_otherSession);
         await store.savePendingEnrollment(_pendingLink());
         // Another device is signed in.
-        await expectLater(store.promotePendingEnrollment(_promotion()),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+        await expectLater(
+          store.promotePendingEnrollment(_promotion()),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         // An MLS state is stored.
         await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 4,
-                stateKey: List<int>.filled(32, 4),
-                sealedState: const [4]),
-            3);
-        await expectLater(store.promotePendingEnrollment(_promotion()),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+          StoredCryptoState(
+            counter: 4,
+            stateKey: List<int>.filled(32, 4),
+            sealedState: const [4],
+          ),
+          3,
+        );
+        await expectLater(
+          store.promotePendingEnrollment(_promotion()),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         expect((await store.loadCryptoState())!.counter, 4);
         expect((await store.loadSession())!.deviceId, 'dev_other');
         expect(await store.loadPendingEnrollment(), isNotNull);
@@ -759,18 +899,23 @@ void main() {
       // refusal here would strand the new identity: it replaces the
       // signed-out one, as an identity change does.
       test('replaces a signed-out device of the same account', () async {
-        await store.saveSession(const Session(
+        await store.saveSession(
+          const Session(
             baseUrl: _origin,
             token: '',
             accountId: 'acct_me',
             deviceId: 'dev_old',
-            deviceSecret: 'secret_old'));
+            deviceSecret: 'secret_old',
+          ),
+        );
         await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 7,
-                stateKey: List<int>.filled(32, 7),
-                sealedState: const [7]),
-            5);
+          StoredCryptoState(
+            counter: 7,
+            stateKey: List<int>.filled(32, 7),
+            sealedState: const [7],
+          ),
+          5,
+        );
         await store.saveDraft('conv_old', 'old draft');
         await promoted(transfer: _incoming());
         final session = (await store.loadSession())!;
@@ -785,24 +930,32 @@ void main() {
         expect(await store.loadPendingEnrollment(), isNull);
         expect(await store.loadHistoryTransfers(), hasLength(1));
         expect(
-            await store.isEnrollmentPromoted(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isTrue);
+          await store.isEnrollmentPromoted(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isTrue,
+        );
       });
 
       test('replaces a signed-out identity of another account', () async {
-        await store.saveSession(const Session(
+        await store.saveSession(
+          const Session(
             baseUrl: _origin,
             token: '',
             accountId: 'acct_other',
             deviceId: 'dev_other',
-            deviceSecret: 'secret_other'));
+            deviceSecret: 'secret_other',
+          ),
+        );
         await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 7,
-                stateKey: List<int>.filled(32, 7),
-                sealedState: const [7]),
-            5);
+          StoredCryptoState(
+            counter: 7,
+            stateKey: List<int>.filled(32, 7),
+            sealedState: const [7],
+          ),
+          5,
+        );
         await store.saveDraft('conv_old', 'old draft');
         await promoted();
         expect((await store.loadSession())!.accountId, 'acct_me');
@@ -813,41 +966,53 @@ void main() {
       test('never replaces the pending identity\'s own stored state', () async {
         // Signed out as the pending identity with its MLS state stored: the
         // identity was made active once, so the frozen state stays refused.
-        await store.saveSession(const Session(
+        await store.saveSession(
+          const Session(
             baseUrl: _origin,
             token: '',
             accountId: 'acct_me',
             deviceId: 'dev_new',
-            deviceSecret: 'secret_new'));
+            deviceSecret: 'secret_new',
+          ),
+        );
         await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 4,
-                stateKey: List<int>.filled(32, 4),
-                sealedState: const [4]),
-            3);
+          StoredCryptoState(
+            counter: 4,
+            stateKey: List<int>.filled(32, 4),
+            sealedState: const [4],
+          ),
+          3,
+        );
         await store.saveDraft('conv_1', 'kept draft');
         await store.savePendingEnrollment(_pendingLink());
-        await expectLater(store.promotePendingEnrollment(_promotion()),
-            throwsA(isA<EnrollmentPromotionRefused>()));
+        await expectLater(
+          store.promotePendingEnrollment(_promotion()),
+          throwsA(isA<EnrollmentPromotionRefused>()),
+        );
         expect((await store.loadCryptoState())!.counter, 4);
         expect((await store.loadDrafts())['conv_1']?.text, 'kept draft');
         expect((await store.loadSession())!.token, '');
       });
 
-      test('resumes over a session an older build saved before its state',
-          () async {
-        await store.saveSession(_newSession);
-        await promoted();
-        expect((await store.loadCryptoState())!.counter, 1);
-      });
+      test(
+        'resumes over a session an older build saved before its state',
+        () async {
+          await store.saveSession(_newSession);
+          await promoted();
+          expect((await store.loadCryptoState())!.counter, 1);
+        },
+      );
 
       test('clear drops the ledger with the pending enrollment', () async {
         await promoted(transfer: _incoming());
         await store.clear();
         expect(
-            await store.isEnrollmentPromoted(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isFalse);
+          await store.isEnrollmentPromoted(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isFalse,
+        );
         expect(await store.loadHistoryTransfers(), isEmpty);
         expect(await store.loadPendingEnrollment(), isNull);
       });
@@ -857,69 +1022,95 @@ void main() {
         await store.clearCachedState();
         expect(await store.loadHistoryTransfers(), hasLength(1));
         expect(
-            await store.isEnrollmentPromoted(
-                accountId: 'acct_me', deviceId: 'dev_new'),
-            isTrue);
+          await store.isEnrollmentPromoted(
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+          ),
+          isTrue,
+        );
       });
 
       group('transfer progress', () {
         test('is only for the active identity', () async {
-          await expectLater(store.saveHistoryTransfer(_incoming()),
-              throwsA(isA<HistoryTransferConflict>()));
+          await expectLater(
+            store.saveHistoryTransfer(_incoming()),
+            throwsA(isA<HistoryTransferConflict>()),
+          );
           await promoted();
           await expectLater(
-              store.saveHistoryTransfer(_incoming(deviceId: 'dev_x')),
-              throwsA(isA<HistoryTransferConflict>()));
+            store.saveHistoryTransfer(_incoming(deviceId: 'dev_x')),
+            throwsA(isA<HistoryTransferConflict>()),
+          );
           await store.saveHistoryTransfer(_incoming());
           expect(await store.loadHistoryTransfers(), hasLength(1));
         });
 
-        test('freezes the handoff, digest and path; stages only go forward',
-            () async {
-          await promoted(transfer: _incoming());
-          final downloading = _incoming(
+        test(
+          'freezes the handoff, digest and path; stages only go forward',
+          () async {
+            await promoted(transfer: _incoming());
+            final downloading = _incoming(
               stage: HistoryTransferStage.downloading,
               handoff: _handoff,
               transferId: _transferId,
               path: '/private/k2.part',
-              offset: 100);
-          await store.saveHistoryTransfer(downloading);
-          // A write without the frozen fields keeps them.
-          await store.saveHistoryTransfer(downloading.copyWith(fileOffset: 0));
-          final kept = (await store.loadHistoryTransfer(_origin, 'link_1'))!;
-          expect(kept.handoff, _handoff);
-          expect(kept.transferId, _transferId);
-          expect(kept.filePath, '/private/k2.part');
-          expect(kept.fileOffset, 0);
-          for (final changed in <HistoryTransferProgress>[
-            _incoming(
+              offset: 100,
+            );
+            await store.saveHistoryTransfer(downloading);
+            // A write without the frozen fields keeps them.
+            await store.saveHistoryTransfer(
+              downloading.copyWith(fileOffset: 0),
+            );
+            final kept = (await store.loadHistoryTransfer(_origin, 'link_1'))!;
+            expect(kept.handoff, _handoff);
+            expect(kept.transferId, _transferId);
+            expect(kept.filePath, '/private/k2.part');
+            expect(kept.fileOffset, 0);
+            for (final changed in <HistoryTransferProgress>[
+              _incoming(
                 stage: HistoryTransferStage.downloading,
                 handoff: utf8.encode('another handoff'),
                 transferId: _transferId,
-                path: '/private/k2.part'),
-            _incoming(
+                path: '/private/k2.part',
+              ),
+              _incoming(
                 stage: HistoryTransferStage.downloading,
                 handoff: _handoff,
                 transferId: 'cd' * 32,
-                path: '/private/k2.part'),
-            _incoming(
+                path: '/private/k2.part',
+              ),
+              _incoming(
                 stage: HistoryTransferStage.downloading,
                 handoff: _handoff,
                 transferId: _transferId,
-                path: '/private/other.part'),
-            _incoming(), // back to awaiting the handoff
-          ]) {
-            await expectLater(store.saveHistoryTransfer(changed),
-                throwsA(isA<HistoryTransferConflict>()));
-          }
-          final done = downloading.copyWith(
-              stage: HistoryTransferStage.downloaded, fileOffset: 4096);
-          await store.saveHistoryTransfer(done);
-          expect((await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
-              HistoryTransferStage.downloaded);
-          expect(await store.deleteHistoryTransfer(_origin, 'link_1'), isTrue);
-          expect(await store.deleteHistoryTransfer(_origin, 'link_1'), isFalse);
-        });
+                path: '/private/other.part',
+              ),
+              _incoming(), // back to awaiting the handoff
+            ]) {
+              await expectLater(
+                store.saveHistoryTransfer(changed),
+                throwsA(isA<HistoryTransferConflict>()),
+              );
+            }
+            final done = downloading.copyWith(
+              stage: HistoryTransferStage.downloaded,
+              fileOffset: 4096,
+            );
+            await store.saveHistoryTransfer(done);
+            expect(
+              (await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
+              HistoryTransferStage.downloaded,
+            );
+            expect(
+              await store.deleteHistoryTransfer(_origin, 'link_1'),
+              isTrue,
+            );
+            expect(
+              await store.deleteHistoryTransfer(_origin, 'link_1'),
+              isFalse,
+            );
+          },
+        );
 
         test('refuses rows a stage cannot resume from', () async {
           await promoted();
@@ -928,23 +1119,27 @@ void main() {
             _incoming(stage: HistoryTransferStage.downloading),
             // Downloaded before the whole file is here.
             _incoming(
-                stage: HistoryTransferStage.downloaded,
-                handoff: _handoff,
-                transferId: _transferId,
-                path: '/p',
-                offset: 10),
+              stage: HistoryTransferStage.downloaded,
+              handoff: _handoff,
+              transferId: _transferId,
+              path: '/p',
+              offset: 10,
+            ),
             // An offset past the size.
             _incoming(
-                stage: HistoryTransferStage.downloading,
-                handoff: _handoff,
-                transferId: _transferId,
-                path: '/p',
-                offset: 5000),
+              stage: HistoryTransferStage.downloading,
+              handoff: _handoff,
+              transferId: _transferId,
+              path: '/p',
+              offset: 5000,
+            ),
             // A stage of the other direction.
             _incoming(stage: HistoryTransferStage.uploaded),
           ]) {
-            await expectLater(store.saveHistoryTransfer(invalid),
-                throwsA(isA<FormatException>()));
+            await expectLater(
+              store.saveHistoryTransfer(invalid),
+              throwsA(isA<FormatException>()),
+            );
           }
           expect(await store.loadHistoryTransfers(), isEmpty);
         });
@@ -952,57 +1147,74 @@ void main() {
         test('commits with the native state, or not at all', () async {
           await promoted(transfer: _incoming());
           final next = StoredCryptoState(
-              counter: 2,
-              stateKey: List<int>.from(_stateKey),
-              sealedState: utf8.encode('root-2'));
+            counter: 2,
+            stateKey: List<int>.from(_stateKey),
+            sealedState: utf8.encode('root-2'),
+          );
           final downloading = _incoming(
-              stage: HistoryTransferStage.downloading,
-              handoff: _handoff,
-              transferId: _transferId,
-              path: '/p');
+            stage: HistoryTransferStage.downloading,
+            handoff: _handoff,
+            transferId: _transferId,
+            path: '/p',
+          );
           await expectLater(
-              store.commitHistoryTransferState(
-                  expectedCounter: 5,
-                  expectedCursor: 0,
-                  state: StoredCryptoState(
-                      counter: 6,
-                      stateKey: List<int>.from(_stateKey),
-                      sealedState: utf8.encode('root-6')),
-                  transfer: downloading),
-              throwsA(anything));
+            store.commitHistoryTransferState(
+              expectedCounter: 5,
+              expectedCursor: 0,
+              state: StoredCryptoState(
+                counter: 6,
+                stateKey: List<int>.from(_stateKey),
+                sealedState: utf8.encode('root-6'),
+              ),
+              transfer: downloading,
+            ),
+            throwsA(anything),
+          );
           expect((await store.loadCryptoState())!.counter, 1);
-          expect((await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
-              HistoryTransferStage.awaitingHandoff);
+          expect(
+            (await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
+            HistoryTransferStage.awaitingHandoff,
+          );
           // A refused transfer leaves the state as it was too.
           await expectLater(
-              store.commitHistoryTransferState(
-                  expectedCounter: 1,
-                  expectedCursor: 0,
-                  state: next,
-                  transfer: _incoming(stage: HistoryTransferStage.downloading)),
-              throwsA(anything));
-          expect((await store.loadCryptoState())!.counter, 1);
-          await store.commitHistoryTransferState(
+            store.commitHistoryTransferState(
               expectedCounter: 1,
               expectedCursor: 0,
               state: next,
-              transfer: downloading);
+              transfer: _incoming(stage: HistoryTransferStage.downloading),
+            ),
+            throwsA(anything),
+          );
+          expect((await store.loadCryptoState())!.counter, 1);
+          await store.commitHistoryTransferState(
+            expectedCounter: 1,
+            expectedCursor: 0,
+            state: next,
+            transfer: downloading,
+          );
           expect((await store.loadCryptoState())!.counter, 2);
-          expect((await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
-              HistoryTransferStage.downloading);
+          expect(
+            (await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
+            HistoryTransferStage.downloading,
+          );
           expect(await store.loadSyncCursor(), 0);
         });
       });
 
       test('a history snapshot does not carry them', () async {
-        await store.saveSnapshot(const <Conversation>[],
-            const <String, List<ReceivedMessageEnvelope>>{}, 0);
+        await store.saveSnapshot(
+          const <Conversation>[],
+          const <String, List<ReceivedMessageEnvelope>>{},
+          0,
+        );
         await promoted(
-            transfer: _incoming(
-                stage: HistoryTransferStage.downloading,
-                handoff: _handoff,
-                transferId: _transferId,
-                path: '/private/SENTINEL-k2s18.part'));
+          transfer: _incoming(
+            stage: HistoryTransferStage.downloading,
+            handoff: _handoff,
+            transferId: _transferId,
+            path: '/private/SENTINEL-k2s18.part',
+          ),
+        );
         final history = await store.exportHistorySnapshot();
         for (final forbidden in <List<int>>[
           utf8.encode(_claimToken),
@@ -1022,18 +1234,20 @@ void main() {
   test('rows print no credential, key or handoff', () {
     final text = [
       _incoming(
-          stage: HistoryTransferStage.downloading,
-          handoff: _handoff,
-          transferId: _transferId,
-          path: '/p'),
+        stage: HistoryTransferStage.downloading,
+        handoff: _handoff,
+        transferId: _transferId,
+        path: '/p',
+      ),
       _promotion(),
       const EnrollmentPromotionRow(
-          kind: 'k2_link_v3',
-          origin: _origin,
-          accountId: 'acct_me',
-          deviceId: 'dev_new',
-          promotionId: 'request-digest-1',
-          promotedAt: 1),
+        kind: 'k2_link_v3',
+        origin: _origin,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        promotionId: 'request-digest-1',
+        promotedAt: 1,
+      ),
       const EnrollmentPromotionRefused('another session is active'),
       const HistoryTransferConflict('frozen transfer data changed'),
     ].join(' ');

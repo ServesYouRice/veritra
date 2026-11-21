@@ -66,6 +66,13 @@ the crypto surface since the freeze is in [`crypto.md`](crypto.md).
   session lifetimes, call authorization, group membership), including
   rollback and upgrade behaviour
 - Android/iOS native push and native crypto packaging
+- in-memory voice playback on iOS, macOS and Linux
+  (`mobile/lib/features/chat/loopback_clip_server.dart`): a decrypted note is
+  served over `http://127.0.0.1` on a random port and a 256-bit random path,
+  so it needs the ATS key `NSAllowsLocalNetworking` on iOS and macOS (local
+  loads only) and the macOS sandbox entitlement
+  `com.apple.security.network.server` (which is not loopback-scoped: the
+  code, not the sandbox, keeps the listener on 127.0.0.1)
 - `THIRD_PARTY_NOTICES.md`, lockfiles, CI, and release scripts
 - the OpenMLS 0.9.0 → 0.9.2 upgrade and the libcrux advisory exception (G27)
 
@@ -96,7 +103,8 @@ cd mobile && flutter analyze && flutter test && flutter build apk --release --fl
 ```
 
 On macOS, also run `./scripts/build-mobile-crypto.sh ios`, an unsigned release
-build, and the approved signing workflow. The release workflow generates SBOM,
+build (it refuses a crypto library built from uncommitted sources, D134), and
+the approved signing workflow. The release workflow generates SBOM,
 checksums, and provenance only after every gate passes.
 
 ## Signed-device matrix (G24)
@@ -104,6 +112,9 @@ checksums, and provenance only after every gate passes.
 Every row is pending until it is run on signed builds of one frozen candidate
 commit. Record sanitized platform versions and artifact digests, never device
 identifiers or signing material.
+
+The exact steps per row, the preflight and the evidence record are in
+[`g24-device-matrix.md`](g24-device-matrix.md) (`scripts/g24-matrix.py`).
 
 | Real-device flow | Android | iOS |
 |---|---|---|
@@ -128,8 +139,8 @@ recorded and checked, but never count: iOS `simulator-debug` (job
 
 | Platform | Signed file | Structural checks in `check-release-evidence.py` |
 |---|---|---|
-| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist whose `CFBundleIdentifier` is the pinned `ios.bundle_id`, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) whose `TeamIdentifier` is exactly the pinned `ios.team_id` and whose `application-identifier` is `<team>.<bundle>` (and `com.apple.developer.team-identifier`, when present, the team). The same zip rules as Android: no comment, one end record, no ZIP64 or multi-disk records, no duplicate entry names |
-| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger` (the no-namespace `package` attribute, raw string equal to the typed one, as Android reads it), not debuggable, `minSdkVersion` 24 or later (older releases verify only v1), arm64 crypto library, an APK Signature Scheme v2 block (Android 7.0-8.1 never read v3) and any v3 blocks, each with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Each block's public key must be that certificate's, and its signatures and signed content digests must verify over the APK (RSA PKCS#1 v1.5 or PSS, ECDSA P-256 or P-384; the pinned certificate is public, so naming it proves nothing). Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map, a `manifest` element that is not the single root, or two attributes of one name or resource ID in an element |
+| iOS | `.ipa` | One `Payload/*.app`, iphoneos plist whose `CFBundleIdentifier` is the pinned `ios.bundle_id`, arm64 iOS Mach-O with a code signature, distribution profile (`get-task-allow=false`) whose `TeamIdentifier` is exactly the pinned `ios.team_id` and whose `application-identifier` is `<team>.<bundle>` (and `com.apple.developer.team-identifier`, when present, the team). A crypto build record `veritra-crypto/build-info.txt` in the app that says `source_tree_dirty=false` exactly once (D134; the Runner's Crypto Build Record phase copies it in and refuses a release build without it). The same zip rules as Android: no comment, one end record, no ZIP64 or multi-disk records, no duplicate entry names |
+| Android | `.apk` (not `.aab`) | `org.veritra.private_messenger` (the no-namespace `package` attribute, raw string equal to the typed one, as Android reads it), not debuggable, `minSdkVersion` 24 or later (older releases verify only v1), arm64 crypto library, a crypto build record `assets/veritra-crypto/build-info.txt` that says `source_tree_dirty=false` exactly once (D134), an APK Signature Scheme v2 block (Android 7.0-8.1 never read v3) and any v3 blocks, each with exactly one signer whose certificate SHA-256 is the pinned `android.release_certificate_sha256` (the record's `signing.certificate_sha256` must name it too) and is not the Android debug certificate. Each block's public key must be that certificate's, and its signatures and signed content digests must verify over the APK (RSA PKCS#1 v1.5 or PSS, ECDSA P-256 or P-384; the pinned certificate is public, so naming it proves nothing). Archives a lenient parser could read differently from Android are refused: a zip comment, a second end-of-central-directory signature, ZIP64 or multi-disk records, duplicate entry names, and a manifest with a second (or late) string pool or resource map, a `manifest` element that is not the single root, or two attributes of one name or resource ID in an element |
 
 Both bind the platform, type, candidate commit, the file's sha256 and the
 provenance (workflow, job, run, source commit). A signed file with the same

@@ -23,10 +23,10 @@ abstract class NotificationSettingsStore {
 }
 
 class SecureNotificationSettingsStore implements NotificationSettingsStore {
-  SecureNotificationSettingsStore(
-      {FlutterSecureStorage? storage,
-      ProfileScope scope = const ProfileScope()})
-      : _key = scope.secureKey('notifications.hide_preview.v1'),
+  SecureNotificationSettingsStore({
+    FlutterSecureStorage? storage,
+    ProfileScope scope = const ProfileScope(),
+  })  : _key = scope.secureKey('notifications.hide_preview.v1'),
         _isPrimary = scope.isPrimary,
         _storage = storage ??
             const FlutterSecureStorage(
@@ -216,20 +216,21 @@ class MessageNotifier {
     final candidates = <String,
         ({ReceivedMessageEnvelope envelope, String text, bool mentioned})>{};
     for (final envelope in envelopes) {
-      final local = state.historyFor(envelope.conversationId).forEnvelope(
-            envelope,
-          );
+      final local =
+          state.historyFor(envelope.conversationId).forEnvelope(envelope);
       final candidate = messageNoticeCandidate(
-          session: session,
-          envelope: envelope,
-          message: local,
-          now: _now(),
-          blocked: state.isBlocked(envelope.senderAccountId),
-          conversationAccepted: state.conversationOpen(envelope.conversationId),
-          freshness: freshness);
+        session: session,
+        envelope: envelope,
+        message: local,
+        now: _now(),
+        blocked: state.isBlocked(envelope.senderAccountId),
+        conversationAccepted: state.conversationOpen(envelope.conversationId),
+        freshness: freshness,
+      );
       if (candidate == null) continue;
       final mentioned = candidate.allowedWhenMuted(
-          mentionsInMutedChats: state.mentionsInMutedChats);
+        mentionsInMutedChats: state.mentionsInMutedChats,
+      );
       if (!_announced.add(envelope.id)) continue;
       // One notification per conversation: the newest message.
       final previous = candidates[envelope.conversationId];
@@ -242,7 +243,7 @@ class MessageNotifier {
           text: candidate.concealsSpoiler
               ? l10n().w8HiddenSpoiler
               : candidate.text,
-          mentioned: mentioned
+          mentioned: mentioned,
         );
       }
     }

@@ -40,6 +40,24 @@
 /scripts/check-dart-licenses_test.py @ServesYouRice
 /scripts/check-gradle-inputs.py @ServesYouRice
 /scripts/check-gradle-inputs_test.py @ServesYouRice
+/scripts/check-gradle-locks.py @ServesYouRice
+/scripts/check-gradle-locks_test.py @ServesYouRice
+/scripts/gradle-lock.sh @ServesYouRice
+/scripts/repro/ @ServesYouRice
+/scripts/repro_test.py @ServesYouRice
+/scripts/release-rc.py @ServesYouRice
+/scripts/release-rc_test.py @ServesYouRice
+/scripts/update-feed.py @ServesYouRice
+/scripts/update-feed_test.py @ServesYouRice
+/scripts/g24-matrix.py @ServesYouRice
+/scripts/g24-matrix_test.py @ServesYouRice
+/mobile/lib/desktop/update_trust.dart @ServesYouRice
+/mobile/lib/desktop/update_installer.dart @ServesYouRice
+/mobile/lib/desktop/update_service.dart @ServesYouRice
+/mobile/lib/desktop/update_verifier.dart @ServesYouRice
+/mobile/test/fixtures/update-feed/ @ServesYouRice
+/crypto/rust/src/update_feed.rs @ServesYouRice
+/mobile/android/gradle/ @ServesYouRice
 
 # The G27 advisory exceptions the gate checks for expiry.
 /crypto/rust/audit-policy.json @ServesYouRice

@@ -196,9 +196,7 @@ void main() {
       );
     });
 
-    testWidgets('widgets outside the app fall back to English', (
-      tester,
-    ) async {
+    testWidgets('widgets outside the app fall back to English', (tester) async {
       late BuildContext context;
       await tester.pumpWidget(
         MaterialApp(
@@ -248,8 +246,9 @@ void main() {
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
       final approve = find.byKey(const ValueKey<String>('device-link-approve'));
-      final field =
-          find.byKey(const ValueKey<String>('device-link-code-field'));
+      final field = find.byKey(
+        const ValueKey<String>('device-link-code-field'),
+      );
       await tester.ensureVisible(approve);
       expect(tester.widget<FilledButton>(approve).onPressed, isNull);
 
@@ -286,10 +285,14 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
-      expect(find.byKey(const ValueKey<String>('device-link-approve')),
-          findsNothing);
-      expect(find.byKey(const ValueKey<String>('device-link-code-field')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('device-link-approve')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('device-link-code-field')),
+        findsNothing,
+      );
       expect(find.textContaining('Checking the new device'), findsOneWidget);
     });
 

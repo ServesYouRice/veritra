@@ -320,10 +320,19 @@ class Channel {
 }
 
 class ChannelCreation {
-  const ChannelCreation({required this.channel, required this.conversation});
+  const ChannelCreation({
+    required this.channel,
+    required this.conversation,
+    this.skippedMembers = 0,
+  });
 
   final Channel channel;
   final Conversation conversation;
+
+  /// Community members the server left out of the channel because they are
+  /// in the most chats an account may (D134). Only a legacy-layout channel
+  /// can leave anyone out; an older server never sends it.
+  final int skippedMembers;
 
   factory ChannelCreation.fromJson(Map<String, Object?> json) =>
       ChannelCreation(
@@ -333,6 +342,10 @@ class ChannelCreation {
         conversation: Conversation.fromJson(
           Map<String, Object?>.from(json['conversation']! as Map),
         ),
+        skippedMembers: switch (json['skipped_members']) {
+          final num n when n > 0 => n.toInt(),
+          _ => 0,
+        },
       );
 }
 
@@ -378,16 +391,32 @@ class Invite {
   });
 
   final String id;
+
+  /// The registration code, or empty when this device has none. The server
+  /// keeps only a hash and returns the code once, when the invite is
+  /// created; a listed invite gets its code from this device's local copy
+  /// (see `AppState.refreshInvites`). A bearer credential: never logged.
   final String code;
   final int maxUses;
   final int uses;
   final DateTime? expiresAt;
   final DateTime? createdAt;
 
+  /// This invite with [code] in place of its own.
+  Invite withCode(String code) => Invite(
+        id: id,
+        code: code,
+        maxUses: maxUses,
+        uses: uses,
+        expiresAt: expiresAt,
+        createdAt: createdAt,
+      );
+
   factory Invite.fromJson(Map<String, Object?> json) {
     return Invite(
       id: json['id'] as String,
-      code: json['code'] as String,
+      // Listed invites carry no code (the server keeps only its hash).
+      code: json['code'] as String? ?? '',
       maxUses: (json['max_uses'] as num?)?.toInt() ?? 0,
       uses: (json['uses'] as num?)?.toInt() ?? 0,
       expiresAt: _parseOptionalTime(json['expires_at']),
@@ -500,10 +529,12 @@ class MessageEnvelope {
           const <Object?>[],
       replyToId: json['reply_to_id'] as String?,
       threadRootId: json['thread_root_id'] as String?,
-      frankCommit:
-          ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
-      sealedBody:
-          ReceivedMessageEnvelope.frankCommitFromJson(json['sealed_body']),
+      frankCommit: ReceivedMessageEnvelope.frankCommitFromJson(
+        json['frank_commit'],
+      ),
+      sealedBody: ReceivedMessageEnvelope.frankCommitFromJson(
+        json['sealed_body'],
+      ),
       sealedToken: json['l2_sealed_token'] == null
           ? null
           : SealedToken.fromLocalJson(json['l2_sealed_token']),

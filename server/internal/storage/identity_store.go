@@ -187,7 +187,7 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 	}
 	defer tx.Rollback()
 	var inviteID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM invites WHERE code = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?)`, strings.TrimSpace(input.InviteCode), nowString()).Scan(&inviteID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM invites WHERE code_hash = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?)`, inviteCodeHash(input.InviteCode), nowString()).Scan(&inviteID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AccountDevice{}, ErrInviteInvalid
 		}
@@ -748,7 +748,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 	// no device shows evidence, and mlsRevocationCoordinator re-checks it.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.conversation_id,
-		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+` THEN d.id END), MIN(d.id))
+		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id")+` THEN d.id END), MIN(d.id))
 		FROM memberships m
 		JOIN memberships participants ON participants.conversation_id = m.conversation_id
 		JOIN devices d ON d.account_id = participants.account_id
@@ -806,7 +806,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			JOIN devices d ON d.account_id = m.account_id
 			WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
 			  AND ((NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
-			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+`)
+			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id")+`)
 			       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
 			                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 			item.conversationID, deviceID, item.conversationID, deviceID); err != nil {
@@ -833,7 +833,9 @@ func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int,
 		return domain.Invite{}, err
 	}
 	createdAt := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO invites(id, code, created_by, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?)`, id, code, createdBy, maxUses, nullableTime(expiresAt), formatTime(createdAt))
+	// Only the hash is kept (migration 0094); the code goes back to the
+	// creator in this response and nowhere else.
+	_, err = s.db.ExecContext(ctx, `INSERT INTO invites(id, code_hash, created_by, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?)`, id, inviteCodeHash(code), createdBy, maxUses, nullableTime(expiresAt), formatTime(createdAt))
 	if err != nil {
 		return domain.Invite{}, err
 	}
@@ -841,10 +843,11 @@ func (s *Store) CreateInvite(ctx context.Context, createdBy string, maxUses int,
 }
 
 // ListInvites returns the invites created by the given account, newest
-// first. Invites are intentionally not visible across accounts: the code is
-// a bearer credential for registration.
+// first, without their codes: the server keeps only a hash of each code (a
+// bearer credential for registration), so only CreateInvite's answer ever
+// carries one. Invites are not visible across accounts.
 func (s *Store) ListInvites(ctx context.Context, createdBy string) ([]domain.Invite, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, code, created_by, max_uses, uses, expires_at, created_at, revoked_at FROM invites WHERE created_by = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`, createdBy, nowString())
+	rows, err := s.db.QueryContext(ctx, `SELECT id, created_by, max_uses, uses, expires_at, created_at, revoked_at FROM invites WHERE created_by = ? AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC`, createdBy, nowString())
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +857,7 @@ func (s *Store) ListInvites(ctx context.Context, createdBy string) ([]domain.Inv
 		var invite domain.Invite
 		var expires, revoked sql.NullString
 		var created string
-		if err := rows.Scan(&invite.ID, &invite.Code, &invite.CreatedBy, &invite.MaxUses, &invite.Uses, &expires, &created, &revoked); err != nil {
+		if err := rows.Scan(&invite.ID, &invite.CreatedBy, &invite.MaxUses, &invite.Uses, &expires, &created, &revoked); err != nil {
 			return nil, err
 		}
 		invite.ExpiresAt = parseOptionalTime(expires)

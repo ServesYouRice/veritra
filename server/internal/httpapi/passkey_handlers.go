@@ -404,7 +404,12 @@ func (a *API) passkeyRegisterOptions(w http.ResponseWriter, r *http.Request, pri
 	}
 	username, err := a.Store.PasskeyAccountUsername(r.Context(), principal.AccountID)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+		// Only a gone account is a 401 (the app ends its session on one).
+		if errors.Is(err, storage.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "passkey_options_failed")
 		return
 	}
 	handle, err := a.Store.PasskeyUserHandle(r.Context(), principal.AccountID, true)

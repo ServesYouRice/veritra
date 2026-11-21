@@ -7,7 +7,9 @@ import '../../l10n/l10n.dart';
 /// (`POST /auth/reauth`), for actions that need recent authentication.
 /// Returns whether it succeeded; a failure is shown as a snack bar.
 Future<bool> confirmPasswordForRecentAuth(
-    BuildContext context, AppState state) async {
+  BuildContext context,
+  AppState state,
+) async {
   final password = await showDialog<String>(
     context: context,
     builder: (_) => const _PasswordDialog(),
@@ -15,8 +17,9 @@ Future<bool> confirmPasswordForRecentAuth(
   if (password == null || password.isEmpty) return false;
   final ok = await state.reauthenticate(password);
   if (!ok && context.mounted && state.error != null) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(state.error!)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(state.error!)));
   }
   return ok;
 }
@@ -74,8 +77,11 @@ class _PasswordDialogState extends State<_PasswordDialog> {
 
 /// U23: shows or hides a password field's text.
 class SecretRevealButton extends StatelessWidget {
-  const SecretRevealButton(
-      {required this.shown, required this.onPressed, super.key});
+  const SecretRevealButton({
+    required this.shown,
+    required this.onPressed,
+    super.key,
+  });
 
   final bool shown;
   final VoidCallback onPressed;
@@ -86,7 +92,8 @@ class SecretRevealButton extends StatelessWidget {
     return IconButton(
       tooltip: shown ? l10n.connectHidePassword : l10n.connectShowPassword,
       icon: Icon(
-          shown ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+        shown ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+      ),
       onPressed: onPressed,
     );
   }

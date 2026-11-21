@@ -39,21 +39,30 @@ class _NoBindings implements NativeCryptoBindings {
 class _Server implements ProfileApi {
   final Map<String, (int, String, Uint8List)> rows = {};
   @override
-  Future<ProfileFetch> fetch(String kind, String subjectId,
-          {int? ifNoneMatchVersion}) async =>
+  Future<ProfileFetch> fetch(
+    String kind,
+    String subjectId, {
+    int? ifNoneMatchVersion,
+  }) async =>
       throw ApiException(404, '');
   @override
-  Future<int> put(String kind, String subjectId, Uint8List blob,
-      {required String keyId, int? ifMatchVersion}) async {
+  Future<int> put(
+    String kind,
+    String subjectId,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) async {
     final next = (rows['$kind/$subjectId']?.$1 ?? 0) + 1;
     rows['$kind/$subjectId'] = (next, keyId, blob);
     return next;
   }
 
   @override
-  Future<List<ProfileVersion>> versions(
-          {List<String> accountIds = const [],
-          List<String> conversationIds = const []}) async =>
+  Future<List<ProfileVersion>> versions({
+    List<String> accountIds = const [],
+    List<String> conversationIds = const [],
+  }) async =>
       const [];
 }
 
@@ -115,8 +124,9 @@ Future<ProfileService> _service(
 Future<Uint8List> _pngBytes(int side) async {
   final recorder = ui.PictureRecorder();
   ui.Canvas(recorder).drawRect(
-      ui.Rect.fromLTWH(0, 0, side.toDouble(), side.toDouble()),
-      ui.Paint()..color = const ui.Color(0xff3366cc));
+    ui.Rect.fromLTWH(0, 0, side.toDouble(), side.toDouble()),
+    ui.Paint()..color = const ui.Color(0xff3366cc),
+  );
   final image = await recorder.endRecording().toImage(side, side);
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   return data!.buffer.asUint8List();
@@ -126,8 +136,9 @@ Future<Uint8List> _pngBytes(int side) async {
 /// clock stays under the test's control, until [done] holds.
 Future<void> _settle(WidgetTester tester, bool Function() done) async {
   for (var i = 0; i < 40 && !done(); i++) {
-    await tester
-        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
     await tester.pump(const Duration(milliseconds: 50));
   }
 }
@@ -139,9 +150,14 @@ void main() {
     late MemoryLocalStore store;
     setUp(() => store = MemoryLocalStore());
 
-    Future<void> shared(String kind, String id, String? name,
-        {Uint8List? photo}) async {
-      await store.saveProfile(StoredProfile(
+    Future<void> shared(
+      String kind,
+      String id,
+      String? name, {
+      Uint8List? photo,
+    }) async {
+      await store.saveProfile(
+        StoredProfile(
           kind: kind,
           subjectId: id,
           serverVersion: 1,
@@ -149,38 +165,60 @@ void main() {
           revision: 1,
           name: name,
           photoPng: photo,
-          fetchedAt: 1));
+          fetchedAt: 1,
+        ),
+      );
     }
 
     final dm = Conversation(
-        id: 'conv_dm', kind: 'dm', peerAccountId: bob, peerUsername: 'bob');
+      id: 'conv_dm',
+      kind: 'dm',
+      peerAccountId: bob,
+      peerUsername: 'bob',
+    );
     final group = Conversation(id: grp, kind: 'group', title: 'Old title');
 
-    testWidgets('a DM shows the shared name, else the username',
-        (tester) async {
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) => Text(conversationTitle(context.l10n, dm)),
-      )));
+    testWidgets('a DM shows the shared name, else the username', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) => Text(conversationTitle(context.l10n, dm)),
+          ),
+        ),
+      );
       expect(find.text('@bob'), findsOneWidget);
       await shared('account', bob, 'Bobby');
       final service = await _service(store);
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) =>
-            Text(conversationTitle(context.l10n, dm, profiles: service)),
-      )));
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) =>
+                Text(conversationTitle(context.l10n, dm, profiles: service)),
+          ),
+        ),
+      );
       expect(find.text('Bobby'), findsOneWidget);
     });
 
-    testWidgets('a group shows its shared name over the old server title',
-        (tester) async {
+    testWidgets('a group shows its shared name over the old server title', (
+      tester,
+    ) async {
       await shared('conversation', grp, 'Walkers');
       final service = await _service(store);
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) => Column(children: [
-          Text(conversationTitle(context.l10n, group)),
-          Text(conversationTitle(context.l10n, group, profiles: service)),
-        ]),
-      )));
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) => Column(
+              children: [
+                Text(conversationTitle(context.l10n, group)),
+                Text(conversationTitle(context.l10n, group, profiles: service)),
+              ],
+            ),
+          ),
+        ),
+      );
       expect(find.text('Old title'), findsOneWidget);
       expect(find.text('Walkers'), findsOneWidget);
     });
@@ -188,47 +226,66 @@ void main() {
     testWidgets('a removed profile falls back to the username', (tester) async {
       await shared('account', bob, null);
       final service = await _service(store);
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) =>
-            Text(conversationTitle(context.l10n, dm, profiles: service)),
-      )));
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) =>
+                Text(conversationTitle(context.l10n, dm, profiles: service)),
+          ),
+        ),
+      );
       expect(find.text('@bob'), findsOneWidget);
     });
 
-    testWidgets('a photo is drawn, and a broken one shows the initials',
-        (tester) async {
+    testWidgets('a photo is drawn, and a broken one shows the initials', (
+      tester,
+    ) async {
       final good = await tester.runAsync(() => _pngBytes(16));
       await shared('account', bob, 'Bobby', photo: good);
       var service = await _service(store);
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) =>
-            conversationAvatar(context, dm, profiles: service, radius: 20),
-      )));
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) =>
+                conversationAvatar(context, dm, profiles: service, radius: 20),
+          ),
+        ),
+      );
       expect(find.byType(PhotoAvatar), findsOneWidget);
 
-      await shared('account', bob, 'Bobby',
-          photo: Uint8List.fromList(List.filled(40, 7)));
+      await shared(
+        'account',
+        bob,
+        'Bobby',
+        photo: Uint8List.fromList(List.filled(40, 7)),
+      );
       service = await _service(store);
-      await tester.pumpWidget(_app(Builder(
-        builder: (context) =>
-            conversationAvatar(context, dm, profiles: service, radius: 20),
-      )));
+      await tester.pumpWidget(
+        _app(
+          Builder(
+            builder: (context) =>
+                conversationAvatar(context, dm, profiles: service, radius: 20),
+          ),
+        ),
+      );
       await tester.pump();
       await tester.pump();
       expect(find.text('BO'), findsOneWidget);
     });
 
-    testWidgets('a message request shows the username, not the shared name',
-        (tester) async {
+    testWidgets('a message request shows the username, not the shared name', (
+      tester,
+    ) async {
       await shared('account', bob, 'Bobby');
       final service = await _service(store);
       final api = _ListApi([
         Conversation(
-            id: 'conv_req',
-            kind: 'dm',
-            peerAccountId: bob,
-            peerUsername: 'bob',
-            createdBy: bob),
+          id: 'conv_req',
+          kind: 'dm',
+          peerAccountId: bob,
+          peerUsername: 'bob',
+          createdBy: bob,
+        ),
       ]);
       final state = _state(profiles: service)..api = api;
       await state.refreshConversations();
@@ -241,129 +298,179 @@ void main() {
       expect(find.text('Bobby'), findsNothing);
     });
 
-    testWidgets('the profile screen offers the editor only with profiles',
-        (tester) async {
+    testWidgets('the profile screen offers the editor only with profiles', (
+      tester,
+    ) async {
       await tester.pumpWidget(_app(ProfileScreen(state: _state())));
       expect(find.byKey(const Key('profile-edit-tile')), findsNothing);
+      // U9: the "unavailable" notice shows only while editing is unavailable.
+      await tester.scrollUntilVisible(
+          find.text('Encryption identity pending'), 200);
+      expect(find.text('Encryption identity pending'), findsOneWidget);
       final service = await _service(store);
-      await tester
-          .pumpWidget(_app(ProfileScreen(state: _state(profiles: service))));
+      await tester.pumpWidget(
+        _app(ProfileScreen(state: _state(profiles: service))),
+      );
       expect(find.byKey(const Key('profile-edit-tile')), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -2000));
+      await tester.pump();
+      expect(find.text('Encryption identity pending', skipOffstage: false),
+          findsNothing);
     });
 
-    testWidgets('the profile screen shows the shared name above the username',
-        (tester) async {
+    testWidgets('the profile screen shows the shared name above the username', (
+      tester,
+    ) async {
       await shared('account', ana, 'Ana Banana');
       final service = await _service(store);
-      await tester
-          .pumpWidget(_app(ProfileScreen(state: _state(profiles: service))));
+      await tester.pumpWidget(
+        _app(ProfileScreen(state: _state(profiles: service))),
+      );
       expect(find.text('Ana Banana'), findsWidgets);
       expect(find.text('@ana'), findsWidgets);
     });
   });
 
   group('editor', () {
-    testWidgets('a name with direction characters never enters the field',
-        (tester) async {
+    testWidgets('a name with direction characters never enters the field', (
+      tester,
+    ) async {
       final service = await _service(MemoryLocalStore());
       await tester.pumpWidget(
-          _app(ProfileEditScreen.account(state: _state(profiles: service))));
+        _app(ProfileEditScreen.account(state: _state(profiles: service))),
+      );
       await tester.enterText(
-          find.byKey(const Key('profile-name')), 'A\u202eB\u0007C');
+        find.byKey(const Key('profile-name')),
+        'A\u202eB\u0007C',
+      );
       await tester.pump();
-      final field =
-          tester.widget<TextField>(find.byKey(const Key('profile-name')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('profile-name')),
+      );
       expect(field.controller!.text, 'ABC');
     });
 
-    testWidgets('a name longer than the limit is held at the limit',
-        (tester) async {
+    testWidgets('a name longer than the limit is held at the limit', (
+      tester,
+    ) async {
       final service = await _service(MemoryLocalStore());
       await tester.pumpWidget(
-          _app(ProfileEditScreen.account(state: _state(profiles: service))));
+        _app(ProfileEditScreen.account(state: _state(profiles: service))),
+      );
       await tester.enterText(find.byKey(const Key('profile-name')), 'x' * 100);
       await tester.pump();
-      final field =
-          tester.widget<TextField>(find.byKey(const Key('profile-name')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('profile-name')),
+      );
       expect(field.controller!.text.length, profileAccountNameMax);
     });
 
     testWidgets('a group editor allows a longer name', (tester) async {
       final service = await _service(MemoryLocalStore());
-      await tester.pumpWidget(_app(ProfileEditScreen.group(
-          state: _state(profiles: service), conversationId: grp)));
+      await tester.pumpWidget(
+        _app(
+          ProfileEditScreen.group(
+            state: _state(profiles: service),
+            conversationId: grp,
+          ),
+        ),
+      );
       await tester.enterText(find.byKey(const Key('profile-name')), 'x' * 100);
       await tester.pump();
-      final field =
-          tester.widget<TextField>(find.byKey(const Key('profile-name')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('profile-name')),
+      );
       expect(field.controller!.text.length, profileConversationNameMax);
       expect(find.text('Group name'), findsOneWidget);
     });
 
-    testWidgets('a picture that cannot be read shows a message',
-        (tester) async {
+    testWidgets('a picture that cannot be read shows a message', (
+      tester,
+    ) async {
       final service = await _service(MemoryLocalStore());
-      await tester.pumpWidget(_app(ProfileEditScreen.account(
-        state: _state(profiles: service),
-        pickPhoto: () async => Uint8List.fromList([1, 2, 3]),
-      )));
+      await tester.pumpWidget(
+        _app(
+          ProfileEditScreen.account(
+            state: _state(profiles: service),
+            pickPhoto: () async => Uint8List.fromList([1, 2, 3]),
+          ),
+        ),
+      );
       await tester.tap(find.byKey(const Key('profile-photo-choose')));
       await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 50)));
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
       await tester.pump();
-      expect(find.text("That picture can't be used. Try another one."),
-          findsOneWidget);
+      expect(
+        find.text("That picture can't be used. Try another one."),
+        findsOneWidget,
+      );
     });
 
     testWidgets('cancelling the chooser changes nothing', (tester) async {
       final service = await _service(MemoryLocalStore());
-      await tester.pumpWidget(_app(ProfileEditScreen.account(
-        state: _state(profiles: service),
-        pickPhoto: () async => null,
-      )));
+      await tester.pumpWidget(
+        _app(
+          ProfileEditScreen.account(
+            state: _state(profiles: service),
+            pickPhoto: () async => null,
+          ),
+        ),
+      );
       await tester.tap(find.byKey(const Key('profile-photo-choose')));
       await tester.pump();
       expect(find.byKey(const Key('profile-photo-remove')), findsNothing);
     });
 
-    testWidgets('choosing then saving uploads an encrypted record',
-        skip: skip != false, (tester) async {
-      final server = _Server();
-      final store = MemoryLocalStore();
-      final codec = ProfileRecordCodec(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
-      final service = await _service(store, api: server, codec: codec);
-      final png = await tester.runAsync(() => _pngBytes(300));
-      final state = _state(profiles: service);
-      await tester.pumpWidget(_app(ProfileEditScreen.account(
-        state: state,
-        pickPhoto: () async => png,
-      )));
-      await tester.tap(find.byKey(const Key('profile-photo-choose')));
-      await _settle(
+    testWidgets(
+      'choosing then saving uploads an encrypted record',
+      skip: skip != false,
+      (tester) async {
+        final server = _Server();
+        final store = MemoryLocalStore();
+        final codec = ProfileRecordCodec(
+          NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+        );
+        final service = await _service(store, api: server, codec: codec);
+        final png = await tester.runAsync(() => _pngBytes(300));
+        final state = _state(profiles: service);
+        await tester.pumpWidget(
+          _app(
+            ProfileEditScreen.account(state: state, pickPhoto: () async => png),
+          ),
+        );
+        await tester.tap(find.byKey(const Key('profile-photo-choose')));
+        await _settle(
           tester,
           () => find
               .byKey(const Key('profile-photo-remove'))
               .evaluate()
-              .isNotEmpty);
-      expect(find.byKey(const Key('profile-photo-remove')), findsOneWidget);
-      await tester.enterText(find.byKey(const Key('profile-name')), '  Ana  ');
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('profile-save')));
-      await _settle(tester, () => server.rows.isNotEmpty);
-      await _settle(tester, () => service.own != null);
-      final row = server.rows['account/$ana']!;
-      expect(row.$3.length, 4 + 8 + 16 + 256 * 1024);
-      expect(service.own?.name, 'Ana');
-      expect(service.own?.photoPng, isNotNull);
-    });
+              .isNotEmpty,
+        );
+        expect(find.byKey(const Key('profile-photo-remove')), findsOneWidget);
+        await tester.enterText(
+          find.byKey(const Key('profile-name')),
+          '  Ana  ',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('profile-save')));
+        await _settle(tester, () => server.rows.isNotEmpty);
+        await _settle(tester, () => service.own != null);
+        final row = server.rows['account/$ana']!;
+        expect(row.$3.length, 4 + 8 + 16 + 256 * 1024);
+        expect(service.own?.name, 'Ana');
+        expect(service.own?.photoPng, isNotNull);
+      },
+    );
 
-    testWidgets('removing the photo keeps the name', skip: skip != false,
-        (tester) async {
+    testWidgets('removing the photo keeps the name', skip: skip != false, (
+      tester,
+    ) async {
       final server = _Server();
       final store = MemoryLocalStore();
       final codec = ProfileRecordCodec(
-          NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+        NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+      );
       final service = await _service(store, api: server, codec: codec);
       final png = await tester.runAsync(() => _pngBytes(300));
       final state = _state(profiles: service);

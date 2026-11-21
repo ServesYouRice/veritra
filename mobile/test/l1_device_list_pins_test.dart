@@ -18,7 +18,9 @@ class _Verifier implements DeviceListVerifier {
 
   @override
   DeviceListChainResult checkChain(
-          String accountId, List<List<int>> statements) =>
+    String accountId,
+    List<List<int>> statements,
+  ) =>
       bindings.checkDeviceListChain(idBytes(accountId), statements);
 
   @override
@@ -29,10 +31,11 @@ class _Verifier implements DeviceListVerifier {
     required List<DeviceListPair> history,
   }) =>
       bindings.checkDeviceListStep(
-          expectedAccountId: idBytes(accountId),
-          prev: prev,
-          statement: statement,
-          history: history);
+        expectedAccountId: idBytes(accountId),
+        prev: prev,
+        statement: statement,
+        history: history,
+      );
 }
 
 class _Server implements DeviceListSource {
@@ -44,8 +47,10 @@ class _Server implements DeviceListSource {
   int? failAfter;
 
   @override
-  Future<DeviceListPage?> fetchDeviceList(String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) async {
     fetches++;
     if (fail) throw const SocketException('down');
     if (failAfter != null && after >= failAfter!) {
@@ -87,8 +92,9 @@ void main() {
               as Map<String, dynamic>)['steps']
           .cast<Map<String, dynamic>>();
 
-  List<Uint8List> statements(int index) =>
-      [for (final step in chainSteps(index)) hex(step['statement_hex'])];
+  List<Uint8List> statements(int index) => [
+        for (final step in chainSteps(index)) hex(step['statement_hex']),
+      ];
 
   String account(int index) =>
       (((vector['outputs'] as Map)['chains'] as List)[index]
@@ -103,8 +109,11 @@ void main() {
 
   setUp(() {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    vector = jsonDecode(File('../testing/vectors/l1-device-list-v1.json')
-        .readAsStringSync()) as Map<String, dynamic>;
+    vector = jsonDecode(
+      File(
+        '../testing/vectors/l1-device-list-v1.json',
+      ).readAsStringSync(),
+    ) as Map<String, dynamic>;
     store = MemoryLocalStore();
     server = _Server();
     now = DateTime.utc(2026, 11, 7, 12);
@@ -131,30 +140,34 @@ void main() {
     addTearDown(carol.close);
     final aliceKey = Uint8List.fromList(alice.signingPublicKey());
     final genesis = alice.signDeviceList(
-        DeviceListBody(
-          accountId: idBytes('acct_fork'),
-          version: 1,
-          prevHash: DeviceListBody.zeroHash,
-          createdAtMs: 1,
-          change: DeviceListChange.genesis,
-          entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
-        ),
-        idBytes('dev_alice'));
+      DeviceListBody(
+        accountId: idBytes('acct_fork'),
+        version: 1,
+        prevHash: DeviceListBody.zeroHash,
+        createdAtMs: 1,
+        change: DeviceListChange.genesis,
+        entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
+      ),
+      idBytes('dev_alice'),
+    );
     final head = bindings.checkDeviceListStep(
-        expectedAccountId: idBytes('acct_fork'), statement: genesis);
+      expectedAccountId: idBytes('acct_fork'),
+      statement: genesis,
+    );
     Uint8List add(String id, List<int> key) => alice.signDeviceList(
-        DeviceListBody(
-          accountId: idBytes('acct_fork'),
-          version: 2,
-          prevHash: head.listHash,
-          createdAtMs: 2,
-          change: DeviceListChange.add,
-          entries: [
-            DeviceListPair(idBytes('dev_alice'), aliceKey),
-            DeviceListPair(idBytes(id), key),
-          ],
-        ),
-        idBytes('dev_alice'));
+          DeviceListBody(
+            accountId: idBytes('acct_fork'),
+            version: 2,
+            prevHash: head.listHash,
+            createdAtMs: 2,
+            change: DeviceListChange.add,
+            entries: [
+              DeviceListPair(idBytes('dev_alice'), aliceKey),
+              DeviceListPair(idBytes(id), key),
+            ],
+          ),
+          idBytes('dev_alice'),
+        );
     return (
       genesis: genesis,
       left: add('dev_bob', bob.signingPublicKey()),
@@ -172,8 +185,10 @@ void main() {
     addTearDown(alice.close);
     addTearDown(bob.close);
     addTearDown(carol.close);
-    final alicePair =
-        DeviceListPair(idBytes('dev_alice'), alice.signingPublicKey());
+    final alicePair = DeviceListPair(
+      idBytes('dev_alice'),
+      alice.signingPublicKey(),
+    );
     final bobPair = DeviceListPair(idBytes('dev_bob'), bob.signingPublicKey());
     final chain = <Uint8List>[];
     DeviceListSummary? previous;
@@ -227,43 +242,54 @@ void main() {
   }
 
   group('long chains', () {
-    test('a removed pair cannot return after the native batch boundary',
-        () async {
-      final full = longChain();
-      server.chain = [...full.chain, full.replay];
-      expect(
-          (await pins.refresh('acct_long')).state, DeviceListState.unavailable);
-      expect(await store.loadDeviceListPin('acct_long'), isNull);
-    });
+    test(
+      'a removed pair cannot return after the native batch boundary',
+      () async {
+        final full = longChain();
+        server.chain = [...full.chain, full.replay];
+        expect(
+          (await pins.refresh('acct_long')).state,
+          DeviceListState.unavailable,
+        );
+        expect(await store.loadDeviceListPin('acct_long'), isNull);
+      },
+    );
 
-    test('the download limit still bounds network work and pins nothing',
-        () async {
-      final genesis = statements(0).first;
-      server.chain = List.filled(deviceListMaxChain + 1, genesis);
-      expect(
-          (await pins.refresh(account(0))).state, DeviceListState.unavailable);
-      expect(await store.loadDeviceListPin(account(0)), isNull);
-      expect(server.fetches, deviceListMaxChain ~/ server.pageSize + 1);
-      await expectLater(
-        pins.pinChain(account(0), server.chain, expectedHead: genesis),
-        throwsFormatException,
-      );
-      expect(await store.loadDeviceListPin(account(0)), isNull);
-    });
+    test(
+      'the download limit still bounds network work and pins nothing',
+      () async {
+        final genesis = statements(0).first;
+        server.chain = List.filled(deviceListMaxChain + 1, genesis);
+        expect(
+          (await pins.refresh(account(0))).state,
+          DeviceListState.unavailable,
+        );
+        expect(await store.loadDeviceListPin(account(0)), isNull);
+        expect(server.fetches, deviceListMaxChain ~/ server.pageSize + 1);
+        await expectLater(
+          pins.pinChain(account(0), server.chain, expectedHead: genesis),
+          throwsFormatException,
+        );
+        expect(await store.loadDeviceListPin(account(0)), isNull);
+      },
+    );
 
-    test('first sight verifies every page and preserves removed history',
-        () async {
-      server.chain = longChain().chain;
-      final status = await pins.refresh('acct_long');
-      expect(status.state, DeviceListState.ok);
-      expect(status.pin!.version, 300);
-      expect(server.fetches, 5);
-      final removed = status.pin!.keys
-          .singleWhere((key) => utf8.decode(key.deviceId) == 'dev_bob');
-      expect(removed.addedVersion, 257);
-      expect(removed.removedVersion, 258);
-      expect(await pins.approvedKey('acct_long', 'dev_bob'), isNull);
-    });
+    test(
+      'first sight verifies every page and preserves removed history',
+      () async {
+        server.chain = longChain().chain;
+        final status = await pins.refresh('acct_long');
+        expect(status.state, DeviceListState.ok);
+        expect(status.pin!.version, 300);
+        expect(server.fetches, 5);
+        final removed = status.pin!.keys.singleWhere(
+          (key) => utf8.decode(key.deviceId) == 'dev_bob',
+        );
+        expect(removed.addedVersion, 257);
+        expect(removed.removedVersion, 258);
+        expect(await pins.approvedKey('acct_long', 'dev_bob'), isNull);
+      },
+    );
 
     test('a pinned account catches up across the old limit', () async {
       final full = longChain().chain;
@@ -278,24 +304,28 @@ void main() {
       server.chain = longChain().chain;
       server.chain.last[server.chain.last.length - 1] ^= 1;
       expect(
-          (await pins.refresh('acct_long')).state, DeviceListState.unavailable);
+        (await pins.refresh('acct_long')).state,
+        DeviceListState.unavailable,
+      );
       expect(await store.loadDeviceListPin('acct_long'), isNull);
     });
 
-    test('an interrupted download preserves the durable pin and retries',
-        () async {
-      final full = longChain().chain;
-      server.chain = full.sublist(0, 1);
-      await pins.refresh('acct_long');
-      server.chain = full;
-      server.failAfter = 128;
-      later();
-      expect((await pins.refresh('acct_long')).pin!.version, 1);
-      expect((await store.loadDeviceListPin('acct_long'))!.version, 1);
-      server.failAfter = null;
-      later();
-      expect((await pins.refresh('acct_long')).pin!.version, 300);
-    });
+    test(
+      'an interrupted download preserves the durable pin and retries',
+      () async {
+        final full = longChain().chain;
+        server.chain = full.sublist(0, 1);
+        await pins.refresh('acct_long');
+        server.chain = full;
+        server.failAfter = 128;
+        later();
+        expect((await pins.refresh('acct_long')).pin!.version, 1);
+        expect((await store.loadDeviceListPin('acct_long'))!.version, 1);
+        server.failAfter = null;
+        later();
+        expect((await pins.refresh('acct_long')).pin!.version, 300);
+      },
+    );
 
     test('a long valid fork is detected against the pinned genesis', () async {
       final full = longChain();
@@ -308,37 +338,50 @@ void main() {
       expect(status.pin!.conflict, isTrue);
     });
 
-    test('authenticated chain import crosses the native batch boundary',
-        () async {
-      final full = longChain().chain;
-      final pin =
-          await pins.pinChain('acct_long', full, expectedHead: full.last);
-      expect(pin.version, 300);
-      expect((await store.loadDeviceListPin('acct_long'))!.version, 300);
-    });
+    test(
+      'authenticated chain import crosses the native batch boundary',
+      () async {
+        final full = longChain().chain;
+        final pin = await pins.pinChain(
+          'acct_long',
+          full,
+          expectedHead: full.last,
+        );
+        expect(pin.version, 300);
+        expect((await store.loadDeviceListPin('acct_long'))!.version, 300);
+      },
+    );
   }, skip: skip);
 
   group('refresh', () {
-    test('first sight pins the whole chain with every pair it listed',
-        () async {
-      server.chain = statements(0);
-      final status = await pins.refresh(account(0));
-      expect(status.state, DeviceListState.ok);
-      final pin = (await store.loadDeviceListPin(account(0)))!;
-      expect(pin.version, 8);
-      expect(pin.headStatement, server.chain.last);
-      final keys = keysOf(0);
-      // a0 was removed by the recovery version (6); d3 is listed.
-      expect(
+    test(
+      'first sight pins the whole chain with every pair it listed',
+      () async {
+        server.chain = statements(0);
+        final status = await pins.refresh(account(0));
+        expect(status.state, DeviceListState.ok);
+        final pin = (await store.loadDeviceListPin(account(0)))!;
+        expect(pin.version, 8);
+        expect(pin.headStatement, server.chain.last);
+        final keys = keysOf(0);
+        // a0 was removed by the recovery version (6); d3 is listed.
+        expect(
           pin.standing(
-              idBytes('dev_a0a0a0a0a0a0a0a0'), keys['dev_a0a0a0a0a0a0a0a0']!),
-          PinStanding.removed);
-      expect(
+            idBytes('dev_a0a0a0a0a0a0a0a0'),
+            keys['dev_a0a0a0a0a0a0a0a0']!,
+          ),
+          PinStanding.removed,
+        );
+        expect(
           pin.standing(
-              idBytes('dev_d3d3d3d3d3d3d3d3'), keys['dev_d3d3d3d3d3d3d3d3']!),
-          PinStanding.approved);
-      expect(pin.recoveryKey, isNotNull);
-    });
+            idBytes('dev_d3d3d3d3d3d3d3d3'),
+            keys['dev_d3d3d3d3d3d3d3d3']!,
+          ),
+          PinStanding.approved,
+        );
+        expect(pin.recoveryKey, isNotNull);
+      },
+    );
 
     test('later versions move the pin forward step by step', () async {
       final full = statements(0);
@@ -354,15 +397,20 @@ void main() {
       final keys = keysOf(0);
       // b1 was removed at version 5 (seen as a step, not a whole chain).
       expect(
-          pin.keys
-              .firstWhere(
-                  (key) => utf8.decode(key.deviceId) == 'dev_b1b1b1b1b1b1b1b1')
-              .removedVersion,
-          isNonZero);
+        pin.keys
+            .firstWhere(
+              (key) => utf8.decode(key.deviceId) == 'dev_b1b1b1b1b1b1b1b1',
+            )
+            .removedVersion,
+        isNonZero,
+      );
       expect(
-          pin.standing(
-              idBytes('dev_e4e4e4e4e4e4e4e4'), keys['dev_e4e4e4e4e4e4e4e4']!),
-          PinStanding.approved);
+        pin.standing(
+          idBytes('dev_e4e4e4e4e4e4e4e4'),
+          keys['dev_e4e4e4e4e4e4e4e4']!,
+        ),
+        PinStanding.approved,
+      );
     });
 
     test('a lower head never replaces the pin', () async {
@@ -411,48 +459,62 @@ void main() {
       later();
       server.unknown = true;
       expect(
-          (await pins.refresh(account(0))).state, DeviceListState.unavailable);
+        (await pins.refresh(account(0))).state,
+        DeviceListState.unavailable,
+      );
       later();
       server.fail = true;
       expect(
-          (await pins.refresh(account(0))).state, DeviceListState.unavailable);
+        (await pins.refresh(account(0))).state,
+        DeviceListState.unavailable,
+      );
     });
 
-    test('a chain from another genesis is not adopted and not sticky',
-        () async {
-      // Both vector chains belong to the same account with different
-      // genesis versions: a server alone could make up the second. The pin
-      // stays, nothing is sticky, and the honest chain carries on.
-      server.chain = statements(0).sublist(0, 3);
-      await pins.refresh(account(0));
-      later();
-      server.chain = statements(1);
-      final status = await pins.refresh(account(0));
-      expect(status.state, DeviceListState.ok);
-      final pin = (await store.loadDeviceListPin(account(0)))!;
-      expect(pin.conflict, isFalse);
-      expect(pin.version, 3);
-      expect(pin.headStatement, statements(0)[2]);
-      later();
-      server.chain = statements(0);
-      expect((await pins.refresh(account(0))).state, DeviceListState.ok);
-      expect((await store.loadDeviceListPin(account(0)))!.version, 8);
-    });
+    test(
+      'a chain from another genesis is not adopted and not sticky',
+      () async {
+        // Both vector chains belong to the same account with different
+        // genesis versions: a server alone could make up the second. The pin
+        // stays, nothing is sticky, and the honest chain carries on.
+        server.chain = statements(0).sublist(0, 3);
+        await pins.refresh(account(0));
+        later();
+        server.chain = statements(1);
+        final status = await pins.refresh(account(0));
+        expect(status.state, DeviceListState.ok);
+        final pin = (await store.loadDeviceListPin(account(0)))!;
+        expect(pin.conflict, isFalse);
+        expect(pin.version, 3);
+        expect(pin.headStatement, statements(0)[2]);
+        later();
+        server.chain = statements(0);
+        expect((await pins.refresh(account(0))).state, DeviceListState.ok);
+        expect((await store.loadDeviceListPin(account(0)))!.version, 8);
+      },
+    );
 
-    test('a validly signed fork of the pinned chain is a sticky conflict',
-        () async {
-      final fork = forkOf();
-      server.chain = [fork.genesis, fork.left];
-      await pins.refresh('acct_fork');
-      later();
-      server.chain = [fork.genesis, fork.right];
-      expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
-      later();
-      // Sticky: the pinned branch again does not clear it.
-      server.chain = [fork.genesis, fork.left];
-      expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
-      expect((await store.loadDeviceListPin('acct_fork'))!.version, 2);
-    });
+    test(
+      'a validly signed fork of the pinned chain is a sticky conflict',
+      () async {
+        final fork = forkOf();
+        server.chain = [fork.genesis, fork.left];
+        await pins.refresh('acct_fork');
+        later();
+        server.chain = [fork.genesis, fork.right];
+        expect(
+          (await pins.refresh('acct_fork')).state,
+          DeviceListState.conflict,
+        );
+        later();
+        // Sticky: the pinned branch again does not clear it.
+        server.chain = [fork.genesis, fork.left];
+        expect(
+          (await pins.refresh('acct_fork')).state,
+          DeviceListState.conflict,
+        );
+        expect((await store.loadDeviceListPin('acct_fork'))!.version, 2);
+      },
+    );
 
     test('refreshes at most once a minute unless forced', () async {
       server.chain = statements(0);
@@ -474,20 +536,32 @@ void main() {
       final acct = idBytes(account(0));
       Future<LeafVerdict> judge(String device, Uint8List key) =>
           pins.judge(acct, idBytes(device), key);
-      expect(await judge('dev_d3d3d3d3d3d3d3d3', keys['dev_d3d3d3d3d3d3d3d3']!),
-          LeafVerdict.approved);
-      expect(await judge('dev_a0a0a0a0a0a0a0a0', keys['dev_a0a0a0a0a0a0a0a0']!),
-          LeafVerdict.removed);
+      expect(
+        await judge('dev_d3d3d3d3d3d3d3d3', keys['dev_d3d3d3d3d3d3d3d3']!),
+        LeafVerdict.approved,
+      );
+      expect(
+        await judge('dev_a0a0a0a0a0a0a0a0', keys['dev_a0a0a0a0a0a0a0a0']!),
+        LeafVerdict.removed,
+      );
       // A listed id with a key the list never named: a ghost.
-      expect(await judge('dev_d3d3d3d3d3d3d3d3', Uint8List(32)..[0] = 9),
-          LeafVerdict.unapproved);
-      expect(await judge('dev_ghost', Uint8List(32)..[0] = 7),
-          LeafVerdict.unapproved);
+      expect(
+        await judge('dev_d3d3d3d3d3d3d3d3', Uint8List(32)..[0] = 9),
+        LeafVerdict.unapproved,
+      );
+      expect(
+        await judge('dev_ghost', Uint8List(32)..[0] = 7),
+        LeafVerdict.unapproved,
+      );
       // Ids nobody can spell are never approved.
       expect(
-          await pins.judge(
-              [0xff, 0xfe], idBytes('dev_d3d3d3d3d3d3d3d3'), Uint8List(32)),
-          LeafVerdict.unapproved);
+        await pins.judge(
+          [0xff, 0xfe],
+          idBytes('dev_d3d3d3d3d3d3d3d3'),
+          Uint8List(32),
+        ),
+        LeafVerdict.unapproved,
+      );
     });
 
     test(
@@ -499,44 +573,66 @@ void main() {
       await pins.refresh(account(0));
       final e4 = keys['dev_e4e4e4e4e4e4e4e4']!;
       expect(
-          (await store.loadDeviceListPin(account(0)))!
-              .standing(idBytes('dev_e4e4e4e4e4e4e4e4'), e4),
-          PinStanding.unknown);
+        (await store.loadDeviceListPin(
+          account(0),
+        ))!
+            .standing(idBytes('dev_e4e4e4e4e4e4e4e4'), e4),
+        PinStanding.unknown,
+      );
       // The account links a device 30 s later; its leaf arrives at once.
       now = now.add(const Duration(seconds: 30));
       server.chain = full;
       expect(
-          await pins.judge(
-              idBytes(account(0)), idBytes('dev_e4e4e4e4e4e4e4e4'), e4),
-          LeafVerdict.approved);
+        await pins.judge(
+          idBytes(account(0)),
+          idBytes('dev_e4e4e4e4e4e4e4e4'),
+          e4,
+        ),
+        LeafVerdict.approved,
+      );
       expect(await pins.approvedKey(account(0), 'dev_e4e4e4e4e4e4e4e4'), e4);
       // A ghost the list never names forces at most one fetch per
       // [minForcedRefresh] per account.
       final before = server.fetches;
       for (var i = 0; i < 5; i++) {
         expect(
-            await pins.judge(idBytes(account(0)), idBytes('dev_ghost'),
-                Uint8List(32)..[0] = 7),
-            LeafVerdict.unapproved);
+          await pins.judge(
+            idBytes(account(0)),
+            idBytes('dev_ghost'),
+            Uint8List(32)..[0] = 7,
+          ),
+          LeafVerdict.unapproved,
+        );
       }
       expect(server.fetches, before);
       now = now.add(const Duration(seconds: 6));
       await pins.judge(
-          idBytes(account(0)), idBytes('dev_ghost'), Uint8List(32)..[0] = 7);
+        idBytes(account(0)),
+        idBytes('dev_ghost'),
+        Uint8List(32)..[0] = 7,
+      );
       expect(server.fetches, before + 1);
     });
 
     test('an account with no list or an unreachable one is checking', () async {
       expect(
-          await pins.judge(
-              idBytes('acct_x'), idBytes('dev_x'), Uint8List(32)..[0] = 1),
-          LeafVerdict.checking);
+        await pins.judge(
+          idBytes('acct_x'),
+          idBytes('dev_x'),
+          Uint8List(32)..[0] = 1,
+        ),
+        LeafVerdict.checking,
+      );
       server.fail = true;
       later();
       expect(
-          await pins.judge(
-              idBytes('acct_y'), idBytes('dev_y'), Uint8List(32)..[0] = 1),
-          LeafVerdict.checking);
+        await pins.judge(
+          idBytes('acct_y'),
+          idBytes('dev_y'),
+          Uint8List(32)..[0] = 1,
+        ),
+        LeafVerdict.checking,
+      );
     });
 
     test('a conflicted account is unapproved', () async {
@@ -548,67 +644,105 @@ void main() {
       await pins.refresh('acct_fork');
       later();
       expect(
-          await pins.judge(
-              idBytes('acct_fork'), idBytes('dev_alice'), fork.aliceKey),
-          LeafVerdict.unapproved);
+        await pins.judge(
+          idBytes('acct_fork'),
+          idBytes('dev_alice'),
+          fork.aliceKey,
+        ),
+        LeafVerdict.unapproved,
+      );
     });
 
-    test('the add gate returns only the pinned key, and none for removed',
-        () async {
-      server.chain = statements(0);
-      final keys = keysOf(0);
-      expect(await pins.approvedKey(account(0), 'dev_e4e4e4e4e4e4e4e4'),
-          keys['dev_e4e4e4e4e4e4e4e4']);
-      expect(
-          await pins.approvedKey(account(0), 'dev_a0a0a0a0a0a0a0a0'), isNull);
-      expect(await pins.approvedKey(account(0), 'dev_ghost'), isNull);
-      expect(await pins.approvedKey('acct_no_list', 'dev_x'), isNull);
-    });
+    test(
+      'the add gate returns only the pinned key, and none for removed',
+      () async {
+        server.chain = statements(0);
+        final keys = keysOf(0);
+        expect(
+          await pins.approvedKey(account(0), 'dev_e4e4e4e4e4e4e4e4'),
+          keys['dev_e4e4e4e4e4e4e4e4'],
+        );
+        expect(
+          await pins.approvedKey(account(0), 'dev_a0a0a0a0a0a0a0a0'),
+          isNull,
+        );
+        expect(await pins.approvedKey(account(0), 'dev_ghost'), isNull);
+        expect(await pins.approvedKey('acct_no_list', 'dev_x'), isNull);
+      },
+    );
   }, skip: skip);
 
   group('own versions', () {
-    test('chain import preserves its pinned prefix and is idempotent',
-        () async {
-      final fork = forkOf();
-      await pins.pinChain('acct_fork', [fork.genesis],
-          expectedHead: fork.genesis);
-      final extended = await pins.pinChain(
-          'acct_fork', [fork.genesis, fork.left],
-          expectedHead: fork.left);
-      expect(extended.version, 2);
-      later();
-      final same = await pins.pinChain('acct_fork', [fork.genesis, fork.left],
-          expectedHead: fork.left);
-      expect(same.checkedAt, extended.checkedAt);
-      for (final chain in [
-        [fork.genesis],
-        [fork.genesis, fork.right],
-      ]) {
-        await expectLater(
+    test(
+      'chain import preserves its pinned prefix and is idempotent',
+      () async {
+        final fork = forkOf();
+        await pins.pinChain(
+            'acct_fork',
+            [
+              fork.genesis,
+            ],
+            expectedHead: fork.genesis);
+        final extended = await pins.pinChain(
+            'acct_fork',
+            [
+              fork.genesis,
+              fork.left,
+            ],
+            expectedHead: fork.left);
+        expect(extended.version, 2);
+        later();
+        final same = await pins.pinChain(
+            'acct_fork',
+            [
+              fork.genesis,
+              fork.left,
+            ],
+            expectedHead: fork.left);
+        expect(same.checkedAt, extended.checkedAt);
+        for (final chain in [
+          [fork.genesis],
+          [fork.genesis, fork.right],
+        ]) {
+          await expectLater(
             pins.pinChain('acct_fork', chain, expectedHead: chain.last),
-            throwsStateError);
-        expect((await store.loadDeviceListPin('acct_fork'))!.headStatement,
-            fork.left);
-      }
-    });
+            throwsStateError,
+          );
+          expect(
+            (await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            fork.left,
+          );
+        }
+      },
+    );
 
-    test('chain import cannot replace a pinned genesis with another identity',
-        () async {
-      final original = forkOf();
-      final other = forkOf(); // Fresh keys for the same account and device IDs.
-      await pins.pinChain('acct_fork', [original.genesis],
-          expectedHead: original.genesis);
-      for (final chain in [
-        [other.genesis],
-        [other.genesis, other.left],
-      ]) {
-        await expectLater(
+    test(
+      'chain import cannot replace a pinned genesis with another identity',
+      () async {
+        final original = forkOf();
+        final other =
+            forkOf(); // Fresh keys for the same account and device IDs.
+        await pins.pinChain(
+            'acct_fork',
+            [
+              original.genesis,
+            ],
+            expectedHead: original.genesis);
+        for (final chain in [
+          [other.genesis],
+          [other.genesis, other.left],
+        ]) {
+          await expectLater(
             pins.pinChain('acct_fork', chain, expectedHead: chain.last),
-            throwsStateError);
-        expect((await store.loadDeviceListPin('acct_fork'))!.headStatement,
-            original.genesis);
-      }
-    });
+            throwsStateError,
+          );
+          expect(
+            (await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            original.genesis,
+          );
+        }
+      },
+    );
 
     test('chain import cannot clear a sticky conflict', () async {
       final fork = forkOf();
@@ -618,9 +752,15 @@ void main() {
       later();
       expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
       await expectLater(
-          pins.pinChain('acct_fork', [fork.genesis, fork.left],
-              expectedHead: fork.left),
-          throwsStateError);
+        pins.pinChain(
+            'acct_fork',
+            [
+              fork.genesis,
+              fork.left,
+            ],
+            expectedHead: fork.left),
+        throwsStateError,
+      );
       expect((await store.loadDeviceListPin('acct_fork'))!.conflict, isTrue);
     });
 
@@ -632,31 +772,37 @@ void main() {
       final aliceKey = Uint8List.fromList(alice.signingPublicKey());
       final bobKey = Uint8List.fromList(bob.signingPublicKey());
       final genesis = alice.signDeviceList(
-          DeviceListBody(
-            accountId: idBytes('acct_own'),
-            version: 1,
-            prevHash: DeviceListBody.zeroHash,
-            createdAtMs: 1,
-            change: DeviceListChange.genesis,
-            entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
-          ),
-          idBytes('dev_alice'));
-      final pinned =
-          await pins.pinChain('acct_own', [genesis], expectedHead: genesis);
+        DeviceListBody(
+          accountId: idBytes('acct_own'),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.genesis,
+          entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
+        ),
+        idBytes('dev_alice'),
+      );
+      final pinned = await pins.pinChain(
+          'acct_own',
+          [
+            genesis,
+          ],
+          expectedHead: genesis);
       expect(pinned.version, 1);
       final add = alice.signDeviceList(
-          DeviceListBody(
-            accountId: idBytes('acct_own'),
-            version: 2,
-            prevHash: pinned.listHash,
-            createdAtMs: 2,
-            change: DeviceListChange.add,
-            entries: [
-              DeviceListPair(idBytes('dev_alice'), aliceKey),
-              DeviceListPair(idBytes('dev_bob'), bobKey),
-            ],
-          ),
-          idBytes('dev_alice'));
+        DeviceListBody(
+          accountId: idBytes('acct_own'),
+          version: 2,
+          prevHash: pinned.listHash,
+          createdAtMs: 2,
+          change: DeviceListChange.add,
+          entries: [
+            DeviceListPair(idBytes('dev_alice'), aliceKey),
+            DeviceListPair(idBytes('dev_bob'), bobKey),
+          ],
+        ),
+        idBytes('dev_alice'),
+      );
       expect(await pins.pinOwnStep('acct_own', add), isTrue);
       final pin = (await store.loadDeviceListPin('acct_own'))!;
       expect(pin.version, 2);
@@ -667,17 +813,23 @@ void main() {
       // A different statement at that version still fails verification.
       final changed = Uint8List.fromList(add);
       changed[changed.length - 1] ^= 1;
-      expect(() => pins.pinOwnStep('acct_own', changed),
-          throwsA(isA<NativeCryptoException>()));
+      expect(
+        () => pins.pinOwnStep('acct_own', changed),
+        throwsA(isA<NativeCryptoException>()),
+      );
       expect((await store.loadDeviceListPin('acct_own'))!.headStatement, add);
     });
 
     test('pinChain refuses a chain that does not end in the head', () async {
       server.chain = statements(0);
       expect(
-          () => pins.pinChain(account(0), statements(0),
-              expectedHead: statements(0)[2]),
-          throwsFormatException);
+        () => pins.pinChain(
+          account(0),
+          statements(0),
+          expectedHead: statements(0)[2],
+        ),
+        throwsFormatException,
+      );
     });
   }, skip: skip);
 
@@ -686,8 +838,11 @@ void main() {
   // itself gets the lookup's time; a pin made earlier keeps its first time
   // as it advances.
   test('a franking key lookup tells when the list was first pinned', () async {
-    final v2 = jsonDecode(File('../testing/vectors/l1-device-list-v2.json')
-        .readAsStringSync()) as Map<String, dynamic>;
+    final v2 = jsonDecode(
+      File(
+        '../testing/vectors/l1-device-list-v2.json',
+      ).readAsStringSync(),
+    ) as Map<String, dynamic>;
     final valid = ((v2['outputs'] as Map)['chains'] as List)
         .cast<Map<String, dynamic>>()
         .first;
@@ -702,8 +857,10 @@ void main() {
     final first = await pins.frankKeyOf(accountId, 'dev_fa');
     expect(first!.key, hex(fa['frank_key']));
     expect(first.pinnedAt, firstSight);
-    expect((await store.loadDeviceListPin(accountId))!.pinnedAt,
-        firstSight.millisecondsSinceEpoch);
+    expect(
+      (await store.loadDeviceListPin(accountId))!.pinnedAt,
+      firstSight.millisecondsSinceEpoch,
+    );
 
     // The list moves on; the first pin time stays.
     later();
@@ -722,20 +879,26 @@ void main() {
   // gives a removed device's key to another. The pin refuses it whether it
   // comes from the server or as an own step.
   test('a franking key once listed is never another device\'s', () async {
-    final v2 = jsonDecode(File('../testing/vectors/l1-device-list-v2.json')
-        .readAsStringSync()) as Map<String, dynamic>;
+    final v2 = jsonDecode(
+      File(
+        '../testing/vectors/l1-device-list-v2.json',
+      ).readAsStringSync(),
+    ) as Map<String, dynamic>;
     final refused = ((v2['outputs'] as Map)['refused_chains'] as List)
         .cast<Map<String, dynamic>>()
         .singleWhere(
-            (item) => item['name'] == 'a_removed_devices_key_given_to_another');
+          (item) => item['name'] == 'a_removed_devices_key_given_to_another',
+        );
     final chain = [
       for (final item in (refused['statements'] as List)) hex(item),
     ];
     final accountId = (v2['inputs'] as Map)['account_id'] as String;
     final prefix = chain.sublist(0, chain.length - 1);
     await pins.pinChain(accountId, prefix, expectedHead: prefix.last);
-    await expectLater(pins.pinOwnStep(accountId, chain.last),
-        throwsA(isA<NativeCryptoException>()));
+    await expectLater(
+      pins.pinOwnStep(accountId, chain.last),
+      throwsA(isA<NativeCryptoException>()),
+    );
     server.chain = chain;
     later();
     await pins.refresh(accountId, force: true);

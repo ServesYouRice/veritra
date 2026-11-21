@@ -165,19 +165,24 @@ Future<void> addAttachmentFiles(
     } else if (tray.length >= maxPendingAttachments) {
       tooMany = true;
     } else {
-      tray.add(PendingAttachment(
-        path: file.path,
-        name: name,
-        size: size,
-        mediaType: file.mimeType,
-        temporary: temporary,
-      ));
+      tray.add(
+        PendingAttachment(
+          path: file.path,
+          name: name,
+          size: size,
+          mediaType: file.mimeType,
+          temporary: temporary,
+        ),
+      );
       continue;
     }
     if (temporary) {
       await PendingAttachment(
-              path: file.path, name: name, size: 0, temporary: true)
-          .discard();
+        path: file.path,
+        name: name,
+        size: 0,
+        temporary: true,
+      ).discard();
     }
   }
   if (tooMany && context.mounted) {
@@ -338,12 +343,14 @@ Future<bool> sendPendingAttachments(
       }
       if (!sent) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-              state.errorFor(Ops.attachment) ??
-                  context.l10n.attachmentSendFailed,
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                state.errorFor(Ops.attachment) ??
+                    context.l10n.attachmentSendFailed,
+              ),
             ),
-          ));
+          );
         }
         return false;
       }
@@ -394,8 +401,9 @@ class AttachmentTray extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    deleteButtonTooltipMessage:
-                        context.l10n.attachmentRemove(item.name),
+                    deleteButtonTooltipMessage: context.l10n.attachmentRemove(
+                      item.name,
+                    ),
                     onDeleted: () => tray.remove(item),
                   ),
               ],

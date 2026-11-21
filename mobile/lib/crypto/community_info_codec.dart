@@ -29,7 +29,7 @@ const infoKindChannel = 'channel';
 const infoKinds = <String>{
   infoKindCommunity,
   infoKindCategory,
-  infoKindChannel
+  infoKindChannel,
 };
 
 const _plainMagic = 'VPR1';
@@ -163,8 +163,12 @@ class CommunityInfoCodec {
     _checkContent(json, kind: record.kind, subjectId: record.subjectId);
     final icon = record.icon;
     if (icon != null) {
-      ProfileRecordCodec.checkPhoto(icon.png, icon.width, icon.height,
-          maxSide: infoMaxIconSide);
+      ProfileRecordCodec.checkPhoto(
+        icon.png,
+        icon.width,
+        icon.height,
+        maxSide: infoMaxIconSide,
+      );
     }
     final jsonBytes = utf8.encode(jsonEncode(json));
     final iconBytes = icon?.png ?? Uint8List(0);
@@ -194,8 +198,11 @@ class CommunityInfoCodec {
         context: ProfileRecordCodec.context(record.kind, record.subjectId, id),
         plaintext: plain,
       );
-      return Uint8List.fromList(
-          <int>[...utf8.encode(_blobMagic), ...nonce, ...sealed]);
+      return Uint8List.fromList(<int>[
+        ...utf8.encode(_blobMagic),
+        ...nonce,
+        ...sealed,
+      ]);
     } finally {
       plain.fillRange(0, plain.length, 0);
     }
@@ -230,22 +237,26 @@ class CommunityInfoCodec {
     }
     final Uint8List plain;
     try {
-      plain = Uint8List.fromList(_bindings.decryptAttachmentChunk(
-        key: key,
-        noncePrefix: blob.sublist(4, 12),
-        chunkIndex: 0,
-        context: ProfileRecordCodec.context(kind, subjectId, servedKeyId),
-        ciphertext: blob.sublist(12),
-      ));
+      plain = Uint8List.fromList(
+        _bindings.decryptAttachmentChunk(
+          key: key,
+          noncePrefix: blob.sublist(4, 12),
+          chunkIndex: 0,
+          context: ProfileRecordCodec.context(kind, subjectId, servedKeyId),
+          ciphertext: blob.sublist(12),
+        ),
+      );
     } on NativeCryptoException {
       throw const ProfileRecordException(ProfileRecordFailure.authFailed);
     }
     try {
-      return _parse(plain,
-          kind: kind,
-          subjectId: subjectId,
-          servedVersion: servedVersion,
-          cachedRevision: cachedRevision);
+      return _parse(
+        plain,
+        kind: kind,
+        subjectId: subjectId,
+        servedVersion: servedVersion,
+        cachedRevision: cachedRevision,
+      );
     } finally {
       plain.fillRange(0, plain.length, 0);
     }
@@ -271,10 +282,12 @@ class CommunityInfoCodec {
       if (r.kind == infoKindCommunity) ...{
         'categories': r.categories,
         'channels': r.channels
-            ?.map((c) => <String, Object?>{
-                  'channel_id': c.channelId,
-                  'category_id': c.categoryId,
-                })
+            ?.map(
+              (c) => <String, Object?>{
+                'channel_id': c.channelId,
+                'category_id': c.categoryId,
+              },
+            )
             .toList(),
       },
       if (r.kind == infoKindChannel && r.privatePlace != null)
@@ -357,8 +370,11 @@ class CommunityInfoCodec {
   /// The receiver's content check alone, for tests of JSON the sealing side
   /// would never write.
   @visibleForTesting
-  static CommunityInfoRecord checkContent(Map<String, Object?> json,
-          {required String kind, required String subjectId}) =>
+  static CommunityInfoRecord checkContent(
+    Map<String, Object?> json, {
+    required String kind,
+    required String subjectId,
+  }) =>
       _checkContent(json, kind: kind, subjectId: subjectId);
 
   /// Checks the JSON of a record (without its icon bytes) and returns it with
@@ -387,7 +403,8 @@ class CommunityInfoCodec {
     };
     const kindKeys = {'topic', 'icon', 'categories', 'channels', 'private'};
     final foreign = kindKeys.difference(required).difference(
-        kind == infoKindChannel ? const {'private'} : const <String>{});
+          kind == infoKindChannel ? const {'private'} : const <String>{},
+        );
     if (!required.every(json.containsKey) || foreign.any(json.containsKey)) {
       throw framing;
     }
@@ -403,8 +420,11 @@ class CommunityInfoCodec {
     final rawTopic = json['topic'];
     if (rawTopic != null &&
         (rawTopic is! String ||
-            !ProfileRecordCodec.validText(rawTopic,
-                max: infoTopicMax, allowEmpty: true))) {
+            !ProfileRecordCodec.validText(
+              rawTopic,
+              max: infoTopicMax,
+              allowEmpty: true,
+            ))) {
       throw badName;
     }
     List<String>? categories;
@@ -445,8 +465,12 @@ class CommunityInfoCodec {
                 (categoryId is! String || !categories.contains(categoryId)))) {
           throw framing;
         }
-        channels.add(InfoChannelPlace(
-            channelId: channelId, categoryId: categoryId as String?));
+        channels.add(
+          InfoChannelPlace(
+            channelId: channelId,
+            categoryId: categoryId as String?,
+          ),
+        );
       }
     }
     InfoPrivatePlace? privatePlace;
@@ -467,7 +491,9 @@ class CommunityInfoCodec {
         throw framing;
       }
       privatePlace = InfoPrivatePlace(
-          categoryId: categoryId as String?, position: position);
+        categoryId: categoryId as String?,
+        position: position,
+      );
     }
     final record = CommunityInfoRecord(
       kind: kind,

@@ -10,6 +10,8 @@ import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/refresh_action.dart';
+import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/tile_group.dart';
 import '../../l10n/l10n.dart';
 
 /// Review and undo blocks. Blocking is enforced by the server for delivery;
@@ -56,6 +58,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: <Widget>[
+                      _InvitesFromStrangers(state: state),
                       const SizedBox(height: 120),
                       if (!state.blocksLoaded && state.isBusy(Ops.blocks))
                         const Center(child: CircularProgressIndicator())
@@ -80,11 +83,15 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                       horizontal: BoneSpacing.sm,
                       vertical: BoneSpacing.sm,
                     ),
-                    itemCount: blocks.length,
+                    itemCount: blocks.length + 1,
                     itemBuilder: (context, index) {
-                      final block = blocks[index];
-                      final label =
-                          accountLabel(block.accountId, block.username);
+                      if (index == 0)
+                        return _InvitesFromStrangers(state: state);
+                      final block = blocks[index - 1];
+                      final label = accountLabel(
+                        block.accountId,
+                        block.username,
+                      );
                       final colors = avatarColorsFor(context, block.accountId);
                       return MergeSemantics(
                         child: ListTile(
@@ -106,19 +113,18 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
                             ),
                           ),
                           title: Text(label),
-                          subtitle: Text(block.createdAt == null
-                              ? context.l10n.blockedLabel
-                              : context.l10n.blockedOn(
-                                  formatDate(context, block.createdAt!),
-                                )),
+                          subtitle: Text(
+                            block.createdAt == null
+                                ? context.l10n.blockedLabel
+                                : context.l10n.blockedOn(
+                                    formatDate(context, block.createdAt!),
+                                  ),
+                          ),
                           trailing: TextButton(
                             onPressed: state.isBusy(Ops.blocks)
                                 ? null
-                                : () => _unblock(
-                                      context,
-                                      block.accountId,
-                                      label,
-                                    ),
+                                : () =>
+                                    _unblock(context, block.accountId, label),
                             child: Text(context.l10n.blockedUnblock),
                           ),
                         ),
@@ -132,11 +138,7 @@ class _BlockedAccountsScreenState extends State<BlockedAccountsScreen> {
   }
 
   // U16: the snackbar offers Undo, which blocks them again.
-  Future<void> _unblock(
-    BuildContext context,
-    String accountId,
-    String label,
-  ) =>
+  Future<void> _unblock(BuildContext context, String accountId, String label) =>
       toggleBlock(
         context,
         widget.state,
@@ -186,6 +188,41 @@ class _ErrorState extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Who may invite this account into a community (owner decision 2026-11-21):
+/// off by default; on, an invitation from someone this account shares no
+/// group or conversation with is refused. It sits with the blocks because
+/// both decide who can reach this account, and the Settings tab has no room
+/// for another row (U18).
+class _InvitesFromStrangers extends StatelessWidget {
+  const _InvitesFromStrangers({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        SectionHeader(l10n.settingsInvitesSection),
+        TileGroup(
+          children: <Widget>[
+            SwitchListTile(
+              key: const ValueKey<String>('settings-invites-shared-only'),
+              secondary: const Icon(Icons.group_add_outlined),
+              title: Text(l10n.settingsInvitesSharedOnlyTitle),
+              subtitle: Text(l10n.settingsInvitesSharedOnlyNote),
+              value: state.communityInvitesSharedOnly,
+              onChanged: state.setCommunityInvitesSharedOnly,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

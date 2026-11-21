@@ -29,8 +29,10 @@ void main() {
       expect(release.databaseKey, 'veritra.database_key.v1');
       expect(release.legacyRecordKey, 'veritra.account_state.v2');
       expect(release.secureKey('read_receipts.v1'), 'veritra.read_receipts.v1');
-      expect(release.secureKey('notifications.hide_preview.v1'),
-          'veritra.notifications.hide_preview.v1');
+      expect(
+        release.secureKey('notifications.hide_preview.v1'),
+        'veritra.notifications.hide_preview.v1',
+      );
       final support = Directory('/support');
       expect(release.directoryIn(support).path, '/support');
       expect(release.workingDirectoryIn(support).path, '/support');
@@ -41,19 +43,25 @@ void main() {
     test('the demo primary keeps its names too', () {
       expect(demo.databaseKey, 'veritra.demo.database_key.v1');
       expect(demo.secureKey('read_receipts.v1'), 'veritra.read_receipts.v1');
-      expect(demo.directoryIn(Directory('/s')).path,
-          '/s${Platform.pathSeparator}profiles${Platform.pathSeparator}demo');
+      expect(
+        demo.directoryIn(Directory('/s')).path,
+        '/s${Platform.pathSeparator}profiles${Platform.pathSeparator}demo',
+      );
       expect(demo.pasteScope, 'demo');
     });
 
     test('other slots share no name with the primary or each other', () {
       for (final primary in <ProfileScope>[release, demo]) {
-        final a = primary.forNamespace(primary.primaryNamespace.isEmpty
-            ? 'a-aaaaaaaaaaaa'
-            : '${primary.primaryNamespace}-a-aaaaaaaaaaaa');
-        final b = primary.forNamespace(primary.primaryNamespace.isEmpty
-            ? 'a-bbbbbbbbbbbb'
-            : '${primary.primaryNamespace}-a-bbbbbbbbbbbb');
+        final a = primary.forNamespace(
+          primary.primaryNamespace.isEmpty
+              ? 'a-aaaaaaaaaaaa'
+              : '${primary.primaryNamespace}-a-aaaaaaaaaaaa',
+        );
+        final b = primary.forNamespace(
+          primary.primaryNamespace.isEmpty
+              ? 'a-bbbbbbbbbbbb'
+              : '${primary.primaryNamespace}-a-bbbbbbbbbbbb',
+        );
         final support = Directory('/support');
         Set<String> names(ProfileScope s) => <String>{
               s.databaseKey,
@@ -68,8 +76,11 @@ void main() {
         final all = <Set<String>>[names(primary), names(a), names(b)];
         for (var i = 0; i < all.length; i++) {
           for (var j = i + 1; j < all.length; j++) {
-            expect(all[i].intersection(all[j]), isEmpty,
-                reason: 'slots $i and $j share a name');
+            expect(
+              all[i].intersection(all[j]),
+              isEmpty,
+              reason: 'slots $i and $j share a name',
+            );
           }
         }
       }
@@ -84,16 +95,21 @@ void main() {
     setUp(() {
       kv = MemorySlotKeyValue();
       store = AccountRegistryStore(
-          storage: kv, random: Random(7), clock: () => now);
+        storage: kv,
+        random: Random(7),
+        clock: () => now,
+      );
     });
 
-    test('a device that never added an account has one active primary slot',
-        () async {
-      final registry = await store.load();
-      expect(registry.slots.single.namespace, '');
-      expect(registry.active, '');
-      expect(kv.values, isEmpty, reason: 'nothing is written until a change');
-    });
+    test(
+      'a device that never added an account has one active primary slot',
+      () async {
+        final registry = await store.load();
+        expect(registry.slots.single.namespace, '');
+        expect(registry.active, '');
+        expect(kv.values, isEmpty, reason: 'nothing is written until a change');
+      },
+    );
 
     test('namespaces are fixed-shape and fit the store rule', () async {
       final registry = await store.load();
@@ -101,7 +117,10 @@ void main() {
       expect(ns, matches(RegExp(r'^a-[a-z2-7]{12}$')));
       expect(slotNamespacePattern.hasMatch(ns), isTrue);
       final demo = AccountRegistryStore(
-          storage: kv, primaryNamespace: 'demo-x', random: Random(1));
+        storage: kv,
+        primaryNamespace: 'demo-x',
+        random: Random(1),
+      );
       final dns = demo.newNamespace(AccountRegistry.initial('demo-x'));
       expect(dns, matches(RegExp(r'^demo-x-a-[a-z2-7]{12}$')));
       expect(slotNamespacePattern.hasMatch(dns), isTrue);
@@ -112,7 +131,9 @@ void main() {
     test('a write is read back; a mismatch fails', () async {
       kv.corruptNextWrite = true;
       await expectLater(
-          store.addPending(), throwsA(isA<AccountRegistryException>()));
+        store.addPending(),
+        throwsA(isA<AccountRegistryException>()),
+      );
     });
 
     test('an unreadable entry fails closed', () async {
@@ -130,9 +151,15 @@ void main() {
       expect(registry.liveCount, maxAccountSlots);
       expect(registry.canAdd, isFalse);
       await expectLater(
-          store.addPending(),
-          throwsA(isA<SlotException>()
-              .having((e) => e.refusal, 'refusal', SlotRefusal.full)));
+        store.addPending(),
+        throwsA(
+          isA<SlotException>().having(
+            (e) => e.refusal,
+            'refusal',
+            SlotRefusal.full,
+          ),
+        ),
+      );
       // A slot being removed no longer counts.
       final removing = registry.withRemoving(registry.slots.last.namespace);
       expect(removing.canAdd, isTrue);
@@ -152,34 +179,55 @@ void main() {
       expect(await activeAccountSlotForWake(store), isNull);
     });
 
-    test('new slots copy preview privacy before the primary is removed',
-        () async {
-      kv.values['veritra.notifications.hide_preview.v1'] = 'true';
-      final registry = await store.addPending();
-      final slot = store.newestPending(registry);
-      final key = ProfileScope(namespace: slot)
-          .secureKey('notifications.hide_preview.v1');
-      expect(kv.values[key], 'true');
-      kv.values.remove('veritra.notifications.hide_preview.v1');
-      expect(kv.values[key], 'true');
-    });
+    test(
+      'new slots copy preview privacy before the primary is removed',
+      () async {
+        kv.values['veritra.notifications.hide_preview.v1'] = 'true';
+        final registry = await store.addPending();
+        final slot = store.newestPending(registry);
+        final key = ProfileScope(
+          namespace: slot,
+        ).secureKey('notifications.hide_preview.v1');
+        expect(kv.values[key], 'true');
+        kv.values.remove('veritra.notifications.hide_preview.v1');
+        expect(kv.values[key], 'true');
+      },
+    );
 
     test('one account per slot', () async {
       var registry = await store.addPending();
       final first = store.newestPending(registry);
-      registry =
-          registry.withIdentity(first, 'https://a.example', 'acct_1', 'alice');
+      registry = registry.withIdentity(
+        first,
+        'https://a.example',
+        'acct_1',
+        'alice',
+      );
       await store.save(registry);
       registry = await store.addPending();
       final second = store.newestPending(registry);
       expect(
-          () => registry.withIdentity(
-              second, 'https://a.example', 'acct_1', 'alice'),
-          throwsA(isA<SlotException>()
-              .having((e) => e.refusal, 'refusal', SlotRefusal.duplicate)));
+        () => registry.withIdentity(
+          second,
+          'https://a.example',
+          'acct_1',
+          'alice',
+        ),
+        throwsA(
+          isA<SlotException>().having(
+            (e) => e.refusal,
+            'refusal',
+            SlotRefusal.duplicate,
+          ),
+        ),
+      );
       // Another account on the same server is allowed, with a warning.
-      final ok =
-          registry.withIdentity(second, 'https://a.example', 'acct_2', 'bob');
+      final ok = registry.withIdentity(
+        second,
+        'https://a.example',
+        'acct_2',
+        'bob',
+      );
       expect(ok.hasServer('https://a.example'), isTrue);
       expect(ok.hasServer('https://b.example'), isFalse);
     });
@@ -190,13 +238,16 @@ void main() {
       final slots = <AccountSlot>[
         for (var i = 0; i < maxAccountSlots + 3; i++)
           AccountSlot(
-              namespace: 'a-${'$i'.padLeft(12, '0')}',
-              state: i == 0 ? SlotState.active : SlotState.removing),
+            namespace: 'a-${'$i'.padLeft(12, '0')}',
+            state: i == 0 ? SlotState.active : SlotState.removing,
+          ),
       ];
       await expectLater(
-          store.save(
-              AccountRegistry(active: slots.first.namespace, slots: slots)),
-          throwsA(isA<AccountRegistryException>()));
+        store.save(
+          AccountRegistry(active: slots.first.namespace, slots: slots),
+        ),
+        throwsA(isA<AccountRegistryException>()),
+      );
       expect(kv.values[store.key], isNull);
       expect(await store.load(), AccountRegistry.initial(''));
     });
@@ -206,9 +257,14 @@ void main() {
       final pending = store.newestPending(registry);
       registry = registry.withRemoving(pending);
       expect(
-          () => registry.withIdentity(
-              pending, 'https://a.example', 'acct_1', 'alice'),
-          throwsA(isA<SlotException>()));
+        () => registry.withIdentity(
+          pending,
+          'https://a.example',
+          'acct_1',
+          'alice',
+        ),
+        throwsA(isA<SlotException>()),
+      );
       expect(() => registry.withActive(pending), throwsA(isA<SlotException>()));
     });
 
@@ -216,7 +272,11 @@ void main() {
       var registry = await store.addPending();
       final pending = store.newestPending(registry);
       registry = registry.withIdentity(
-          pending, 'https://a.example', 'acct_1', 'alice');
+        pending,
+        'https://a.example',
+        'acct_1',
+        'alice',
+      );
       registry = registry.withActive(pending);
       registry = registry.withRemoving('');
       await store.save(registry);
@@ -228,27 +288,37 @@ void main() {
       expect(again.slot(pending)!.username, 'alice');
     });
 
-    test('removing the active or primary slot picks another, never the removed',
-        () async {
-      var registry = await store.addPending();
-      final other = store.newestPending(registry);
-      registry = registry.withIdentity(other, 'https://a.example', 'a', 'x');
-      final after = registry.without('', fallback: '');
-      expect(after.active, other);
-      expect(after.slot(''), isNull);
-      final empty = after.without(other, fallback: '');
-      expect(empty.slots, isEmpty);
-      expect(empty.active, '');
-      expect(
-          () => registry.withActive('missing'), throwsA(isA<SlotException>()));
-      expect(() => registry.withRemoving('missing'),
-          throwsA(isA<SlotException>()));
-    });
+    test(
+      'removing the active or primary slot picks another, never the removed',
+      () async {
+        var registry = await store.addPending();
+        final other = store.newestPending(registry);
+        registry = registry.withIdentity(other, 'https://a.example', 'a', 'x');
+        final after = registry.without('', fallback: '');
+        expect(after.active, other);
+        expect(after.slot(''), isNull);
+        final empty = after.without(other, fallback: '');
+        expect(empty.slots, isEmpty);
+        expect(empty.active, '');
+        expect(
+          () => registry.withActive('missing'),
+          throwsA(isA<SlotException>()),
+        );
+        expect(
+          () => registry.withRemoving('missing'),
+          throwsA(isA<SlotException>()),
+        );
+      },
+    );
 
     test('no token or key ever lands in the registry', () async {
       var registry = await store.addPending();
-      registry = registry.withIdentity(store.newestPending(registry),
-          'https://a.example', 'acct_1', 'alice');
+      registry = registry.withIdentity(
+        store.newestPending(registry),
+        'https://a.example',
+        'acct_1',
+        'alice',
+      );
       await store.save(registry);
       final text = kv.values[store.key]!;
       expect(text, isNot(contains('token')));
@@ -311,9 +381,11 @@ void main() {
       await closeAll();
       expect(File('${support.path}/veritra-local.db').existsSync(), isTrue);
       expect(
-          File('${support.path}/profiles/a-aaaaaaaaaaaa/veritra-local.db')
-              .existsSync(),
-          isTrue);
+        File(
+          '${support.path}/profiles/a-aaaaaaaaaaaa/veritra-local.db',
+        ).existsSync(),
+        isTrue,
+      );
       final a = await plain.read(key: 'veritra.database_key.v1');
       final b = await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1');
       expect(a, isNotNull);
@@ -321,35 +393,43 @@ void main() {
       expect(a, isNot(b));
     });
 
-    test('report seeds and preview choices are isolated and erased per slot',
-        () async {
-      const primary = ProfileScope();
-      const other = ProfileScope(namespace: 'a-aaaaaaaaaaaa');
-      final a = SecureReportSeedStore(storage: plain, scope: primary);
-      final b = SecureReportSeedStore(storage: plain, scope: other);
-      final seed = Uint8List.fromList(List.filled(32, 7));
-      await a.save('https://a.example', 'acct', seed);
-      expect(await b.load('https://a.example', 'acct'), isNull);
-      await b.save('https://a.example', 'acct', Uint8List(32));
-      final prefsA =
-          SecureNotificationSettingsStore(storage: plain, scope: primary);
-      final prefsB =
-          SecureNotificationSettingsStore(storage: plain, scope: other);
-      await prefsA.saveHidePreview(true);
-      expect(await prefsB.loadHidePreview(), isTrue);
-      await prefsA.saveHidePreview(false);
-      expect(await prefsB.loadHidePreview(), isTrue);
-      await eraser().erase('');
-      expect(await a.load('https://a.example', 'acct'), isNull);
-      expect(await b.load('https://a.example', 'acct'), Uint8List(32));
-      expect(await prefsB.loadHidePreview(), isTrue);
-      await eraser().erase(other.namespace);
-      expect(await b.load('https://a.example', 'acct'), isNull);
-      expect(
+    test(
+      'report seeds and preview choices are isolated and erased per slot',
+      () async {
+        const primary = ProfileScope();
+        const other = ProfileScope(namespace: 'a-aaaaaaaaaaaa');
+        final a = SecureReportSeedStore(storage: plain, scope: primary);
+        final b = SecureReportSeedStore(storage: plain, scope: other);
+        final seed = Uint8List.fromList(List.filled(32, 7));
+        await a.save('https://a.example', 'acct', seed);
+        expect(await b.load('https://a.example', 'acct'), isNull);
+        await b.save('https://a.example', 'acct', Uint8List(32));
+        final prefsA = SecureNotificationSettingsStore(
+          storage: plain,
+          scope: primary,
+        );
+        final prefsB = SecureNotificationSettingsStore(
+          storage: plain,
+          scope: other,
+        );
+        await prefsA.saveHidePreview(true);
+        expect(await prefsB.loadHidePreview(), isTrue);
+        await prefsA.saveHidePreview(false);
+        expect(await prefsB.loadHidePreview(), isTrue);
+        await eraser().erase('');
+        expect(await a.load('https://a.example', 'acct'), isNull);
+        expect(await b.load('https://a.example', 'acct'), Uint8List(32));
+        expect(await prefsB.loadHidePreview(), isTrue);
+        await eraser().erase(other.namespace);
+        expect(await b.load('https://a.example', 'acct'), isNull);
+        expect(
           await plain.read(
-              key: other.secureKey('notifications.hide_preview.v1')),
-          isNull);
-    });
+            key: other.secureKey('notifications.hide_preview.v1'),
+          ),
+          isNull,
+        );
+      },
+    );
 
     test('erasing the primary leaves every other slot untouched', () async {
       await open('').saveSyncCursor(11);
@@ -358,10 +438,13 @@ void main() {
       // Leftovers of the primary: a quarantine folder, a quarantined key, a
       // partial recovery file and an unrelated file of another owner.
       Directory('${support.path}/unreadable-1').createSync();
-      File('${support.path}/unreadable-1/veritra-local.db')
-          .writeAsStringSync('x');
+      File(
+        '${support.path}/unreadable-1/veritra-local.db',
+      ).writeAsStringSync('x');
       await plain.write(
-          key: 'veritra.database_key.v1.quarantined.1', value: 'k');
+        key: 'veritra.database_key.v1.quarantined.1',
+        value: 'k',
+      );
       File('${support.path}/.veritra-recovery.partial').writeAsStringSync('p');
       final attachmentNames = <String>[
         _orphanName(),
@@ -378,97 +461,133 @@ void main() {
       await plain.write(key: 'veritra.read_receipts.v1', value: 'off');
       // Each slot owns its preview choice.
       await plain.write(
-          key: 'veritra.notifications.hide_preview.v1', value: 'true');
+        key: 'veritra.notifications.hide_preview.v1',
+        value: 'true',
+      );
       final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
       File('${slotDir.path}/${_orphanName()}').writeAsStringSync('keep');
       final before =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();
-      final slotKey =
-          await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1');
+      final slotKey = await plain.read(
+        key: 'veritra.a-aaaaaaaaaaaa.database_key.v1',
+      );
 
       await eraser().erase('');
 
       expect(File('${support.path}/veritra-local.db').existsSync(), isFalse);
       for (final name in attachmentNames) {
-        expect(File('${support.path}/$name').existsSync(), isFalse,
-            reason: 'removed account left $name behind');
+        expect(
+          File('${support.path}/$name').existsSync(),
+          isFalse,
+          reason: 'removed account left $name behind',
+        );
       }
       expect(unrelated.readAsStringSync(), 'keep');
       expect(Directory('${support.path}/unreadable-1').existsSync(), isFalse);
-      expect(File('${support.path}/.veritra-recovery.partial').existsSync(),
-          isFalse);
+      expect(
+        File('${support.path}/.veritra-recovery.partial').existsSync(),
+        isFalse,
+      );
       expect(await plain.read(key: 'veritra.database_key.v1'), isNull);
-      expect(await plain.read(key: 'veritra.database_key.v1.quarantined.1'),
-          isNull);
+      expect(
+        await plain.read(key: 'veritra.database_key.v1.quarantined.1'),
+        isNull,
+      );
       expect(await plain.read(key: 'veritra.read_receipts.v1'), isNull);
-      expect(await plain.read(key: 'veritra.notifications.hide_preview.v1'),
-          isNull);
+      expect(
+        await plain.read(key: 'veritra.notifications.hide_preview.v1'),
+        isNull,
+      );
       expect(support.existsSync(), isTrue);
       final after =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();
       expect(after, before);
-      expect(await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1'),
-          slotKey);
+      expect(
+        await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1'),
+        slotKey,
+      );
       expect(await open('a-aaaaaaaaaaaa').loadSyncCursor(), 22);
     });
 
-    test('erasing a slot leaves the primary and the other slots untouched',
-        () async {
-      await open('').saveSyncCursor(11);
-      await open('a-aaaaaaaaaaaa').saveSyncCursor(22);
-      await open('a-bbbbbbbbbbbb').saveSyncCursor(33);
-      await closeAll();
-      await plain.write(
+    test(
+      'erasing a slot leaves the primary and the other slots untouched',
+      () async {
+        await open('').saveSyncCursor(11);
+        await open('a-aaaaaaaaaaaa').saveSyncCursor(22);
+        await open('a-bbbbbbbbbbbb').saveSyncCursor(33);
+        await closeAll();
+        await plain.write(
           key: 'veritra.a-aaaaaaaaaaaa.database_key.v1.quarantined.9',
-          value: 'k');
-      await plain.write(
-          key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1', value: 'off');
-      await plain.write(
+          value: 'k',
+        );
+        await plain.write(
+          key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1',
+          value: 'off',
+        );
+        await plain.write(
           key: 'veritra.a-aaaaaaaaaaaa.notifications.hide_preview.v1',
-          value: 'true');
+          value: 'true',
+        );
 
-      await eraser().erase('a-aaaaaaaaaaaa');
+        await eraser().erase('a-aaaaaaaaaaaa');
 
-      expect(Directory('${support.path}/profiles/a-aaaaaaaaaaaa').existsSync(),
-          isFalse);
-      expect(await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1'),
-          isNull);
-      expect(
+        expect(
+          Directory('${support.path}/profiles/a-aaaaaaaaaaaa').existsSync(),
+          isFalse,
+        );
+        expect(
+          await plain.read(key: 'veritra.a-aaaaaaaaaaaa.database_key.v1'),
+          isNull,
+        );
+        expect(
           await plain.read(
-              key: 'veritra.a-aaaaaaaaaaaa.database_key.v1.quarantined.9'),
-          isNull);
-      expect(await plain.read(key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1'),
-          isNull);
-      expect(
+            key: 'veritra.a-aaaaaaaaaaaa.database_key.v1.quarantined.9',
+          ),
+          isNull,
+        );
+        expect(
+          await plain.read(key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1'),
+          isNull,
+        );
+        expect(
           await plain.read(
-              key: 'veritra.a-aaaaaaaaaaaa.notifications.hide_preview.v1'),
-          isNull);
-      expect(await open('').loadSyncCursor(), 11);
-      await closeAll();
-      expect(await open('a-bbbbbbbbbbbb').loadSyncCursor(), 33);
-    });
+            key: 'veritra.a-aaaaaaaaaaaa.notifications.hide_preview.v1',
+          ),
+          isNull,
+        );
+        expect(await open('').loadSyncCursor(), 11);
+        await closeAll();
+        expect(await open('a-bbbbbbbbbbbb').loadSyncCursor(), 33);
+      },
+    );
 
-    test('attachment sweeps and the store reset never reach a slot folder',
-        () async {
-      await open('').saveSyncCursor(11);
-      await open('a-aaaaaaaaaaaa').saveSyncCursor(22);
-      await closeAll();
-      final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
-      // An old orphan in the slot folder must survive a sweep of the root.
-      final nested = File('${slotDir.path}/${_orphanName()}')
-        ..writeAsStringSync('x');
-      nested.setLastModifiedSync(
-          DateTime.now().subtract(const Duration(days: 9)));
-      await cleanupAttachmentOrphans(support, minAge: const Duration(hours: 1));
-      expect(nested.existsSync(), isTrue);
+    test(
+      'attachment sweeps and the store reset never reach a slot folder',
+      () async {
+        await open('').saveSyncCursor(11);
+        await open('a-aaaaaaaaaaaa').saveSyncCursor(22);
+        await closeAll();
+        final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
+        // An old orphan in the slot folder must survive a sweep of the root.
+        final nested = File('${slotDir.path}/${_orphanName()}')
+          ..writeAsStringSync('x');
+        nested.setLastModifiedSync(
+          DateTime.now().subtract(const Duration(days: 9)),
+        );
+        await cleanupAttachmentOrphans(
+          support,
+          minAge: const Duration(hours: 1),
+        );
+        expect(nested.existsSync(), isTrue);
 
-      // The confirmed reset of the primary moves its fixed names only.
-      await open('').quarantineUnreadableDatabase(confirmed: true);
-      expect(slotDir.existsSync(), isTrue);
-      expect(File('${slotDir.path}/veritra-local.db').existsSync(), isTrue);
-      await closeAll();
-      expect(await open('a-aaaaaaaaaaaa').loadSyncCursor(), 22);
-    });
+        // The confirmed reset of the primary moves its fixed names only.
+        await open('').quarantineUnreadableDatabase(confirmed: true);
+        expect(slotDir.existsSync(), isTrue);
+        expect(File('${slotDir.path}/veritra-local.db').existsSync(), isTrue);
+        await closeAll();
+        expect(await open('a-aaaaaaaaaaaa').loadSyncCursor(), 22);
+      },
+    );
 
     test('a closed store never reopens or recreates its slot', () async {
       final store = open('a-dddddddddddd');
@@ -478,13 +597,19 @@ void main() {
       final slotDir = Directory('${support.path}/profiles/a-dddddddddddd');
       expect(slotDir.existsSync(), isFalse);
       // Late work of the torn-down account fails instead of starting over.
-      await expectLater(store.saveSyncCursor(6),
-          throwsA(isA<LocalStoreUnavailableException>()));
       await expectLater(
-          store.loadSession(), throwsA(isA<LocalStoreUnavailableException>()));
+        store.saveSyncCursor(6),
+        throwsA(isA<LocalStoreUnavailableException>()),
+      );
+      await expectLater(
+        store.loadSession(),
+        throwsA(isA<LocalStoreUnavailableException>()),
+      );
       expect(slotDir.existsSync(), isFalse);
-      expect(await plain.read(key: 'veritra.a-dddddddddddd.database_key.v1'),
-          isNull);
+      expect(
+        await plain.read(key: 'veritra.a-dddddddddddd.database_key.v1'),
+        isNull,
+      );
       // The same slot opened again gets a new store.
       expect(await open('a-dddddddddddd').loadSyncCursor(), 0);
     });
@@ -493,8 +618,9 @@ void main() {
       final store = open('a-cccccccccccc');
       expect(await store.loadSession(), isNull);
       expect(await store.loadPendingEnrollment(), isNull);
-      await store.saveSession(const Session(
-          baseUrl: 'https://a.example', token: 't', accountId: 'a'));
+      await store.saveSession(
+        const Session(baseUrl: 'https://a.example', token: 't', accountId: 'a'),
+      );
       expect(await store.loadSession(), isNotNull);
     });
   });

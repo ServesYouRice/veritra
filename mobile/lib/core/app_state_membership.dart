@@ -1,5 +1,16 @@
 part of 'app_state.dart';
 
+/// Where the "only accept community invites from people I share a group with"
+/// switch is stored (owner decision 2026-11-21). The value is scoped to the
+/// server and account, so another account signed in on this device never
+/// inherits it; only that exact scope followed by `true` turns it on.
+const String _sharedOnlyInvitesSetting = 'c1.invites_shared_only';
+
+/// The account event an owner or admin gets when a join request is filed for
+/// a group or community it runs. It carries nothing (owner decision
+/// 2026-11-21); the app shows "New join request" and the list says the rest.
+const String joinRequestNoticeEventType = 'account.join_request';
+
 /// C1: joining groups and communities through invitation links, deciding join
 /// requests, and leaving or removing members of a community.
 ///
@@ -29,13 +40,18 @@ extension MembershipActions on AppState {
   /// administers and returns the link to share. The link holds the secret and
   /// is not stored anywhere: the server keeps a hash of the locator only.
   ///
-  /// The invitation is bound (D90, v2) to the target, this account and device,
-  /// and the device's signing key: by a tag derived from the secret, by a
-  /// commitment to the key in the link, and by this device's signature over
-  /// the same fields and the link's locator (ABI 13 sign, domain
-  /// `veritra-invite-binding-v2`). The key and the signature come from the
-  /// native engine; without it (any build that is not the reviewed engine) no
-  /// invitation is made.
+  /// The invitation is bound (D90, v3) to the target, the MLS group it admits
+  /// to, this account and device, and the device's signing key: by a tag
+  /// derived from the secret, by a commitment to the key in the link, and by
+  /// this device's signature over the same fields and the link's locator
+  /// (ABI 13 sign, domain `veritra-invite-binding-v2`). The key and the
+  /// signature come from the native engine; without it (any build that is not
+  /// the reviewed engine) no invitation is made.
+  ///
+  /// The anchor group is the group itself, or the community's shared group;
+  /// a legacy community (no shared group) gets no invitation. It is anchored
+  /// only if this device is in that MLS group with its own key, so a joiner's
+  /// Welcome check can pass.
   Future<String?> createInviteLink(InviteTargetKind kind, String targetId) {
     return _membershipCall<String>((current, client) async {
       // Only the native engine reads the device key and signs; the
@@ -56,6 +72,28 @@ extension MembershipActions on AppState {
         accountId: accountId,
         deviceId: deviceId,
       );
+      final anchorGroupId = kind == InviteTargetKind.group
+          ? targetId
+          : communities
+              .where((community) => community.id == targetId)
+              .firstOrNull
+              ?.sharedConversationId;
+      if (anchorGroupId == null || anchorGroupId.isEmpty) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
+      Uint8List? ownLeaf;
+      try {
+        ownLeaf = await signer.memberSigningKey(
+          conversationId: anchorGroupId,
+          accountId: accountId,
+          deviceId: deviceId,
+        );
+      } on Object {
+        ownLeaf = null;
+      }
+      if (ownLeaf == null || !_sameBytes(ownLeaf, signingKey)) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
       final link = MembershipInviteLink.generate(
         origin: client.baseUrl,
         inviterSigningKey: signingKey,
@@ -63,6 +101,7 @@ extension MembershipActions on AppState {
       final message = link.bindingMessage(
         kind: kind,
         targetId: targetId,
+        anchorGroupId: anchorGroupId,
         inviterAccountId: accountId,
         inviterDeviceId: deviceId,
         inviterSigningKey: signingKey,
@@ -85,10 +124,12 @@ extension MembershipActions on AppState {
         kind,
         targetId,
         locator: link.locator,
+        anchorGroupId: anchorGroupId,
         signingKey: signingKey,
         bindingTag: link.bindingTag(
           kind: kind,
           targetId: targetId,
+          anchorGroupId: anchorGroupId,
           inviterAccountId: accountId,
           inviterDeviceId: deviceId,
           inviterSigningKey: signingKey,
@@ -100,18 +141,20 @@ extension MembershipActions on AppState {
   }
 
   /// Whether what the server says about an invitation is what its creating
-  /// device bound it to (D90, v2). Fails closed: every check below must pass,
+  /// device bound it to (D90, v3). Fails closed: every check below must pass,
   /// and a build without the signing engine accepts nothing.
   ///
   /// 1. The shown kind is the bound kind, the key hashes to the commitment in
-  ///    the link, and the tag is the one the secret makes
-  ///    (`MembershipInviteLink.matches`).
+  ///    the link, the tag is the one the secret makes, and the anchor names a
+  ///    group (a group's own id for a group) (`MembershipInviteLink.matches`).
   /// 2. The device's signature verifies under the key over the message the
   ///    link rebuilds, in the invitation domain.
   /// 3. Where this device already holds an MLS group with the inviting device,
   ///    that group's roster key must be the key named. A stranger to the
   ///    inviter shares no group, so nothing is read and the commitment in the
   ///    link is the anchor; any group that names another key refuses.
+  /// 4. A community this device already pinned to a shared group through an
+  ///    earlier verified link must be anchored to that same group.
   Future<bool> _inviteBindingHolds(
     MembershipInviteLink link,
     InviteBinding binding,
@@ -128,6 +171,12 @@ extension MembershipActions on AppState {
         signature: binding.signature,
       );
       if (!signed) return false;
+      if (binding.kind == InviteTargetKind.community) {
+        final pinned = await localStore.loadCommunityInviteAnchor(
+          binding.targetId,
+        );
+        if (pinned != null && pinned != binding.anchorGroupId) return false;
+      }
       for (final conversation in conversations.toList(growable: false)) {
         final Uint8List? known;
         try {
@@ -145,6 +194,114 @@ extension MembershipActions on AppState {
       }
     } on Object {
       return false;
+    }
+    return true;
+  }
+
+  /// Hides the "New join request" notice.
+  void dismissJoinRequestNotice() {
+    if (!joinRequestNotice) return;
+    joinRequestNotice = false;
+    notifyListeners();
+  }
+
+  static String _sharedOnlyScope(Session owner) =>
+      '${owner.baseUrl}\u0000${owner.accountId}\u0000';
+
+  /// Reads the stored "only from people I share a group with" switch into
+  /// [communityInvitesSharedOnly]. Off when nothing (or another account's
+  /// value) is stored.
+  Future<void> loadCommunityInvitesSharedOnly() async {
+    final owner = session;
+    if (owner == null) return;
+    final String? raw;
+    try {
+      raw = await localStore.loadSetting(_sharedOnlyInvitesSetting);
+    } on Object {
+      return;
+    }
+    if (!identical(session, owner)) return;
+    final value = raw == '${_sharedOnlyScope(owner)}true';
+    if (value == communityInvitesSharedOnly) return;
+    communityInvitesSharedOnly = value;
+    notifyListeners();
+  }
+
+  /// Turns the switch on or off for this account. False when it could not be
+  /// stored (the choice still applies until the app restarts).
+  Future<bool> setCommunityInvitesSharedOnly(bool value) async {
+    final owner = session;
+    communityInvitesSharedOnly = value;
+    notifyListeners();
+    if (owner == null) return false;
+    try {
+      await localStore.saveSetting(
+        _sharedOnlyInvitesSetting,
+        '${_sharedOnlyScope(owner)}$value',
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Whether this device shares a group or conversation with [accountId]:
+  /// the account is in the MLS roster of one of its groups (read from the
+  /// group's own tree, never the server's member list), or is the other side
+  /// of a direct conversation. A message request does not count: it is how a
+  /// stranger first reaches someone.
+  bool sharesConversationWith(String accountId) {
+    if (accountId == session?.accountId) return true;
+    final engine = cryptoService;
+    final roster = engine is MlsRosterSource ? engine as MlsRosterSource : null;
+    for (final conversation in conversations.toList(growable: false)) {
+      if (isMessageRequest(conversation)) continue;
+      if (conversation.peerAccountId == accountId) return true;
+      final members = roster?.groupMemberAccounts(conversation.id);
+      if (members != null && members.contains(accountId)) return true;
+    }
+    return false;
+  }
+
+  /// Refuses a community invitation from someone this account shares no group
+  /// or conversation with, when the switch is on (owner decision 2026-11-21).
+  /// Runs after the binding check, so a forged link still reads as unusable.
+  void _refuseStrangerInvite(InviteTargetKind kind, InviteBinding binding) {
+    if (kind != InviteTargetKind.community || !communityInvitesSharedOnly) {
+      return;
+    }
+    if (!sharesConversationWith(binding.inviterAccountId)) {
+      throw UserFacingException(l10n.joinInviteFromStranger);
+    }
+  }
+
+  /// C1 v3: the shared group a verified invitation pinned each of
+  /// [communities] to, or null where none was pinned. Throws when the store
+  /// cannot answer, so the caller keeps what it already shows rather than
+  /// trust the server's mapping or drop a community.
+  Future<Map<String, String?>> _communityInviteAnchorsOf(
+    List<Community> communities,
+  ) async =>
+      <String, String?>{
+        for (final community in communities)
+          community.id:
+              await localStore.loadCommunityInviteAnchor(community.id),
+      };
+
+  /// C1 v3: whether the server's account of [community] agrees with the
+  /// shared group in [pinned] (from [_communityInviteAnchorsOf]): its shared
+  /// group is the pinned one and so is every open or announcement channel's.
+  /// A community this device never pinned passes.
+  static bool _communityKeepsInviteAnchor(
+    Community community,
+    List<Channel> channels,
+    String? pinned,
+  ) {
+    if (pinned == null) return true;
+    if (community.sharedConversationId != pinned) return false;
+    for (final channel in channels) {
+      if (channel.kind == 'private') continue;
+      if (channel.conversationId != pinned) return false;
     }
     return true;
   }
@@ -203,6 +360,8 @@ extension MembershipActions on AppState {
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
+        await loadCommunityInvitesSharedOnly();
+        _refuseStrangerInvite(preview.kind, preview.binding);
         return (link: link, preview: preview);
       } on ApiException catch (err) {
         if (err.statusCode == 404) {
@@ -218,28 +377,44 @@ extension MembershipActions on AppState {
   Future<JoinRequest?> requestToJoin(MembershipInviteLink link) {
     return _membershipCall<JoinRequest>((current, client) async {
       try {
-        // Persist the verified group anchor before the server can approve and
-        // deliver a Welcome, including when the request response is lost.
-        final preview =
-            await client.previewMembershipInvite(current.token, link.locator);
+        // Persist the verified anchor before the server can approve and
+        // deliver a Welcome, including when the request response is lost: the
+        // group a Welcome must come from (the group, or the community's shared
+        // group, v3) with the inviter's key, and for a community the group the
+        // server must name as its shared group from now on.
+        final preview = await client.previewMembershipInvite(
+          current.token,
+          link.locator,
+        );
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
-        if (preview.kind == InviteTargetKind.group) {
-          final binding = preview.binding;
-          await localStore.saveInviteAnchor(InviteAnchor(
-            conversationId: binding.targetId,
-            accountId: binding.inviterAccountId,
-            deviceId: binding.inviterDeviceId,
-            signingKey: binding.inviterSigningKey,
-          ));
+        await loadCommunityInvitesSharedOnly();
+        _refuseStrangerInvite(preview.kind, preview.binding);
+        final verified = preview.binding;
+        await localStore.saveInviteAnchor(
+          InviteAnchor(
+            conversationId: verified.anchorGroupId,
+            accountId: verified.inviterAccountId,
+            deviceId: verified.inviterDeviceId,
+            signingKey: verified.inviterSigningKey,
+          ),
+        );
+        if (preview.kind == InviteTargetKind.community) {
+          await localStore.saveCommunityInviteAnchor(
+            verified.targetId,
+            verified.anchorGroupId,
+          );
         }
         final request = await client.requestToJoin(current.token, link.locator);
-        // The answer must carry the binding of this very link; otherwise the
-        // server filed the request against something else (a swap between
-        // the preview and the request). Withdraw it, best effort.
+        // The answer must carry the binding of this very link, for the target
+        // and group the preview showed; otherwise the server filed the
+        // request against something else (a swap between the preview and the
+        // request). Withdraw it, best effort.
         final binding = request.binding;
         if (binding == null ||
+            binding.targetId != verified.targetId ||
+            binding.anchorGroupId != verified.anchorGroupId ||
             !await _inviteBindingHolds(link, binding, request.kind)) {
           try {
             await client.cancelJoinRequest(current.token, request.id);
@@ -270,11 +445,13 @@ extension MembershipActions on AppState {
     );
     if (requests != null) {
       final known = <String>{for (final c in communities) c.id};
-      final approvedNewCommunity = requests.any((r) =>
-          r.status == JoinRequestStatus.approved &&
-          r.kind == InviteTargetKind.community &&
-          r.targetId != null &&
-          !known.contains(r.targetId));
+      final approvedNewCommunity = requests.any(
+        (r) =>
+            r.status == JoinRequestStatus.approved &&
+            r.kind == InviteTargetKind.community &&
+            r.targetId != null &&
+            !known.contains(r.targetId),
+      );
       if (approvedNewCommunity) unawaited(refreshCommunities());
     }
     return requests;
@@ -535,6 +712,76 @@ extension MembershipActions on AppState {
       _membershipCall<List<CommunityBan>>(
         (current, client) => client.communityBans(current.token, communityId),
       );
+
+  /// Every running timeout of the community the server remembers (C5),
+  /// for admins and above: of accounts that left (`member` false; lifted
+  /// with [timeoutCommunityMember] and 0, owner decision 2026-11-21) and of
+  /// current members (`member` true).
+  Future<List<CommunityTimeout>?> loadCommunityTimeouts(String communityId) =>
+      _membershipCall<List<CommunityTimeout>>(
+        (current, client) =>
+            client.communityTimeouts(current.token, communityId),
+      );
+
+  /// C5 rejoin gap: the members among [timeouts] whose running server
+  /// timeout this device may write into the shared group's record now
+  /// ([mayApplyServerTimeout]: the record lacks it, they are in the MLS
+  /// roster, the record lets this account act on them, and the end is far
+  /// enough ahead). Empty without a record.
+  Future<Set<String>> serverTimeoutsToApply(
+    String communityId,
+    List<CommunityTimeout> timeouts,
+  ) async {
+    final self = session?.accountId;
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    final members = timeouts.where((t) => t.member).toList();
+    if (self == null || shared == null || members.isEmpty) return const {};
+    final view = await governanceViewFor(shared);
+    if (view == null) return const {};
+    final now = DateTime.now();
+    return <String>{
+      for (final t in members)
+        if (mayApplyServerTimeout(
+          record: view.record,
+          roster: view.roster,
+          actor: self,
+          account: t.accountId,
+          serverUntil: t.timeoutUntil,
+          now: now,
+        ))
+          t.accountId,
+    };
+  }
+
+  /// C5 rejoin gap: writes a member's running server timeout, ending at
+  /// [until], into the shared group's record, starting now
+  /// ([applyServerTimeout], checked again against the record when staged).
+  /// Only ever an admin's explicit action: no device does it on its own, so
+  /// admins' devices do not race. The server already holds the timeout and
+  /// is not called. False (with the error under [Ops.members]) when refused.
+  Future<bool> applyServerTimeoutToRecord(
+    String communityId,
+    String accountId,
+    DateTime until,
+  ) async {
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (shared == null) return false;
+    return _roleCommand(
+      shared,
+      (commands, _, now) => applyServerTimeout(
+        commands,
+        accountId,
+        serverUntil: until,
+        now: now,
+      ),
+    );
+  }
 
   Future<ModerationState?> loadModerationState(String communityId) =>
       _membershipCall<ModerationState>(

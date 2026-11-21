@@ -88,8 +88,8 @@ func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, devic
 }
 
 // ListConversationSyncPage is ListConversationSyncEvents with the scan
-// position. Only when bounded (the client opted in) does a scan budget apply;
-// otherwise the scan is unbounded as before (C1 bounds, D92). Rows the device cannot see
+// position. Only when bounded does a scan budget apply (the route always
+// asks for it since D134); otherwise the scan is unbounded (C1 bounds, D92). Rows the device cannot see
 // stay hidden (the MLS join filter only grows, dead envelopes stay dead), or
 // are block-hidden, which D92 lets the cursor pass: an unblock does not
 // replay them through sync.

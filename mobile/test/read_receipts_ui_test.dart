@@ -49,29 +49,37 @@ Widget _app(Widget child) => MaterialApp(
     );
 
 void main() {
-  testWidgets('a choice the device could not store is shown on the tile',
-      (tester) async {
+  testWidgets('a choice the device could not store is shown on the tile', (
+    tester,
+  ) async {
     final store = _Store()..failWrites = true;
     store.read.complete(null);
     final preferences = ReceiptPreferences(store);
     await preferences.loaded;
 
-    await tester.pumpWidget(_app(ReadReceiptsTile(
-      preferences: preferences,
-      // The server took the change; only the local save fails, as in
-      // AppState.setSendReadReceipts.
-      onChanged: (value) async {
-        await preferences.setSendReadReceipts(value);
-        return true;
-      },
-    )));
+    await tester.pumpWidget(
+      _app(
+        ReadReceiptsTile(
+          preferences: preferences,
+          // The server took the change; only the local save fails, as in
+          // AppState.setSendReadReceipts.
+          onChanged: (value) async {
+            await preferences.setSendReadReceipts(value);
+            return true;
+          },
+        ),
+      ),
+    );
     expect(find.text(englishL10n.settingsReadReceiptsNotSaved), findsNothing);
 
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
 
-    expect(preferences.sendReadReceipts, isFalse,
-        reason: 'the choice still applies for this run');
+    expect(
+      preferences.sendReadReceipts,
+      isFalse,
+      reason: 'the choice still applies for this run',
+    );
     expect(find.text(englishL10n.settingsReadReceiptsNotSaved), findsOneWidget);
 
     store.failWrites = false;
@@ -80,8 +88,9 @@ void main() {
     expect(find.text(englishL10n.settingsReadReceiptsNotSaved), findsNothing);
   });
 
-  testWidgets('ticks show read state only once the stored choice is known',
-      (tester) async {
+  testWidgets('ticks show read state only once the stored choice is known', (
+    tester,
+  ) async {
     final store = _Store();
     final api = ApiClient(baseUrl: 'https://localhost:8080');
     final state = AppState(
@@ -100,13 +109,17 @@ void main() {
       ),
     ]);
 
-    await tester.pumpWidget(_app(MessageTickBuilder(
-      state: state,
-      conversationId: 'c1',
-      createdAt: sent,
-      enabled: true,
-      builder: (context, tick) => Text('tick:${tick?.name}'),
-    )));
+    await tester.pumpWidget(
+      _app(
+        MessageTickBuilder(
+          state: state,
+          conversationId: 'c1',
+          createdAt: sent,
+          enabled: true,
+          builder: (context, tick) => Text('tick:${tick?.name}'),
+        ),
+      ),
+    );
     // The keystore has not answered: a stored "off" may be hidden, so no
     // read state is shown yet.
     expect(find.text('tick:delivered'), findsOneWidget);

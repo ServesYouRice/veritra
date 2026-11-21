@@ -26,6 +26,8 @@ class HistoryCopyBanner extends StatelessWidget {
 
   final AppState state;
 
+  static bool active(AppState state) => state.historyTransferStatus != null;
+
   @override
   Widget build(BuildContext context) {
     return ListenableSelector<(bool?, HistoryTransferPhase?)>(
@@ -68,8 +70,9 @@ class HistoryCopyBanner extends StatelessWidget {
                   Expanded(
                     child: Text(
                       historyCopyMessage(context.l10n, status),
-                      style:
-                          theme.textTheme.bodySmall?.copyWith(color: onColor),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: onColor,
+                      ),
                     ),
                   ),
                   // K2: a copy from the old device that did not arrive can

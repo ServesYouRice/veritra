@@ -185,9 +185,10 @@ class AccountHost extends ChangeNotifier {
       slots = <AccountSlot>[
         ...slots,
         AccountSlot(
-            namespace: next,
-            state: SlotState.pending,
-            addedAt: DateTime.now().toUtc()),
+          namespace: next,
+          state: SlotState.pending,
+          addedAt: DateTime.now().toUtc(),
+        ),
       ];
     }
     return AccountRegistry(active: next, slots: slots);
@@ -198,7 +199,8 @@ class AccountHost extends ChangeNotifier {
     // Never saved with an active slot that is missing or being removed: the
     // next start could not read it back.
     registry = _withLiveActive(
-        registry.without(namespace, fallback: primaryNamespace));
+      registry.without(namespace, fallback: primaryNamespace),
+    );
     await _registryStore.save(registry);
   }
 
@@ -240,30 +242,36 @@ class AccountHost extends ChangeNotifier {
         '${session.accountId}|${session.username}';
     if (identity == _boundIdentity) return;
     _boundIdentity = identity;
-    unawaited(_enqueue(() async {
-      if (runtime != current) return;
-      final slot = registry.slot(current.namespace);
-      if (slot == null) return;
-      if (slot.state == SlotState.active &&
-          slot.origin == session.baseUrl &&
-          slot.accountId == session.accountId &&
-          slot.username == session.username) {
-        return;
-      }
-      try {
-        registry = registry.withIdentity(current.namespace, session.baseUrl,
-            session.accountId!, session.username);
-        await _registryStore.save(registry);
-        notifyListeners();
-      } on SlotException catch (e) {
-        if (e.refusal == SlotRefusal.duplicate) {
-          await _dropDuplicate(current);
+    unawaited(
+      _enqueue(() async {
+        if (runtime != current) return;
+        final slot = registry.slot(current.namespace);
+        if (slot == null) return;
+        if (slot.state == SlotState.active &&
+            slot.origin == session.baseUrl &&
+            slot.accountId == session.accountId &&
+            slot.username == session.username) {
+          return;
         }
-      } on AccountRegistryException {
-        error = AccountHostError.registry;
-        notifyListeners();
-      }
-    }));
+        try {
+          registry = registry.withIdentity(
+            current.namespace,
+            session.baseUrl,
+            session.accountId!,
+            session.username,
+          );
+          await _registryStore.save(registry);
+          notifyListeners();
+        } on SlotException catch (e) {
+          if (e.refusal == SlotRefusal.duplicate) {
+            await _dropDuplicate(current);
+          }
+        } on AccountRegistryException {
+          error = AccountHostError.registry;
+          notifyListeners();
+        }
+      }),
+    );
   }
 
   /// The slot just signed in as an account another slot already holds: sign
@@ -271,8 +279,10 @@ class AccountHost extends ChangeNotifier {
   Future<void> _dropDuplicate(AccountRuntime current) async {
     duplicateAccount = true;
     final other = registry.duplicateOf(
-        current.state.session!.baseUrl, current.state.session!.accountId!,
-        except: current.namespace);
+      current.state.session!.baseUrl,
+      current.state.session!.accountId!,
+      except: current.namespace,
+    );
     registry = registry.withRemoving(current.namespace);
     await _registryStore.save(registry);
     await current.state.logout();
@@ -285,9 +295,11 @@ class AccountHost extends ChangeNotifier {
   }
 
   String _firstLive() => registry.slots
-      .firstWhere((s) => s.state != SlotState.removing,
-          orElse: () =>
-              AccountSlot(namespace: primaryNamespace, state: SlotState.active))
+      .firstWhere(
+        (s) => s.state != SlotState.removing,
+        orElse: () =>
+            AccountSlot(namespace: primaryNamespace, state: SlotState.active),
+      )
       .namespace;
 
   // ------------------------------------------------------------- switching ---
@@ -295,8 +307,10 @@ class AccountHost extends ChangeNotifier {
   /// Makes [namespace] the live account. The old runtime is torn down
   /// completely first. When push cannot be taken down, nothing changes and
   /// the result is [SwitchOutcome.needsConfirmation].
-  Future<SwitchOutcome> switchTo(String namespace,
-      {bool acceptPushFailure = false}) async {
+  Future<SwitchOutcome> switchTo(
+    String namespace, {
+    bool acceptPushFailure = false,
+  }) async {
     if (switching) return SwitchOutcome.busy;
     var outcome = SwitchOutcome.done;
     await _enqueue(() async {
@@ -360,8 +374,10 @@ class AccountHost extends ChangeNotifier {
   }
 
   /// Steps 6 and 7: desktop services, state, store, then that slot's files.
-  Future<void> _leaveAndClose(AccountRuntime current,
-      {bool signedOutAlready = false}) async {
+  Future<void> _leaveAndClose(
+    AccountRuntime current, {
+    bool signedOutAlready = false,
+  }) async {
     current.state.removeListener(_bindIdentity);
     await current.desktop?.detach();
     current.desktop = null;
@@ -397,8 +413,10 @@ class AccountHost extends ChangeNotifier {
       }
     });
     if (namespace == null) return SwitchOutcome.failed;
-    final outcome =
-        await switchTo(namespace!, acceptPushFailure: acceptPushFailure);
+    final outcome = await switchTo(
+      namespace!,
+      acceptPushFailure: acceptPushFailure,
+    );
     if (outcome != SwitchOutcome.done) {
       // Nothing was opened: do not leave an empty pending slot behind.
       await _enqueue(() async {
@@ -416,8 +434,10 @@ class AccountHost extends ChangeNotifier {
   /// `removing`, signed out on its server (best effort), deleted, and then
   /// forgotten. Removing the active slot opens another one, or a fresh
   /// connect screen when none is left.
-  Future<SwitchOutcome> remove(String namespace,
-      {bool acceptPushFailure = false}) async {
+  Future<SwitchOutcome> remove(
+    String namespace, {
+    bool acceptPushFailure = false,
+  }) async {
     if (switching) return SwitchOutcome.busy;
     var outcome = SwitchOutcome.done;
     await _enqueue(() async {
@@ -458,8 +478,9 @@ class AccountHost extends ChangeNotifier {
         if (runtime == null) {
           if (registry.slots.isEmpty) {
             registry = await _registryStore.addPending();
-            registry =
-                registry.withActive(_registryStore.newestPending(registry));
+            registry = registry.withActive(
+              _registryStore.newestPending(registry),
+            );
             await _registryStore.save(registry);
           } else {
             registry = registry.withActive(_firstLive());
@@ -544,8 +565,9 @@ Future<bool> storeHoldsAccount(LocalStore store) async {
 /// backup and recovery files, K2 transfers): the shared support directory
 /// for the primary slot, its own `profiles/<namespace>` folder otherwise.
 Future<Directory> slotWorkingDirectory(ProfileScope scope) async {
-  final directory =
-      scope.workingDirectoryIn(await getApplicationSupportDirectory());
+  final directory = scope.workingDirectoryIn(
+    await getApplicationSupportDirectory(),
+  );
   await directory.create(recursive: true);
   return directory;
 }

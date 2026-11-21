@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -75,11 +76,13 @@ Future<(AppState, _InviteApi)> _open(
     ..invites = invites
     ..invitesLoaded = true;
   addTearDown(state.dispose);
-  await tester.pumpWidget(MaterialApp(
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: InviteScreen(state: state),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: InviteScreen(state: state),
+    ),
+  );
   await tester.pumpAndSettle();
   return (state, api);
 }
@@ -87,18 +90,18 @@ Future<(AppState, _InviteApi)> _open(
 Future<void> _revokeFirst(WidgetTester tester) async {
   await tester.tap(find.byTooltip(englishL10n.inviteActions).first);
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Revoke').last);
+  await tester.tap(find.text('Turn off').last);
   await tester.pumpAndSettle();
   // The confirmation dialog.
-  await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
   await tester.pumpAndSettle();
 }
 
 Future<void> _pullToRefresh(WidgetTester tester) async {
   // The same refresh a pull gesture runs.
-  unawaited(tester
-      .state<RefreshIndicatorState>(find.byType(RefreshIndicator))
-      .show());
+  unawaited(
+    tester.state<RefreshIndicatorState>(find.byType(RefreshIndicator)).show(),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -131,8 +134,9 @@ void main() {
     expect(find.text(unreachable), findsNothing);
   });
 
-  testWidgets('leaving during a failing revoke causes no error',
-      (tester) async {
+  testWidgets('leaving during a failing revoke causes no error', (
+    tester,
+  ) async {
     final (_, api) = await _open(
       tester,
       invites: <Invite>[_invite('inv_1', 'ABCD-1234')],
@@ -140,9 +144,9 @@ void main() {
     api.failRevoke = true;
     await tester.tap(find.byTooltip(englishL10n.inviteActions).first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Revoke').last);
+    await tester.tap(find.text('Turn off').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
     // Gone before the answer is handled.
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     await tester.pumpAndSettle();
@@ -168,11 +172,37 @@ void main() {
     expect(find.text(englishL10n.inviteLoadFailed), findsNothing);
   });
 
-  testWidgets('a refresh that succeeds with nothing says there are none',
-      (tester) async {
+  testWidgets('a refresh that succeeds with nothing says there are none', (
+    tester,
+  ) async {
     final (_, _) = await _open(tester);
     await _pullToRefresh(tester);
     expect(find.text(englishL10n.inviteEmptyTitle), findsOneWidget);
     expect(find.text(englishL10n.inviteLoadFailed), findsNothing);
+  });
+
+  testWidgets('U34: tapping an invite copies it as one link', (tester) async {
+    final copies = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copies.add((call.arguments as Map)['text'] as String);
+      }
+      return null;
+    });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    await _open(
+      tester,
+      invites: <Invite>[_invite('i1', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')],
+    );
+    await tester.tap(find.text(englishL10n.inviteNeverExpires));
+    await tester.pump();
+    expect(copies, <String>[
+      'https://localhost/invite#v1.ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    ]);
+    expect(find.text(englishL10n.inviteLinkCopied), findsOneWidget);
   });
 }

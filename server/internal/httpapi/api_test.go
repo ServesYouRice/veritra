@@ -695,7 +695,8 @@ func TestListMessagesCursorPagination(t *testing.T) {
 
 func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	handler, ownerToken, ownerDeviceID := newTestHandlerWithOwnerDevice(t)
-	_, memberAccountID := registerMemberWithID(t, handler, ownerToken, "claimmember")
+	memberToken, memberAccountID := registerMemberWithID(t, handler, ownerToken, "claimmember")
+	memberDeviceID := firstDeviceID(t, handler, memberToken)
 	outsiderToken := registerMember(t, handler, ownerToken, "claimoutsider")
 
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/conversations", ownerToken, map[string]interface{}{
@@ -713,12 +714,25 @@ func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	}
 	claimPath := "/api/v1/conversations/" + conversation.ID + "/key-packages/claim"
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, outsiderToken, nil)
+	claimBody := map[string]interface{}{"device_ids": []string{memberDeviceID}}
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, outsiderToken, claimBody)
 	if status != http.StatusForbidden || !bytes.Contains(response, []byte(`"error":"forbidden"`)) {
 		t.Fatalf("non-member claim status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
+	// A claim names the devices it wants (D134): none, whether the body is
+	// missing, empty or lists no device, is refused and takes nothing.
+	for name, body := range map[string]interface{}{"no body": nil, "empty object": map[string]interface{}{}, "empty list": map[string]interface{}{"device_ids": []string{}}} {
+		if status, response := doJSON(t, handler, http.MethodPost, claimPath, ownerToken, body); status != http.StatusBadRequest || !bytes.Contains(response, []byte(`"error":"invalid_input"`)) {
+			t.Fatalf("claim with %s status=%d body=%s", name, status, response)
+		}
+	}
+	// The requester's own device is never a target.
+	if status, response := doJSON(t, handler, http.MethodPost, claimPath, ownerToken, map[string]interface{}{"device_ids": []string{ownerDeviceID}}); status != http.StatusBadRequest {
+		t.Fatalf("claim of the requester's own device status=%d body=%s", status, response)
+	}
+
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, claimBody)
 	if status != http.StatusOK {
 		t.Fatalf("member claim status=%d body=%s", status, response)
 	}
@@ -730,13 +744,15 @@ func TestConversationKeyPackageClaimsAreAuthorizedAndSingleUse(t *testing.T) {
 	if err := json.Unmarshal(response, &claimed); err != nil {
 		t.Fatalf("decode key packages: %v", err)
 	}
-	if len(claimed.KeyPackages) != 1 || claimed.KeyPackages[0].DeviceID == ownerDeviceID {
-		t.Fatalf("claim did not exclude requester device: %s", response)
+	if len(claimed.KeyPackages) != 1 || claimed.KeyPackages[0].DeviceID != memberDeviceID {
+		t.Fatalf("claim did not return the named device's package: %s", response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, nil)
-	if status != http.StatusConflict || !bytes.Contains(response, []byte(`"error":"key_package_unavailable"`)) {
-		t.Fatalf("repeated claim status=%d body=%s", status, response)
+	// Single use: a device with no package left is skipped, not an error.
+	status, response = doJSON(t, handler, http.MethodPost, claimPath, ownerToken, claimBody)
+	claimed.KeyPackages = nil
+	if err := json.Unmarshal(response, &claimed); err != nil || status != http.StatusOK || len(claimed.KeyPackages) != 0 {
+		t.Fatalf("repeated claim status=%d body=%s, want 200 with no package", status, response)
 	}
 }
 
@@ -1055,6 +1071,23 @@ func registerMemberWithID(t *testing.T, handler http.Handler, ownerToken, userna
 	return decoded.Token, decoded.Account.ID
 }
 
+// registerMemberWithCode registers username with an invite code already in
+// hand and returns the registration status.
+func registerMemberWithCode(t *testing.T, handler http.Handler, code, username string) int {
+	t.Helper()
+	enrollment := reserveEnrollment(t, handler, "/api/v1/register/enrollment", code)
+	body := map[string]interface{}{
+		"invite_code":        code,
+		"username":           username,
+		"password":           "member-password-123",
+		"device_name":        username + " phone",
+		"device_key_package": mlswiretest.KeyPackage(),
+	}
+	addEnrollmentProof(body, enrollment)
+	status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/register", "", body)
+	return status
+}
+
 func accountIDFromExport(t *testing.T, handler http.Handler, token string) string {
 	t.Helper()
 	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
@@ -1189,31 +1222,53 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("create invite status=%d body=%s", status, response)
 	}
+	var created struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response, &created); err != nil || created.Code == "" {
+		t.Fatalf("create returns the code once: %s (%v)", response, err)
+	}
 
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/invites", ownerToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("list invites status=%d body=%s", status, response)
 	}
 	var listed struct {
-		Invites []struct {
-			ID      string `json:"id"`
-			Code    string `json:"code"`
-			MaxUses int    `json:"max_uses"`
-		} `json:"invites"`
+		Invites []map[string]interface{} `json:"invites"`
 	}
 	if err := json.Unmarshal(response, &listed); err != nil {
 		t.Fatalf("decode invites: %v", err)
 	}
-	if len(listed.Invites) != 1 || listed.Invites[0].MaxUses != 5 ||
-		listed.Invites[0].Code == "" {
+	if len(listed.Invites) != 1 || listed.Invites[0]["id"] != created.ID ||
+		listed.Invites[0]["max_uses"] != float64(5) || listed.Invites[0]["uses"] != float64(0) {
 		t.Fatalf("unexpected invites: %#v", listed.Invites)
 	}
-	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+listed.Invites[0].ID, ownerToken, nil)
+	// The server keeps only a hash: the list carries no code, under any key.
+	if _, ok := listed.Invites[0]["code"]; ok || bytes.Contains(response, []byte(created.Code)) {
+		t.Fatalf("listed invite carries its code: %s", response)
+	}
+	// The code from the create answer registers.
+	if code := registerMemberWithCode(t, handler, created.Code, "listedmember"); code != http.StatusCreated {
+		t.Fatalf("register with the created code status=%d", code)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/invites", ownerToken, map[string]interface{}{"max_uses": 1})
+	if status != http.StatusCreated {
+		t.Fatalf("create invite status=%d body=%s", status, response)
+	}
+	var revocable struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response, &revocable); err != nil {
+		t.Fatal(err)
+	}
+	status, response = doJSON(t, handler, http.MethodDelete, "/api/v1/invites/"+revocable.ID, ownerToken, nil)
 	if status != http.StatusNoContent {
 		t.Fatalf("revoke invite status=%d body=%s", status, response)
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/register", "", map[string]interface{}{
-		"invite_code": listed.Invites[0].Code, "username": "revokedinvite",
+		"invite_code": revocable.Code, "username": "revokedinvite",
 		"password": "member-password-123", "device_name": "phone",
 		"device_key_package": base64.StdEncoding.EncodeToString([]byte("revoked-key-package")),
 	})

@@ -55,9 +55,15 @@ final Map<String, GovernanceState> _valid = {
     joined: {'acc_owner': 0, 'acc_m': 1, 'acc_x': 2, 'acc_y': 2},
     timeouts: {
       'acc_y': const MemberTimeout(
-          epoch: 7, fromMs: 1700000000000, untilMs: 1700000600000),
+        epoch: 7,
+        fromMs: 1700000000000,
+        untilMs: 1700000600000,
+      ),
       'acc_x': const MemberTimeout(
-          epoch: 6, fromMs: 1699999000000, untilMs: 1700002600000)
+        epoch: 6,
+        fromMs: 1699999000000,
+        untilMs: 1700002600000,
+      ),
     },
   ),
 };
@@ -67,12 +73,13 @@ void main() {
     final out = {
       'format': 'veritra-c4-governance-record-v2',
       'valid': {
-        for (final e in _valid.entries) e.key: _hex(encodeGovernance(e.value))
+        for (final e in _valid.entries) e.key: _hex(encodeGovernance(e.value)),
       },
       'invalid': _invalid(),
     };
-    File(_vectorPath).writeAsStringSync(
-        '${const JsonEncoder.withIndent('  ').convert(out)}\n');
+    File(
+      _vectorPath,
+    ).writeAsStringSync('${const JsonEncoder.withIndent('  ').convert(out)}\n');
   }
   final vector =
       jsonDecode(File(_vectorPath).readAsStringSync()) as Map<String, dynamic>;
@@ -83,8 +90,11 @@ void main() {
     expect(valid.keys.toSet(), _valid.keys.toSet());
     for (final e in _valid.entries) {
       expect(_hex(encodeGovernance(e.value)), valid[e.key], reason: e.key);
-      expect(decodeGovernance(_unhex(valid[e.key] as String)), e.value,
-          reason: e.key);
+      expect(
+        decodeGovernance(_unhex(valid[e.key] as String)),
+        e.value,
+        reason: e.key,
+      );
     }
   });
 
@@ -93,41 +103,53 @@ void main() {
     for (final e in invalid.entries) {
       final item = e.value as Map<String, dynamic>;
       expect(
-          () => decodeGovernance(_unhex(item['hex'] as String)),
-          throwsA(isA<GovernanceCodecException>().having(
-              (x) => x.message, 'message', contains(item['reason'] as String))),
-          reason: e.key);
+        () => decodeGovernance(_unhex(item['hex'] as String)),
+        throwsA(
+          isA<GovernanceCodecException>().having(
+            (x) => x.message,
+            'message',
+            contains(item['reason'] as String),
+          ),
+        ),
+        reason: e.key,
+      );
     }
   });
 
   test('every truncation of a valid record is refused', () {
     final bytes = encodeGovernance(_full());
     for (var n = 0; n < bytes.length; n++) {
-      expect(() => decodeGovernance(Uint8List.sublistView(bytes, 0, n)),
-          throwsA(isA<GovernanceCodecException>()),
-          reason: 'cut at $n');
+      expect(
+        () => decodeGovernance(Uint8List.sublistView(bytes, 0, n)),
+        throwsA(isA<GovernanceCodecException>()),
+        reason: 'cut at $n',
+      );
     }
   });
 
   test('a byte appended is refused', () {
     final bytes = Uint8List.fromList([...encodeGovernance(_full()), 0]);
-    expect(() => decodeGovernance(bytes),
-        throwsA(isA<GovernanceCodecException>()));
+    expect(
+      () => decodeGovernance(bytes),
+      throwsA(isA<GovernanceCodecException>()),
+    );
   });
 
   test('encoding is independent of insertion order', () {
     final a = GovernanceState(
-        rev: 5,
-        owner: 'o',
-        ownerRev: 0,
-        admins: {'x': 1, 'y': 2},
-        moderators: {'m', 'n'});
+      rev: 5,
+      owner: 'o',
+      ownerRev: 0,
+      admins: {'x': 1, 'y': 2},
+      moderators: {'m', 'n'},
+    );
     final b = GovernanceState(
-        rev: 5,
-        owner: 'o',
-        ownerRev: 0,
-        admins: {'y': 2, 'x': 1},
-        moderators: {'n', 'm'});
+      rev: 5,
+      owner: 'o',
+      ownerRev: 0,
+      admins: {'y': 2, 'x': 1},
+      moderators: {'n', 'm'},
+    );
     expect(_hex(encodeGovernance(a)), _hex(encodeGovernance(b)));
   });
 
@@ -157,17 +179,21 @@ void main() {
       'ownerRev above rev': s(ownerRev: 4),
       'admin since above rev': s(admins: {'a': 4}),
       'elector not admin': s(electors: {'z'}),
-      'empty electorate':
-          s(election: Election(opened: 1, electorate: <String>{})),
+      'empty electorate': s(
+        election: Election(opened: 1, electorate: <String>{}),
+      ),
       'vote outside electorate': s(
-          election: Election(opened: 1, electorate: {'a'}, votes: {'b': 'a'})),
+        election: Election(opened: 1, electorate: {'a'}, votes: {'b': 'a'}),
+      ),
       'empty id': s(moderators: {''}),
       'long id': s(moderators: {'a' * 256}),
     };
     for (final e in bad.entries) {
-      expect(() => encodeGovernance(e.value),
-          throwsA(isA<GovernanceCodecException>()),
-          reason: e.key);
+      expect(
+        () => encodeGovernance(e.value),
+        throwsA(isA<GovernanceCodecException>()),
+        reason: e.key,
+      );
     }
   });
 }
@@ -194,8 +220,10 @@ Map<String, Map<String, String>> _invalid() {
     0, 2, 0, 1, 0x61, 0, 1, 0x61, // a twice
     ...g.sublist(25),
   ];
-  Map<String, String> bad(String hex, String reason) =>
-      {'hex': hex, 'reason': reason};
+  Map<String, String> bad(String hex, String reason) => {
+        'hex': hex,
+        'reason': reason,
+      };
   return {
     'version_1': bad(h(with_(0, 1)), 'unknown version'),
     'version_3': bad(h(with_(0, 3)), 'unknown version'),
@@ -203,28 +231,34 @@ Map<String, Map<String, String>> _invalid() {
     'election_flag_without_body': bad(h(with_(flags, 2)), 'truncated'),
     // C5: bit 2 announces a timeout list, which must hold at least one.
     'timeouts_flag_without_body': bad(h(with_(flags, 4)), 'truncated'),
-    'timeouts_flag_with_empty_list':
-        bad(h([...with_(flags, 4), 0, 0]), 'empty timeouts'),
+    'timeouts_flag_with_empty_list': bad(
+      h([...with_(flags, 4), 0, 0]),
+      'empty timeouts',
+    ),
     'owner_rev_above_rev': bad(h(with_(16, 1)), 'owner_rev'),
     'empty_input': bad('', 'truncated'),
     'moderators_unsorted': bad(h(unsortedMods), 'not sorted'),
     'moderators_duplicate': bad(h(dupMods), 'not sorted'),
     'rev_high_bit_set': bad(h(with_(1, 0x80)), 'number too large'),
-    'id_not_utf8':
-        bad(h([...g.sublist(0, 20), 0xff, ...g.sublist(21)]), 'UTF-8'),
+    'id_not_utf8': bad(
+      h([...g.sublist(0, 20), 0xff, ...g.sublist(21)]),
+      'UTF-8',
+    ),
     'id_with_bom': bad(
-        h([
-          ...g.sublist(0, 18),
-          0, 4, 0xef, 0xbb, 0xbf, 0x61, // owner = BOM + 'a'
-          ...g.sublist(21),
-        ]),
-        'canonical'),
+      h([
+        ...g.sublist(0, 18),
+        0, 4, 0xef, 0xbb, 0xbf, 0x61, // owner = BOM + 'a'
+        ...g.sublist(21),
+      ]),
+      'canonical',
+    ),
     'owner_is_also_admin': bad(
-        h([
-          ...g.sublist(0, 21),
-          0, 1, 0, 1, 0x6f, 0, 0, 0, 0, 0, 0, 0, 0, 0, // admin 'o' since 0
-          ...g.sublist(23),
-        ]),
-        'owner also'),
+      h([
+        ...g.sublist(0, 21),
+        0, 1, 0, 1, 0x6f, 0, 0, 0, 0, 0, 0, 0, 0, 0, // admin 'o' since 0
+        ...g.sublist(23),
+      ]),
+      'owner also',
+    ),
   };
 }

@@ -8,6 +8,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/profile_service.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/profile_record_codec.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -48,8 +49,11 @@ class _Recording extends ProfileService {
   bool sidecarsThrow = false;
 
   @override
-  Future<void> saveGroupProfile(String conversationId,
-      {String? name, ProfilePhoto? photo}) async {
+  Future<void> saveGroupProfile(
+    String conversationId, {
+    String? name,
+    ProfilePhoto? photo,
+  }) async {
     calls.add('saveGroup:$conversationId:$name');
   }
 
@@ -98,6 +102,11 @@ class _Api extends ApiClient {
   Future<List<BlockedAccount>> listBlocks(String token) async => remoteBlocks;
 
   @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String conversationId) async =>
+      const <ConversationMember>[];
+
+  @override
   Future<List<Conversation>> conversations(String token) async =>
       const <Conversation>[];
 
@@ -124,11 +133,6 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-          String token, String conversationId) async =>
-      const <DeviceKeyPackage>[];
-
-  @override
   Future<BlockedAccount> blockAccount(String token, String accountId) async {
     blocked.add(accountId);
     return BlockedAccount(accountId: accountId);
@@ -136,18 +140,33 @@ class _Api extends ApiClient {
 
   @override
   Future<int?> removeConversationMember(
-          String token, String conversationId, String accountId) async =>
+    String token,
+    String conversationId,
+    String accountId,
+  ) async =>
       null;
 }
 
-class _Mls implements MlsConversationCryptoService {
+class _Mls
+    implements
+        MlsConversationCryptoService,
+        ApprovedDeviceDiscoveryCryptoService {
+  @override
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+          String? conversationId, Iterable<String> accountIds,
+          {Set<String> excluding = const <String>{}}) async =>
+      const <MlsDeviceRef>[];
+
   @override
   Future<void> initializeConversation(
-      String conversationId, List<DeviceKeyPackage> claimedPackages) async {}
+    String conversationId,
+    List<DeviceKeyPackage> claimedPackages,
+  ) async {}
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       (epoch: 1, pending: false);
 
   @override
@@ -168,12 +187,15 @@ class _ExpiringMls extends _Mls implements ExpiringPayloadCryptoService {
 
   @override
   Future<MessageEnvelope> encryptExpiringPayload(
-      String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {required DateTime expiresAt,
-      String? channelId,
-      int? layoutGeneration,
-      List<String> attachmentRefs = const [],
-      String? draftText}) async {
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required DateTime expiresAt,
+    String? channelId,
+    int? layoutGeneration,
+    List<String> attachmentRefs = const [],
+    String? draftText,
+  }) async {
     encryptedBody = body;
     expiry = expiresAt;
     throw StateError('stop after capturing encryption input');
@@ -190,8 +212,10 @@ class _IdleSync implements SyncService {
   Future<void> dispose() => _controller.close();
 }
 
-Future<(AppState, _Api, _Recording?)> _start(
-    {bool profiles = true, bool mls = true}) async {
+Future<(AppState, _Api, _Recording?)> _start({
+  bool profiles = true,
+  bool mls = true,
+}) async {
   final api = _Api();
   final recording = profiles ? _Recording() : null;
   final state = AppState(
@@ -218,14 +242,16 @@ SyncEvent _event(String type, {String? conversationId, Object? payload}) =>
 
 void main() {
   group('a new group', () {
-    test('its name goes into the encrypted profile, not the server title',
-        () async {
-      final (state, api, profiles) = await _start();
-      await state.startConversation(kind: 'group', title: '  Walkers  ');
-      await Future<void>.delayed(Duration.zero);
-      expect(api.sentTitle, isNull);
-      expect(profiles!.calls, ['saveGroup:conv_new:Walkers']);
-    });
+    test(
+      'its name goes into the encrypted profile, not the server title',
+      () async {
+        final (state, api, profiles) = await _start();
+        await state.startConversation(kind: 'group', title: '  Walkers  ');
+        await Future<void>.delayed(Duration.zero);
+        expect(api.sentTitle, isNull);
+        expect(profiles!.calls, ['saveGroup:conv_new:Walkers']);
+      },
+    );
 
     test('without profiles the title still goes to the server', () async {
       final (state, api, _) = await _start(profiles: false);
@@ -245,7 +271,10 @@ void main() {
     test('a DM never gets a profile', () async {
       final (state, api, profiles) = await _start();
       await state.startConversation(
-          kind: 'dm', memberAccountIds: <String>['acct_peer'], title: 'x');
+        kind: 'dm',
+        memberAccountIds: <String>['acct_peer'],
+        title: 'x',
+      );
       await Future<void>.delayed(Duration.zero);
       expect(profiles!.calls, isEmpty);
       expect(api.sentTitle, 'x');
@@ -261,19 +290,21 @@ void main() {
       expect(profiles!.calls, ['forgetAccount:acct_bob', 'ownDue']);
     });
 
-    test('a block discovered on another device marks rotation due once',
-        () async {
-      final (state, api, profiles) = await _start();
-      api.remoteBlocks = [BlockedAccount(accountId: 'acct_bob')];
-      await state.refreshBlocks();
-      await Future<void>.delayed(Duration.zero);
-      expect(profiles!.calls, ['forgetAccount:acct_bob', 'ownDue']);
-      profiles.calls.clear();
-      await state.refreshBlocks();
-      await Future<void>.delayed(Duration.zero);
-      expect(profiles.calls, isEmpty);
-      state.dispose();
-    });
+    test(
+      'a block discovered on another device marks rotation due once',
+      () async {
+        final (state, api, profiles) = await _start();
+        api.remoteBlocks = [BlockedAccount(accountId: 'acct_bob')];
+        await state.refreshBlocks();
+        await Future<void>.delayed(Duration.zero);
+        expect(profiles!.calls, ['forgetAccount:acct_bob', 'ownDue']);
+        profiles.calls.clear();
+        await state.refreshBlocks();
+        await Future<void>.delayed(Duration.zero);
+        expect(profiles.calls, isEmpty);
+        state.dispose();
+      },
+    );
 
     test('a refused block changes nothing', () async {
       final (state, _, profiles) = await _start();
@@ -285,7 +316,7 @@ void main() {
     test('leaving a group forgets its profile', () async {
       final (state, _, profiles) = await _start(mls: false);
       state.conversations = <Conversation>[
-        Conversation(id: 'conv_g', kind: 'group')
+        Conversation(id: 'conv_g', kind: 'group'),
       ];
       expect(await state.leaveConversation('conv_g'), isTrue);
       expect(profiles!.calls, contains('forgetConversation:conv_g'));
@@ -314,34 +345,43 @@ void main() {
     test('a removal marks the group rotation due', () async {
       final (state, _, profiles) = await _start();
       state.debugProfileSyncEvent(
-          _event('membership.removed', conversationId: 'conv_g'));
+        _event('membership.removed', conversationId: 'conv_g'),
+      );
       state.debugProfileSyncEvent(
-          _event('membership.left', conversationId: 'conv_g'));
+        _event('membership.left', conversationId: 'conv_g'),
+      );
       await Future<void>.delayed(Duration.zero);
       expect(profiles!.calls, ['groupDue:conv_g', 'groupDue:conv_g']);
     });
 
-    test('other roster events flag the next post to carry the group key',
-        () async {
-      final (state, _, profiles) = await _start();
-      state.debugProfileSyncEvent(
-          _event('conversation.updated', conversationId: 'conv_g'));
-      state.debugProfileSyncEvent(
-          _event('membership.updated', conversationId: 'conv_g'));
-      await Future<void>.delayed(Duration.zero);
-      expect(profiles!.calls, ['sidecarFlag:conv_g', 'sidecarFlag:conv_g']);
-    });
+    test(
+      'other roster events flag the next post to carry the group key',
+      () async {
+        final (state, _, profiles) = await _start();
+        state.debugProfileSyncEvent(
+          _event('conversation.updated', conversationId: 'conv_g'),
+        );
+        state.debugProfileSyncEvent(
+          _event('membership.updated', conversationId: 'conv_g'),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(profiles!.calls, ['sidecarFlag:conv_g', 'sidecarFlag:conv_g']);
+      },
+    );
 
-    test('unrelated events and events with no conversation do nothing',
-        () async {
-      final (state, _, profiles) = await _start();
-      state.debugProfileSyncEvent(
-          _event('reaction.created', conversationId: 'conv_g'));
-      state.debugProfileSyncEvent(_event('membership.removed'));
-      state.debugProfileSyncEvent(_event('conversation.updated'));
-      await Future<void>.delayed(Duration.zero);
-      expect(profiles!.calls, isEmpty);
-    });
+    test(
+      'unrelated events and events with no conversation do nothing',
+      () async {
+        final (state, _, profiles) = await _start();
+        state.debugProfileSyncEvent(
+          _event('reaction.created', conversationId: 'conv_g'),
+        );
+        state.debugProfileSyncEvent(_event('membership.removed'));
+        state.debugProfileSyncEvent(_event('conversation.updated'));
+        await Future<void>.delayed(Duration.zero);
+        expect(profiles!.calls, isEmpty);
+      },
+    );
 
     test('with no profile service every event is ignored', () async {
       final (state, _, _) = await _start(profiles: false);
@@ -349,39 +389,39 @@ void main() {
     });
   });
 
-  test('disappearing messages include profile sidecars at encryption',
-      () async {
-    final api = _Api();
-    final crypto = _ExpiringMls();
-    final profiles = _Recording()
-      ..sidecarMap = {
-        'profile_key': {'key': 'k', 'key_id': 'i', 'version': 1}
-      };
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: crypto,
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => _IdleSync(),
-    )
-      ..api = api
-      ..session = _session
-      ..profiles = profiles;
-    await state.refreshConversations();
-    state.conversations = [
-      Conversation(
+  test(
+    'disappearing messages include profile sidecars at encryption',
+    () async {
+      final api = _Api();
+      final crypto = _ExpiringMls();
+      final profiles = _Recording()
+        ..sidecarMap = {
+          'profile_key': {'key': 'k', 'key_id': 'i', 'version': 1},
+        };
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: crypto,
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => _IdleSync(),
+      )
+        ..api = api
+        ..session = _session
+        ..profiles = profiles;
+      await state.refreshConversations();
+      state.conversations = [
+        Conversation(
           id: 'conv_g',
           kind: 'group',
           createdBy: 'acct_me',
-          retentionSeconds: 60)
-    ];
-    await state.sendMessageTo('conv_g', 'hello');
-    expect(crypto.encryptedBody, {
-      'text': 'hello',
-      ...profiles.sidecarMap,
-    });
-    expect(crypto.expiry, isNotNull);
-    state.dispose();
-  });
+          retentionSeconds: 60,
+        ),
+      ];
+      await state.sendMessageTo('conv_g', 'hello');
+      expect(crypto.encryptedBody, {'text': 'hello', ...profiles.sidecarMap});
+      expect(crypto.expiry, isNotNull);
+      state.dispose();
+    },
+  );
 
   group('sidecars on a post', () {
     final key = {'key': 'k', 'key_id': 'i', 'version': 1};
@@ -395,43 +435,61 @@ void main() {
         AppPayloadType.attachmentManifest,
         AppPayloadType.poll,
       ]) {
-        final out =
-            await state.debugWithProfileSidecars('conv_g', type, {'a': 1});
+        final out = await state.debugWithProfileSidecars('conv_g', type, {
+          'a': 1,
+        });
         expect(out, {'a': 1, 'profile_key': key}, reason: type.name);
       }
     });
 
-    test('other types, and a post with nothing to add, are left as they are',
-        () async {
-      final (state, _, profiles) = await _start();
-      profiles!.sidecarMap = {'profile_key': key};
-      final body = {'message_id': 'm', 'reaction': '+'};
-      expect(
+    test(
+      'other types, and a post with nothing to add, are left as they are',
+      () async {
+        final (state, _, profiles) = await _start();
+        profiles!.sidecarMap = {'profile_key': key};
+        final body = {'message_id': 'm', 'reaction': '+'};
+        expect(
           identical(
-              await state.debugWithProfileSidecars(
-                  'conv_g', AppPayloadType.reaction, body),
-              body),
-          isTrue);
-      profiles.sidecarMap = {};
-      final text = {'text': 'hi'};
-      expect(
+            await state.debugWithProfileSidecars(
+              'conv_g',
+              AppPayloadType.reaction,
+              body,
+            ),
+            body,
+          ),
+          isTrue,
+        );
+        profiles.sidecarMap = {};
+        final text = {'text': 'hi'};
+        expect(
           identical(
-              await state.debugWithProfileSidecars(
-                  'conv_g', AppPayloadType.text, text),
-              text),
-          isTrue);
-    });
+            await state.debugWithProfileSidecars(
+              'conv_g',
+              AppPayloadType.text,
+              text,
+            ),
+            text,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('a very long text gets no room-eating key', () async {
       final (state, _, profiles) = await _start();
       profiles!.sidecarMap = {'profile_key': key};
       final long = {'text': 'x' * 9000};
       expect(
-          identical(
-              await state.debugWithProfileSidecars(
-                  'conv_g', AppPayloadType.text, long),
-              long),
-          isTrue);
+        identical(
+          await state.debugWithProfileSidecars(
+            'conv_g',
+            AppPayloadType.text,
+            long,
+          ),
+          long,
+        ),
+        isTrue,
+      );
     });
 
     test('an unreadable store never stops the post', () async {
@@ -439,20 +497,29 @@ void main() {
       profiles!.sidecarsThrow = true;
       final text = {'text': 'hi'};
       expect(
-          await state.debugWithProfileSidecars(
-              'conv_g', AppPayloadType.text, text),
-          text);
+        await state.debugWithProfileSidecars(
+          'conv_g',
+          AppPayloadType.text,
+          text,
+        ),
+        text,
+      );
     });
 
     test('with no profile service a post is untouched', () async {
       final (state, _, _) = await _start(profiles: false);
       final text = {'text': 'hi'};
       expect(
-          identical(
-              await state.debugWithProfileSidecars(
-                  'conv_g', AppPayloadType.text, text),
-              text),
-          isTrue);
+        identical(
+          await state.debugWithProfileSidecars(
+            'conv_g',
+            AppPayloadType.text,
+            text,
+          ),
+          text,
+        ),
+        isTrue,
+      );
     });
   });
 
@@ -463,7 +530,9 @@ void main() {
       final (state, _, profiles) = await _start();
       profiles!.sidecarMap = {'profile_key': key};
       await state.startConversation(
-          kind: 'dm', memberAccountIds: <String>['acct_peer']);
+        kind: 'dm',
+        memberAccountIds: <String>['acct_peer'],
+      );
       return (state, profiles);
     }
 
@@ -472,31 +541,41 @@ void main() {
       state.blocksLoaded = false;
       final text = {'text': 'hi'};
       expect(
-          await state.debugWithProfileSidecars(
-              'conv_new', AppPayloadType.text, text),
-          text);
+        await state.debugWithProfileSidecars(
+          'conv_new',
+          AppPayloadType.text,
+          text,
+        ),
+        text,
+      );
     });
 
     test('an accepted DM with an unblocked peer gets the key', () async {
       final (state, _) = await dm();
       state.blocksLoaded = true;
       expect(
-          await state.debugWithProfileSidecars(
-              'conv_new', AppPayloadType.text, {'text': 'hi'}),
-          {'text': 'hi', 'profile_key': key});
+        await state.debugWithProfileSidecars('conv_new', AppPayloadType.text, {
+          'text': 'hi',
+        }),
+        {'text': 'hi', 'profile_key': key},
+      );
     });
 
     test('an accepted DM whose peer was blocked later gets none', () async {
       final (state, _) = await dm();
       state.blocksLoaded = true;
       state.blockedAccounts = <BlockedAccount>[
-        BlockedAccount(accountId: 'acct_peer')
+        BlockedAccount(accountId: 'acct_peer'),
       ];
       final text = {'text': 'hi'};
       expect(
-          await state.debugWithProfileSidecars(
-              'conv_new', AppPayloadType.text, text),
-          text);
+        await state.debugWithProfileSidecars(
+          'conv_new',
+          AppPayloadType.text,
+          text,
+        ),
+        text,
+      );
     });
   });
 
@@ -506,10 +585,9 @@ void main() {
     final (state, _, _) = await _start(profiles: false);
     state.profiles = _WritesThroughQueue(state);
     expect(
-        await state
-            .saveOwnProfile(name: 'x')
-            .timeout(const Duration(seconds: 5)),
-        isTrue);
+      await state.saveOwnProfile(name: 'x').timeout(const Duration(seconds: 5)),
+      isTrue,
+    );
   });
 
   test('co-members are unknown until the list came from the server', () async {
@@ -523,7 +601,7 @@ void main() {
       ..api = api
       ..session = _session
       ..conversations = <Conversation>[
-        Conversation(id: 'conv_1', kind: 'dm', peerAccountId: 'acct_peer')
+        Conversation(id: 'conv_1', kind: 'dm', peerAccountId: 'acct_peer'),
       ];
     expect(state.debugCoMemberAccounts(), isNull);
     await state.refreshConversations();
@@ -544,7 +622,8 @@ void main() {
 
   test('profile reads come from the service', () async {
     final store = MemoryLocalStore();
-    await store.saveProfile(StoredProfile(
+    await store.saveProfile(
+      StoredProfile(
         kind: 'account',
         subjectId: 'acct_bob',
         serverVersion: 1,
@@ -552,15 +631,20 @@ void main() {
         revision: 1,
         name: 'Bobby',
         photoPng: Uint8List.fromList([1]),
-        fetchedAt: 1));
-    await store.saveProfile(StoredProfile(
+        fetchedAt: 1,
+      ),
+    );
+    await store.saveProfile(
+      StoredProfile(
         kind: 'conversation',
         subjectId: 'conv_g',
         serverVersion: 1,
         keyId: '0' * 32,
         revision: 1,
         name: 'Walkers',
-        fetchedAt: 1));
+        fetchedAt: 1,
+      ),
+    );
     final service = ProfileService(
       store: store,
       codec: ProfileRecordCodec(_NoBindings()),

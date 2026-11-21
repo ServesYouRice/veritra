@@ -94,7 +94,8 @@ String groupRecoveryKey(String display) {
   final groups = <String>[];
   for (var i = 0; i < display.length; i += 4) {
     groups.add(
-        display.substring(i, i + 4 > display.length ? display.length : i + 4));
+      display.substring(i, i + 4 > display.length ? display.length : i + 4),
+    );
   }
   return groups.join('-');
 }
@@ -356,11 +357,13 @@ class PendingAccountRecovery {
     try {
       final json = jsonDecode(enrollment.payloadJson);
       if (json is! Map) return null;
-      return _fromFields(json,
-          origin: enrollment.origin,
-          accountId: enrollment.accountId,
-          deviceId: enrollment.deviceId,
-          mlsState: state);
+      return _fromFields(
+        json,
+        origin: enrollment.origin,
+        accountId: enrollment.accountId,
+        deviceId: enrollment.deviceId,
+        mlsState: state,
+      );
     } catch (_) {
       // Never echo the text: it holds credentials.
       return null;

@@ -18,7 +18,8 @@ import (
 //	POST   {id}/bans                      {account_id}
 //	GET    {id}/bans
 //	DELETE {id}/bans/{account}
-//	PUT    {id}/members/{account}/timeout {seconds}   (0 clears)
+//	PUT    {id}/members/{account}/timeout {seconds}   (0 clears; admins also clear a departed account's)
+//	GET    {id}/timeouts                      (every running timeout, with a member flag; admins and above)
 //	PUT    {id}/channels/{channel}/slow-mode {seconds} (0 turns off)
 //	PUT    {id}/invites-pause             {seconds}   (0 resumes)
 //	GET    {id}/moderation-state              (pause and slow modes, visible channels only)
@@ -91,6 +92,13 @@ func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal 
 			return true
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "timeout_until": until})
+	case len(parts) == 2 && parts[1] == "timeouts" && r.Method == http.MethodGet:
+		timeouts, err := a.Store.ListCommunityTimeouts(r.Context(), community, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"timeouts": timeouts})
 	case len(parts) == 4 && parts[1] == "channels" && parts[3] == "slow-mode" && r.Method == http.MethodPut:
 		d, ok := secondsBody(w, r)
 		if !ok {

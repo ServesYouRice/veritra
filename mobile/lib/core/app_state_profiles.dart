@@ -12,29 +12,56 @@ class _SessionProfileApi implements ProfileApi {
   final String _token;
 
   @override
-  Future<ProfileFetch> fetch(String kind, String subjectId,
-          {int? ifNoneMatchVersion}) =>
+  Future<ProfileFetch> fetch(
+    String kind,
+    String subjectId, {
+    int? ifNoneMatchVersion,
+  }) =>
       kind == profileSubjectAccount
-          ? _client.fetchAccountProfile(_token, subjectId,
-              ifNoneMatchVersion: ifNoneMatchVersion)
-          : _client.fetchConversationProfile(_token, subjectId,
-              ifNoneMatchVersion: ifNoneMatchVersion);
+          ? _client.fetchAccountProfile(
+              _token,
+              subjectId,
+              ifNoneMatchVersion: ifNoneMatchVersion,
+            )
+          : _client.fetchConversationProfile(
+              _token,
+              subjectId,
+              ifNoneMatchVersion: ifNoneMatchVersion,
+            );
 
   @override
-  Future<int> put(String kind, String subjectId, Uint8List blob,
-          {required String keyId, int? ifMatchVersion}) =>
+  Future<int> put(
+    String kind,
+    String subjectId,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) =>
       kind == profileSubjectAccount
-          ? _client.putAccountProfile(_token, blob,
-              keyId: keyId, ifMatchVersion: ifMatchVersion)
-          : _client.putConversationProfile(_token, subjectId, blob,
-              keyId: keyId, ifMatchVersion: ifMatchVersion);
+          ? _client.putAccountProfile(
+              _token,
+              blob,
+              keyId: keyId,
+              ifMatchVersion: ifMatchVersion,
+            )
+          : _client.putConversationProfile(
+              _token,
+              subjectId,
+              blob,
+              keyId: keyId,
+              ifMatchVersion: ifMatchVersion,
+            );
 
   @override
-  Future<List<ProfileVersion>> versions(
-          {List<String> accountIds = const <String>[],
-          List<String> conversationIds = const <String>[]}) =>
-      _client.profileVersions(_token,
-          accountIds: accountIds, conversationIds: conversationIds);
+  Future<List<ProfileVersion>> versions({
+    List<String> accountIds = const <String>[],
+    List<String> conversationIds = const <String>[],
+  }) =>
+      _client.profileVersions(
+        _token,
+        accountIds: accountIds,
+        conversationIds: conversationIds,
+      );
 }
 
 extension ProfileActions on AppState {
@@ -112,7 +139,9 @@ extension ProfileActions on AppState {
     notifyListeners();
     _profileTimer?.cancel();
     _profileTimer = Timer.periodic(
-        const Duration(hours: 24), (_) => unawaited(_profileCheck()));
+      const Duration(hours: 24),
+      (_) => unawaited(_profileCheck()),
+    );
     unawaited(_profileCheck());
   }
 
@@ -170,8 +199,10 @@ extension ProfileActions on AppState {
       }
       budget--;
       try {
-        final members =
-            await client.conversationMembers(current.token, conversation.id);
+        final members = await client.conversationMembers(
+          current.token,
+          conversation.id,
+        );
         if (!_sameSession(current)) return;
         membersByConversation = <String, List<ConversationMember>>{
           ...membersByConversation,
@@ -232,10 +263,12 @@ extension ProfileActions on AppState {
     final service = profiles;
     final co = _coMemberAccounts();
     if (service == null || co == null) return;
-    unawaited(service
-        .noteCoMembers(co)
-        .then((_) => service.pruneUnshared(co))
-        .catchError((Object _) {}));
+    unawaited(
+      service
+          .noteCoMembers(co)
+          .then((_) => service.pruneUnshared(co))
+          .catchError((Object _) {}),
+    );
   }
 
   /// Sync events that concern profiles.
@@ -246,20 +279,23 @@ extension ProfileActions on AppState {
     final conversationId = event.conversationId;
     if (type == 'profile.updated') {
       unawaited(
-          service.onProfileUpdated(event.payload).catchError((Object _) {}));
+        service.onProfileUpdated(event.payload).catchError((Object _) {}),
+      );
     } else if ((type == 'membership.removed' || type == 'membership.left') &&
         conversationId != null) {
-      unawaited(service
-          .markGroupRotationDue(conversationId)
-          .catchError((Object _) {}));
+      unawaited(
+        service.markGroupRotationDue(conversationId).catchError((Object _) {}),
+      );
     } else if ((type.startsWith('conversation.') ||
             type.startsWith('membership.')) &&
         conversationId != null) {
       // A roster change: the next post here carries the group key, so a
       // member who just joined learns it with no burst of messages (S13).
-      unawaited(service
-          .markGroupKeyForSidecar(conversationId)
-          .catchError((Object _) {}));
+      unawaited(
+        service
+            .markGroupKeyForSidecar(conversationId)
+            .catchError((Object _) {}),
+      );
     }
   }
 
@@ -303,8 +339,11 @@ extension ProfileActions on AppState {
   Set<String>? debugCoMemberAccounts() => _coMemberAccounts();
 
   @visibleForTesting
-  Future<Map<String, Object?>> debugWithProfileSidecars(String conversationId,
-          AppPayloadType type, Map<String, Object?> body) =>
+  Future<Map<String, Object?>> debugWithProfileSidecars(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body,
+  ) =>
       _withProfileSidecars(conversationId, type, body);
 
   /// Sets this account's display name and photo (null clears each).
@@ -312,10 +351,15 @@ extension ProfileActions on AppState {
       _profileWrite(() => profiles!.saveOwnProfile(name: name, photo: photo));
 
   /// Sets a group's name and photo (null clears each).
-  Future<bool> saveGroupProfile(String conversationId,
-          {String? name, ProfilePhoto? photo}) =>
-      _profileWrite(() =>
-          profiles!.saveGroupProfile(conversationId, name: name, photo: photo));
+  Future<bool> saveGroupProfile(
+    String conversationId, {
+    String? name,
+    ProfilePhoto? photo,
+  }) =>
+      _profileWrite(
+        () => profiles!
+            .saveGroupProfile(conversationId, name: name, photo: photo),
+      );
 
   /// Runs a profile write. Not under the session queue (`_runScoped`): the
   /// write queues key messages through the send queue, which would wait on
@@ -334,10 +378,13 @@ extension ProfileActions on AppState {
       _opErrors[Ops.profile] = l10n.profileSaveInvalid;
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) {
-        unawaited(_clearLocalSession(
+        unawaited(
+          _clearLocalSession(
             preserveDeviceIdentity: true,
             keepDrafts: true,
-            preserveOutbox: true));
+            preserveOutbox: true,
+          ),
+        );
       }
       _opErrors[Ops.profile] = describeError(err, l10n);
     } finally {
@@ -358,6 +405,7 @@ extension ProfileActions on AppState {
 
   void _profileConversationLeft(String conversationId) {
     unawaited(
-        profiles?.forgetConversation(conversationId).catchError((Object _) {}));
+      profiles?.forgetConversation(conversationId).catchError((Object _) {}),
+    );
   }
 }

@@ -11,8 +11,10 @@ void main() {
   const origin = 'https://chat.example.org';
   const production = TransportPolicy.production;
 
-  AccountInviteLink? parse(String text,
-          {TransportPolicy transport = production}) =>
+  AccountInviteLink? parse(
+    String text, {
+    TransportPolicy transport = production,
+  }) =>
       AccountInviteLink.tryParse(text, transport: transport);
 
   test('builds and reads back the same server and code', () {
@@ -27,22 +29,31 @@ void main() {
     final read = parse('  HTTPS://Chat.Example.org:443/invite#v1.$code\n')!;
     expect(read.origin, origin);
     expect(read.code, code);
-    expect(parse('https://chat.example.org:8443/invite#v1.$code')!.origin,
-        'https://chat.example.org:8443');
+    expect(
+      parse('https://chat.example.org:8443/invite#v1.$code')!.origin,
+      'https://chat.example.org:8443',
+    );
     // The server compares codes exactly: case is not folded.
-    expect(parse('$origin/invite#v1.${code.toLowerCase()}')!.code,
-        code.toLowerCase());
+    expect(
+      parse('$origin/invite#v1.${code.toLowerCase()}')!.code,
+      code.toLowerCase(),
+    );
   });
 
   test('plain HTTP only to loopback, and only in demo builds', () {
     const loopback = 'http://127.0.0.1:8080/invite#v1.$code';
     expect(parse(loopback), isNull);
-    expect(parse(loopback, transport: TransportPolicy.demo)!.origin,
-        'http://127.0.0.1:8080');
     expect(
-        parse('http://chat.example.org/invite#v1.$code',
-            transport: TransportPolicy.demo),
-        isNull);
+      parse(loopback, transport: TransportPolicy.demo)!.origin,
+      'http://127.0.0.1:8080',
+    );
+    expect(
+      parse(
+        'http://chat.example.org/invite#v1.$code',
+        transport: TransportPolicy.demo,
+      ),
+      isNull,
+    );
   });
 
   test('refuses everything that is not exactly an invitation link', () {
@@ -82,16 +93,21 @@ void main() {
     final commitment = 'B' * 22;
     expect(parse('$origin/join#v2.$secret.$commitment'), isNull);
     expect(
-        MembershipInviteLink.tryParse('$origin/invite#v1.$code',
-            expectedOrigin: origin),
-        isNull);
+      MembershipInviteLink.tryParse(
+        '$origin/invite#v1.$code',
+        expectedOrigin: origin,
+      ),
+      isNull,
+    );
   });
 
   test('a code that cannot travel in a link gets no link', () {
     expect(AccountInviteLink.forInvite(origin: origin, code: 'ab cd'), isNull);
     expect(AccountInviteLink.forInvite(origin: origin, code: 'short'), isNull);
     expect(
-        AccountInviteLink.forInvite(origin: 'not a url', code: code), isNull);
+      AccountInviteLink.forInvite(origin: 'not a url', code: code),
+      isNull,
+    );
   });
 
   test('never prints the code', () {

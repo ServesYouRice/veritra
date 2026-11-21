@@ -23,15 +23,20 @@ import 'test_crypto_service.dart';
 /// T44B: conversation, list and form quality.
 void main() {
   group('list time', () {
-    testWidgets('is relative to today and locale-formatted otherwise',
-        (tester) async {
+    testWidgets('is relative to today and locale-formatted otherwise', (
+      tester,
+    ) async {
       late BuildContext context;
-      await tester.pumpWidget(MaterialApp(
-        home: Builder(builder: (value) {
-          context = value;
-          return const SizedBox();
-        }),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (value) {
+              context = value;
+              return const SizedBox();
+            },
+          ),
+        ),
+      );
       final now = DateTime(2026, 10, 22, 15, 30);
       String at(DateTime time) => formatListTime(context, time, now: now);
 
@@ -43,8 +48,9 @@ void main() {
       expect(at(DateTime(2025, 12, 31, 12)), 'Dec 31, 2025');
     });
 
-    testWidgets('a chat row shows the time, not the date, for today',
-        (tester) async {
+    testWidgets('a chat row shows the time, not the date, for today', (
+      tester,
+    ) async {
       final now = DateTime.now();
       final state = _connectedState(_FakeApi())
         ..conversations = <Conversation>[
@@ -82,12 +88,13 @@ void main() {
   });
 
   group('composer', () {
-    testWidgets('an over-long draft is flagged inline and kept, not cut',
-        (tester) async {
+    testWidgets('an over-long draft is flagged inline and kept, not cut', (
+      tester,
+    ) async {
       final state = _groupState(_FakeApi());
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
       final draft = 'x' * (maxAppTextLength + 1);
@@ -96,10 +103,12 @@ void main() {
 
       expect(find.text(englishL10n.validationMessageTooLong), findsOneWidget);
       expect(
-        find.text(englishL10n.chatComposerCounter(
-          maxAppTextLength + 1,
-          maxAppTextLength,
-        )),
+        find.text(
+          englishL10n.chatComposerCounter(
+            maxAppTextLength + 1,
+            maxAppTextLength,
+          ),
+        ),
         findsOneWidget,
       );
       expect(_sendButton(tester).onPressed, isNull);
@@ -116,34 +125,41 @@ void main() {
       state.flushDrafts();
     });
 
-    testWidgets('the unavailable attachment reason is reachable by focus',
-        (tester) async {
+    testWidgets('the unavailable attachment reason is reachable by focus', (
+      tester,
+    ) async {
       final state = _groupState(_FakeApi());
       expect(state.attachmentsAvailable, isFalse);
-      await tester.pumpWidget(_app(
-        ChatScreen(state: state, conversationId: 'conv_1'),
-      ));
+      await tester.pumpWidget(
+        _app(ChatScreen(state: state, conversationId: 'conv_1')),
+      );
       await tester.pumpAndSettle();
 
-      final attach = tester.widget<IconButton>(find.ancestor(
-        of: find.byIcon(Icons.add),
-        matching: find.byType(IconButton),
-      ));
+      final attach = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byIcon(Icons.add),
+          matching: find.byType(IconButton),
+        ),
+      );
       expect(attach.onPressed, isNull, reason: 'the control stays disabled');
       expect(find.text(englishL10n.gatedAttachmentsUnavailable), findsNothing);
 
       final gate = find.byType(GatedExplanation);
       expect(gate, findsOneWidget);
       // The wrapper's own node, not the disabled button's.
-      final focus = Focus.of(tester.element(find
-          .descendant(of: gate, matching: find.byType(DecoratedBox))
-          .first));
+      final focus = Focus.of(
+        tester.element(
+          find.descendant(of: gate, matching: find.byType(DecoratedBox)).first,
+        ),
+      );
       expect(focus.canRequestFocus, isTrue);
       focus.requestFocus();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
       expect(
-          find.text(englishL10n.gatedAttachmentsUnavailable), findsOneWidget);
+        find.text(englishL10n.gatedAttachmentsUnavailable),
+        findsOneWidget,
+      );
       await tester.pumpAndSettle(const Duration(seconds: 2));
     });
   });
@@ -159,9 +175,9 @@ void main() {
             _message('m$i', DateTime.utc(2026, 9, 24, 10, i)),
         ],
       };
-    await tester.pumpWidget(_app(
-      ChatScreen(state: state, conversationId: 'conv_1'),
-    ));
+    await tester.pumpWidget(
+      _app(ChatScreen(state: state, conversationId: 'conv_1')),
+    );
     await tester.pumpAndSettle();
     final loaded = state.timelineFor('conv_1').length;
     expect(find.byTooltip('Jump to latest'), findsNothing);
@@ -182,8 +198,9 @@ void main() {
     expect(api.pageRequests, isEmpty, reason: 'nothing was refetched');
   });
 
-  testWidgets('a chat row offers mute and details on long press',
-      (tester) async {
+  testWidgets('a chat row offers mute and details on long press', (
+    tester,
+  ) async {
     final api = _FakeApi();
     final state = _connectedState(api)
       ..conversations = <Conversation>[
@@ -210,8 +227,9 @@ void main() {
     expect(state.isMuted('conv_1'), isTrue);
   });
 
-  testWidgets('a community name is validated before Create enables',
-      (tester) async {
+  testWidgets('a community name is validated before Create enables', (
+    tester,
+  ) async {
     final state = _connectedState(_FakeApi());
     await tester.pumpWidget(_app(CommunityScreen(state: state)));
     await tester.tap(find.byTooltip('New community'));
@@ -219,8 +237,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    FilledButton create() => tester
-        .widget<FilledButton>(find.widgetWithText(FilledButton, 'Create'));
+    FilledButton create() => tester.widget<FilledButton>(
+          find.widgetWithText(FilledButton, 'Create'),
+        );
     expect(create().onPressed, isNull);
     expect(find.text('Enter a name.'), findsNothing);
 
@@ -242,14 +261,18 @@ void main() {
   testWidgets('the new conversation form validates inline', (tester) async {
     final api = _FakeApi();
     final state = _connectedState(api);
-    await tester.pumpWidget(_app(Builder(
-      builder: (context) => Scaffold(
-        body: TextButton(
-          onPressed: () => showNewConversationSheet(context, state),
-          child: const Text('open'),
+    await tester.pumpWidget(
+      _app(
+        Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showNewConversationSheet(context, state),
+              child: const Text('open'),
+            ),
+          ),
         ),
       ),
-    )));
+    );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Group'));
@@ -277,9 +300,7 @@ Widget _app(Widget child) => MaterialApp(home: child);
 
 IconButton _sendButton(WidgetTester tester) => tester.widget<IconButton>(
       find.ancestor(
-        of: find.byIcon(Icons.send),
-        matching: find.byType(IconButton),
-      ),
+          of: find.byIcon(Icons.send), matching: find.byType(IconButton)),
     );
 
 ReceivedMessageEnvelope _message(String id, DateTime createdAt) {
@@ -296,9 +317,7 @@ ReceivedMessageEnvelope _message(String id, DateTime createdAt) {
 }
 
 AppState _groupState(ApiClient api) => _connectedState(api)
-  ..conversations = <Conversation>[
-    Conversation(id: 'conv_1', kind: 'group'),
-  ];
+  ..conversations = <Conversation>[Conversation(id: 'conv_1', kind: 'group')];
 
 AppState _connectedState(ApiClient api) {
   return AppState(
@@ -337,7 +356,9 @@ class _FakeApi extends ApiClient {
 
   @override
   Future<ConversationMute> conversationMute(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       ConversationMute(muted: mutedConversations[conversationId] ?? false);
 
   @override

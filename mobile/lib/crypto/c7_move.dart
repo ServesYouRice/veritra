@@ -206,10 +206,12 @@ final class C7Move {
       );
       if (plain == null) continue;
       try {
-        final head =
-            C7Record.decode(Uint8List.sublistView(plain, 0, c7RecordBytes));
+        final head = C7Record.decode(
+          Uint8List.sublistView(plain, 0, c7RecordBytes),
+        );
         final entry = C7GenerationEntry.decode(
-            Uint8List.sublistView(plain, c7RecordBytes, c7SlotPlainBytes));
+          Uint8List.sublistView(plain, c7RecordBytes, c7SlotPlainBytes),
+        );
         if (entry == null ||
             head.mode != c7ModeFull ||
             utf8.decode(head.groupId) != fromConversationId ||

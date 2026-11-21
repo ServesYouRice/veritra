@@ -101,7 +101,9 @@ class _EmojiPickerState extends State<EmojiPicker> {
             child: ListView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(
-                  horizontal: BoneSpacing.gutter, vertical: BoneSpacing.xs),
+                horizontal: BoneSpacing.gutter,
+                vertical: BoneSpacing.xs,
+              ),
               children: <Widget>[
                 for (final group in EmojiGroup.values)
                   Padding(

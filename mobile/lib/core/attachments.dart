@@ -24,6 +24,33 @@ const Set<String> playableAudioTypes = <String>{
   'audio/x-wav',
 };
 
+/// The largest attachment, in plaintext bytes, that opens from memory. At or
+/// below it the image viewer (`Image.memory`) and the voice player
+/// (`BytesSource` or the loopback server) take the decrypted bytes and no
+/// file is written; above it the attachment is decrypted to a short-lived
+/// temp copy that is deleted when its viewer closes, and the hourly sweep
+/// removes any that remain (D134).
+///
+/// Neither viewer has a size limit of its own, so the limit is the peak
+/// memory of one open: the bytes, plus a native copy (the image engine's
+/// buffer, or the platform-channel and Java copies of `BytesSource`), plus
+/// for an image its decoded frame (at most 4096 x 4096 x 4, about 64 MB, see
+/// `maxViewerDecodeSide`). At 8 MiB that is about 3 x 8 = 24 MB of bytes on
+/// top of the frame, safe on a 2 GB phone; at the 48 MiB attachment limit
+/// ([maxPlaintextAttachmentBytes]) it would be about 144 MB. 8 MiB holds
+/// every AAC voice note (64 kbit/s is 8 kB/s, so the 10-minute cap is
+/// 4.8 MB) and a typical 12 MP photo (3 to 6 MB). It does not hold the WAV
+/// fallback past about 95 s (44.1 kHz mono 16-bit is 88 kB/s), a 48 MP
+/// photo, or any file for another app: `OpenFilex.open` takes only a path,
+/// so external openers always get a temp copy whatever the size.
+///
+/// `audioplayers` plays bytes natively on Android and Windows; on iOS, macOS
+/// and Linux the voice player serves them from memory over a loopback-only
+/// HTTP server (`LoopbackClipServer`), so a small voice note plays without a
+/// file everywhere. If the platform refuses that server, the note plays from
+/// a temp copy.
+const int attachmentMemoryLimit = 8 * 1024 * 1024;
+
 /// Metadata the server accepts with an uploaded attachment blob. It names
 /// the scheme only; keys, names and sizes travel inside the MLS message.
 const Map<String, Object?> attachmentUploadMetadata = <String, Object?>{
@@ -55,6 +82,10 @@ class AttachmentEntry {
 
   /// The decryption manifest (key, nonce prefix, chunking, context).
   final Map<String, Object?> manifest;
+
+  /// Whether an image viewer or the voice player takes this attachment from
+  /// memory, so it never touches disk (D134). See [attachmentMemoryLimit].
+  bool get opensFromMemory => plaintextSize <= attachmentMemoryLimit;
 
   bool get isImage => previewableImageTypes.contains(mediaType);
 
@@ -98,8 +129,10 @@ class AttachmentEntry {
 
   /// Parses the JSON list stored in a local attachment message. Malformed
   /// entries are dropped rather than shown.
-  static List<AttachmentEntry> listFromBody(String? body,
-      {String? conversationId}) {
+  static List<AttachmentEntry> listFromBody(
+    String? body, {
+    String? conversationId,
+  }) {
     if (body == null) return const <AttachmentEntry>[];
     try {
       final decoded = jsonDecode(body);
@@ -122,16 +155,20 @@ class AttachmentEntry {
 /// `invoice<RLO>fdp.exe` read as `invoiceexe.pdf`. Removing Cf also removes
 /// the zero-width joiner, which splits emoji ZWJ sequences into their parts;
 /// a name that is safe on every platform matters more than that.
-final RegExp _invisibleNameCharacters =
-    RegExp(r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', unicode: true);
+final RegExp _invisibleNameCharacters = RegExp(
+  r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]',
+  unicode: true,
+);
 
 /// Characters Windows does not allow in a file name (the path separators are
 /// split off before this).
 final RegExp _windowsInvalidNameCharacters = RegExp(r'[<>:"|?*]');
 
 /// Device names Windows reserves, with or without an extension.
-final RegExp _windowsReservedName =
-    RegExp(r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', caseSensitive: false);
+final RegExp _windowsReservedName = RegExp(
+  r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])$',
+  caseSensitive: false,
+);
 
 /// A file name that is safe to show and to use as a suggested save name:
 /// no directories, no invisible or direction-changing characters, valid on
@@ -208,7 +245,12 @@ class AttachmentOrphanSweeper {
     this._directory, {
     this.interval = attachmentOrphanSweepInterval,
     this.minAge = attachmentOrphanMinAge,
+    this.alsoSweep,
   });
+
+  /// More cleanup to run on every sweep, given [minAge]: the opened-file
+  /// copies of the viewers live outside this directory (D134).
+  final Future<void> Function(Duration minAge)? alsoSweep;
 
   final Future<Directory?> Function() _directory;
   final Duration interval;
@@ -232,6 +274,11 @@ class AttachmentOrphanSweeper {
       if (directory != null && !_stopped) {
         await cleanupAttachmentOrphans(directory, minAge: minAge);
       }
+    } catch (_) {
+      // Best effort; the next tick tries again.
+    }
+    try {
+      await alsoSweep?.call(minAge);
     } catch (_) {
       // Best effort; the next tick tries again.
     } finally {

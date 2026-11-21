@@ -6,6 +6,7 @@ import '../../core/api_client.dart';
 import '../../crypto/device_link_code.dart';
 import '../../core/transport_policy.dart';
 import '../../l10n/l10n.dart';
+import '../../ui/widgets/bar_action.dart';
 
 /// Pulls the `code` query parameter out of a scanned device-link URI
 /// (`veritra://device-link?code=…`), falling back to the raw scan when it is
@@ -64,8 +65,9 @@ String? parseDeviceLinkOrigin(
 
 /// The Runner channel that opens this app's page in the system settings,
 /// where the camera can be allowed again (Android and iOS).
-const appSettingsChannel =
-    MethodChannel('org.veritra.private_messenger/app_settings');
+const appSettingsChannel = MethodChannel(
+  'org.veritra.private_messenger/app_settings',
+);
 
 /// Opens this app's page in the system settings. False when nothing opened
 /// (a platform without the channel, or the system refused).
@@ -132,14 +134,14 @@ class _QrScanScreenState extends State<QrScanScreen> {
       appBar: AppBar(
         title: Text(widget.title ?? context.l10n.qrScanLinkTitle),
         actions: <Widget>[
-          IconButton(
-            tooltip: context.l10n.qrToggleTorch,
-            icon: const Icon(Icons.flashlight_on_outlined),
+          BarAction(
+            label: context.l10n.qrToggleTorch,
+            icon: Icons.flashlight_on_outlined,
             onPressed: () => _controller.toggleTorch(),
           ),
-          IconButton(
-            tooltip: context.l10n.qrSwitchCamera,
-            icon: const Icon(Icons.cameraswitch_outlined),
+          BarAction(
+            label: context.l10n.qrSwitchCamera,
+            icon: Icons.cameraswitch_outlined,
             onPressed: () => _controller.switchCamera(),
           ),
         ],
@@ -246,15 +248,19 @@ class QrScannerError extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  const Icon(Icons.no_photography_outlined,
-                      size: 48, color: Colors.white70),
+                  const Icon(
+                    Icons.no_photography_outlined,
+                    size: 48,
+                    color: Colors.white70,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     message,
                     key: const ValueKey<String>('qr-error-message'),
                     textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: Colors.white),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   if (denied) ...<Widget>[

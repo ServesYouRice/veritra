@@ -1,0 +1,192 @@
+name: Reproducible builds
+
+# Manual only. Builds each target twice from clean copies of this commit and
+# compares the file digests (scripts/repro/verify.*), for the platforms the dev
+# PC cannot build (D118): Android, Windows, macOS. Linux runs locally
+# (scripts/repro/verify.sh linux). Nothing here signs, publishes or releases;
+# the outputs are unsigned digests and an unsigned installer. Details and what
+# is still open: docs/release-engineering.md.
+#
+# Not run yet: this file was written without a hosted runner. Its first run
+# is the first evidence for these targets.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repro-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # flutter.ndkVersion of Flutter 3.44.0 (scripts/repro/env.sh PIN_NDK).
+  NDK_VERSION: "28.2.13676358"
+
+jobs:
+  # Two different runner images stand in for two hosts: the digests must match
+  # across them (the compare job), not only across two builds on one host.
+  android:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build scripts and their dependencies never see the token.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install the pinned Rust toolchain and Android targets
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup default 1.91.0
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - name: Pin JDK 17 and the NDK
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Build the unsigned APK twice and compare
+        run: sh scripts/repro/verify.sh android "$RUNNER_TEMP/report.md"
+        env:
+          REPRO_KEEP: ${{ runner.temp }}/keep
+      - name: Show the report
+        if: always()
+        run: cat "$RUNNER_TEMP/report.md" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: repro-android-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/keep
+            ${{ runner.temp }}/report.md
+          if-no-files-found: warn
+
+  android-compare:
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build scripts and their dependencies never see the token.
+          persist-credentials: false
+      - name: Compare the digests of the two runner images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n repro-android-ubuntu-22.04 -D a
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n repro-android-ubuntu-24.04 -D b
+          cat a/keep/TOOLCHAIN.txt b/keep/TOOLCHAIN.txt
+          sh scripts/repro/compare.sh a/keep/SHA256SUMS b/keep/SHA256SUMS
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build scripts and their dependencies never see the token.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup default 1.91.0
+      - name: Build the unsigned app twice and compare
+        shell: pwsh
+        run: ./scripts/repro/verify.ps1 -KeepDir "$env:RUNNER_TEMP\keep"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: repro-windows
+          path: ${{ runner.temp }}/keep
+          if-no-files-found: warn
+
+  # The unsigned installer: proves release/windows/veritra.iss compiles. The
+  # signing step is the owner's (docs/release-engineering.md); nothing here has
+  # a certificate.
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build scripts and their dependencies never see the token.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup default 1.91.0
+      - name: Make sure Inno Setup 6 is installed
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build the app and the unsigned installer
+        shell: pwsh
+        run: |
+          ./scripts/repro/build.ps1 -OutDir "$env:RUNNER_TEMP\app"
+          ./scripts/build-windows-installer.ps1 -AppDir "$env:RUNNER_TEMP\app" -OutDir "$env:RUNNER_TEMP\installer"
+          Get-Content "$env:RUNNER_TEMP\installer\SHA256SUMS"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: veritra-windows-installer-unsigned
+          path: ${{ runner.temp }}/installer
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build scripts and their dependencies never see the token.
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - name: Install the pinned Rust toolchain and macOS targets
+        run: |
+          rustup toolchain install 1.91.0 --profile minimal
+          rustup default 1.91.0
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build the unsigned app twice and compare
+        run: sh scripts/repro/verify.sh macos "$RUNNER_TEMP/report.md"
+        env:
+          REPRO_KEEP: ${{ runner.temp }}/keep
+      - name: Show the report
+        if: always()
+        run: cat "$RUNNER_TEMP/report.md" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: repro-macos
+          path: |
+            ${{ runner.temp }}/keep
+            ${{ runner.temp }}/report.md
+          if-no-files-found: warn

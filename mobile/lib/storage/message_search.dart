@@ -35,8 +35,10 @@ class MessageSearchHit {
 /// letter or a digit separates words, so no input can form FTS syntax.
 List<String> searchTerms(String query) {
   final terms = <String>[];
-  for (final match in RegExp(r'[\p{L}\p{N}]+', unicode: true)
-      .allMatches(query.toLowerCase())) {
+  for (final match in RegExp(
+    r'[\p{L}\p{N}]+',
+    unicode: true,
+  ).allMatches(query.toLowerCase())) {
     final term = match.group(0)!;
     if (!terms.contains(term)) terms.add(term);
     if (terms.length == maxSearchTerms) break;

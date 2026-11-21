@@ -26,36 +26,35 @@ void main() {
         pingInterval: pingInterval,
       );
 
-  test('authenticates by header and closes with a normal-closure frame',
-      () async {
-    final sync = service();
-    final connected = sync.events.firstWhere(
-      (event) => event['type'] == 'sync.connected',
-    );
-    await sync.connect();
-    final request = await requests.stream.first;
-    expect(request.uri.path, '/api/v1/sync/ws');
-    expect(request.uri.query, isEmpty);
-    expect(request.headers.value('authorization'), 'Bearer session-token');
-    final socket = await WebSocketTransformer.upgrade(request);
-    final serverDone = socket.drain<void>();
-    await connected;
+  test(
+    'authenticates by header and closes with a normal-closure frame',
+    () async {
+      final sync = service();
+      final connected = sync.events.firstWhere(
+        (event) => event['type'] == 'sync.connected',
+      );
+      await sync.connect();
+      final request = await requests.stream.first;
+      expect(request.uri.path, '/api/v1/sync/ws');
+      expect(request.uri.query, isEmpty);
+      expect(request.headers.value('authorization'), 'Bearer session-token');
+      final socket = await WebSocketTransformer.upgrade(request);
+      final serverDone = socket.drain<void>();
+      await connected;
 
-    await sync.dispose();
+      await sync.dispose();
 
-    await serverDone.timeout(const Duration(seconds: 5));
-    expect(socket.closeCode, WebSocketStatus.normalClosure);
-  });
+      await serverDone.timeout(const Duration(seconds: 5));
+      expect(socket.closeCode, WebSocketStatus.normalClosure);
+    },
+  );
 
   test('dispose during an in-flight handshake leaves no open socket', () async {
     final sync = service();
     var connectedEvents = 0;
-    final subscription = sync.events.listen(
-      (event) {
-        if (event['type'] == 'sync.connected') connectedEvents++;
-      },
-      onError: (_) {},
-    );
+    final subscription = sync.events.listen((event) {
+      if (event['type'] == 'sync.connected') connectedEvents++;
+    }, onError: (_) {});
     await sync.connect();
     final request = await requests.stream.first;
 
@@ -81,9 +80,12 @@ void main() {
   test('dispose does not wait out the reconnect backoff', () async {
     final sync = service();
     final failed = Completer<void>();
-    final subscription = sync.events.listen((_) {}, onError: (_) {
-      if (!failed.isCompleted) failed.complete();
-    });
+    final subscription = sync.events.listen(
+      (_) {},
+      onError: (_) {
+        if (!failed.isCompleted) failed.complete();
+      },
+    );
     await sync.connect();
     final request = await requests.stream.first;
     request.response.statusCode = HttpStatus.unauthorized;
@@ -104,12 +106,16 @@ void main() {
     final sync = service();
     final paths = <String>[];
     final failed = Completer<Object>();
-    final subscription = sync.events.listen((_) {}, onError: (Object err) {
-      if (!failed.isCompleted) failed.complete(err);
-    });
+    final subscription = sync.events.listen(
+      (_) {},
+      onError: (Object err) {
+        if (!failed.isCompleted) failed.complete(err);
+      },
+    );
     final served = requests.stream.listen((request) async {
-      paths
-          .add('${request.uri.path} ${request.headers.value('authorization')}');
+      paths.add(
+        '${request.uri.path} ${request.headers.value('authorization')}',
+      );
       if (request.uri.path == '/api/v1/sync/ws') {
         request.response
           ..statusCode = HttpStatus.found
@@ -169,19 +175,24 @@ void main() {
     addTearDown(seen.cancel);
 
     await sync.connect();
-    await second.future.timeout(const Duration(seconds: 8),
-        onTimeout: () => fail('the silent connection was never replaced'));
+    await second.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () => fail('the silent connection was never replaced'),
+    );
     expect(connected, hasLength(2));
     // The ping interval and one backoff, not the 60 s a half-open TCP
     // connection would otherwise keep the loop parked.
-    expect(connected[1].difference(connected[0]),
-        lessThan(const Duration(seconds: 6)));
+    expect(
+      connected[1].difference(connected[0]),
+      lessThan(const Duration(seconds: 6)),
+    );
     await sync.dispose();
     await subscription.cancel();
     for (final socket in silent) {
-      await socket
-          .close()
-          .timeout(const Duration(seconds: 2), onTimeout: () => null);
+      await socket.close().timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => null,
+          );
     }
   });
 

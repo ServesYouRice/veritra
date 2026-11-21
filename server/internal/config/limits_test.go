@@ -15,7 +15,7 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 	}
 	got := cfg.Limits.WithDefaults()
 	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 250,
-		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
+		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200, SocketsPerIPv4Address: 20}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
@@ -73,6 +73,24 @@ func TestLimitsRelations(t *testing.T) {
 	}
 }
 
+// The 2026-11-12 rehearsal: a 2 GiB volume needs an instance limit below the
+// 512 MiB account default. Setting only the instance limit must start; the
+// store then caps each account at the instance limit.
+func TestLimitsUnsetAccountFollowsSmallerInstance(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB", "184")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("instance limit below the account default refused: %v", err)
+	}
+	if cfg.Limits.AccountStorageBytes != 0 || cfg.Limits.InstanceStorageBytes != 184<<20 {
+		t.Fatalf("limits = %+v, want the account limit left unset", cfg.Limits)
+	}
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB", "512")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "must not exceed") {
+		t.Fatalf("explicit account limit above instance accepted: %v", err)
+	}
+}
+
 func TestDeriveInstanceStorage(t *testing.T) {
 	for _, tc := range []struct {
 		volume int64
@@ -106,6 +124,26 @@ func TestSocketsPerIPv6PrefixLimit(t *testing.T) {
 	for _, value := range []string{"19", "10001", "many"} {
 		t.Setenv("PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX", value)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SOCKETS_PER_IPV6_PREFIX") {
+			t.Fatalf("%q accepted: %v", value, err)
+		}
+	}
+}
+
+func TestSocketsPerIPv4AddressLimit(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Limits.WithDefaults().SocketsPerIPv4Address; got != 20 {
+		t.Fatalf("default = %d, want 20 (the cap before it was a setting)", got)
+	}
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV4_ADDRESS", "500")
+	if cfg, err = Load(); err != nil || cfg.Limits.SocketsPerIPv4Address != 500 {
+		t.Fatalf("configured limit: %+v err=%v", cfg.Limits, err)
+	}
+	for _, value := range []string{"2", "10001", "many"} {
+		t.Setenv("PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV4_ADDRESS", value)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SOCKETS_PER_IPV4_ADDRESS") {
 			t.Fatalf("%q accepted: %v", value, err)
 		}
 	}

@@ -278,66 +278,83 @@ void main() {
 
   test('records must fit the canonical codec before staging', () {
     expect(
-        () => commands(initial, 'owner')
-            .setPosting(adminsOnly: false, announcementChannels: {'x' * 256}),
-        refused);
+      () => commands(
+        initial,
+        'owner',
+      ).setPosting(adminsOnly: false, announcementChannels: {'x' * 256}),
+      refused,
+    );
     expect(
-        () => commands(initial, 'owner').setPosting(
-            adminsOnly: false,
-            announcementChannels: {String.fromCharCode(0xd800)}),
-        refused);
+      () => commands(initial, 'owner').setPosting(
+        adminsOnly: false,
+        announcementChannels: {String.fromCharCode(0xd800)},
+      ),
+      refused,
+    );
     final exhausted = initial.copyWith(rev: 0x7fffffffffffffff);
     expect(
-        () => commands(exhausted, 'owner').setRole('alice', BuiltInRole.admin),
-        refused);
+      () => commands(exhausted, 'owner').setRole('alice', BuiltInRole.admin),
+      refused,
+    );
   });
 
   test(
-      'local observations start conservatively and track authenticated activity',
-      () {
-    final state = admins();
-    final first = GovernanceObservations.firstSeen(state, now);
-    expect(() => commands(state, 'alice').openElection(first, now), refused);
-    final later = now.add(ownerInactivityWait);
-    final idle = first.accepted(state, later, ownerActive: false);
-    expect(idle.lastOwnerActivity, now);
-    final open = commands(state, 'alice').openElection(idle, later);
-    final seen = idle.accepted(open, later, ownerActive: false);
-    expect(seen.electionOpened, open.election!.opened);
-    expect(seen.electionSeen, later);
-    expect(() => commands(open, 'alice').vote('bob', seen, later), refused);
-    final activity =
-        seen.accepted(open, later.add(electionWait), ownerActive: true);
-    expect(activity.lastOwnerActivity, later.add(electionWait));
-    expect(activity.electionSeen, later);
-    expect(
-        () => commands(open, 'alice')
-            .vote('bob', activity, later.add(electionWait)),
-        refused);
-    final backward = activity.accepted(open, now, ownerActive: true);
-    expect(backward.lastOwnerActivity, activity.lastOwnerActivity);
-    final restore = GovernanceObservations.firstSeen(open, later);
-    expect(restore.lastOwnerActivity, later);
-    expect(restore.electionSeen, later);
-  });
+    'local observations start conservatively and track authenticated activity',
+    () {
+      final state = admins();
+      final first = GovernanceObservations.firstSeen(state, now);
+      expect(() => commands(state, 'alice').openElection(first, now), refused);
+      final later = now.add(ownerInactivityWait);
+      final idle = first.accepted(state, later, ownerActive: false);
+      expect(idle.lastOwnerActivity, now);
+      final open = commands(state, 'alice').openElection(idle, later);
+      final seen = idle.accepted(open, later, ownerActive: false);
+      expect(seen.electionOpened, open.election!.opened);
+      expect(seen.electionSeen, later);
+      expect(() => commands(open, 'alice').vote('bob', seen, later), refused);
+      final activity = seen.accepted(
+        open,
+        later.add(electionWait),
+        ownerActive: true,
+      );
+      expect(activity.lastOwnerActivity, later.add(electionWait));
+      expect(activity.electionSeen, later);
+      expect(
+        () => commands(
+          open,
+          'alice',
+        ).vote('bob', activity, later.add(electionWait)),
+        refused,
+      );
+      final backward = activity.accepted(open, now, ownerActive: true);
+      expect(backward.lastOwnerActivity, activity.lastOwnerActivity);
+      final restore = GovernanceObservations.firstSeen(open, later);
+      expect(restore.lastOwnerActivity, later);
+      expect(restore.electionSeen, later);
+    },
+  );
 
-  test('cancellation clears opening observation; transfer restarts owner clock',
-      () {
-    final state = admins();
-    final open = commands(state, 'alice').openElection(observed(state), now);
-    final seen = observed(state).accepted(open, now, ownerActive: false);
-    final closed = commands(open, 'owner').closeElection();
-    final cancel = seen.accepted(closed, now, ownerActive: true);
-    expect(cancel.electionSeen, isNull);
-    expect(cancel.electionOpened, isNull);
-    final transfer = commands(open, 'owner').transfer('bob');
-    final changed = seen.accepted(transfer, now, ownerActive: false);
-    expect(changed.owner, 'bob');
-    expect(changed.ownerRev, transfer.rev);
-    expect(changed.lastOwnerActivity, now);
-    expect(
-        () => commands(transfer, 'alice').openElection(changed, now), refused);
-  });
+  test(
+    'cancellation clears opening observation; transfer restarts owner clock',
+    () {
+      final state = admins();
+      final open = commands(state, 'alice').openElection(observed(state), now);
+      final seen = observed(state).accepted(open, now, ownerActive: false);
+      final closed = commands(open, 'owner').closeElection();
+      final cancel = seen.accepted(closed, now, ownerActive: true);
+      expect(cancel.electionSeen, isNull);
+      expect(cancel.electionOpened, isNull);
+      final transfer = commands(open, 'owner').transfer('bob');
+      final changed = seen.accepted(transfer, now, ownerActive: false);
+      expect(changed.owner, 'bob');
+      expect(changed.ownerRev, transfer.rev);
+      expect(changed.lastOwnerActivity, now);
+      expect(
+        () => commands(transfer, 'alice').openElection(changed, now),
+        refused,
+      );
+    },
+  );
 
   test('no-admin claim uses joined order then id, including absent owner', () {
     final roster = {...members}..remove('owner');
@@ -378,60 +395,75 @@ void main() {
     );
   });
 
-  test('no-admin claim with present inactive owner makes old owner an admin',
-      () {
-    // Initial has no admins and owner is in the roster.
-    final open =
-        commands(initial, 'alice').openElection(observed(initial), now);
-    expect(open.election!.electorate, {'alice'});
-    final win = commands(open, 'alice').vote('alice', observed(open), now);
-    expect(win.owner, 'alice');
-    expect(win.admins, {'owner': win.rev});
-    expect(win.election, isNull);
-    valid(open, win, 'alice');
-  });
+  test(
+    'no-admin claim with present inactive owner makes old owner an admin',
+    () {
+      // Initial has no admins and owner is in the roster.
+      final open = commands(
+        initial,
+        'alice',
+      ).openElection(observed(initial), now);
+      expect(open.election!.electorate, {'alice'});
+      final win = commands(open, 'alice').vote('alice', observed(open), now);
+      expect(win.owner, 'alice');
+      expect(win.admins, {'owner': win.rev});
+      expect(win.election, isNull);
+      valid(open, win, 'alice');
+    },
+  );
 
   test(
-      'owner role and posting changes clear an open election and advance ownerRev',
-      () {
-    final state = admins();
-    final open = commands(state, 'alice').openElection(observed(state), now);
-    expect(open.election, isNotNull);
+    'owner role and posting changes clear an open election and advance ownerRev',
+    () {
+      final state = admins();
+      final open = commands(state, 'alice').openElection(observed(state), now);
+      expect(open.election, isNotNull);
 
-    final withNewRole =
-        commands(open, 'owner').setRole('dave', BuiltInRole.moderator);
-    valid(open, withNewRole, 'owner');
-    expect(withNewRole.election, isNull);
-    expect(withNewRole.ownerRev, withNewRole.rev);
-    expect(withNewRole.moderators, contains('dave'));
+      final withNewRole = commands(
+        open,
+        'owner',
+      ).setRole('dave', BuiltInRole.moderator);
+      valid(open, withNewRole, 'owner');
+      expect(withNewRole.election, isNull);
+      expect(withNewRole.ownerRev, withNewRole.rev);
+      expect(withNewRole.moderators, contains('dave'));
 
-    final openAgain =
-        commands(withNewRole, 'alice').openElection(observed(withNewRole), now);
-    final withPosting = commands(openAgain, 'owner').setPosting(
-      adminsOnly: true,
-      announcementChannels: {'announcements'},
-    );
-    valid(openAgain, withPosting, 'owner');
-    expect(withPosting.election, isNull);
-    expect(withPosting.ownerRev, withPosting.rev);
-    expect(withPosting.adminsOnlyPosting, isTrue);
-  });
+      final openAgain = commands(
+        withNewRole,
+        'alice',
+      ).openElection(observed(withNewRole), now);
+      final withPosting = commands(
+        openAgain,
+        'owner',
+      ).setPosting(adminsOnly: true, announcementChannels: {'announcements'});
+      valid(openAgain, withPosting, 'owner');
+      expect(withPosting.election, isNull);
+      expect(withPosting.ownerRev, withPosting.rev);
+      expect(withPosting.adminsOnlyPosting, isTrue);
+    },
+  );
 
-  test('admin demotion by owner and stepping down to member work as expected',
-      () {
-    final state = admins();
-    final demoted =
-        commands(state, 'owner').setRole('alice', BuiltInRole.moderator);
-    valid(state, demoted, 'owner');
-    expect(demoted.admins.containsKey('alice'), isFalse);
-    expect(demoted.electors.contains('alice'), isFalse);
-    expect(demoted.moderators.contains('alice'), isTrue);
+  test(
+    'admin demotion by owner and stepping down to member work as expected',
+    () {
+      final state = admins();
+      final demoted = commands(
+        state,
+        'owner',
+      ).setRole('alice', BuiltInRole.moderator);
+      valid(state, demoted, 'owner');
+      expect(demoted.admins.containsKey('alice'), isFalse);
+      expect(demoted.electors.contains('alice'), isFalse);
+      expect(demoted.moderators.contains('alice'), isTrue);
 
-    final member =
-        commands(demoted, 'alice').setRole('alice', BuiltInRole.member);
-    valid(demoted, member, 'alice');
-    expect(member.roleOf('alice'), BuiltInRole.member);
-  });
+      final member = commands(
+        demoted,
+        'alice',
+      ).setRole('alice', BuiltInRole.member);
+      valid(demoted, member, 'alice');
+      expect(member.roleOf('alice'), BuiltInRole.member);
+    },
+  );
 
   test('GovernanceObservations equality, hashCode and toString', () {
     final obs1 = observed(initial);
@@ -440,8 +472,11 @@ void main() {
     expect(obs1.hashCode, equals(obs2.hashCode));
     expect(obs1.toString(), contains('GovernanceObservations('));
 
-    final different = obs1.accepted(initial, now.add(const Duration(hours: 1)),
-        ownerActive: true);
+    final different = obs1.accepted(
+      initial,
+      now.add(const Duration(hours: 1)),
+      ownerActive: true,
+    );
     expect(obs1, isNot(equals(different)));
   });
 }

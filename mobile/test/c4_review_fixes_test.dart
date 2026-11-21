@@ -59,12 +59,16 @@ void main() {
 
     test('a held commit pauses only its conversation and stays retryable', () {
       expect(
-          failurePausesConversation(const SyncEventFailure(
-              SyncFailureKind.governanceHeld,
-              eventId: 10,
-              eventType: 'mls.message.created',
-              conversationId: 'conv')),
-          isTrue);
+        failurePausesConversation(
+          const SyncEventFailure(
+            SyncFailureKind.governanceHeld,
+            eventId: 10,
+            eventType: 'mls.message.created',
+            conversationId: 'conv',
+          ),
+        ),
+        isTrue,
+      );
       final held = pause(SyncFailureKind.governanceHeld);
       expect(held.held, isTrue);
       expect(held.retryable, isTrue);
@@ -82,14 +86,18 @@ void main() {
       expect(held.heldRetryDue(at.add(const Duration(minutes: 4))), isTrue);
       // Any other pause waits for the user.
       expect(
-          pause(SyncFailureKind.mlsState)
-              .heldRetryDue(at.add(const Duration(days: 1))),
-          isFalse);
+        pause(
+          SyncFailureKind.mlsState,
+        ).heldRetryDue(at.add(const Duration(days: 1))),
+        isFalse,
+      );
     });
 
     test('the exception names why, without content', () {
-      expect(const GovernanceHeldException('removal_unproven').toString(),
-          'GovernanceHeldException(removal_unproven)');
+      expect(
+        const GovernanceHeldException('removal_unproven').toString(),
+        'GovernanceHeldException(removal_unproven)',
+      );
     });
   });
 
@@ -97,9 +105,10 @@ void main() {
     DeleteMessageEffect delete({required bool actsWithRole}) =>
         messageEffectsFor(
           const DecryptedAppPayload(
-              type: AppPayloadType.delete,
-              actionId: 'd1',
-              body: {'message_id': 'dev_bob:m1'}),
+            type: AppPayloadType.delete,
+            actionId: 'd1',
+            body: {'message_id': 'dev_bob:m1'},
+          ),
           conversationId: 'conv',
           senderAccountId: mod,
           senderDeviceId: 'dev_mod_old',
@@ -109,26 +118,29 @@ void main() {
           senderActsWithRole: actsWithRole,
         ).whereType<DeleteMessageEffect>().single;
 
-    test('a moderator delete from a removed leaf is the author\'s own only',
-        () {
-      final approved = delete(actsWithRole: true);
-      expect(approved.allows(bob), isTrue);
-      final removed = delete(actsWithRole: false);
-      expect(removed.moderatorProtects, isNull);
-      expect(removed.allows(bob), isFalse);
-      expect(removed.allows(mod), isTrue);
-    });
+    test(
+      'a moderator delete from a removed leaf is the author\'s own only',
+      () {
+        final approved = delete(actsWithRole: true);
+        expect(approved.allows(bob), isTrue);
+        final removed = delete(actsWithRole: false);
+        expect(removed.moderatorProtects, isNull);
+        expect(removed.allows(bob), isFalse);
+        expect(removed.allows(mod), isTrue);
+      },
+    );
 
     test('a pin from a removed leaf uses no community role', () {
       List<MessageEffect> pin(bool actsWithRole) => messageEffectsFor(
             const DecryptedAppPayload(
-                type: AppPayloadType.pin,
-                actionId: 'p1',
-                body: {
-                  'message_id': 'dev_bob:m1',
-                  'pinned': true,
-                  'duration_seconds': 86400
-                }),
+              type: AppPayloadType.pin,
+              actionId: 'p1',
+              body: {
+                'message_id': 'dev_bob:m1',
+                'pinned': true,
+                'duration_seconds': 86400,
+              },
+            ),
             conversationId: 'conv',
             senderAccountId: mod,
             senderDeviceId: 'dev_mod_old',
@@ -155,64 +167,82 @@ void main() {
       expect(drop(removed: true), isTrue);
       // Unrestricted, an ordinary post from that leaf keeps its handling.
       expect(
-          shouldDropRestrictedPost(
-              record: admins,
-              sender: mod,
-              channelId: null,
-              serverRestricts: false,
-              senderRemoved: true),
-          isFalse);
+        shouldDropRestrictedPost(
+          record: admins,
+          sender: mod,
+          channelId: null,
+          serverRestricts: false,
+          senderRemoved: true,
+        ),
+        isFalse,
+      );
     });
   });
 
   group('deferred moderator delete', () {
     LocalMessage target(String sender) => LocalMessage(
-        key: 'dev_x:m1',
-        conversationId: 'conv',
-        senderAccountId: sender,
-        senderDeviceId: 'dev_x',
-        kind: 'text',
-        body: 'hello',
-        createdAt: 1,
-        state: 'received',
-        senderHidden: false);
+          key: 'dev_x:m1',
+          conversationId: 'conv',
+          senderAccountId: sender,
+          senderDeviceId: 'dev_x',
+          kind: 'text',
+          body: 'hello',
+          createdAt: 1,
+          state: 'received',
+          senderHidden: false,
+        );
 
     HistoryNamespace deferred(Set<String>? protects) {
       final namespace = HistoryNamespace();
       deferHistoryEffect(
-          namespace,
-          DeleteMessageEffect(
-            targetKey: 'dev_x:m1',
-            deleterAccountId: mod,
-            at: 5,
-            conversationId: 'conv',
-            moderatorProtects: protects,
-          ),
-          'acc_me');
+        namespace,
+        DeleteMessageEffect(
+          targetKey: 'dev_x:m1',
+          deleterAccountId: mod,
+          at: 5,
+          conversationId: 'conv',
+          moderatorProtects: protects,
+        ),
+        'acc_me',
+      );
       return namespace;
     }
 
     test('applies to a message the moderator outranks once it arrives', () {
       final namespace = deferred({mod, owner});
-      final applied = applyDeferredHistory(namespace, target(bob), 'acc_me',
-          targetAuthenticated: true);
+      final applied = applyDeferredHistory(
+        namespace,
+        target(bob),
+        'acc_me',
+        targetAuthenticated: true,
+      );
       expect(applied.body, isNull);
       expect(applied.deletedAt, 5);
     });
 
-    test('never to a protected sender, and an author-only delete as before',
-        () {
-      expect(
-          applyDeferredHistory(deferred({mod, owner}), target(owner), 'acc_me',
-                  targetAuthenticated: true)
-              .body,
-          'hello');
-      expect(
-          applyDeferredHistory(deferred(null), target(bob), 'acc_me',
-                  targetAuthenticated: true)
-              .body,
-          'hello');
-    });
+    test(
+      'never to a protected sender, and an author-only delete as before',
+      () {
+        expect(
+          applyDeferredHistory(
+            deferred({mod, owner}),
+            target(owner),
+            'acc_me',
+            targetAuthenticated: true,
+          ).body,
+          'hello',
+        );
+        expect(
+          applyDeferredHistory(
+            deferred(null),
+            target(bob),
+            'acc_me',
+            targetAuthenticated: true,
+          ).body,
+          'hello',
+        );
+      },
+    );
 
     test('the reach survives the journal round trip; an edit carries none', () {
       final effect = deferred({owner, mod}).deferred.values.single;
@@ -223,11 +253,7 @@ void main() {
       // A journal entry from before this change has no reach.
       final legacy = Map<String, Object?>.of(json)..remove('protects');
       expect(DeferredHistoryEffect.fromJson(legacy).protects, isNull);
-      final edit = <String, Object?>{
-        ...json,
-        'deleted': false,
-        'body': 'x',
-      };
+      final edit = <String, Object?>{...json, 'deleted': false, 'body': 'x'};
       expect(() => DeferredHistoryEffect.fromJson(edit), throwsFormatException);
     });
   });

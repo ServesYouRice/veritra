@@ -47,10 +47,10 @@ Uint8List? _fromHex(String? text) {
 /// and iOS's backup rules already exclude it from cloud backups of the app's
 /// files; the value is also never written anywhere else.
 class SecureReportSeedStore implements ReportSeedStore {
-  SecureReportSeedStore(
-      {FlutterSecureStorage? storage,
-      ProfileScope scope = const ProfileScope()})
-      : _scope = scope,
+  SecureReportSeedStore({
+    FlutterSecureStorage? storage,
+    ProfileScope scope = const ProfileScope(),
+  })  : _scope = scope,
         _storage = storage ??
             const FlutterSecureStorage(
               // Fail closed (I39): a keystore error must never delete the
@@ -68,7 +68,8 @@ class SecureReportSeedStore implements ReportSeedStore {
   final ProfileScope _scope;
 
   String _key(String origin, String accountId) => _scope.secureKey(
-      'report_seed.v1.${canonicalizeServerOrigin(origin)}.$accountId');
+        'report_seed.v1.${canonicalizeServerOrigin(origin)}.$accountId',
+      );
 
   @override
   Future<Uint8List?> load(String origin, String accountId) async =>

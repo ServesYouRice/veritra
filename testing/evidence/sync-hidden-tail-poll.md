@@ -2,11 +2,13 @@
 
 Date: 2026-11-11. Local, Windows 11, AMD Ryzen 7 7800X3D, Go SQLite, no network.
 
-Opt-in: `GET /api/v1/sync/events?...&scan=bounded` (the app sends it). The
-response adds `scanned_through` and `scan_truncated` (same names as the scoped
-conversation route, D92); a 200 leaves out `oldest_event_id` and
-`latest_event_id` (only the 409 carries them, and only the epoch is read
-cheaply). Without the parameter nothing changes.
+Measured when bounded paging was opt-in (`?scan=bounded`, which the app
+sends). Since D134 (2026-11-14) every `GET /api/v1/sync/events` request is
+bounded, with or without the parameter, so the "Before" column below no longer
+exists on the route. The response adds `scanned_through` and `scan_truncated`
+(same names as the scoped conversation route, D92); a 200 leaves out
+`oldest_event_id` and `latest_event_id` (only the 409 carries them, and only
+the epoch is read cheaply).
 
 Command: `cd server && go test -run '^$' -bench 'SyncHiddenTailPoll|SyncHiddenRun/40000x2/blocked/SyncBounds' ./internal/storage`
 

@@ -25,7 +25,6 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://localhost:8080');
 
   late Conversation created;
-  final List<String> claims = <String>[];
 
   @override
   Future<List<Conversation>> conversations(String token) async =>
@@ -42,13 +41,6 @@ class _Api extends ApiClient {
     int? retentionSeconds,
   }) async =>
       created;
-
-  @override
-  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
-      String token, String conversationId) async {
-    claims.add(conversationId);
-    return const <DeviceKeyPackage>[];
-  }
 }
 
 class _Mls implements MlsConversationCryptoService {
@@ -56,13 +48,16 @@ class _Mls implements MlsConversationCryptoService {
 
   @override
   Future<void> initializeConversation(
-      String conversationId, List<DeviceKeyPackage> claimedPackages) async {
+    String conversationId,
+    List<DeviceKeyPackage> claimedPackages,
+  ) async {
     initialized.add(conversationId);
   }
 
   @override
   Future<({int epoch, bool pending})?> groupEpoch(
-          String conversationId) async =>
+    String conversationId,
+  ) async =>
       null;
 
   @override
@@ -107,11 +102,15 @@ Future<Conversation> _createAgainst(int status) async {
       ..write(jsonEncode(_dmJson()));
     await request.response.close();
   });
-  final client =
-      ApiClient(baseUrl: 'http://${server.address.address}:${server.port}');
+  final client = ApiClient(
+    baseUrl: 'http://${server.address.address}:${server.port}',
+  );
   addTearDown(client.close);
-  return client.createConversationDetailed('token',
-      kind: 'dm', memberAccountIds: <String>['acct_peer']);
+  return client.createConversationDetailed(
+    'token',
+    kind: 'dm',
+    memberAccountIds: <String>['acct_peer'],
+  );
 }
 
 void main() {
@@ -154,11 +153,12 @@ void main() {
       existedOnServer: true,
     );
 
-    final result = await state
-        .startConversation(kind: 'dm', memberAccountIds: <String>['acct_peer']);
+    final result = await state.startConversation(
+      kind: 'dm',
+      memberAccountIds: <String>['acct_peer'],
+    );
 
     expect(result?.id, 'dm_1');
-    expect(api.claims, isEmpty, reason: 'claimed key packages again');
     expect(mls.initialized, isEmpty, reason: 'made a second MLS group');
     expect(state.selectedConversationId, 'dm_1');
     expect(state.conversations.where((c) => c.id == 'dm_1'), hasLength(1));

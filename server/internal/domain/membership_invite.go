@@ -42,9 +42,16 @@ type MembershipInvite struct {
 // invitation made before v2, which the app refuses. The server stores and
 // returns it and cannot verify it: the joiner does, against the key the link
 // commits to and the MLS roster.
+//
+// AnchorGroupID (v3, 2026-11-21) is the MLS group the invitation admits to:
+// the group itself, or a community's shared conversation. The creating
+// device signs it; the server derives it from what it already holds and
+// stores nothing new. It is empty for a legacy community, which the app
+// refuses.
 type InviteBinding struct {
 	TargetKind        string `json:"target_kind"`
 	TargetID          string `json:"target_id"`
+	AnchorGroupID     string `json:"anchor_group_id"`
 	InviterAccountID  string `json:"inviter_account_id"`
 	InviterDeviceID   string `json:"inviter_device_id"`
 	InviterSigningKey []byte `json:"inviter_signing_key"`

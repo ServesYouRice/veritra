@@ -42,60 +42,66 @@ void main() {
     engine.dispose();
   });
 
-  test('paused push wake does not sync and resumes from the durable marker',
-      () async {
-    final localStore = MemoryLocalStore();
-    await localStore.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'owner-token',
-      accountId: 'acct_owner',
-      deviceId: 'dev_owner',
-    ));
-    final api = _WakeApiClient();
-    final push = _WakePushService(initialGeneration: 1);
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-      pushService: push,
-    );
-    state.handleAppLifecycleState(AppLifecycleState.paused);
+  test(
+    'paused push wake does not sync and resumes from the durable marker',
+    () async {
+      final localStore = MemoryLocalStore();
+      await localStore.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+        ),
+      );
+      final api = _WakeApiClient();
+      final push = _WakePushService(initialGeneration: 1);
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+        pushService: push,
+      );
+      state.handleAppLifecycleState(AppLifecycleState.paused);
 
-    await state.tryRestoreSession();
-    await push.registered.future.timeout(const Duration(seconds: 2));
-    push.emitWake();
-    await Future<void>.delayed(Duration.zero);
-    expect(api.syncCalls, 0);
-    expect(await localStore.loadSyncCursor(), 0);
-    expect(push.generation, 2);
-
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await api.cursorAdvanced.future.timeout(const Duration(seconds: 2));
-    for (var attempt = 0;
-        attempt < 10 && await localStore.loadSyncCursor() != 7;
-        attempt++) {
+      await state.tryRestoreSession();
+      await push.registered.future.timeout(const Duration(seconds: 2));
+      push.emitWake();
       await Future<void>.delayed(Duration.zero);
-    }
-    expect(await localStore.loadSyncCursor(), 7);
-    expect(push.acknowledged, <int>[2]);
-    expect(push.generation, 0);
-    state.dispose();
-  });
+      expect(api.syncCalls, 0);
+      expect(await localStore.loadSyncCursor(), 0);
+      expect(push.generation, 2);
 
-  test('message envelope serializes ciphertext without plaintext body field',
-      () {
-    final envelope = MessageEnvelope(
-      conversationId: 'conv_1',
-      idempotencyKey: 'key_1',
-      ciphertext: <int>[1, 2, 3],
-      cryptoProtocol: 'mls-openmls-todo',
-    );
-    final json = envelope.toJson();
-    expect(json.containsKey('ciphertext'), isTrue);
-    expect(json.containsKey('body'), isFalse);
-    expect(json.containsKey('text'), isFalse);
-  });
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await api.cursorAdvanced.future.timeout(const Duration(seconds: 2));
+      for (var attempt = 0;
+          attempt < 10 && await localStore.loadSyncCursor() != 7;
+          attempt++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(await localStore.loadSyncCursor(), 7);
+      expect(push.acknowledged, <int>[2]);
+      expect(push.generation, 0);
+      state.dispose();
+    },
+  );
+
+  test(
+    'message envelope serializes ciphertext without plaintext body field',
+    () {
+      final envelope = MessageEnvelope(
+        conversationId: 'conv_1',
+        idempotencyKey: 'key_1',
+        ciphertext: <int>[1, 2, 3],
+        cryptoProtocol: 'mls-openmls-todo',
+      );
+      final json = envelope.toJson();
+      expect(json.containsKey('ciphertext'), isTrue);
+      expect(json.containsKey('body'), isFalse);
+      expect(json.containsKey('text'), isFalse);
+    },
+  );
 
   test('metadata search result parses non-message metadata only', () {
     final result = MetadataSearchResult.fromJson(<String, Object?>{
@@ -131,7 +137,8 @@ void main() {
       syncServiceFactory: (_, __) => FakeSyncService(),
     );
     await localStore.saveSession(
-        const Session(baseUrl: 'https://localhost:8080', token: 'token'));
+      const Session(baseUrl: 'https://localhost:8080', token: 'token'),
+    );
     expect((await state.localStore.loadSession())?.token, 'token');
   });
 
@@ -171,32 +178,34 @@ void main() {
     expect(link.verificationCode, isEmpty);
   });
 
-  test('app state refreshes encrypted messages for selected conversation',
-      () async {
-    final api = FakeDeviceLinkApiClient();
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    )
-      ..api = api
-      ..session = const Session(
-        baseUrl: 'https://localhost:8080',
-        token: 'owner-token',
-        accountId: 'acct_owner',
-        deviceId: 'dev_owner',
+  test(
+    'app state refreshes encrypted messages for selected conversation',
+    () async {
+      final api = FakeDeviceLinkApiClient();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: MemoryLocalStore(),
+        syncServiceFactory: (_, __) => FakeSyncService(),
       )
-      ..conversations = <Conversation>[
-        Conversation(id: 'conv_1', kind: 'group'),
-      ];
+        ..api = api
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+        )
+        ..conversations = <Conversation>[
+          Conversation(id: 'conv_1', kind: 'group'),
+        ];
 
-    state.selectConversation('conv_1');
-    await Future<void>.delayed(Duration.zero);
+      state.selectConversation('conv_1');
+      await Future<void>.delayed(Duration.zero);
 
-    expect(state.selectedMessages, hasLength(1));
-    expect(state.selectedMessages.first.ciphertext, <int>[1, 2, 3]);
-  });
+      expect(state.selectedMessages, hasLength(1));
+      expect(state.selectedMessages.first.ciphertext, <int>[1, 2, 3]);
+    },
+  );
 
   test('logout preserves local device identity for password sign-in', () async {
     final localStore = MemoryLocalStore();
@@ -354,172 +363,189 @@ void main() {
     expect(await localStore.pendingEnvelopes(), isEmpty);
   });
 
-  test('restore failure enters recovery without resetting the cursor',
-      () async {
-    final localStore = _FailingRestoreStore();
-    await localStore.saveSyncCursor(42);
-    final state = AppState(
-      apiClientFactory: (_) => throw UnimplementedError(),
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'restore failure enters recovery without resetting the cursor',
+    () async {
+      final localStore = _FailingRestoreStore();
+      await localStore.saveSyncCursor(42);
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
+      await state.tryRestoreSession();
 
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(state.recoveryMessage, isNotNull);
-    expect(await localStore.loadSyncCursor(), 42);
-    state.continueWithoutRestore();
-    expect(state.lifecycle, SessionLifecycle.ready);
-    state.dispose();
-  });
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(state.recoveryMessage, isNotNull);
+      expect(await localStore.loadSyncCursor(), 42);
+      state.continueWithoutRestore();
+      expect(state.lifecycle, SessionLifecycle.ready);
+      state.dispose();
+    },
+  );
 
-  test('an unreadable database offers retry or a confirmed reset only',
-      () async {
-    final localStore = _UnreadableStore();
-    final state = AppState(
-      apiClientFactory: (_) => throw UnimplementedError(),
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'an unreadable database offers retry or a confirmed reset only',
+    () async {
+      final localStore = _UnreadableStore();
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(state.localStoreFailure, LocalStoreFailureKind.keyMissing);
-    expect(state.canContinueWithoutRestore, isFalse);
-    expect(state.recoveryMessage, contains('Nothing has been deleted'));
+      await state.tryRestoreSession();
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(state.localStoreFailure, LocalStoreFailureKind.keyMissing);
+      expect(state.canContinueWithoutRestore, isFalse);
+      expect(state.recoveryMessage, contains('Nothing has been deleted'));
 
-    // Continuing to sign in is not offered and does nothing.
-    state.continueWithoutRestore();
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(() => state.resetUnreadableLocalData(confirmed: false),
-        throwsArgumentError);
-    expect(localStore.quarantined, isFalse);
+      // Continuing to sign in is not offered and does nothing.
+      state.continueWithoutRestore();
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(
+        () => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError,
+      );
+      expect(localStore.quarantined, isFalse);
 
-    await state.resetUnreadableLocalData(confirmed: true);
-    expect(localStore.quarantined, isTrue);
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.localStoreFailure, isNull);
-    state.dispose();
-  });
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(localStore.quarantined, isTrue);
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(state.localStoreFailure, isNull);
+      state.dispose();
+    },
+  );
 
-  test('a wrong key and a failed upgrade get their own recovery messages',
-      () async {
-    final localStore = _UnreadableStore(LocalStoreFailureKind.keyRejected);
-    final state = AppState(
-      apiClientFactory: (_) => throw UnimplementedError(),
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'a wrong key and a failed upgrade get their own recovery messages',
+    () async {
+      final localStore = _UnreadableStore(LocalStoreFailureKind.keyRejected);
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
-    expect(state.localStoreFailure, LocalStoreFailureKind.keyRejected);
-    expect(state.recoveryMessage, state.l10n.recoveryKeyMissing);
-    expect(state.canResetLocalData, isTrue);
+      await state.tryRestoreSession();
+      expect(state.localStoreFailure, LocalStoreFailureKind.keyRejected);
+      expect(state.recoveryMessage, state.l10n.recoveryKeyMissing);
+      expect(state.canResetLocalData, isTrue);
 
-    // An upgrade that ran out of space is not a wrong key: the message says
-    // to free space and retry, and no reset is offered or done at first.
-    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
-    expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
-    expect(state.recoveryMessage, isNot(state.l10n.recoveryKeyMissing));
-    expect(state.canResetLocalData, isFalse);
-    expect(state.canContinueWithoutRestore, isFalse);
-    await state.resetUnreadableLocalData(confirmed: true);
-    expect(localStore.quarantined, isFalse);
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      // An upgrade that ran out of space is not a wrong key: the message says
+      // to free space and retry, and no reset is offered or done at first.
+      localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
+      await state.tryRestoreSession();
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
+      expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
+      expect(state.recoveryMessage, isNot(state.l10n.recoveryKeyMissing));
+      expect(state.canResetLocalData, isFalse);
+      expect(state.canContinueWithoutRestore, isFalse);
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(localStore.quarantined, isFalse);
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
 
-    // Once there is room again, a retry opens it.
-    localStore.kind = null;
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.localStoreFailure, isNull);
-    expect(localStore.quarantined, isFalse);
-    state.dispose();
-  });
+      // Once there is room again, a retry opens it.
+      localStore.kind = null;
+      await state.tryRestoreSession();
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(state.localStoreFailure, isNull);
+      expect(localStore.quarantined, isFalse);
+      state.dispose();
+    },
+  );
 
-  test('an upgrade that keeps failing for space offers the confirmed reset',
-      () async {
-    final localStore =
-        _UnreadableStore(LocalStoreFailureKind.upgradeStorageFull);
-    final state = AppState(
-      apiClientFactory: (_) => throw UnimplementedError(),
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'an upgrade that keeps failing for space offers the confirmed reset',
+    () async {
+      final localStore = _UnreadableStore(
+        LocalStoreFailureKind.upgradeStorageFull,
+      );
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
-    expect(state.canResetLocalData, isFalse);
+      await state.tryRestoreSession();
+      expect(state.canResetLocalData, isFalse);
 
-    // The retry fails the same way: the user is not left stuck.
-    await state.tryRestoreSession();
-    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
-    expect(state.recoveryMessage, state.l10n.recoveryUpgradeStillFull);
-    expect(state.canResetLocalData, isTrue);
-    expect(state.canContinueWithoutRestore, isFalse);
-    expect(() => state.resetUnreadableLocalData(confirmed: false),
-        throwsArgumentError);
-    expect(localStore.quarantined, isFalse);
+      // The retry fails the same way: the user is not left stuck.
+      await state.tryRestoreSession();
+      expect(state.localStoreFailure, LocalStoreFailureKind.upgradeStorageFull);
+      expect(state.recoveryMessage, state.l10n.recoveryUpgradeStillFull);
+      expect(state.canResetLocalData, isTrue);
+      expect(state.canContinueWithoutRestore, isFalse);
+      expect(
+        () => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError,
+      );
+      expect(localStore.quarantined, isFalse);
 
-    // A restore that opens the database ends the run: a later failure for
-    // space asks to free space and retry first again.
-    localStore.kind = null;
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.ready);
-    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
-    await state.tryRestoreSession();
-    expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
-    expect(state.canResetLocalData, isFalse);
-    // So does a different failure in between.
-    await state.tryRestoreSession();
-    expect(state.canResetLocalData, isTrue);
-    localStore.kind = LocalStoreFailureKind.keyUnavailable;
-    await state.tryRestoreSession();
-    localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
-    await state.tryRestoreSession();
-    expect(state.canResetLocalData, isFalse);
+      // A restore that opens the database ends the run: a later failure for
+      // space asks to free space and retry first again.
+      localStore.kind = null;
+      await state.tryRestoreSession();
+      expect(state.lifecycle, SessionLifecycle.ready);
+      localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
+      await state.tryRestoreSession();
+      expect(state.recoveryMessage, state.l10n.recoveryUpgradeFailed);
+      expect(state.canResetLocalData, isFalse);
+      // So does a different failure in between.
+      await state.tryRestoreSession();
+      expect(state.canResetLocalData, isTrue);
+      localStore.kind = LocalStoreFailureKind.keyUnavailable;
+      await state.tryRestoreSession();
+      localStore.kind = LocalStoreFailureKind.upgradeStorageFull;
+      await state.tryRestoreSession();
+      expect(state.canResetLocalData, isFalse);
 
-    await state.tryRestoreSession();
-    await state.resetUnreadableLocalData(confirmed: true);
-    expect(localStore.quarantined, isTrue);
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.localStoreFailure, isNull);
-    state.dispose();
-  });
+      await state.tryRestoreSession();
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(localStore.quarantined, isTrue);
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(state.localStoreFailure, isNull);
+      state.dispose();
+    },
+  );
 
-  test('an upgrade that fails for another reason offers the reset at once',
-      () async {
-    final localStore = _UnreadableStore(LocalStoreFailureKind.upgradeFailed);
-    final state = AppState(
-      apiClientFactory: (_) => throw UnimplementedError(),
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'an upgrade that fails for another reason offers the reset at once',
+    () async {
+      final localStore = _UnreadableStore(LocalStoreFailureKind.upgradeFailed);
+      final state = AppState(
+        apiClientFactory: (_) => throw UnimplementedError(),
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
-    expect(state.lifecycle, SessionLifecycle.recoveryRequired);
-    expect(state.localStoreFailure, LocalStoreFailureKind.upgradeFailed);
-    // Freeing space would not help, so the message does not ask for it.
-    expect(state.recoveryMessage, state.l10n.recoveryUpgradeError);
-    expect(state.recoveryMessage, isNot(contains('space')));
-    expect(state.canResetLocalData, isTrue);
-    expect(state.canContinueWithoutRestore, isFalse);
-    expect(() => state.resetUnreadableLocalData(confirmed: false),
-        throwsArgumentError);
-    expect(localStore.quarantined, isFalse);
+      await state.tryRestoreSession();
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+      expect(state.localStoreFailure, LocalStoreFailureKind.upgradeFailed);
+      // Freeing space would not help, so the message does not ask for it.
+      expect(state.recoveryMessage, state.l10n.recoveryUpgradeError);
+      expect(state.recoveryMessage, isNot(contains('space')));
+      expect(state.canResetLocalData, isTrue);
+      expect(state.canContinueWithoutRestore, isFalse);
+      expect(
+        () => state.resetUnreadableLocalData(confirmed: false),
+        throwsArgumentError,
+      );
+      expect(localStore.quarantined, isFalse);
 
-    await state.resetUnreadableLocalData(confirmed: true);
-    expect(localStore.quarantined, isTrue);
-    expect(state.lifecycle, SessionLifecycle.ready);
-    state.dispose();
-  });
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(localStore.quarantined, isTrue);
+      expect(state.lifecycle, SessionLifecycle.ready);
+      state.dispose();
+    },
+  );
 
   for (final kind in <LocalStoreFailureKind>[
     LocalStoreFailureKind.keyRejected,
@@ -549,24 +575,29 @@ void main() {
         state.l10n.recoveryKeyMissing,
       }) {
         expect(
-            find.text(text), text == message ? findsOneWidget : findsNothing);
+          find.text(text),
+          text == message ? findsOneWidget : findsNothing,
+        );
       }
       expect(find.text(state.l10n.shellRetryRestore), findsOneWidget);
       expect(find.text(state.l10n.shellContinueToSignIn), findsNothing);
       expect(
-          find.text(state.l10n.shellResetDevice),
-          kind == LocalStoreFailureKind.upgradeStorageFull
-              ? findsNothing
-              : findsOneWidget);
+        find.text(state.l10n.shellResetDevice),
+        kind == LocalStoreFailureKind.upgradeStorageFull
+            ? findsNothing
+            : findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox());
       state.dispose();
     });
   }
 
-  testWidgets('a retry that runs out of space again shows the reset',
-      (tester) async {
-    final localStore =
-        _UnreadableStore(LocalStoreFailureKind.upgradeStorageFull);
+  testWidgets('a retry that runs out of space again shows the reset', (
+    tester,
+  ) async {
+    final localStore = _UnreadableStore(
+      LocalStoreFailureKind.upgradeStorageFull,
+    );
     final state = AppState(
       apiClientFactory: (_) => throw UnimplementedError(),
       cryptoService: TestOnlyCryptoService(),
@@ -625,7 +656,7 @@ void main() {
         deviceId: 'dev_owner',
       )
       ..conversations = <Conversation>[
-        Conversation(id: 'conv_1', kind: 'group')
+        Conversation(id: 'conv_1', kind: 'group'),
       ];
 
     expect(await state.sendMessageTo('conv_1', 'not accepted'), isFalse);
@@ -638,129 +669,154 @@ void main() {
     state.dispose();
   });
 
-  test('a retention change refreshes conversations and sync moves on',
-      () async {
-    final localStore = MemoryLocalStore();
-    await localStore.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'owner-token',
-      accountId: 'acct_owner',
-      deviceId: 'dev_owner',
-    ));
-    final api = _RetentionApiClient();
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    );
+  test(
+    'a retention change refreshes conversations and sync moves on',
+    () async {
+      final localStore = MemoryLocalStore();
+      await localStore.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+        ),
+      );
+      final api = _RetentionApiClient();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      );
 
-    await state.tryRestoreSession();
-    for (var attempt = 0;
-        attempt < 50 && await localStore.loadSyncCursor() < 3;
-        attempt++) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    expect(await localStore.loadSyncCursor(), 3);
-    expect(state.deviceRecoveryRequired, isFalse);
-    expect(state.conversations.single.retentionSeconds, 3600);
-  });
+      await state.tryRestoreSession();
+      for (var attempt = 0;
+          attempt < 50 && await localStore.loadSyncCursor() < 3;
+          attempt++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(await localStore.loadSyncCursor(), 3);
+      expect(state.deviceRecoveryRequired, isFalse);
+      expect(state.conversations.single.retentionSeconds, 3600);
+    },
+  );
 
-  test('sync fails closed when an edited event lacks its immutable envelope',
-      () async {
-    final localStore = MemoryLocalStore();
-    final conversation = Conversation(id: 'conv_1', kind: 'group');
-    final newest = ReceivedMessageEnvelope(
-      id: 'msg_newest',
-      conversationId: conversation.id,
-      senderAccountId: 'acct_owner',
-      senderDeviceId: 'dev_owner',
-      idempotencyKey: 'idem_newest',
-      ciphertext: <int>[1],
-      cryptoProtocol: 'mls-openmls-todo',
-      createdAt: DateTime.parse('2026-05-29T12:01:00Z'),
-    );
-    await localStore.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'owner-token',
-      accountId: 'acct_owner',
-      deviceId: 'dev_owner',
-    ));
-    await localStore.saveSnapshot(
-      <Conversation>[conversation],
-      <String, List<ReceivedMessageEnvelope>>{
-        conversation.id: <ReceivedMessageEnvelope>[newest],
-      },
-      0,
-    );
-    final api = _RepairApiClient();
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: localStore,
-      syncServiceFactory: (_, __) => FakeSyncService(),
-    )..selectedConversationId = conversation.id;
+  test(
+    'sync fails closed when an edited event lacks its immutable envelope',
+    () async {
+      final localStore = MemoryLocalStore();
+      final conversation = Conversation(id: 'conv_1', kind: 'group');
+      final newest = ReceivedMessageEnvelope(
+        id: 'msg_newest',
+        conversationId: conversation.id,
+        senderAccountId: 'acct_owner',
+        senderDeviceId: 'dev_owner',
+        idempotencyKey: 'idem_newest',
+        ciphertext: <int>[1],
+        cryptoProtocol: 'mls-openmls-todo',
+        createdAt: DateTime.parse('2026-05-29T12:01:00Z'),
+      );
+      await localStore.saveSession(
+        const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'owner-token',
+          accountId: 'acct_owner',
+          deviceId: 'dev_owner',
+        ),
+      );
+      await localStore.saveSnapshot(
+        <Conversation>[conversation],
+        <String, List<ReceivedMessageEnvelope>>{
+          conversation.id: <ReceivedMessageEnvelope>[newest],
+        },
+        0,
+      );
+      final api = _RepairApiClient();
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: localStore,
+        syncServiceFactory: (_, __) => FakeSyncService(),
+      )..selectedConversationId = conversation.id;
 
-    await state.tryRestoreSession();
-    for (var attempt = 0;
-        attempt < 20 && !state.deviceRecoveryRequired;
-        attempt++) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    expect(api.listMessagesCalls, 0);
-    expect(state.deviceRecoveryRequired, isTrue);
-    expect(await localStore.loadSyncCursor(), 0);
-    expect(state.messagesFor(conversation.id).map((message) => message.id),
-        <String>['msg_newest']);
-    state.dispose();
-  });
+      await state.tryRestoreSession();
+      for (var attempt = 0;
+          attempt < 20 && !state.deviceRecoveryRequired;
+          attempt++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(api.listMessagesCalls, 0);
+      expect(state.deviceRecoveryRequired, isTrue);
+      expect(await localStore.loadSyncCursor(), 0);
+      expect(
+        state.messagesFor(conversation.id).map((message) => message.id),
+        <String>['msg_newest'],
+      );
+      state.dispose();
+    },
+  );
 
-  test('a failed list refresh keeps stale lists, reports safely, and retries',
-      () async {
-    final api = _FlakyListApiClient();
-    final state = _signedInState(api);
-    await state.refreshConversations();
-    await state.refreshDevices();
-    expect(state.conversations.map((c) => c.id), <String>['conv_1']);
-    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
-    expect(state.errorFor(Ops.conversations), isNull);
+  test(
+    'a failed list refresh keeps stale lists, reports safely, and retries',
+    () async {
+      final api = _FlakyListApiClient();
+      final state = _signedInState(api);
+      await state.refreshConversations();
+      await state.refreshDevices();
+      expect(state.conversations.map((c) => c.id), <String>['conv_1']);
+      expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+      expect(state.errorFor(Ops.conversations), isNull);
 
-    api.failure = ApiException(503, '{"error":"server_draining"}');
-    await state.refreshConversations();
-    await state.refreshDevices();
-    expect(state.conversations.map((c) => c.id), <String>['conv_1'],
-        reason: 'the last good list survives a failed refresh');
-    expect(state.devices.map((d) => d.id), <String>['dev_owner']);
-    expect(state.errorFor(Ops.conversations),
-        'The server is restarting. Try again shortly.');
-    expect(state.errorFor(Ops.devices),
-        'The server is restarting. Try again shortly.');
-    expect(state.session, isNotNull);
+      api.failure = ApiException(503, '{"error":"server_draining"}');
+      await state.refreshConversations();
+      await state.refreshDevices();
+      expect(
+        state.conversations.map((c) => c.id),
+        <String>['conv_1'],
+        reason: 'the last good list survives a failed refresh',
+      );
+      expect(state.devices.map((d) => d.id), <String>['dev_owner']);
+      expect(
+        state.errorFor(Ops.conversations),
+        'The server is restarting. Try again shortly.',
+      );
+      expect(
+        state.errorFor(Ops.devices),
+        'The server is restarting. Try again shortly.',
+      );
+      expect(state.session, isNotNull);
 
-    api.failure = const ApiResponseException();
-    await state.refreshConversations();
-    expect(state.errorFor(Ops.conversations),
-        'The server returned an unexpected response.');
+      api.failure = const ApiResponseException();
+      await state.refreshConversations();
+      expect(
+        state.errorFor(Ops.conversations),
+        'The server returned an unexpected response.',
+      );
 
-    api.failure = null;
-    await state.refreshConversations();
-    await state.refreshDevices();
-    expect(state.errorFor(Ops.conversations), isNull);
-    expect(state.errorFor(Ops.devices), isNull);
-    state.dispose();
-  });
+      api.failure = null;
+      await state.refreshConversations();
+      await state.refreshDevices();
+      expect(state.errorFor(Ops.conversations), isNull);
+      expect(state.errorFor(Ops.devices), isNull);
+      state.dispose();
+    },
+  );
 
-  test('a 401 list refresh signs out instead of surfacing raw errors',
-      () async {
-    final api = _FlakyListApiClient()
-      ..failure = ApiException(401, '{"error":"unauthorized"}');
-    final state = _signedInState(api);
-    await state.refreshConversations();
-    expect(state.session, isNull);
-    expect(state.errorFor(Ops.conversations),
-        'Your session is no longer valid. Sign in again.');
-    state.dispose();
-  });
+  test(
+    'a 401 list refresh signs out instead of surfacing raw errors',
+    () async {
+      final api = _FlakyListApiClient()
+        ..failure = ApiException(401, '{"error":"unauthorized"}');
+      final state = _signedInState(api);
+      await state.refreshConversations();
+      expect(state.session, isNull);
+      expect(
+        state.errorFor(Ops.conversations),
+        'Your session is no longer valid. Sign in again.',
+      );
+      state.dispose();
+    },
+  );
 
   test('search failures reach the UI only as mapped sentences', () async {
     final api = _FlakyListApiClient()
@@ -768,14 +824,24 @@ void main() {
     final state = _signedInState(api);
     await expectLater(
       state.searchMetadata('alice'),
-      throwsA(isA<UserFacingException>().having((e) => e.toString(), 'text',
-          'The server had a problem. Try again shortly.')),
+      throwsA(
+        isA<UserFacingException>().having(
+          (e) => e.toString(),
+          'text',
+          'The server had a problem. Try again shortly.',
+        ),
+      ),
     );
     api.failure = StateError('internal invariant broke');
     await expectLater(
       state.searchMetadata('alice'),
-      throwsA(isA<UserFacingException>()
-          .having((e) => e.toString(), 'text', isNot(contains('invariant')))),
+      throwsA(
+        isA<UserFacingException>().having(
+          (e) => e.toString(),
+          'text',
+          isNot(contains('invariant')),
+        ),
+      ),
     );
     state.dispose();
   });
@@ -1156,8 +1222,12 @@ class FakeDeviceLinkApiClient extends ApiClient with LegacySyncPageFake {
   }
 
   @override
-  Future<Session?> completeDeviceLinkClaim(String linkId, String claimToken,
-      List<int> expectedTranscriptHash, List<int> expectedApprovalTag) async {
+  Future<Session?> completeDeviceLinkClaim(
+    String linkId,
+    String claimToken,
+    List<int> expectedTranscriptHash,
+    List<int> expectedApprovalTag,
+  ) async {
     completeCalls++;
     return Session(
       baseUrl: 'https://localhost:8080',
@@ -1209,18 +1279,20 @@ class FakeDeviceLinkApiClient extends ApiClient with LegacySyncPageFake {
     int limit = 50,
     String? before,
   }) async {
-    return MessagePage(messages: <ReceivedMessageEnvelope>[
-      ReceivedMessageEnvelope(
-        id: 'msg_1',
-        conversationId: conversationId,
-        senderAccountId: 'acct_owner',
-        senderDeviceId: 'dev_owner',
-        idempotencyKey: 'idem_1',
-        ciphertext: <int>[1, 2, 3],
-        cryptoProtocol: 'mls-openmls-todo',
-        createdAt: DateTime.parse('2026-05-29T12:00:00Z'),
-      ),
-    ]);
+    return MessagePage(
+      messages: <ReceivedMessageEnvelope>[
+        ReceivedMessageEnvelope(
+          id: 'msg_1',
+          conversationId: conversationId,
+          senderAccountId: 'acct_owner',
+          senderDeviceId: 'dev_owner',
+          idempotencyKey: 'idem_1',
+          ciphertext: <int>[1, 2, 3],
+          cryptoProtocol: 'mls-openmls-todo',
+          createdAt: DateTime.parse('2026-05-29T12:00:00Z'),
+        ),
+      ],
+    );
   }
 
   @override

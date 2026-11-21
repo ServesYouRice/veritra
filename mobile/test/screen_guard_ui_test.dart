@@ -64,153 +64,157 @@ void main() {
   });
 
   testWidgets(
-      'the chat list holds the screen guard only while previews are shown (U12)',
-      (tester) async {
-    final guard = FakeScreenGuard();
-    final state = _createState(guard, MemoryLocalStore());
-    expect(state.showChatPreviews, isTrue);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatListScreen(state: state),
-      ),
-    );
-    await tester.pump();
-
-    // Previews on: the list shows message text, so it is guarded.
-    expect(state.activeChatViewsForTesting, 1);
-    expect(state.isScreenGuardActive, isTrue);
-    expect(await guard.isSecure(), isTrue);
-
-    // Turning previews off while the list is mounted drops the guard.
-    await tester.runAsync(() => state.setShowChatPreviews(false));
-    await tester.pump();
-    expect(state.activeChatViewsForTesting, 0);
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await guard.isSecure(), isFalse);
-
-    // And turning them back on takes it again.
-    await tester.runAsync(() => state.setShowChatPreviews(true));
-    await tester.pump();
-    expect(state.activeChatViewsForTesting, 1);
-    expect(await guard.isSecure(), isTrue);
-
-    // Unmounting releases it.
-    await tester.pumpWidget(const SizedBox());
-    expect(state.activeChatViewsForTesting, 0);
-    expect(await guard.isSecure(), isFalse);
-
-    // A list mounted with previews already off never takes the guard.
-    await tester.runAsync(() => state.setShowChatPreviews(false));
-    await tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatListScreen(state: state),
-      ),
-    );
-    await tester.pump();
-    expect(state.activeChatViewsForTesting, 0);
-    expect(state.isScreenGuardActive, isFalse);
-
-    state.dispose();
-  });
-
-  testWidgets(
-      'ChatScreen mounts and unmounts, toggling screen guard active views',
-      (tester) async {
-    final guard = FakeScreenGuard();
-    final store = MemoryLocalStore();
-    final state = _createState(guard, store);
-
-    expect(state.activeChatViewsForTesting, 0);
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await guard.isSecure(), isFalse);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ChatScreen(state: state, conversationId: 'conv_1'),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(state.activeChatViewsForTesting, 1);
-    expect(state.isScreenGuardActive, isTrue);
-    expect(await guard.isSecure(), isTrue);
-
-    // Unmount ChatScreen
-    await tester.pumpWidget(const SizedBox());
-    await tester.pumpAndSettle();
-
-    expect(state.activeChatViewsForTesting, 0);
-    expect(state.isScreenGuardActive, isFalse);
-    expect(await guard.isSecure(), isFalse);
-
-    state.dispose();
-  });
-
-  testWidgets(
-      'SettingsScreen shows screen guard toggle on Android and toggles setting',
-      (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    tester.view.physicalSize = const Size(800, 2400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    try {
+    'the chat list holds the screen guard only while previews are shown (U12)',
+    (tester) async {
       final guard = FakeScreenGuard();
-      final store = MemoryLocalStore();
-      final state = _createState(guard, store);
+      final state = _createState(guard, MemoryLocalStore());
+      expect(state.showChatPreviews, isTrue);
 
       await tester.pumpWidget(
         MaterialApp(
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(body: SettingsScreen(state: state)),
+          home: ChatListScreen(state: state),
         ),
       );
       await tester.pump();
 
-      final tileKey = const ValueKey<String>('settings-screen-guard');
-      final tileFinder = find.byKey(tileKey);
-      expect(tileFinder, findsOneWidget);
+      // Previews on: the list shows message text, so it is guarded.
+      expect(state.activeChatViewsForTesting, 1);
+      expect(state.isScreenGuardActive, isTrue);
+      expect(await guard.isSecure(), isTrue);
 
-      final switchTile = tester.widget<SwitchListTile>(tileFinder);
-      expect(switchTile.value, isTrue);
-      expect(find.text('Screen guard'), findsOneWidget);
-      // U18 dropped the explanation line from the row.
-
-      // Tap to toggle off
-      await tester.tap(tileFinder);
+      // Turning previews off while the list is mounted drops the guard.
+      await tester.runAsync(() => state.setShowChatPreviews(false));
       await tester.pump();
+      expect(state.activeChatViewsForTesting, 0);
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await guard.isSecure(), isFalse);
 
-      expect(state.screenGuardChats, isFalse);
-      expect(await store.loadSetting('screen_guard_chats'), 'false');
-      final switchTileOff = tester.widget<SwitchListTile>(tileFinder);
-      expect(switchTileOff.value, isFalse);
-
-      // Tap to toggle on
-      await tester.tap(tileFinder);
+      // And turning them back on takes it again.
+      await tester.runAsync(() => state.setShowChatPreviews(true));
       await tester.pump();
+      expect(state.activeChatViewsForTesting, 1);
+      expect(await guard.isSecure(), isTrue);
 
-      expect(state.screenGuardChats, isTrue);
-      expect(await store.loadSetting('screen_guard_chats'), 'true');
-      final switchTileOn = tester.widget<SwitchListTile>(tileFinder);
-      expect(switchTileOn.value, isTrue);
+      // Unmounting releases it.
+      await tester.pumpWidget(const SizedBox());
+      expect(state.activeChatViewsForTesting, 0);
+      expect(await guard.isSecure(), isFalse);
+
+      // A list mounted with previews already off never takes the guard.
+      await tester.runAsync(() => state.setShowChatPreviews(false));
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ChatListScreen(state: state),
+        ),
+      );
+      await tester.pump();
+      expect(state.activeChatViewsForTesting, 0);
+      expect(state.isScreenGuardActive, isFalse);
 
       state.dispose();
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
-    }
-  });
+    },
+  );
 
-  testWidgets('SettingsScreen hides screen guard toggle on non-Android',
-      (tester) async {
+  testWidgets(
+    'ChatScreen mounts and unmounts, toggling screen guard active views',
+    (tester) async {
+      final guard = FakeScreenGuard();
+      final store = MemoryLocalStore();
+      final state = _createState(guard, store);
+
+      expect(state.activeChatViewsForTesting, 0);
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await guard.isSecure(), isFalse);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ChatScreen(state: state, conversationId: 'conv_1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(state.activeChatViewsForTesting, 1);
+      expect(state.isScreenGuardActive, isTrue);
+      expect(await guard.isSecure(), isTrue);
+
+      // Unmount ChatScreen
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+
+      expect(state.activeChatViewsForTesting, 0);
+      expect(state.isScreenGuardActive, isFalse);
+      expect(await guard.isSecure(), isFalse);
+
+      state.dispose();
+    },
+  );
+
+  testWidgets(
+    'SettingsScreen shows screen guard toggle on Android and toggles setting',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      try {
+        final guard = FakeScreenGuard();
+        final store = MemoryLocalStore();
+        final state = _createState(guard, store);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(body: SettingsScreen(state: state)),
+          ),
+        );
+        await tester.pump();
+
+        final tileKey = const ValueKey<String>('settings-screen-guard');
+        final tileFinder = find.byKey(tileKey);
+        expect(tileFinder, findsOneWidget);
+
+        final switchTile = tester.widget<SwitchListTile>(tileFinder);
+        expect(switchTile.value, isTrue);
+        expect(find.text('Screen guard'), findsOneWidget);
+        // U18 dropped the explanation line from the row.
+
+        // Tap to toggle off
+        await tester.tap(tileFinder);
+        await tester.pump();
+
+        expect(state.screenGuardChats, isFalse);
+        expect(await store.loadSetting('screen_guard_chats'), 'false');
+        final switchTileOff = tester.widget<SwitchListTile>(tileFinder);
+        expect(switchTileOff.value, isFalse);
+
+        // Tap to toggle on
+        await tester.tap(tileFinder);
+        await tester.pump();
+
+        expect(state.screenGuardChats, isTrue);
+        expect(await store.loadSetting('screen_guard_chats'), 'true');
+        final switchTileOn = tester.widget<SwitchListTile>(tileFinder);
+        expect(switchTileOn.value, isTrue);
+
+        state.dispose();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
+  testWidgets('SettingsScreen hides screen guard toggle on non-Android', (
+    tester,
+  ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     try {
       final guard = FakeScreenGuard();

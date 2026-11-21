@@ -52,11 +52,14 @@ void main() {
   test('Android keeps all app data out of backups and device transfers', () {
     // Android 12+ device-to-device transfer ignores allowBackup="false";
     // only the data extraction rules keep data out of it.
-    final manifest =
-        File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+    final manifest = File(
+      'android/app/src/main/AndroidManifest.xml',
+    ).readAsStringSync();
     expect(manifest, contains('android:allowBackup="false"'));
-    expect(manifest,
-        contains('android:dataExtractionRules="@xml/data_extraction_rules"'));
+    expect(
+      manifest,
+      contains('android:dataExtractionRules="@xml/data_extraction_rules"'),
+    );
     expect(manifest, contains('android:fullBackupContent="@xml/backup_rules"'));
 
     const domains = <String>[
@@ -81,10 +84,12 @@ void main() {
       return xml.substring(start, end);
     }
 
-    final rules = File('android/app/src/main/res/xml/data_extraction_rules.xml')
-        .readAsStringSync();
-    final legacy = File('android/app/src/main/res/xml/backup_rules.xml')
-        .readAsStringSync();
+    final rules = File(
+      'android/app/src/main/res/xml/data_extraction_rules.xml',
+    ).readAsStringSync();
+    final legacy = File(
+      'android/app/src/main/res/xml/backup_rules.xml',
+    ).readAsStringSync();
     for (final (name, body) in <(String, String)>[
       ('cloud-backup', section(rules, 'cloud-backup')),
       ('device-transfer', section(rules, 'device-transfer')),
@@ -109,22 +114,29 @@ void main() {
     expect(delegate, contains('values.isExcludedFromBackup = true'));
     // The shared engine (D52) registers the storage channel in the same
     // main-thread turn that starts it, before any Dart bootstrap call runs.
-    final shared = delegate.substring(delegate.indexOf('func sharedEngine('),
-        delegate.indexOf('func setWakeUIAttached('));
+    final shared = delegate.substring(
+      delegate.indexOf('func sharedEngine('),
+      delegate.indexOf('func setWakeUIAttached('),
+    );
     expect(shared, contains('registerStorageChannel(engine)'));
-    expect(shared.indexOf('registerStorageChannel(engine)'),
-        lessThan(shared.indexOf('return engine')));
+    expect(
+      shared.indexOf('registerStorageChannel(engine)'),
+      lessThan(shared.indexOf('return engine')),
+    );
     // Every path is tried: a failure is counted inside the loop, never
     // returned from it, and reported once after it.
     final handler = delegate.substring(
-        delegate.indexOf('for path in paths where'),
-        delegate.indexOf('func onListen('));
+      delegate.indexOf('for path in paths where'),
+      delegate.indexOf('func onListen('),
+    );
     final loop = handler.substring(0, handler.indexOf('if failures > 0'));
     expect(loop, contains('failures += 1'));
     expect(loop, isNot(contains('return')));
     expect(loop, isNot(contains('result(')));
-    expect(handler.substring(loop.length),
-        contains('FlutterError(code: "exclude_failed"'));
+    expect(
+      handler.substring(loop.length),
+      contains('FlutterError(code: "exclude_failed"'),
+    );
   });
 
   test('iOS declares why device-link QR scanning needs the camera', () {
@@ -133,8 +145,62 @@ void main() {
     expect(infoPlist, contains('<key>NSCameraUsageDescription</key>'));
     expect(
       infoPlist,
-      contains('Veritra uses the camera to scan device-link QR codes.'),
+      contains('Veritra uses the camera to scan device-link QR codes'),
     );
+    // Video calls and group calls use it too, so the prompt says so.
+    expect(infoPlist, contains('video calls and group calls'));
+  });
+
+  // In-memory voice playback (D134) serves a decrypted note to AVPlayer over
+  // http://127.0.0.1 (`LoopbackClipServer`). iOS needs ATS to allow local
+  // loads and the macOS sandbox needs the server entitlement to listen.
+  // Both stay this narrow: no arbitrary loads, no exception domains.
+  test('Apple ATS allows local loads only, for loopback voice playback', () {
+    for (final path in <String>[
+      'ios/Runner/Info.plist',
+      'macos/Runner/Info.plist',
+    ]) {
+      final infoPlist = File(path).readAsStringSync();
+      final start = infoPlist.indexOf('<key>NSAppTransportSecurity</key>');
+      expect(start, isNonNegative, reason: path);
+      final dict = infoPlist.substring(
+        infoPlist.indexOf('<dict>', start),
+        infoPlist.indexOf('</dict>', start) + '</dict>'.length,
+      );
+      expect(
+        RegExp(r'<key>([^<]+)</key>')
+            .allMatches(dict)
+            .map((m) => m.group(1))
+            .toList(),
+        <String>['NSAllowsLocalNetworking'],
+      );
+      expect(
+        dict.replaceAll(RegExp(r'\s'), ''),
+        contains('<key>NSAllowsLocalNetworking</key><true/>'),
+      );
+      expect(infoPlist, isNot(contains('NSAllowsArbitraryLoads')));
+      expect(infoPlist, isNot(contains('NSExceptionDomains')));
+    }
+    expect(
+      File('lib/features/chat/loopback_clip_server.dart').readAsStringSync(),
+      contains('HttpServer.bind(InternetAddress.loopbackIPv4, 0)'),
+    );
+  });
+
+  test('macOS release may listen, for loopback voice playback', () {
+    for (final path in <String>[
+      'macos/Runner/Release.entitlements',
+      'macos/Runner/DebugProfile.entitlements',
+    ]) {
+      final text = File(path).readAsStringSync().replaceAll(RegExp(r'\s'), '');
+      expect(
+          text, contains('<key>com.apple.security.app-sandbox</key><true/>'));
+      expect(
+        text,
+        contains('<key>com.apple.security.network.server</key><true/>'),
+        reason: path,
+      );
+    }
   });
 
   // K1 second copy on phones (D91). These are text checks of native code
@@ -146,15 +212,20 @@ void main() {
 
     test('Kotlin, Swift and Dart name the same channel', () {
       final quoted = '"$k1SecondCopyChannelName"';
-      expect(File('$kotlinDir/K1SecondCopy.kt').readAsStringSync(),
-          contains('const val CHANNEL = $quoted'));
-      expect(File('ios/Runner/AppDelegate.swift').readAsStringSync(),
-          contains('name: $quoted'));
+      expect(
+        File('$kotlinDir/K1SecondCopy.kt').readAsStringSync(),
+        contains('const val CHANNEL = $quoted'),
+      );
+      expect(
+        File('ios/Runner/AppDelegate.swift').readAsStringSync(),
+        contains('name: $quoted'),
+      );
     });
 
     test('both engines register it before Dart can call it', () {
-      final engine =
-          File('$kotlinDir/SharedFlutterEngine.kt').readAsStringSync();
+      final engine = File(
+        '$kotlinDir/SharedFlutterEngine.kt',
+      ).readAsStringSync();
       final install = engine.indexOf('K1SecondCopy.install(app, messenger)');
       expect(install, greaterThan(0));
       expect(install, lessThan(engine.indexOf('executeDartEntrypoint')));
@@ -167,8 +238,9 @@ void main() {
     });
 
     test('Android asks for no storage permission: only the picked tree', () {
-      final manifest =
-          File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+      final manifest = File(
+        'android/app/src/main/AndroidManifest.xml',
+      ).readAsStringSync();
       for (final permission in <String>[
         'READ_EXTERNAL_STORAGE',
         'WRITE_EXTERNAL_STORAGE',
@@ -185,17 +257,22 @@ void main() {
       expect(copy, contains('releasePersistableUriPermission('));
       // The file is written in full and synced before the old one goes.
       final write = copy.substring(copy.indexOf('fun write(context'));
-      expect(write.indexOf('writeAll(resolver, temp, bytes)'),
-          lessThan(write.indexOf('oldDeleted = true')));
+      expect(
+        write.indexOf('writeAll(resolver, temp, bytes)'),
+        lessThan(write.indexOf('oldDeleted = true')),
+      );
       expect(copy, contains('fd.sync()'));
     });
 
     test('iOS exports a protected temporary copy through the picker', () {
       final swift = File('ios/Runner/AppDelegate.swift').readAsStringSync();
       expect(
-          swift,
-          contains('UIDocumentPickerViewController(forExporting: [file], '
-              'asCopy: true)'));
+        swift,
+        contains(
+          'UIDocumentPickerViewController(forExporting: [file], '
+          'asCopy: true)',
+        ),
+      );
       expect(swift, contains('.completeFileProtection'));
       // The temporary file is removed whichever way the picker closes.
       expect(swift, contains('func documentPickerWasCancelled('));

@@ -20,18 +20,20 @@ class _H {
     api = FakeCallApi(log);
     media = FakeMediaFactory(log);
     service = NativeCallService(
-        api: api,
-        token: 'token',
-        crypto: FakeCallCrypto(log),
-        incoming: incoming.stream,
-        media: media,
-        retryDelay: (_) async {});
+      api: api,
+      token: 'token',
+      crypto: FakeCallCrypto(log),
+      incoming: incoming.stream,
+      media: media,
+      retryDelay: (_) async {},
+    );
     controller = CallController(
-        service: service,
-        selfAccountId: 'acc_callee',
-        speakerSupported: true,
-        ringTimeout: const Duration(milliseconds: 200),
-        setSpeaker: (on) async => speaker.add(on));
+      service: service,
+      selfAccountId: 'acc_callee',
+      speakerSupported: true,
+      ringTimeout: const Duration(milliseconds: 200),
+      setSpeaker: (on) async => speaker.add(on),
+    );
   }
 
   final log = <String>[];
@@ -63,32 +65,38 @@ _H _h() {
 }
 
 void main() {
-  test('outgoing call rings, connects on the first remote stream, hangs up',
-      () async {
-    final h = _h();
-    await h.controller.start('conv_1', withVideo: true);
-    expect(h.controller.phase, CallPhase.ringingOut);
-    expect(h.media.peer.configuration['iceTransportPolicy'], 'relay');
-    h.media.peer.emitTrack(FakeStream(h.log, 'remote'));
-    await pumpEventQueue();
-    expect(h.controller.phase, CallPhase.active);
+  test(
+    'outgoing call rings, connects on the first remote stream, hangs up',
+    () async {
+      final h = _h();
+      await h.controller.start('conv_1', withVideo: true);
+      expect(h.controller.phase, CallPhase.ringingOut);
+      expect(h.media.peer.configuration['iceTransportPolicy'], 'relay');
+      h.media.peer.emitTrack(FakeStream(h.log, 'remote'));
+      await pumpEventQueue();
+      expect(h.controller.phase, CallPhase.active);
 
-    h.controller.toggleMute();
-    expect(h.controller.muted, isTrue);
-    expect(h.media.stream.tracks.firstWhere((t) => t.name == 'audio').enabled,
-        isFalse);
-    h.controller.toggleCamera();
-    expect(h.media.stream.tracks.firstWhere((t) => t.name == 'video').enabled,
-        isFalse);
-    await h.controller.toggleSpeaker();
-    expect(h.controller.speakerOn, isTrue);
+      h.controller.toggleMute();
+      expect(h.controller.muted, isTrue);
+      expect(
+        h.media.stream.tracks.firstWhere((t) => t.name == 'audio').enabled,
+        isFalse,
+      );
+      h.controller.toggleCamera();
+      expect(
+        h.media.stream.tracks.firstWhere((t) => t.name == 'video').enabled,
+        isFalse,
+      );
+      await h.controller.toggleSpeaker();
+      expect(h.controller.speakerOn, isTrue);
 
-    await h.controller.hangUp();
-    expect(h.controller.phase, CallPhase.idle);
-    expect(h.api.transitions.last.state, 'ended');
-    expect(h.speaker, <bool>[true, false]);
-    expect(h.media.peer.closeCount, 1);
-  });
+      await h.controller.hangUp();
+      expect(h.controller.phase, CallPhase.idle);
+      expect(h.api.transitions.last.state, 'ended');
+      expect(h.speaker, <bool>[true, false]);
+      expect(h.media.peer.closeCount, 1);
+    },
+  );
 
   test('no answer: caller gives up and sees a notice', () async {
     final h = _h();
@@ -99,14 +107,16 @@ void main() {
     expect(h.api.transitions.last.state, 'ended');
   });
 
-  test('a call that cannot start shows a failure notice and frees media',
-      () async {
-    final h = _h();
-    h.api.iceServers = <Map<String, Object?>>[];
-    await h.controller.start('conv_1');
-    expect(h.controller.phase, CallPhase.idle);
-    expect(h.controller.notice?.kind, CallNoticeKind.failed);
-  });
+  test(
+    'a call that cannot start shows a failure notice and frees media',
+    () async {
+      final h = _h();
+      h.api.iceServers = <Map<String, Object?>>[];
+      await h.controller.start('conv_1');
+      expect(h.controller.phase, CallPhase.idle);
+      expect(h.controller.notice?.kind, CallNoticeKind.failed);
+    },
+  );
 
   test('incoming call can be declined', () async {
     final h = _h();
@@ -128,8 +138,12 @@ void main() {
     h.media.peer.emitTrack(FakeStream(h.log, 'remote'));
     await pumpEventQueue();
     expect(h.controller.phase, CallPhase.active);
-    h.incoming.add(IncomingCallSignal(
-        callSession(state: 'ended', version: 9), const <String, Object?>{}));
+    h.incoming.add(
+      IncomingCallSignal(
+        callSession(state: 'ended', version: 9),
+        const <String, Object?>{},
+      ),
+    );
     await pumpEventQueue();
     expect(h.controller.phase, CallPhase.idle);
     expect(h.controller.notice, isNull);
@@ -138,8 +152,12 @@ void main() {
   test('caller hangs up before answer: missed-call notice', () async {
     final h = _h();
     await h.ring();
-    h.incoming.add(IncomingCallSignal(
-        callSession(state: 'missed', version: 2), const <String, Object?>{}));
+    h.incoming.add(
+      IncomingCallSignal(
+        callSession(state: 'missed', version: 2),
+        const <String, Object?>{},
+      ),
+    );
     await pumpEventQueue();
     expect(h.controller.phase, CallPhase.idle);
     expect(h.controller.notice?.kind, CallNoticeKind.missed);
@@ -152,8 +170,10 @@ void main() {
     await h.ring();
     await h.ring(id: 'call_2');
     expect(h.controller.callId, 'call_1');
-    expect(h.api.transitions.where((t) => t.callId == 'call_2').single.state,
-        'rejected');
+    expect(
+      h.api.transitions.where((t) => t.callId == 'call_2').single.state,
+      'rejected',
+    );
     expect(h.controller.notice?.kind, CallNoticeKind.busy);
   });
 
@@ -161,14 +181,15 @@ void main() {
     final h = _h();
     final base = callSession();
     final own = CallSession(
-        id: base.id,
-        conversationId: base.conversationId,
-        createdBy: 'acc_callee',
-        invitedAccountId: 'acc_caller',
-        state: base.state,
-        version: base.version,
-        metadata: base.metadata,
-        createdAt: base.createdAt);
+      id: base.id,
+      conversationId: base.conversationId,
+      createdBy: 'acc_callee',
+      invitedAccountId: 'acc_caller',
+      state: base.state,
+      version: base.version,
+      metadata: base.metadata,
+      createdAt: base.createdAt,
+    );
     h.incoming.add(IncomingCallSignal(own, _offer));
     await pumpEventQueue();
     expect(h.controller.phase, CallPhase.idle);

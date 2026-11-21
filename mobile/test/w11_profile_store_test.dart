@@ -26,8 +26,12 @@ ProfileKeyEffect _key(
       receivedAt: n,
     );
 
-StoredProfile _profile(int revision,
-        {String keyId = '', String? name = 'Ana', String subject = 'acct_a'}) =>
+StoredProfile _profile(
+  int revision, {
+  String keyId = '',
+  String? name = 'Ana',
+  String subject = 'acct_a',
+}) =>
     StoredProfile(
       kind: profileSubjectAccount,
       subjectId: subject,
@@ -60,8 +64,10 @@ void main() {
         for (var n = 1; n <= 6; n++) {
           await store.saveProfileKey(_key(n));
         }
-        final held =
-            await store.loadProfileKeys(profileSubjectAccount, 'acct_a');
+        final held = await store.loadProfileKeys(
+          profileSubjectAccount,
+          'acct_a',
+        );
         expect(held.map((k) => k.keyId), [_id(3), _id(4), _id(5), _id(6)]);
       });
 
@@ -71,24 +77,35 @@ void main() {
         for (var n = 2; n <= 9; n++) {
           await store.saveProfileKey(_key(n));
         }
-        final held =
-            await store.loadProfileKeys(profileSubjectAccount, 'acct_a');
-        expect(
-            held.map((k) => k.keyId).toSet(), {_id(1), _id(7), _id(8), _id(9)});
+        final held = await store.loadProfileKeys(
+          profileSubjectAccount,
+          'acct_a',
+        );
+        expect(held.map((k) => k.keyId).toSet(), {
+          _id(1),
+          _id(7),
+          _id(8),
+          _id(9),
+        });
       });
 
       test('a key already held keeps its place', () async {
         await store.saveProfileKey(_key(1));
         await store.saveProfileKey(_key(2));
-        await store.saveProfileKey(ProfileKeyEffect(
+        await store.saveProfileKey(
+          ProfileKeyEffect(
             kind: profileSubjectAccount,
             subjectId: 'acct_a',
             key: Uint8List(32)..[0] = 1,
             keyId: _id(1),
             version: 0,
-            receivedAt: 99));
-        final held =
-            await store.loadProfileKeys(profileSubjectAccount, 'acct_a');
+            receivedAt: 99,
+          ),
+        );
+        final held = await store.loadProfileKeys(
+          profileSubjectAccount,
+          'acct_a',
+        );
         expect(held.map((k) => k.receivedAt), [1, 2]);
       });
 
@@ -96,108 +113,161 @@ void main() {
         await store.saveProfileKey(_key(1));
         await store.saveProfileKey(_key(2, subject: 'acct_b'));
         await store.saveProfileKey(
-            _key(3, kind: profileSubjectConversation, subject: 'conv_g'));
+          _key(3, kind: profileSubjectConversation, subject: 'conv_g'),
+        );
         expect(
-            (await store.loadAllProfileKeys(profileSubjectAccount))
-                .map((k) => k.subjectId)
-                .toSet(),
-            {'acct_a', 'acct_b'});
-        expect(await store.loadAllProfileKeys(profileSubjectConversation),
-            hasLength(1));
+          (await store.loadAllProfileKeys(
+            profileSubjectAccount,
+          ))
+              .map((k) => k.subjectId)
+              .toSet(),
+          {'acct_a', 'acct_b'},
+        );
+        expect(
+          await store.loadAllProfileKeys(profileSubjectConversation),
+          hasLength(1),
+        );
       });
 
       test('keys of one subject do not touch another', () async {
         await store.saveProfileKey(_key(1));
         await store.saveProfileKey(
-            _key(2, kind: profileSubjectConversation, subject: 'conv_g'));
-        expect(await store.loadProfileKeys(profileSubjectAccount, 'acct_a'),
-            hasLength(1));
+          _key(2, kind: profileSubjectConversation, subject: 'conv_g'),
+        );
         expect(
-            await store.loadProfileKeys(profileSubjectConversation, 'conv_g'),
-            hasLength(1));
-        expect(await store.loadProfileKeys(profileSubjectAccount, 'acct_b'),
-            isEmpty);
+          await store.loadProfileKeys(profileSubjectAccount, 'acct_a'),
+          hasLength(1),
+        );
+        expect(
+          await store.loadProfileKeys(profileSubjectConversation, 'conv_g'),
+          hasLength(1),
+        );
+        expect(
+          await store.loadProfileKeys(profileSubjectAccount, 'acct_b'),
+          isEmpty,
+        );
       });
 
-      test('an account hint raises the floor; a group hint never does',
-          () async {
-        await store.saveProfileKey(_key(1, version: 7));
-        await store.saveProfileKey(_key(2, version: 3));
-        final floor = await store.loadProfile(profileSubjectAccount, 'acct_a');
-        expect(floor?.versionFloor, 7);
-        expect(floor?.isPlaceholder, isTrue);
-        await store.saveProfileKey(_key(3,
-            kind: profileSubjectConversation, subject: 'conv_g', version: 99));
-        expect(await store.loadProfile(profileSubjectConversation, 'conv_g'),
-            isNull);
-      });
+      test(
+        'an account hint raises the floor; a group hint never does',
+        () async {
+          await store.saveProfileKey(_key(1, version: 7));
+          await store.saveProfileKey(_key(2, version: 3));
+          final floor = await store.loadProfile(
+            profileSubjectAccount,
+            'acct_a',
+          );
+          expect(floor?.versionFloor, 7);
+          expect(floor?.isPlaceholder, isTrue);
+          await store.saveProfileKey(
+            _key(
+              3,
+              kind: profileSubjectConversation,
+              subject: 'conv_g',
+              version: 99,
+            ),
+          );
+          expect(
+            await store.loadProfile(profileSubjectConversation, 'conv_g'),
+            isNull,
+          );
+        },
+      );
 
-      test('a placeholder is not a profile and a record keeps the floor',
-          () async {
-        await store.saveProfileKey(_key(1, version: 4));
-        expect(await store.loadProfiles(profileSubjectAccount), isEmpty);
-        expect(await store.saveProfile(_profile(5)), isTrue);
-        final saved = await store.loadProfile(profileSubjectAccount, 'acct_a');
-        expect(saved?.versionFloor, 4);
-        expect(saved?.name, 'Ana');
-        expect(await store.loadProfiles(profileSubjectAccount), hasLength(1));
-      });
+      test(
+        'a placeholder is not a profile and a record keeps the floor',
+        () async {
+          await store.saveProfileKey(_key(1, version: 4));
+          expect(await store.loadProfiles(profileSubjectAccount), isEmpty);
+          expect(await store.saveProfile(_profile(5)), isTrue);
+          final saved = await store.loadProfile(
+            profileSubjectAccount,
+            'acct_a',
+          );
+          expect(saved?.versionFloor, 4);
+          expect(saved?.name, 'Ana');
+          expect(await store.loadProfiles(profileSubjectAccount), hasLength(1));
+        },
+      );
 
       test('a record below the stored revision is refused', () async {
         expect(await store.saveProfile(_profile(5)), isTrue);
         expect(await store.saveProfile(_profile(4, name: 'Old')), isFalse);
         expect(await store.saveProfile(_profile(5, name: 'Same')), isTrue);
-        expect((await store.loadProfile(profileSubjectAccount, 'acct_a'))?.name,
-            'Same');
+        expect(
+          (await store.loadProfile(profileSubjectAccount, 'acct_a'))?.name,
+          'Same',
+        );
       });
 
-      test('a photo round-trips and deleting a subject drops all of it',
-          () async {
-        final photo = Uint8List.fromList([1, 2, 3, 4]);
-        await store.saveProfileKey(_key(1));
-        await store.saveProfile(StoredProfile(
-            kind: profileSubjectAccount,
-            subjectId: 'acct_a',
-            serverVersion: 2,
-            keyId: _id(1),
-            revision: 2,
-            name: 'Ana',
-            photoPng: photo,
-            fetchedAt: 1));
-        expect(
-            (await store.loadProfile(profileSubjectAccount, 'acct_a'))
+      test(
+        'a photo round-trips and deleting a subject drops all of it',
+        () async {
+          final photo = Uint8List.fromList([1, 2, 3, 4]);
+          await store.saveProfileKey(_key(1));
+          await store.saveProfile(
+            StoredProfile(
+              kind: profileSubjectAccount,
+              subjectId: 'acct_a',
+              serverVersion: 2,
+              keyId: _id(1),
+              revision: 2,
+              name: 'Ana',
+              photoPng: photo,
+              fetchedAt: 1,
+            ),
+          );
+          expect(
+            (await store.loadProfile(
+              profileSubjectAccount,
+              'acct_a',
+            ))
                 ?.photoPng,
-            photo);
-        await store.deleteProfileSubject(profileSubjectAccount, 'acct_a');
-        expect(
-            await store.loadProfile(profileSubjectAccount, 'acct_a'), isNull);
-        expect(await store.loadProfileKeys(profileSubjectAccount, 'acct_a'),
-            isEmpty);
-      });
+            photo,
+          );
+          await store.deleteProfileSubject(profileSubjectAccount, 'acct_a');
+          expect(
+            await store.loadProfile(profileSubjectAccount, 'acct_a'),
+            isNull,
+          );
+          expect(
+            await store.loadProfileKeys(profileSubjectAccount, 'acct_a'),
+            isEmpty,
+          );
+        },
+      );
 
       test('deleting one key leaves the others', () async {
         await store.saveProfileKey(_key(1));
         await store.saveProfileKey(_key(2));
         await store.deleteProfileKey(profileSubjectAccount, 'acct_a', _id(1));
         expect(
-            (await store.loadProfileKeys(profileSubjectAccount, 'acct_a'))
-                .map((k) => k.keyId),
-            [_id(2)]);
+          (await store.loadProfileKeys(
+            profileSubjectAccount,
+            'acct_a',
+          ))
+              .map((k) => k.keyId),
+          [_id(2)],
+        );
       });
 
-      test('profile state reads, writes, lists by prefix and deletes',
-          () async {
-        await store.saveProfileState('own.key_id', 'x');
-        await store.saveProfileState('due.conv_1', '1');
-        await store.saveProfileState('due.conv_2', '1');
-        expect(await store.loadProfileState('own.key_id'), 'x');
-        expect(await store.loadProfileStatePrefix('due.'),
-            {'due.conv_1': '1', 'due.conv_2': '1'});
-        await store.saveProfileState('due.conv_1', null);
-        expect(await store.loadProfileState('due.conv_1'), isNull);
-        await store.saveProfileState('own.key_id', 'y');
-        expect(await store.loadProfileState('own.key_id'), 'y');
-      });
+      test(
+        'profile state reads, writes, lists by prefix and deletes',
+        () async {
+          await store.saveProfileState('own.key_id', 'x');
+          await store.saveProfileState('due.conv_1', '1');
+          await store.saveProfileState('due.conv_2', '1');
+          expect(await store.loadProfileState('own.key_id'), 'x');
+          expect(await store.loadProfileStatePrefix('due.'), {
+            'due.conv_1': '1',
+            'due.conv_2': '1',
+          });
+          await store.saveProfileState('due.conv_1', null);
+          expect(await store.loadProfileState('due.conv_1'), isNull);
+          await store.saveProfileState('own.key_id', 'y');
+          expect(await store.loadProfileState('own.key_id'), 'y');
+        },
+      );
     });
   }
 
@@ -205,45 +275,57 @@ void main() {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await db.applyMessageEffects([_key(1, version: 2), _key(2)]);
-    expect(await db.readProfileKeys(profileSubjectAccount, 'acct_a'),
-        hasLength(2));
     expect(
-        (await db.readProfile(profileSubjectAccount, 'acct_a'))?.versionFloor,
-        2);
+      await db.readProfileKeys(profileSubjectAccount, 'acct_a'),
+      hasLength(2),
+    );
+    expect(
+      (await db.readProfile(profileSubjectAccount, 'acct_a'))?.versionFloor,
+      2,
+    );
   });
 
-  test('schema 32 gains profiles and preserves invite anchors on upgrade',
-      () async {
-    final dir = await Directory.systemTemp.createTemp('w11-upgrade-');
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File('${dir.path}/p.db');
-    var db = EncryptedLocalDatabase(NativeDatabase(file));
-    await db.writeInviteAnchor(InviteAnchor(
-        conversationId: 'group',
-        accountId: 'alice',
-        deviceId: 'phone',
-        signingKey: List.filled(32, 7)));
-    for (final table in [
-      'local_profile_keys',
-      'local_profiles',
-      'local_profile_state',
-    ]) {
-      await db.customStatement('DROP TABLE $table');
-    }
-    await db.customStatement('PRAGMA user_version = 32');
-    await db.close();
+  test(
+    'schema 32 gains profiles and preserves invite anchors on upgrade',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('w11-upgrade-');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/p.db');
+      var db = EncryptedLocalDatabase(NativeDatabase(file));
+      await db.writeInviteAnchor(
+        InviteAnchor(
+          conversationId: 'group',
+          accountId: 'alice',
+          deviceId: 'phone',
+          signingKey: List.filled(32, 7),
+        ),
+      );
+      for (final table in [
+        'local_profile_keys',
+        'local_profiles',
+        'local_profile_state',
+      ]) {
+        await db.customStatement('DROP TABLE $table');
+      }
+      await db.customStatement('PRAGMA user_version = 32');
+      await db.close();
 
-    db = EncryptedLocalDatabase(NativeDatabase(file));
-    addTearDown(db.close);
-    expect(await db.readProfile(profileSubjectAccount, 'acct_a'), isNull);
-    expect((await db.readInviteAnchor('group'))?.accountId, 'alice');
-    await db.storeProfileKey(_key(1));
-    expect(await db.readProfileKeys(profileSubjectAccount, 'acct_a'),
-        hasLength(1));
-    final version = await db.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'),
-        EncryptedLocalDatabase.currentSchemaVersion);
-  });
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      addTearDown(db.close);
+      expect(await db.readProfile(profileSubjectAccount, 'acct_a'), isNull);
+      expect((await db.readInviteAnchor('group'))?.accountId, 'alice');
+      await db.storeProfileKey(_key(1));
+      expect(
+        await db.readProfileKeys(profileSubjectAccount, 'acct_a'),
+        hasLength(1),
+      );
+      final version = await db.customSelect('PRAGMA user_version').getSingle();
+      expect(
+        version.read<int>('user_version'),
+        EncryptedLocalDatabase.currentSchemaVersion,
+      );
+    },
+  );
 
   test('sign-out clears every profile table', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
@@ -260,15 +342,17 @@ void main() {
     final keys = [
       for (var n = 1; n <= 6; n++)
         StoredProfileKey(
-            kind: profileSubjectAccount,
-            subjectId: 's',
-            keyId: _id(n),
-            key: Uint8List(32),
-            receivedAt: n),
+          kind: profileSubjectAccount,
+          subjectId: 's',
+          keyId: _id(n),
+          key: Uint8List(32),
+          receivedAt: n,
+        ),
     ];
     expect(
-        profileKeysToEvict(keys, protectedKeyId: _id(1), newestKeyId: _id(6)),
-        [_id(2), _id(3)]);
+      profileKeysToEvict(keys, protectedKeyId: _id(1), newestKeyId: _id(6)),
+      [_id(2), _id(3)],
+    );
     expect(profileKeysToEvict(keys.take(4).toList()), isEmpty);
   });
 }
@@ -280,7 +364,9 @@ class _DbStore extends MemoryLocalStore {
 
   @override
   Future<List<StoredProfileKey>> loadProfileKeys(
-          String kind, String subjectId) =>
+    String kind,
+    String subjectId,
+  ) =>
       db.readProfileKeys(kind, subjectId);
 
   @override

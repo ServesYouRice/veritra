@@ -45,7 +45,9 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
   @override
   Future<List<ConversationMember>> communityMembers(
-          String token, String id) async =>
+    String token,
+    String id,
+  ) async =>
       [
         ConversationMember(
             accountId: 'alice', role: 'owner', username: 'alice'),
@@ -65,22 +67,30 @@ AppState _ownerState() {
   )
     ..api = api
     ..session = const Session(
-        baseUrl: 'https://example.test',
-        token: 'token',
-        accountId: 'alice',
-        deviceId: 'device')
+      baseUrl: 'https://example.test',
+      token: 'token',
+      accountId: 'alice',
+      deviceId: 'device',
+    )
     ..communities = <Community>[
       Community(id: 'comm_1', name: 'Club', sharedConversationId: 'shared'),
     ]
     ..conversations = <Conversation>[
       Conversation(
-          id: 'shared',
-          kind: 'community_shared',
-          communityId: 'comm_1',
-          currentRole: 'owner'),
+        id: 'shared',
+        kind: 'community_shared',
+        communityId: 'comm_1',
+        currentRole: 'owner',
+      ),
     ]
-    ..debugInfoRoleSource = _Roles(GovernanceState(
-        rev: 1, owner: 'alice', ownerRev: 1, joined: const {'alice': 1}));
+    ..debugInfoRoleSource = _Roles(
+      GovernanceState(
+        rev: 1,
+        owner: 'alice',
+        ownerRev: 1,
+        joined: const {'alice': 1},
+      ),
+    );
   return state;
 }
 
@@ -102,7 +112,7 @@ Future<bool> _loadRoboto() async {
     for (final name in <String>[
       'Roboto-Regular.ttf',
       'Roboto-Medium.ttf',
-      'Roboto-Bold.ttf'
+      'Roboto-Bold.ttf',
     ])
       File('${dir.path}/$name'),
   ];
@@ -117,62 +127,83 @@ Future<bool> _loadRoboto() async {
 
 void main() {
   testWidgets(
-      'U1: at 360 dp an owner sees the whole name, one actions menu, and a '
-      'header under 100 dp', (tester) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final state = _ownerState();
-    addTearDown(state.dispose);
-    await tester.pumpWidget(_app(CommunityScreen(state: state)));
-    await tester.pumpAndSettle();
+    'U1: at 360 dp an owner sees the whole name, one actions menu, and a '
+    'header under 100 dp',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final state = _ownerState();
+      addTearDown(state.dispose);
+      await tester.pumpWidget(_app(CommunityScreen(state: state)));
+      await tester.pumpAndSettle();
 
-    // The community name is not squeezed out by trailing buttons.
-    final name = find.text('Community');
-    expect(name, findsOneWidget);
-    expect(tester.getSize(name).width, greaterThan(100));
-    expect(tester.getSize(name).height, lessThan(30),
-        reason: 'one line, not one letter per line');
-    // The header (first tile of the card) is under 100 dp tall.
-    expect(tester.getSize(find.byType(ListTile).first).height, lessThan(100));
-    // One labelled menu, no loose icon buttons on the header.
-    final menu = find.byType(PopupMenuButton<String>);
-    expect(menu, findsOneWidget);
-    expect(find.byTooltip('Actions for Community'), findsOneWidget);
-    expect(find.byType(IconButton), findsNWidgets(1),
-        reason: "only the menu's own button; Join and New are words");
+      // The community name is not squeezed out by trailing buttons.
+      final name = find.text('Community');
+      expect(name, findsOneWidget);
+      expect(tester.getSize(name).width, greaterThan(100));
+      expect(
+        tester.getSize(name).height,
+        lessThan(30),
+        reason: 'one line, not one letter per line',
+      );
+      // The header (first tile of the card) is under 100 dp tall.
+      expect(tester.getSize(find.byType(ListTile).first).height, lessThan(100));
+      // One labelled menu, no loose icon buttons on the header.
+      final menu = find.byType(PopupMenuButton<String>);
+      expect(menu, findsOneWidget);
+      expect(find.byTooltip('Actions for Community'), findsOneWidget);
+      expect(
+        find.byType(IconButton),
+        findsNWidgets(1),
+        reason: "only the menu's own button; Join and New are words",
+      );
 
-    // Every tap target is named for a screen reader.
-    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      // Every tap target is named for a screen reader.
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
 
-    await tester.tap(menu);
-    await tester.pumpAndSettle();
-    expect(find.text('Edit community'), findsOneWidget);
-    expect(find.text('Categories and icon'), findsOneWidget);
-    expect(find.text('Roles'), findsOneWidget);
-    expect(find.text('New channel'), findsOneWidget);
-  });
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(find.text('Edit community'), findsOneWidget);
+      expect(find.text('Categories and icon'), findsOneWidget);
+      expect(find.text('Roles'), findsOneWidget);
+      expect(find.text('New channel'), findsOneWidget);
+    },
+  );
 
   group('U32: channel dialogs', () {
-    final community =
-        Community(id: 'comm_1', name: 'Club', sharedConversationId: 'shared');
+    final community = Community(
+      id: 'comm_1',
+      name: 'Club',
+      sharedConversationId: 'shared',
+    );
     final channel = Channel(
-        id: 'chan_1',
-        communityId: 'comm_1',
-        name: '',
-        kind: 'open',
-        conversationId: 'shared',
-        layoutGeneration: 1);
+      id: 'chan_1',
+      communityId: 'comm_1',
+      name: '',
+      kind: 'open',
+      conversationId: 'shared',
+      layoutGeneration: 1,
+    );
 
     // [forChannel] false edits the community itself, which only owners and
     // admins may (channel names and topics are open to members, D80).
-    Future<void> openEdit(WidgetTester tester, AppState state,
-        {bool forChannel = true}) async {
-      await tester.pumpWidget(_app(Scaffold(
-          body: EditInfoDialog(
+    Future<void> openEdit(
+      WidgetTester tester,
+      AppState state, {
+      bool forChannel = true,
+    }) async {
+      await tester.pumpWidget(
+        _app(
+          Scaffold(
+            body: EditInfoDialog(
               state: state,
               community: community,
-              channel: forChannel ? channel : null))));
+              channel: forChannel ? channel : null,
+            ),
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
     }
 
@@ -180,50 +211,57 @@ void main() {
         tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'));
 
     testWidgets(
-        'edit and create share one name limit and say what is wrong under '
-        'the field', (tester) async {
-      final state = _ownerState();
-      addTearDown(state.dispose);
-      await openEdit(tester, state);
-      // Save is off, and the field says why.
-      expect(find.text('Enter a name.'), findsOneWidget);
-      expect(save(tester).onPressed, isNull);
+      'edit and create share one name limit and say what is wrong under '
+      'the field',
+      (tester) async {
+        final state = _ownerState();
+        addTearDown(state.dispose);
+        await openEdit(tester, state);
+        // Save is off, and the field says why.
+        expect(find.text('Enter a name.'), findsOneWidget);
+        expect(save(tester).onPressed, isNull);
 
-      await tester.enterText(find.byType(TextField).first, 'x' * 101);
-      await tester.pump();
-      expect(find.text('That name is too long.'), findsOneWidget);
-      expect(save(tester).onPressed, isNull);
+        await tester.enterText(find.byType(TextField).first, 'x' * 101);
+        await tester.pump();
+        expect(find.text('That name is too long.'), findsOneWidget);
+        expect(save(tester).onPressed, isNull);
 
-      await tester.enterText(find.byType(TextField).first, 'x' * 100);
-      await tester.pump();
-      expect(find.text('That name is too long.'), findsNothing);
-      expect(save(tester).onPressed, isNotNull);
+        await tester.enterText(find.byType(TextField).first, 'x' * 100);
+        await tester.pump();
+        expect(find.text('That name is too long.'), findsNothing);
+        expect(save(tester).onPressed, isNotNull);
 
-      await tester.enterText(find.byType(TextField).first, 'a\u202eb');
-      await tester.pump();
-      expect(find.text('That name has characters that are not allowed.'),
-          findsOneWidget);
-      expect(save(tester).onPressed, isNull);
+        await tester.enterText(find.byType(TextField).first, 'a\u202eb');
+        await tester.pump();
+        expect(
+          find.text('That name has characters that are not allowed.'),
+          findsOneWidget,
+        );
+        expect(save(tester).onPressed, isNull);
 
-      // Create takes exactly what edit takes.
-      await tester.pumpWidget(
-          _app(CreateChannelScreen(state: state, community: community)));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, 'x' * 101);
-      await tester.pump();
-      expect(find.text('That name is too long.'), findsOneWidget);
-      await tester.enterText(find.byType(TextField).first, 'x' * 100);
-      await tester.pump();
-      expect(find.text('That name is too long.'), findsNothing);
-      expect(
+        // Create takes exactly what edit takes.
+        await tester.pumpWidget(
+          _app(CreateChannelScreen(state: state, community: community)),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).first, 'x' * 101);
+        await tester.pump();
+        expect(find.text('That name is too long.'), findsOneWidget);
+        await tester.enterText(find.byType(TextField).first, 'x' * 100);
+        await tester.pump();
+        expect(find.text('That name is too long.'), findsNothing);
+        expect(
           tester
               .widget<FilledButton>(find.widgetWithText(FilledButton, 'Create'))
               .onPressed,
-          isNotNull);
-    });
+          isNotNull,
+        );
+      },
+    );
 
-    testWidgets('edit says why Save is off when the account may not edit',
-        (tester) async {
+    testWidgets('edit says why Save is off when the account may not edit', (
+      tester,
+    ) async {
       final state = _ownerState();
       addTearDown(state.dispose);
       await openEdit(tester, state, forChannel: false);
@@ -233,15 +271,23 @@ void main() {
       expect(find.byKey(const Key('edit-not-allowed')), findsNothing);
 
       // Demoted: the verified record no longer lets this account edit.
-      state.debugInfoRoleSource = _Roles(GovernanceState(
-          rev: 2, owner: 'bob', ownerRev: 1, joined: const {'alice': 1}));
+      state.debugInfoRoleSource = _Roles(
+        GovernanceState(
+          rev: 2,
+          owner: 'bob',
+          ownerRev: 1,
+          joined: const {'alice': 1},
+        ),
+      );
       state.notifyListeners();
       await tester.pumpAndSettle();
       expect(save(tester).onPressed, isNull);
       expect(
-          find.text(
-              'You cannot save changes here any more, because your role or account has changed.'),
-          findsOneWidget);
+        find.text(
+          'You cannot save changes here any more, because your role or account has changed.',
+        ),
+        findsOneWidget,
+      );
     });
   });
 
@@ -265,8 +311,9 @@ void main() {
         expect(find.byTooltip('New community'), findsOneWidget);
         expect(find.byType(FloatingActionButton), findsNothing);
         // The title is not cut to make room for them.
-        final title = tester
-            .renderObject<RenderParagraph>(find.text('Communities').first);
+        final title = tester.renderObject<RenderParagraph>(
+          find.text('Communities').first,
+        );
         if (realFonts) {
           expect(title.didExceedMaxLines, isFalse, reason: 'at $width dp');
         }
@@ -280,8 +327,9 @@ void main() {
       }
     });
 
-    testWidgets('at text scale 2.0 the actions keep their names as icons',
-        (tester) async {
+    testWidgets('at text scale 2.0 the actions keep their names as icons', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(320, 800);
       tester.view.devicePixelRatio = 1;
       tester.platformDispatcher.textScaleFactorTestValue = 2.0;
@@ -314,25 +362,28 @@ void main() {
       expect(find.byType(JoinByLinkScreen), findsOneWidget);
     });
 
-    testWidgets('a private channel shows a padlock, an open one does not',
-        (tester) async {
+    testWidgets('a private channel shows a padlock, an open one does not', (
+      tester,
+    ) async {
       final state = _ownerState()
         ..channelsByCommunity = <String, List<Channel>>{
           'comm_1': <Channel>[
             Channel(
-                id: 'chan_open',
-                communityId: 'comm_1',
-                name: '',
-                kind: 'open',
-                conversationId: 'shared',
-                layoutGeneration: 1),
+              id: 'chan_open',
+              communityId: 'comm_1',
+              name: '',
+              kind: 'open',
+              conversationId: 'shared',
+              layoutGeneration: 1,
+            ),
             Channel(
-                id: 'chan_private',
-                communityId: 'comm_1',
-                name: '',
-                kind: 'private',
-                conversationId: 'private_group',
-                layoutGeneration: 1),
+              id: 'chan_private',
+              communityId: 'comm_1',
+              name: '',
+              kind: 'private',
+              conversationId: 'private_group',
+              layoutGeneration: 1,
+            ),
           ],
         };
       addTearDown(state.dispose);
@@ -340,16 +391,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byIcon(Icons.lock_outline), findsOneWidget);
       expect(
-          find.byWidgetPredicate((w) =>
+        find.byWidgetPredicate(
+          (w) =>
               w is Icon &&
               w.icon == Icons.lock_outline &&
-              w.semanticLabel == 'Private channel'),
-          findsOneWidget);
+              w.semanticLabel == 'Private channel',
+        ),
+        findsOneWidget,
+      );
       expect(find.byIcon(Icons.tag), findsOneWidget);
     });
 
-    testWidgets('a member in a running timeout is marked, others are not',
-        (tester) async {
+    testWidgets('a member in a running timeout is marked, others are not', (
+      tester,
+    ) async {
       final api = _Api();
       final state = _ownerState();
       state.api = api;
@@ -362,20 +417,30 @@ void main() {
             joined: const {'alice': 1, 'bob': 2, 'carol': 2},
             timeouts: {
               'bob': MemberTimeout(
-                  epoch: 4,
-                  fromMs: until.millisecondsSinceEpoch - 7200000,
-                  untilMs: until.millisecondsSinceEpoch),
+                epoch: 4,
+                fromMs: until.millisecondsSinceEpoch - 7200000,
+                untilMs: until.millisecondsSinceEpoch,
+              ),
               'carol': MemberTimeout(
-                  epoch: 4,
-                  fromMs: expired.millisecondsSinceEpoch - 7200000,
-                  untilMs: expired.millisecondsSinceEpoch),
+                epoch: 4,
+                fromMs: expired.millisecondsSinceEpoch - 7200000,
+                untilMs: expired.millisecondsSinceEpoch,
+              ),
             },
           );
       addTearDown(state.dispose);
-      await tester.pumpWidget(_app(CommunityDetailsScreen(
-          state: state,
-          community: Community(
-              id: 'comm_1', name: 'Club', sharedConversationId: 'shared'))));
+      await tester.pumpWidget(
+        _app(
+          CommunityDetailsScreen(
+            state: state,
+            community: Community(
+              id: 'comm_1',
+              name: 'Club',
+              sharedConversationId: 'shared',
+            ),
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.textContaining('Timed out until'), findsOneWidget);
       expect(find.textContaining('bob'), findsWidgets);

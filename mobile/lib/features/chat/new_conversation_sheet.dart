@@ -196,20 +196,19 @@ class _NewConversationFormState extends State<_NewConversationForm> {
           FilledButton.icon(
             onPressed: submitting ? null : _submit,
             icon: const Icon(Icons.add_comment_outlined),
-            label: Text(kind == 'dm'
-                ? l10n.newConversationStartDm
-                : l10n.newConversationCreateGroup),
+            label: Text(
+              kind == 'dm'
+                  ? l10n.newConversationStartDm
+                  : l10n.newConversationCreateGroup,
+            ),
           ),
         ],
       ),
     );
   }
 
-  String? _titleError() => displayNameError(
-        title.text,
-        groupName: true,
-        l10n: context.l10n,
-      );
+  String? _titleError() =>
+      displayNameError(title.text, groupName: true, l10n: context.l10n);
 
   String? _membersError() {
     if (members.isNotEmpty) {

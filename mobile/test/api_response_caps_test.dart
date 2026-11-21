@@ -71,35 +71,39 @@ void main() {
       expect(_limits(requests), <String>['250']);
     });
 
-    test('halves the limit while the page is over the cap, keeping the cursor',
-        () async {
-      final (client, requests) = await _client((request) {
-        final limit = int.parse(request.uri.queryParameters['limit']!);
-        return limit > 60 ? _page(_cap + 1024) : _page(1024, next: 'cursor_9');
-      });
-      final page = await client.exportAccountPage(
-        'token',
-        limit: 250,
-        before: 'cursor_1',
-      );
-      expect(page['next_before'], 'cursor_9');
-      expect(_limits(requests), <String>['250', '125', '62', '31']);
-      for (final uri in requests) {
-        expect(uri.queryParameters['before'], 'cursor_1');
-      }
-    });
+    test(
+      'halves the limit while the page is over the cap, keeping the cursor',
+      () async {
+        final (client, requests) = await _client((request) {
+          final limit = int.parse(request.uri.queryParameters['limit']!);
+          return limit > 60
+              ? _page(_cap + 1024)
+              : _page(1024, next: 'cursor_9');
+        });
+        final page = await client.exportAccountPage(
+          'token',
+          limit: 250,
+          before: 'cursor_1',
+        );
+        expect(page['next_before'], 'cursor_9');
+        expect(_limits(requests), <String>['250', '125', '62', '31']);
+        for (final uri in requests) {
+          expect(uri.queryParameters['before'], 'cursor_1');
+        }
+      },
+    );
 
-    test('a limit above the 200-row list cap is not silently lowered',
-        () async {
-      final (client, requests) = await _client((_) => _page(1024));
-      await client.exportAccountPage('token', limit: 1000);
-      expect(_limits(requests), <String>['1000']);
-    });
+    test(
+      'a limit above the 200-row list cap is not silently lowered',
+      () async {
+        final (client, requests) = await _client((_) => _page(1024));
+        await client.exportAccountPage('token', limit: 1000);
+        expect(_limits(requests), <String>['1000']);
+      },
+    );
 
     test('a single row over the cap still fails', () async {
-      final (client, requests) = await _client(
-        (_) => _page(_cap + 1024),
-      );
+      final (client, requests) = await _client((_) => _page(_cap + 1024));
       await expectLater(
         client.exportAccountPage('token', limit: 4),
         throwsA(isA<ApiResponseTooLargeException>()),
@@ -111,9 +115,7 @@ void main() {
   group('sendMlsMessage', () {
     test('decodes the echoed 4 MiB payload', () async {
       // 4 MiB of payload is about 5.6 MB as base64, above the 2 MiB JSON cap.
-      final (client, _) = await _client(
-        (_) => _mlsMessage(4 * 1024 * 1024),
-      );
+      final (client, _) = await _client((_) => _mlsMessage(4 * 1024 * 1024));
       final message = await client.sendMlsMessage(
         'token',
         'conv_1',
@@ -125,9 +127,7 @@ void main() {
     });
 
     test('a reply above the ciphertext cap still fails', () async {
-      final (client, _) = await _client(
-        (_) => _mlsMessage(_cap),
-      );
+      final (client, _) = await _client((_) => _mlsMessage(_cap));
       await expectLater(
         client.sendMlsMessage(
           'token',

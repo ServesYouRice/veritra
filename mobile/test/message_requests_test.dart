@@ -68,12 +68,15 @@ class _Api extends ApiClient {
   }) async {
     pageFetches.add(conversationId);
     return MessagePage(
-        messages: pages[conversationId] ?? const <ReceivedMessageEnvelope>[]);
+      messages: pages[conversationId] ?? const <ReceivedMessageEnvelope>[],
+    );
   }
 
   @override
   Future<Stream<List<int>>> downloadEncryptedAttachment(
-      String token, String attachmentId) async {
+    String token,
+    String attachmentId,
+  ) async {
     downloads++;
     return const Stream<List<int>>.empty();
   }
@@ -144,8 +147,10 @@ ReceivedMessageEnvelope _envelope(String id, String conversationId) =>
       'created_at': '2026-06-02T12:30:00Z',
     });
 
-Matcher _refusedWith(String text) => throwsA(isA<StateError>()
-    .having((error) => error.message, 'message', contains(text)));
+Matcher _refusedWith(String text) => throwsA(
+      isA<StateError>()
+          .having((error) => error.message, 'message', contains(text)),
+    );
 
 AppState _state(_Api api, LocalStore store) => AppState(
       apiClientFactory: (_) => api,
@@ -166,187 +171,211 @@ RequestBucket _bucket(AppState state, String id) =>
     state.requestBucket(_find(state, id));
 
 void main() {
-  test('a fresh device grandfathers nothing but what this account started',
-      () async {
-    final api = _Api()
-      ..list = <Conversation>[
-        _dm('old', 'acct_old', 'acct_old'),
-        _dm('mine', 'acct_friend', 'acct_me'),
-        _group('theirs', 'acct_old'),
+  test(
+    'a fresh device grandfathers nothing but what this account started',
+    () async {
+      final api = _Api()
+        ..list = <Conversation>[
+          _dm('old', 'acct_old', 'acct_old'),
+          _dm('mine', 'acct_friend', 'acct_me'),
+          _group('theirs', 'acct_old'),
+        ];
+      final state = _state(api, MemoryLocalStore());
+      expect(state.requestStateLoaded, isFalse);
+      await state.refreshConversations();
+      expect(_bucket(state, 'old'), RequestBucket.request);
+      expect(_bucket(state, 'mine'), RequestBucket.chat);
+      expect(_bucket(state, 'theirs'), RequestBucket.request);
+    },
+  );
+
+  test(
+    'an upgrade keeps existing DMs and groups; new strangers are requests',
+    () async {
+      final store = MemoryLocalStore();
+      await store.saveSession(_session);
+      await store.saveSnapshot(
+        <Conversation>[
+          _dm('old', 'acct_old', 'acct_old'),
+          _group('oldgroup', 'acct_old'),
+        ],
+        <String, List<ReceivedMessageEnvelope>>{},
+        0,
+      );
+      final api = _Api()
+        ..list = <Conversation>[
+          _dm('old', 'acct_old', 'acct_old'),
+          _group('oldgroup', 'acct_old'),
+          _dm('new', 'acct_stranger', 'acct_stranger'),
+          _group('newgroup', 'acct_stranger'),
+        ];
+      final state = AppState(
+        apiClientFactory: (_) => api,
+        cryptoService: TestOnlyCryptoService(),
+        localStore: store,
+        syncServiceFactory: (_, __) => _FakeSync(),
+      );
+      await state.tryRestoreSession();
+      await state.refreshConversations();
+      expect(_bucket(state, 'old'), RequestBucket.chat);
+      expect(_bucket(state, 'oldgroup'), RequestBucket.chat);
+      expect(_bucket(state, 'new'), RequestBucket.request);
+      expect(_bucket(state, 'newgroup'), RequestBucket.request);
+      state.dispose();
+    },
+  );
+
+  test(
+    'requests hold back receipts and attachments; accept persists',
+    () async {
+      final api = _Api()
+        ..list = <Conversation>[
+          _dm('new', 'acct_stranger', 'acct_stranger'),
+          _group('g', 'acct_stranger'),
+        ];
+      final store = MemoryLocalStore();
+      final state = _state(api, store);
+      await state.refreshConversations();
+      expect(_bucket(state, 'new'), RequestBucket.request);
+      expect(_bucket(state, 'g'), RequestBucket.request);
+
+      state.messagesByConversation['new'] = <ReceivedMessageEnvelope>[
+        _envelope('m1', 'new'),
       ];
-    final state = _state(api, MemoryLocalStore());
-    expect(state.requestStateLoaded, isFalse);
-    await state.refreshConversations();
-    expect(_bucket(state, 'old'), RequestBucket.request);
-    expect(_bucket(state, 'mine'), RequestBucket.chat);
-    expect(_bucket(state, 'theirs'), RequestBucket.request);
-  });
+      await state.markNewestMessageRead('new');
+      expect(api.reads, isEmpty);
 
-  test('an upgrade keeps existing DMs and groups; new strangers are requests',
-      () async {
-    final store = MemoryLocalStore();
-    await store.saveSession(_session);
-    await store.saveSnapshot(
-      <Conversation>[
-        _dm('old', 'acct_old', 'acct_old'),
-        _group('oldgroup', 'acct_old'),
-      ],
-      <String, List<ReceivedMessageEnvelope>>{},
-      0,
-    );
-    final api = _Api()
-      ..list = <Conversation>[
-        _dm('old', 'acct_old', 'acct_old'),
-        _group('oldgroup', 'acct_old'),
-        _dm('new', 'acct_stranger', 'acct_stranger'),
-        _group('newgroup', 'acct_stranger'),
-      ];
-    final state = AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: store,
-      syncServiceFactory: (_, __) => _FakeSync(),
-    );
-    await state.tryRestoreSession();
-    await state.refreshConversations();
-    expect(_bucket(state, 'old'), RequestBucket.chat);
-    expect(_bucket(state, 'oldgroup'), RequestBucket.chat);
-    expect(_bucket(state, 'new'), RequestBucket.request);
-    expect(_bucket(state, 'newgroup'), RequestBucket.request);
-    state.dispose();
-  });
+      AttachmentEntry entry(String conversation) => AttachmentEntry(
+            id: 'att',
+            fileName: 'a.png',
+            mediaType: 'image/png',
+            plaintextSize: 10,
+            ciphertextSize: 30,
+            manifest: <String, Object?>{'conversation_id': conversation},
+          );
+      final noConversation = AttachmentEntry(
+        id: 'att',
+        fileName: 'a.png',
+        mediaType: 'image/png',
+        plaintextSize: 10,
+        ciphertextSize: 30,
+        manifest: const <String, Object?>{},
+      );
+      // While a request, the gate refuses even a matching manifest.
+      await expectLater(
+        state.loadAttachment(entry('new'), conversationId: 'new'),
+        _refusedWith('wait until the request is accepted'),
+      );
 
-  test('requests hold back receipts and attachments; accept persists',
-      () async {
-    final api = _Api()
-      ..list = <Conversation>[
-        _dm('new', 'acct_stranger', 'acct_stranger'),
-        _group('g', 'acct_stranger'),
-      ];
-    final store = MemoryLocalStore();
-    final state = _state(api, store);
-    await state.refreshConversations();
-    expect(_bucket(state, 'new'), RequestBucket.request);
-    expect(_bucket(state, 'g'), RequestBucket.request);
-
-    state.messagesByConversation['new'] = <ReceivedMessageEnvelope>[
-      _envelope('m1', 'new'),
-    ];
-    await state.markNewestMessageRead('new');
-    expect(api.reads, isEmpty);
-
-    AttachmentEntry entry(String conversation) => AttachmentEntry(
-          id: 'att',
-          fileName: 'a.png',
-          mediaType: 'image/png',
-          plaintextSize: 10,
-          ciphertextSize: 30,
-          manifest: <String, Object?>{'conversation_id': conversation},
-        );
-    final noConversation = AttachmentEntry(
-      id: 'att',
-      fileName: 'a.png',
-      mediaType: 'image/png',
-      plaintextSize: 10,
-      ciphertextSize: 30,
-      manifest: const <String, Object?>{},
-    );
-    // While a request, the gate refuses even a matching manifest.
-    await expectLater(state.loadAttachment(entry('new'), conversationId: 'new'),
-        _refusedWith('wait until the request is accepted'));
-
-    expect(await state.acceptMessageRequest('new'), isTrue);
-    // Past the gate, the caller's conversation decides: a manifest naming a
-    // different (or no) conversation is refused rather than trusted.
-    await expectLater(
+      expect(await state.acceptMessageRequest('new'), isTrue);
+      // Past the gate, the caller's conversation decides: a manifest naming a
+      // different (or no) conversation is refused rather than trusted.
+      await expectLater(
         state.loadAttachment(entry('other'), conversationId: 'new'),
-        _refusedWith('belongs to another conversation'));
-    await expectLater(
+        _refusedWith('belongs to another conversation'),
+      );
+      await expectLater(
         state.loadAttachment(noConversation, conversationId: 'new'),
-        _refusedWith('belongs to another conversation'));
-    expect(api.downloads, 0);
+        _refusedWith('belongs to another conversation'),
+      );
+      expect(api.downloads, 0);
 
-    expect(await state.acceptMessageRequest('g'), isTrue);
-    expect(_bucket(state, 'new'), RequestBucket.chat);
-    expect(_bucket(state, 'g'), RequestBucket.chat);
-    await state.markNewestMessageRead('new');
-    expect(api.reads, <String>['new']);
+      expect(await state.acceptMessageRequest('g'), isTrue);
+      expect(_bucket(state, 'new'), RequestBucket.chat);
+      expect(_bucket(state, 'g'), RequestBucket.chat);
+      await state.markNewestMessageRead('new');
+      expect(api.reads, <String>['new']);
 
-    // Acceptance survives a restart (same encrypted local store).
-    final restarted = _state(api, store);
-    await restarted.refreshConversations();
-    expect(_bucket(restarted, 'new'), RequestBucket.chat);
-    expect(_bucket(restarted, 'g'), RequestBucket.chat);
-  });
+      // Acceptance survives a restart (same encrypted local store).
+      final restarted = _state(api, store);
+      await restarted.refreshConversations();
+      expect(_bucket(restarted, 'new'), RequestBucket.chat);
+      expect(_bucket(restarted, 'g'), RequestBucket.chat);
+    },
+  );
 
-  test('delete on a DM never leaves it: it is hidden until newer activity',
-      () async {
-    final api = _Api()
-      ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
-    final store = MemoryLocalStore();
-    final state = _state(api, store);
-    await state.refreshConversations();
+  test(
+    'delete on a DM never leaves it: it is hidden until newer activity',
+    () async {
+      final api = _Api()
+        ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
+      final store = MemoryLocalStore();
+      final state = _state(api, store);
+      await state.refreshConversations();
 
-    expect(await state.deleteMessageRequest('new'), isTrue);
-    expect(api.left, isEmpty);
-    expect(_bucket(state, 'new'), RequestBucket.hidden);
+      expect(await state.deleteMessageRequest('new'), isTrue);
+      expect(api.left, isEmpty);
+      expect(_bucket(state, 'new'), RequestBucket.hidden);
 
-    // Still hidden after a restart and a refresh with no new activity.
-    final restarted = _state(api, store);
-    await restarted.refreshConversations();
-    expect(_bucket(restarted, 'new'), RequestBucket.hidden);
+      // Still hidden after a restart and a refresh with no new activity.
+      final restarted = _state(api, store);
+      await restarted.refreshConversations();
+      expect(_bucket(restarted, 'new'), RequestBucket.hidden);
 
-    // A newer message brings it back as a request, never as a chat.
-    api.list = <Conversation>[
-      _dm('new', 'acct_stranger', 'acct_stranger',
-          lastMessageAt: DateTime.now().add(const Duration(minutes: 5))),
-    ];
-    await restarted.refreshConversations();
-    expect(_bucket(restarted, 'new'), RequestBucket.request);
-  });
-
-  test('block on a DM blocks, hides, and never returns it to the list',
-      () async {
-    final api = _Api()
-      ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
-    final state = _state(api, MemoryLocalStore());
-    await state.refreshConversations();
-
-    expect(await state.blockMessageRequest('new'), isTrue);
-    expect(api.blocked, <String>['acct_stranger']);
-    expect(api.left, isEmpty);
-    expect(_bucket(state, 'new'), RequestBucket.hidden);
-
-    api.list = <Conversation>[
-      _dm('new', 'acct_stranger', 'acct_stranger',
-          lastMessageAt: DateTime.now().add(const Duration(minutes: 5))),
-    ];
-    await state.refreshConversations();
-    expect(_bucket(state, 'new'), RequestBucket.hidden);
-    // A blocked sender cannot be accepted either.
-    expect(await state.acceptMessageRequest('new'), isFalse);
-  });
-
-  test('a stranger group is a request; delete and block leave it for real',
-      () async {
-    final api = _Api()
-      ..list = <Conversation>[
-        _group('g1', 'acct_stranger'),
-        _group('g2', 'acct_other'),
-        _group('mine', 'acct_me'),
+      // A newer message brings it back as a request, never as a chat.
+      api.list = <Conversation>[
+        _dm(
+          'new',
+          'acct_stranger',
+          'acct_stranger',
+          lastMessageAt: DateTime.now().add(const Duration(minutes: 5)),
+        ),
       ];
-    final state = _state(api, MemoryLocalStore());
-    await state.refreshConversations();
-    expect(_bucket(state, 'mine'), RequestBucket.chat);
+      await restarted.refreshConversations();
+      expect(_bucket(restarted, 'new'), RequestBucket.request);
+    },
+  );
 
-    expect(await state.deleteMessageRequest('g1'), isTrue);
-    expect(api.left, <String>['g1']);
+  test(
+    'block on a DM blocks, hides, and never returns it to the list',
+    () async {
+      final api = _Api()
+        ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
+      final state = _state(api, MemoryLocalStore());
+      await state.refreshConversations();
 
-    expect(await state.blockMessageRequest('g2'), isTrue);
-    expect(api.blocked, <String>['acct_other']);
-    expect(api.left, <String>['g1', 'g2']);
-    expect(state.conversations.map((c) => c.id), <String>['mine']);
-  });
+      expect(await state.blockMessageRequest('new'), isTrue);
+      expect(api.blocked, <String>['acct_stranger']);
+      expect(api.left, isEmpty);
+      expect(_bucket(state, 'new'), RequestBucket.hidden);
+
+      api.list = <Conversation>[
+        _dm(
+          'new',
+          'acct_stranger',
+          'acct_stranger',
+          lastMessageAt: DateTime.now().add(const Duration(minutes: 5)),
+        ),
+      ];
+      await state.refreshConversations();
+      expect(_bucket(state, 'new'), RequestBucket.hidden);
+      // A blocked sender cannot be accepted either.
+      expect(await state.acceptMessageRequest('new'), isFalse);
+    },
+  );
+
+  test(
+    'a stranger group is a request; delete and block leave it for real',
+    () async {
+      final api = _Api()
+        ..list = <Conversation>[
+          _group('g1', 'acct_stranger'),
+          _group('g2', 'acct_other'),
+          _group('mine', 'acct_me'),
+        ];
+      final state = _state(api, MemoryLocalStore());
+      await state.refreshConversations();
+      expect(_bucket(state, 'mine'), RequestBucket.chat);
+
+      expect(await state.deleteMessageRequest('g1'), isTrue);
+      expect(api.left, <String>['g1']);
+
+      expect(await state.blockMessageRequest('g2'), isTrue);
+      expect(api.blocked, <String>['acct_other']);
+      expect(api.left, <String>['g1', 'g2']);
+      expect(state.conversations.map((c) => c.id), <String>['mine']);
+    },
+  );
 
   test('a group from an accepted peer is not a request', () async {
     final api = _Api()
@@ -386,8 +415,9 @@ void main() {
         home: home,
       );
 
-  testWidgets('chat list shows Requests; delete hides without a server call',
-      (tester) async {
+  testWidgets('chat list shows Requests; delete hides without a server call', (
+    tester,
+  ) async {
     final api = _Api()
       ..list = <Conversation>[
         _dm('mine', 'acct_old', 'acct_me'),
@@ -432,24 +462,26 @@ void main() {
     expect(find.byKey(const Key('requests-row')), findsNothing);
   });
 
-  testWidgets('a request opened directly (search, wide pane) shows the request',
-      (tester) async {
-    final api = _Api()
-      ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
-    final state = _state(api, MemoryLocalStore());
-    await state.refreshConversations();
+  testWidgets(
+    'a request opened directly (search, wide pane) shows the request',
+    (tester) async {
+      final api = _Api()
+        ..list = <Conversation>[_dm('new', 'acct_stranger', 'acct_stranger')];
+      final state = _state(api, MemoryLocalStore());
+      await state.refreshConversations();
 
-    await tester.pumpWidget(
-      app(ChatScreen(state: state, conversationId: 'new')),
-    );
-    await tester.pump();
-    expect(find.text('Accept'), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
+      await tester.pumpWidget(
+        app(ChatScreen(state: state, conversationId: 'new')),
+      );
+      await tester.pump();
+      expect(find.text('Accept'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
 
-    await tester.tap(find.text('Accept'));
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('Accept'), findsNothing);
-    expect(_bucket(state, 'new'), RequestBucket.chat);
-  });
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Accept'), findsNothing);
+      expect(_bucket(state, 'new'), RequestBucket.chat);
+    },
+  );
 }

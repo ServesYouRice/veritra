@@ -19,92 +19,108 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('unshown envelopes whose history still cannot be read do not block sync',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
-    final store = _FlakyStore()..historyFailures = 1;
-    final harness = await _Harness.start(api, store: store);
-    await harness.waitFor(() => harness.state.syncError != null);
-    expect(await store.loadSyncCursor(), 4);
+  test(
+    'unshown envelopes whose history still cannot be read do not block sync',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+      final store = _FlakyStore()..historyFailures = 1;
+      final harness = await _Harness.start(api, store: store);
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 4);
 
-    // The history read keeps failing; a new event arrives.
-    store.historyFailures = 1000;
-    api.events = <SyncEvent>[...api.events, _envelopeEvent(5, 'msg_two')];
-    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() async => await store.loadSyncCursor() == 5);
-    expect(harness.crypto.applied, <String>['msg_one', 'msg_two']);
+      // The history read keeps failing; a new event arrives.
+      store.historyFailures = 1000;
+      api.events = <SyncEvent>[...api.events, _envelopeEvent(5, 'msg_two')];
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      expect(harness.crypto.applied, <String>['msg_one', 'msg_two']);
 
-    // Once history reads again, both are shown.
-    store.historyFailures = 0;
-    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() => harness.state.messagesFor('conv_1').length == 2);
-    await harness.waitFor(() => harness.state.syncError == null);
-    harness.dispose();
-  });
+      // Once history reads again, both are shown.
+      store.historyFailures = 0;
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () => harness.state.messagesFor('conv_1').length == 2,
+      );
+      await harness.waitFor(() => harness.state.syncError == null);
+      harness.dispose();
+    },
+  );
 
   // L2-3, verification (d): a sync page that opened a sealed message ends
   // with one log checkpoint; a page with none does not checkpoint.
-  test('a sync page that opened a sealed message checkpoints the log',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
-    final store = MemoryLocalStore();
-    final harness = await _Harness.start(api, store: store, sealing: true);
-    await harness.waitFor(() async => await store.loadSyncCursor() == 4);
-    expect(store.sealedResidueCheckpoints, 0);
-    api.events = <SyncEvent>[
-      ...api.events,
-      _sealedEvent(5, 'sealed_one'),
-      _sealedEvent(6, 'sealed_two'),
-    ];
-    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness.waitFor(() async => await store.loadSyncCursor() == 6);
-    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
-    expect(harness.crypto.applied,
-        <String>['msg_plain', 'sealed_one', 'sealed_two']);
-    harness.dispose();
-  });
+  test(
+    'a sync page that opened a sealed message checkpoints the log',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store, sealing: true);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+      expect(store.sealedResidueCheckpoints, 0);
+      api.events = <SyncEvent>[
+        ...api.events,
+        _sealedEvent(5, 'sealed_one'),
+        _sealedEvent(6, 'sealed_two'),
+      ];
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+      expect(harness.crypto.applied, <String>[
+        'msg_plain',
+        'sealed_one',
+        'sealed_two',
+      ]);
+      harness.dispose();
+    },
+  );
 
   // Review L1: a page that opened a sealed message and then failed still
   // clears the log, and the need is durable from before the open.
-  test('a page that opened a sealed message and then threw still checkpoints',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[
-        _sealedEvent(5, 'sealed_one'),
-        _envelopeEvent(6, 'msg_bad'),
-      ];
-    final store = MemoryLocalStore();
-    final harness = await _Harness.start(api,
+  test(
+    'a page that opened a sealed message and then threw still checkpoints',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _sealedEvent(5, 'sealed_one'),
+          _envelopeEvent(6, 'msg_bad'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(
+        api,
         store: store,
         sealing: true,
-        configure: (state) => (state.cryptoService as _FakeMlsCrypto)
-            .applyError = StateError('boom'));
-    await harness.waitFor(() => harness.crypto.applied.contains('msg_bad'));
-    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
-    expect(await store.loadSyncCursor(), 5);
-    expect(
-        (harness.crypto as _FakeSealingCrypto).residueSettingAtOpen, <String?>[
-      '1',
-    ]);
-    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
-    harness.dispose();
-  });
+        configure: (state) =>
+            (state.cryptoService as _FakeMlsCrypto).applyError = StateError(
+          'boom',
+        ),
+      );
+      await harness.waitFor(() => harness.crypto.applied.contains('msg_bad'));
+      await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+      expect(await store.loadSyncCursor(), 5);
+      expect(
+        (harness.crypto as _FakeSealingCrypto).residueSettingAtOpen,
+        <String?>['1'],
+      );
+      expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+      harness.dispose();
+    },
+  );
 
-  test('a residue flag a killed app left is cleared on the next start',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
-    final store = MemoryLocalStore();
-    await store.saveSetting(AppState.sealedResidueSetting, '1');
-    final harness = await _Harness.start(api, store: store, sealing: true);
-    await harness.waitFor(() async => await store.loadSyncCursor() == 4);
-    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
-    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
-    harness.dispose();
-  });
+  test(
+    'a residue flag a killed app left is cleared on the next start',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
+      final store = MemoryLocalStore();
+      await store.saveSetting(AppState.sealedResidueSetting, '1');
+      final harness = await _Harness.start(api, store: store, sealing: true);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+      await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+      expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+      harness.dispose();
+    },
+  );
 
   test('a failed one-time clear of a pre-D54 stop is tried again', () async {
     final api = _ScriptedApi()
@@ -113,13 +129,15 @@ void main() {
       ];
     final store = _FlakyStore()..recoveryClearFailures = 1;
     await _keepIdentity(store);
-    await store.saveSyncRecovery(SyncRecovery(
-      kind: SyncFailureKind.applicationUndecryptable,
-      recordedAt: DateTime.utc(2026, 10, 1),
-      eventId: 4,
-      eventType: 'message.envelope.created',
-      conversationId: 'conv_1',
-    ));
+    await store.saveSyncRecovery(
+      SyncRecovery(
+        kind: SyncFailureKind.applicationUndecryptable,
+        recordedAt: DateTime.utc(2026, 10, 1),
+        eventId: 4,
+        eventType: 'message.envelope.created',
+        conversationId: 'conv_1',
+      ),
+    );
     final harness = await _Harness.start(api, store: store);
     await harness.waitFor(() => store.recoveryClearFailures == 0);
     await harness.waitFor(() => harness.state.syncError != null);
@@ -135,34 +153,38 @@ void main() {
 
   for (final code in <int>[11, 26]) {
     test(
-        'a damaged database ($code) offers the confirmed reset, not Retry only',
-        () async {
-      final api = _ScriptedApi()
-        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
-      final store = MemoryLocalStore();
-      await _keepIdentity(store);
-      final harness = await _Harness.start(api,
+      'a damaged database ($code) offers the confirmed reset, not Retry only',
+      () async {
+        final api = _ScriptedApi()
+          ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+        final store = MemoryLocalStore();
+        await _keepIdentity(store);
+        final harness = await _Harness.start(
+          api,
           store: store,
           configure: (state) =>
               (state.cryptoService as _FakeMlsCrypto).applyError =
-                  SqliteException(extendedResultCode: code, message: 'test'));
-      final state = harness.state;
-      await harness
-          .waitFor(() => state.lifecycle == SessionLifecycle.recoveryRequired);
-      expect(state.session, isNull);
-      expect(state.canResetLocalData, isTrue);
-      expect(state.canContinueWithoutRestore, isFalse);
-      expect(state.recoveryMessage, state.l10n.recoveryStorageDamaged);
-      expect(state.syncRecovery, isNull);
-      expect(await store.loadSyncRecovery(), isNull);
-      expect(await store.loadSyncCursor(), 0);
+                  SqliteException(extendedResultCode: code, message: 'test'),
+        );
+        final state = harness.state;
+        await harness.waitFor(
+          () => state.lifecycle == SessionLifecycle.recoveryRequired,
+        );
+        expect(state.session, isNull);
+        expect(state.canResetLocalData, isTrue);
+        expect(state.canContinueWithoutRestore, isFalse);
+        expect(state.recoveryMessage, state.l10n.recoveryStorageDamaged);
+        expect(state.syncRecovery, isNull);
+        expect(await store.loadSyncRecovery(), isNull);
+        expect(await store.loadSyncCursor(), 0);
 
-      await state.resetUnreadableLocalData(confirmed: true);
-      expect(state.lifecycle, SessionLifecycle.ready);
-      expect(state.session, isNull);
-      expect(state.canResetLocalData, isFalse);
-      harness.dispose();
-    });
+        await state.resetUnreadableLocalData(confirmed: true);
+        expect(state.lifecycle, SessionLifecycle.ready);
+        expect(state.session, isNull);
+        expect(state.canResetLocalData, isFalse);
+        harness.dispose();
+      },
+    );
   }
 
   test('another durable storage error still stops with Retry only', () async {
@@ -170,11 +192,12 @@ void main() {
       ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
     final store = MemoryLocalStore();
     await _keepIdentity(store);
-    final harness = await _Harness.start(api,
-        store: store,
-        configure: (state) =>
-            (state.cryptoService as _FakeMlsCrypto).applyError =
-                SqliteException(extendedResultCode: 19, message: 'test'));
+    final harness = await _Harness.start(
+      api,
+      store: store,
+      configure: (state) => (state.cryptoService as _FakeMlsCrypto).applyError =
+          SqliteException(extendedResultCode: 19, message: 'test'),
+    );
     final state = harness.state;
     await harness.waitFor(() => state.syncRecovery != null);
     expect(state.syncRecovery!.kind, SyncFailureKind.localStorage);
@@ -183,39 +206,47 @@ void main() {
     harness.dispose();
   });
 
-  test('a damaged database stop keeps nothing of the account for the next',
-      () async {
-    final api = _ScriptedApi()
-      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
-    final store = MemoryLocalStore();
-    await _keepIdentity(store);
-    final harness = await _Harness.start(api, store: store);
-    final state = harness.state;
-    await harness.waitFor(() => state.lastSyncedAt != null);
-    state.blocksLoaded = true;
-    expect(state.conversations, isNotEmpty);
-    expect(state.requestStateLoaded, isTrue);
+  test(
+    'a damaged database stop keeps nothing of the account for the next',
+    () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+      final state = harness.state;
+      await harness.waitFor(() => state.lastSyncedAt != null);
+      state.blocksLoaded = true;
+      expect(state.conversations, isNotEmpty);
+      expect(state.requestStateLoaded, isTrue);
 
-    // The next pass finds the database damaged.
-    harness.crypto.applyError =
-        SqliteException(extendedResultCode: 11, message: 'test');
-    api.events = <SyncEvent>[...api.events, _envelopeEvent(5, 'msg_two')];
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    await harness
-        .waitFor(() => state.lifecycle == SessionLifecycle.recoveryRequired);
+      // The next pass finds the database damaged.
+      harness.crypto.applyError = SqliteException(
+        extendedResultCode: 11,
+        message: 'test',
+      );
+      api.events = <SyncEvent>[...api.events, _envelopeEvent(5, 'msg_two')];
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(
+        () => state.lifecycle == SessionLifecycle.recoveryRequired,
+      );
 
-    await state.resetUnreadableLocalData(confirmed: true);
-    expect(state.lifecycle, SessionLifecycle.ready);
-    expect(state.requestStateLoaded, isFalse,
-        reason: "the old account's accepted peers must not carry over");
-    expect(state.conversations, isEmpty);
-    expect(state.conversationsLoaded, isFalse);
-    expect(state.historyOnlyConversations, isEmpty);
-    expect(state.blocksLoaded, isFalse);
-    expect(state.messagesFor('conv_1'), isEmpty);
+      await state.resetUnreadableLocalData(confirmed: true);
+      expect(state.lifecycle, SessionLifecycle.ready);
+      expect(
+        state.requestStateLoaded,
+        isFalse,
+        reason: "the old account's accepted peers must not carry over",
+      );
+      expect(state.conversations, isEmpty);
+      expect(state.conversationsLoaded, isFalse);
+      expect(state.historyOnlyConversations, isEmpty);
+      expect(state.blocksLoaded, isFalse);
+      expect(state.messagesFor('conv_1'), isEmpty);
 
-    harness.dispose();
-  });
+      harness.dispose();
+    },
+  );
 }
 
 /// The ciphertext [_FakeMlsCrypto] treats as one this device can never
@@ -225,11 +256,13 @@ const _neverDecrypts = <int>[9];
 /// Protected MLS state, so signing in again keeps this device's identity
 /// and its cursor.
 Future<void> _keepIdentity(LocalStore store) => store.saveCryptoState(
-    StoredCryptoState(
+      StoredCryptoState(
         counter: 1,
         stateKey: List<int>.filled(32, 7),
-        sealedState: const <int>[1]),
-    0);
+        sealedState: const <int>[1],
+      ),
+      0,
+    );
 
 const _session = Session(
   baseUrl: 'https://localhost:8080',
@@ -239,9 +272,12 @@ const _session = Session(
   deviceSecret: 'secret',
 );
 
-SyncEvent _envelopeEvent(int id, String messageId,
-        {List<int> ciphertext = const <int>[1],
-        String conversationId = 'conv_1'}) =>
+SyncEvent _envelopeEvent(
+  int id,
+  String messageId, {
+  List<int> ciphertext = const <int>[1],
+  String conversationId = 'conv_1',
+}) =>
     SyncEvent(
       id: id,
       type: 'message.envelope.created',
@@ -293,10 +329,12 @@ class _Harness {
   final LocalStore store;
   final _FakeMlsCrypto crypto;
 
-  static Future<_Harness> start(_ScriptedApi api,
-      {LocalStore? store,
-      void Function(AppState state)? configure,
-      bool sealing = false}) async {
+  static Future<_Harness> start(
+    _ScriptedApi api, {
+    LocalStore? store,
+    void Function(AppState state)? configure,
+    bool sealing = false,
+  }) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
     final crypto = sealing ? _FakeSealingCrypto(local) : _FakeMlsCrypto(local);
@@ -384,12 +422,16 @@ class _FlakyStore extends MemoryLocalStore {
   }
 
   @override
-  Future<void> clearCachedState(
-      {bool preserveOutbox = false, bool keepDrafts = false}) async {
+  Future<void> clearCachedState({
+    bool preserveOutbox = false,
+    bool keepDrafts = false,
+  }) async {
     clearAttempts++;
     if (refuseClear) throw _refused;
     return super.clearCachedState(
-        preserveOutbox: preserveOutbox, keepDrafts: keepDrafts);
+      preserveOutbox: preserveOutbox,
+      keepDrafts: keepDrafts,
+    );
   }
 }
 
@@ -480,7 +522,9 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<ReceivedMessageEnvelope> message(
-          String token, String messageId) async =>
+    String token,
+    String messageId,
+  ) async =>
       throw ApiException(404, '{"error":"not_found"}');
 
   MlsMessage _mls(SyncEvent event) => MlsMessage(
@@ -508,10 +552,13 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
       ].take(limit).toList(growable: false);
 
   @override
-  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
-      _mls(events.firstWhere((event) =>
-          event.type == 'mls.message.created' &&
-          (event.payload as Map)['mls_message_id'] == messageId));
+  Future<MlsMessage> mlsMessage(String token, String messageId) async => _mls(
+        events.firstWhere(
+          (event) =>
+              event.type == 'mls.message.created' &&
+              (event.payload as Map)['mls_message_id'] == messageId,
+        ),
+      );
 }
 
 class _FakeMlsCrypto implements MlsConversationCryptoService {
@@ -531,17 +578,21 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   @override
   Future<void> processMlsMessage(MlsMessage message) async {
     if (rejectedMls.contains(message.id)) throw StateError('commit rejected');
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'mls:${message.syncEventId}:${message.id}',
-      conversationId: message.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: message.syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'mls:${message.syncEventId}:${message.id}',
+        conversationId: message.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: message.syncEventId,
+      ),
+    );
   }
 
   @override
   Future<List<int>?> processApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId) async {
+    ReceivedMessageEnvelope envelope,
+    int syncEventId,
+  ) async {
     applied.add(envelope.id);
     final error = applyError;
     if (error != null) {
@@ -555,46 +606,52 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
       // decrypt (D54): the same group state, the cursor, and a placeholder
       // row with no content.
       final previous = (await store.loadCryptoState())!;
-      await store.commitMlsTransition(MlsStateTransition(
-        messageId: 'application:$syncEventId:${envelope.id}',
-        conversationId: envelope.conversationId,
-        expectedCounter: previous.counter,
-        expectedCursor: await store.loadSyncCursor(),
-        state: StoredCryptoState(
+      await store.commitMlsTransition(
+        MlsStateTransition(
+          messageId: 'application:$syncEventId:${envelope.id}',
+          conversationId: envelope.conversationId,
+          expectedCounter: previous.counter,
+          expectedCursor: await store.loadSyncCursor(),
+          state: StoredCryptoState(
             counter: previous.counter + 1,
             stateKey: previous.stateKey,
-            sealedState: previous.sealedState),
-        cursor: syncEventId,
-        upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
-        messageEffects: <MessageEffect>[
-          InsertMessageEffect(
-            key: 'undecryptable:$syncEventId:${envelope.id}',
-            serverMessageId: envelope.id,
-            conversationId: envelope.conversationId,
-            senderAccountId: envelope.senderAccountId,
-            senderDeviceId: envelope.senderDeviceId,
-            kind: LocalMessageKind.invalid,
-            createdAt: envelope.createdAt.millisecondsSinceEpoch,
-            state: LocalMessageState.received,
+            sealedState: previous.sealedState,
           ),
-        ],
-      ));
+          cursor: syncEventId,
+          upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+          messageEffects: <MessageEffect>[
+            InsertMessageEffect(
+              key: 'undecryptable:$syncEventId:${envelope.id}',
+              serverMessageId: envelope.id,
+              conversationId: envelope.conversationId,
+              senderAccountId: envelope.senderAccountId,
+              senderDeviceId: envelope.senderDeviceId,
+              kind: LocalMessageKind.invalid,
+              createdAt: envelope.createdAt.millisecondsSinceEpoch,
+              state: LocalMessageState.received,
+            ),
+          ],
+        ),
+      );
       return null;
     }
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'application:$syncEventId:${envelope.id}',
-      conversationId: envelope.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'application:$syncEventId:${envelope.id}',
+        conversationId: envelope.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: syncEventId,
+      ),
+    );
     return null;
   }
 
   @override
-  Future<List<List<int>>> createReplenishmentKeyPackages(
-          {int count = 5}) async =>
+  Future<List<List<int>>> createReplenishmentKeyPackages({
+    int count = 5,
+  }) async =>
       <List<int>>[
-        for (var i = 0; i < count; i++) <int>[i]
+        for (var i = 0; i < count; i++) <int>[i],
       ];
 
   @override
@@ -618,17 +675,22 @@ class _FakeSealingCrypto extends _FakeMlsCrypto
 
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId,
-      {void Function()? checkCanCommit}) async {
-    residueSettingAtOpen
-        .add(await store.loadSetting(AppState.sealedResidueSetting));
+    ReceivedMessageEnvelope envelope,
+    int syncEventId, {
+    void Function()? checkCanCommit,
+  }) async {
+    residueSettingAtOpen.add(
+      await store.loadSetting(AppState.sealedResidueSetting),
+    );
     applied.add(envelope.id);
-    await store.commitSyncEvent(SyncEventCommit(
-      eventKey: 'application:$syncEventId:${envelope.id}',
-      conversationId: envelope.conversationId,
-      expectedCursor: await store.loadSyncCursor(),
-      cursor: syncEventId,
-    ));
+    await store.commitSyncEvent(
+      SyncEventCommit(
+        eventKey: 'application:$syncEventId:${envelope.id}',
+        conversationId: envelope.conversationId,
+        expectedCursor: await store.loadSyncCursor(),
+        cursor: syncEventId,
+      ),
+    );
     return ReceivedMessageEnvelope(
       id: envelope.id,
       conversationId: envelope.conversationId,

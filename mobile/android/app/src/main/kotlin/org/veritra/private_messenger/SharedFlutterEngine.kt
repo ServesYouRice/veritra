@@ -90,6 +90,7 @@ object SharedFlutterEngine {
         }
         WakeWorkerCoordinator.installChannel(app, messenger, background)
         K1SecondCopy.install(app, messenger) { activity.get() }
+        RoomCallBridge.install(app, messenger)
         created.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         return created
     }

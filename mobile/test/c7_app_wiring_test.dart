@@ -25,10 +25,11 @@ import 'package:private_messenger/sync/sync_service.dart';
 // crypto service. The crypto service is a recording fake.
 
 const _session = Session(
-    baseUrl: 'https://example.test',
-    token: 'token',
-    accountId: 'alice',
-    deviceId: 'dev');
+  baseUrl: 'https://example.test',
+  token: 'token',
+  accountId: 'alice',
+  deviceId: 'dev',
+);
 final _community = 'comm_${'1' * 32}';
 final _open = 'chan_${'2' * 32}';
 final _private = 'chan_${'3' * 32}';
@@ -65,8 +66,12 @@ class _Api extends ApiClient {
 
   @override
   Future<List<Map<String, Object?>>> historyBodies(
-      String token, String conversationId,
-      {String? channelId, String? beforeId, int limit = 50}) async {
+    String token,
+    String conversationId, {
+    String? channelId,
+    String? beforeId,
+    int limit = 50,
+  }) async {
     historyAsked.add((channelId ?? '', beforeId, limit));
     if (historyFails) throw ApiException(500, '{"error":"internal"}');
     final refusal = historyRefusal;
@@ -80,7 +85,9 @@ class _Api extends ApiClient {
 
   @override
   Future<List<Map<String, Object?>>> formerMemberKeys(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     formerAsked++;
     return <Map<String, Object?>>[
       <String, Object?>{
@@ -100,14 +107,19 @@ class _Api extends ApiClient {
 
   @override
   Future<bool> historySyncDelivered(
-      String token, String conversationId, int forEpoch) async {
+    String token,
+    String conversationId,
+    int forEpoch,
+  ) async {
     asked.add((conversationId, forEpoch));
     return delivered.contains((conversationId, forEpoch));
   }
 
   @override
   Future<MessageEnvelope> sendEnvelope(
-      String token, MessageEnvelope envelope) async {
+    String token,
+    MessageEnvelope envelope,
+  ) async {
     sentKeys.add(envelope.idempotencyKey);
     final refusal = refusals[envelope.idempotencyKey];
     if (refusal != null) throw refusal;
@@ -132,8 +144,11 @@ class _Api extends ApiClient {
 
   @override
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
-      String token, String channelId, String accessMode,
-      {required String requestId}) async {
+    String token,
+    String channelId,
+    String accessMode, {
+    required String requestId,
+  }) async {
     requestIds.add(requestId);
     final usual = await _moveAnswer(channelId, accessMode);
     await moveGate?.future;
@@ -150,7 +165,9 @@ class _Api extends ApiClient {
   }
 
   Future<({Map<String, Object?> move, Conversation conversation})> _moveAnswer(
-      String channelId, String accessMode) async {
+    String channelId,
+    String accessMode,
+  ) async {
     moves.add((channelId, accessMode));
     if (accessMode == 'private') {
       return (
@@ -161,10 +178,11 @@ class _Api extends ApiClient {
           'layout_generation': 4,
         },
         conversation: Conversation(
-            id: 'conv_new',
-            kind: 'community_channel',
-            communityId: _community,
-            createdBy: 'alice'),
+          id: 'conv_new',
+          kind: 'community_channel',
+          communityId: _community,
+          createdBy: 'alice',
+        ),
       );
     }
     return (
@@ -175,10 +193,11 @@ class _Api extends ApiClient {
         'layout_generation': 4,
       },
       conversation: Conversation(
-          id: 'conv_shared',
-          kind: 'community_shared',
-          communityId: _community,
-          createdBy: 'alice'),
+        id: 'conv_shared',
+        kind: 'community_shared',
+        communityId: _community,
+        createdBy: 'alice',
+      ),
     );
   }
 
@@ -192,26 +211,37 @@ class _Api extends ApiClient {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-          String token, String conversationId) async =>
+    String token,
+    String conversationId,
+  ) async =>
       <ConversationMember>[
         for (final account in roster)
           ConversationMember(
-              accountId: account,
-              role: account == 'alice' ? 'owner' : 'member'),
+            accountId: account,
+            role: account == 'alice' ? 'owner' : 'member',
+          ),
       ];
 
   @override
   Future<void> addConversationMember(
-      String token, String conversationId, String accountId,
-      {String role = 'member'}) async {
+    String token,
+    String conversationId,
+    String accountId, {
+    String role = 'member',
+  }) async {
     if (accountId == addFails) throw ApiException(500, '{"error":"internal"}');
     added.add((conversationId, accountId));
   }
 
   @override
   Future<List<Map<String, Object?>>> movedHistoryBodies(
-      String token, String channelId, String fromConversationId,
-      {required bool group, String? beforeId, int limit = 50}) async {
+    String token,
+    String channelId,
+    String fromConversationId, {
+    required bool group,
+    String? beforeId,
+    int limit = 50,
+  }) async {
     movedAsked.add((channelId, fromConversationId, group));
     final refusal = historyRefusal;
     if (refusal != null) throw ApiException(refusal, '{"error":"refused"}');
@@ -220,26 +250,34 @@ class _Api extends ApiClient {
 
   @override
   Future<List<Map<String, Object?>>> movedMemberKeys(
-          String token, String channelId, String fromConversationId) async =>
+    String token,
+    String channelId,
+    String fromConversationId,
+  ) async =>
       const <Map<String, Object?>>[];
 
   @override
   Future<ChannelCreation> createChannel(
-      String token, String communityId, String name,
-      {String kind = 'private'}) async {
+    String token,
+    String communityId,
+    String name, {
+    String kind = 'private',
+  }) async {
     return ChannelCreation(
       channel: Channel(
-          id: _open,
-          communityId: communityId,
-          name: name,
-          kind: kind,
-          conversationId: 'conv_shared',
-          layoutGeneration: 3),
+        id: _open,
+        communityId: communityId,
+        name: name,
+        kind: kind,
+        conversationId: 'conv_shared',
+        layoutGeneration: 3,
+      ),
       conversation: Conversation(
-          id: 'conv_shared',
-          kind: 'community_shared',
-          communityId: communityId,
-          createdBy: 'alice'),
+        id: 'conv_shared',
+        kind: 'community_shared',
+        communityId: communityId,
+        createdBy: 'alice',
+      ),
     );
   }
 }
@@ -273,19 +311,27 @@ class _C7Crypto extends UnavailableCryptoService
     bool first,
   })>[];
   Map<String, String> earlier = const <String, String>{};
-  C7ChannelView view =
-      const C7ChannelView(full: false, status: 'ok', pending: false);
+  C7ChannelView view = const C7ChannelView(
+    full: false,
+    status: 'ok',
+    pending: false,
+  );
 
   MessageEnvelope _envelope(String conversationId) => MessageEnvelope(
-      conversationId: conversationId,
-      idempotencyKey: 'action-${proposals.length + sent.length}',
-      ciphertext: const [1],
-      cryptoProtocol: 'test');
+        conversationId: conversationId,
+        idempotencyKey: 'action-${proposals.length + sent.length}',
+        ciphertext: const [1],
+        cryptoProtocol: 'test',
+      );
 
   @override
   Future<MessageEnvelope> c7ProposeRecord(
-      String conversationId, String channelId,
-      {required bool full, bool create = false, int? layoutGeneration}) async {
+    String conversationId,
+    String channelId, {
+    required bool full,
+    bool create = false,
+    int? layoutGeneration,
+  }) async {
     proposals.add((
       conversation: conversationId,
       channel: channelId,
@@ -298,7 +344,9 @@ class _C7Crypto extends UnavailableCryptoService
 
   @override
   Future<C7ChannelView?> c7ChannelView(
-          String conversationId, String channelId) async =>
+    String conversationId,
+    String channelId,
+  ) async =>
       view;
 
   @override
@@ -340,11 +388,13 @@ class _C7Crypto extends UnavailableCryptoService
   }
 
   @override
-  Future<int> c7ImportHistory(String conversationId,
-      {required C7HistoryPage groupLevel,
-      required Map<String, C7HistoryPage> channels,
-      List<C7FormerKey> formerKeys = const <C7FormerKey>[],
-      bool first = true}) async {
+  Future<int> c7ImportHistory(
+    String conversationId, {
+    required C7HistoryPage groupLevel,
+    required Map<String, C7HistoryPage> channels,
+    List<C7FormerKey> formerKeys = const <C7FormerKey>[],
+    bool first = true,
+  }) async {
     imports.add((
       conversation: conversationId,
       groupLevel: groupLevel,
@@ -357,7 +407,9 @@ class _C7Crypto extends UnavailableCryptoService
 
   @override
   Future<String?> c7EarlierCursor(
-          String conversationId, String channelId) async =>
+    String conversationId,
+    String channelId,
+  ) async =>
       conversationId == 'conv_shared' ? earlier[channelId] : null;
 
   final notes = <({String channel, String from, String to, bool own})>[];
@@ -385,8 +437,10 @@ class _C7Crypto extends UnavailableCryptoService
       ));
 
   @override
-  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
-      {int? layoutGeneration}) async {
+  Future<MessageEnvelope?> c7ProposeMove(
+    C7DueMove due, {
+    int? layoutGeneration,
+  }) async {
     moveProposals.add((due, layoutGeneration));
     return _envelope(due.conversationId);
   }
@@ -395,12 +449,18 @@ class _C7Crypto extends UnavailableCryptoService
   Future<List<C7Move>> c7MovedImportsDue() async => movesDue;
 
   @override
-  Future<int> c7ImportMoved(C7Move move,
-      {required C7HistoryPage channel,
-      required C7HistoryPage groupLevel,
-      List<C7FormerKey> keys = const <C7FormerKey>[]}) async {
-    movedImports.add(
-        (move: move, channel: channel, groupLevel: groupLevel, keys: keys));
+  Future<int> c7ImportMoved(
+    C7Move move, {
+    required C7HistoryPage channel,
+    required C7HistoryPage groupLevel,
+    List<C7FormerKey> keys = const <C7FormerKey>[],
+  }) async {
+    movedImports.add((
+      move: move,
+      channel: channel,
+      groupLevel: groupLevel,
+      keys: keys,
+    ));
     movesDue = const <C7Move>[];
     return channel.rows.length;
   }
@@ -427,47 +487,55 @@ List<Map<String, Object?>> _rows(String stream, int count) =>
   final crypto = _C7Crypto();
   final store = MemoryLocalStore();
   final state = AppState(
-      apiClientFactory: (_) => api,
-      syncServiceFactory: (_, __) => _QuietSync(),
-      localStore: store,
-      cryptoService: crypto);
+    apiClientFactory: (_) => api,
+    syncServiceFactory: (_, __) => _QuietSync(),
+    localStore: store,
+    cryptoService: crypto,
+  );
   addTearDown(state.dispose);
   state.session = _session;
   state.api = api;
   state.communities = [
     Community(
-        id: _community, name: 'Club', sharedConversationId: 'conv_shared'),
+      id: _community,
+      name: 'Club',
+      sharedConversationId: 'conv_shared',
+    ),
   ];
   state.conversations = [
     Conversation(
-        id: 'conv_shared',
-        kind: 'community_shared',
-        communityId: _community,
-        createdBy: 'alice',
-        currentRole: 'owner'),
+      id: 'conv_shared',
+      kind: 'community_shared',
+      communityId: _community,
+      createdBy: 'alice',
+      currentRole: 'owner',
+    ),
     Conversation(
-        id: 'conv_private',
-        kind: 'community_channel',
-        communityId: _community,
-        createdBy: 'alice'),
+      id: 'conv_private',
+      kind: 'community_channel',
+      communityId: _community,
+      createdBy: 'alice',
+    ),
     Conversation(id: 'conv_dm', kind: 'direct', createdBy: 'alice'),
   ];
   state.channelsByCommunity = {
     _community: [
       Channel(
-          id: _open,
-          communityId: _community,
-          name: '',
-          kind: 'open',
-          conversationId: 'conv_shared',
-          layoutGeneration: 3),
+        id: _open,
+        communityId: _community,
+        name: '',
+        kind: 'open',
+        conversationId: 'conv_shared',
+        layoutGeneration: 3,
+      ),
       Channel(
-          id: _private,
-          communityId: _community,
-          name: '',
-          kind: 'private',
-          conversationId: 'conv_private',
-          layoutGeneration: 3),
+        id: _private,
+        communityId: _community,
+        name: '',
+        kind: 'private',
+        conversationId: 'conv_private',
+        layoutGeneration: 3,
+      ),
     ],
   };
   state.governanceOverrideForTesting =
@@ -478,26 +546,31 @@ List<Map<String, Object?>> _rows(String stream, int count) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a new channel sends its create record with the chosen setting',
-      () async {
-    final (state, crypto) = _app();
-    state.channelsByCommunity = {_community: const <Channel>[]};
-    final channel =
-        await state.createChannel(_community, 'general', fullHistory: true);
-    expect(channel?.id, _open);
-    for (var i = 0; i < 100 && crypto.proposals.isEmpty; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    expect(crypto.proposals, [
-      (
-        conversation: 'conv_shared',
-        channel: _open,
-        full: true,
-        create: true,
-        layoutGeneration: 3,
-      ),
-    ]);
-  });
+  test(
+    'a new channel sends its create record with the chosen setting',
+    () async {
+      final (state, crypto) = _app();
+      state.channelsByCommunity = {_community: const <Channel>[]};
+      final channel = await state.createChannel(
+        _community,
+        'general',
+        fullHistory: true,
+      );
+      expect(channel?.id, _open);
+      for (var i = 0; i < 100 && crypto.proposals.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(crypto.proposals, [
+        (
+          conversation: 'conv_shared',
+          channel: _open,
+          full: true,
+          create: true,
+          layoutGeneration: 3,
+        ),
+      ]);
+    },
+  );
 
   test(
       'a move event rehomes the rows even before this device is in the new '
@@ -505,15 +578,16 @@ void main() {
     final (state, crypto) = _app();
     await state.localStore.importC7History(<MessageEffect>[
       InsertMessageEffect(
-          key: 'dev_bob:a1',
-          conversationId: 'conv_shared',
-          senderAccountId: 'bob',
-          senderDeviceId: 'dev_bob',
-          kind: LocalMessageKind.text,
-          createdAt: 1,
-          state: LocalMessageState.received,
-          body: 'earlier',
-          channelId: _open),
+        key: 'dev_bob:a1',
+        conversationId: 'conv_shared',
+        senderAccountId: 'bob',
+        senderDeviceId: 'dev_bob',
+        kind: LocalMessageKind.text,
+        createdAt: 1,
+        state: LocalMessageState.received,
+        body: 'earlier',
+        channelId: _open,
+      ),
     ]);
     // Malformed: nothing happens.
     await state.channelMovedForTesting(<String, Object?>{'channel_id': _open});
@@ -528,23 +602,29 @@ void main() {
     final rows = await state.localStore.loadMessages('conv_new');
     expect(rows.single.body, 'earlier');
     expect(rows.single.channelId, isNull);
-    expect(crypto.notes,
-        [(channel: _open, from: 'conv_shared', to: 'conv_new', own: false)]);
+    expect(crypto.notes, [
+      (channel: _open, from: 'conv_shared', to: 'conv_new', own: false),
+    ]);
   });
 
   Future<void> seedRows(AppState state) async {
     InsertMessageEffect row(
-            String key, String conversation, String? channel, String body) =>
+      String key,
+      String conversation,
+      String? channel,
+      String body,
+    ) =>
         InsertMessageEffect(
-            key: key,
-            conversationId: conversation,
-            senderAccountId: 'bob',
-            senderDeviceId: 'dev_bob',
-            kind: LocalMessageKind.text,
-            createdAt: 1,
-            state: LocalMessageState.received,
-            body: body,
-            channelId: channel);
+          key: key,
+          conversationId: conversation,
+          senderAccountId: 'bob',
+          senderDeviceId: 'dev_bob',
+          kind: LocalMessageKind.text,
+          createdAt: 1,
+          state: LocalMessageState.received,
+          body: body,
+          channelId: channel,
+        );
     await state.localStore.importC7History(<MessageEffect>[
       row('dev_bob:s1', 'conv_shared', _open, 'open post'),
       row('dev_bob:p1', 'conv_private', null, 'private post'),
@@ -559,7 +639,7 @@ void main() {
           'conv_private',
           'conv_dm',
           'conv_new',
-          'conv_ghost'
+          'conv_ghost',
         ])
           for (final row in await state.localStore.loadMessages(id))
             (id, row.channelId, row.body),
@@ -567,64 +647,72 @@ void main() {
 
   for (final c7 in [true, false]) {
     test(
-        'a move event that does not fit the channel as this device knows it '
-        'moves no rows and notes nothing (review M-A, C7 ${c7 ? 'on' : 'off'})',
-        () async {
-      final (state, crypto) = _app();
-      crypto.c7SealedBodies = c7;
-      // A group the server says is of the community is still no channel's.
-      state.conversations = [
-        ...state.conversations,
-        Conversation(
+      'a move event that does not fit the channel as this device knows it '
+      'moves no rows and notes nothing (review M-A, C7 ${c7 ? 'on' : 'off'})',
+      () async {
+        final (state, crypto) = _app();
+        crypto.c7SealedBodies = c7;
+        // A group the server says is of the community is still no channel's.
+        state.conversations = [
+          ...state.conversations,
+          Conversation(
             id: 'conv_group',
             kind: 'group',
             communityId: _community,
-            createdBy: 'alice'),
-      ];
-      await seedRows(state);
-      final before = await rowsOf(state);
-      Map<String, Object?> event(
-              String channel, String from, String to, String access) =>
-          <String, Object?>{
-            'channel_id': channel,
-            'from_conversation_id': from,
-            'to_conversation_id': to,
-            'access_mode': access,
-            'moved_by': 'mallory',
-          };
-      for (final forged in [
-        // Into a direct conversation.
-        event(_open, 'conv_shared', 'conv_dm', 'private'),
-        event(_open, 'conv_shared', 'conv_group', 'private'),
-        // Into another channel's private conversation.
-        event(_open, 'conv_shared', 'conv_private', 'private'),
-        // Another channel's private conversation into the shared one.
-        event(_open, 'conv_private', 'conv_shared', 'open'),
-        event(_open, 'conv_dm', 'conv_shared', 'open'),
-        // Not from where the channel is.
-        event(_private, 'conv_shared', 'conv_new', 'private'),
-        // An open channel cannot be made open, a private one private.
-        event(_private, 'conv_private', 'conv_new', 'private'),
-        // A private channel opens only into the community's shared one.
-        event(_private, 'conv_private', 'conv_dm', 'open'),
-        event(_private, 'conv_private', 'conv_new', 'open'),
-        // A channel this device does not know.
-        event('chan_unknown', 'conv_shared', 'conv_new', 'private'),
-        // An access mode no move has.
-        event(_private, 'conv_private', 'conv_shared', 'everyone'),
-      ]) {
-        await state.channelMovedForTesting(forged);
-        expect(await rowsOf(state), before, reason: '$forged');
-      }
-      expect(crypto.notes, isEmpty);
-      expect(
-          state.channelsByCommunity[_community]!
-              .map((c) => (c.id, c.kind, c.conversationId)),
+            createdBy: 'alice',
+          ),
+        ];
+        await seedRows(state);
+        final before = await rowsOf(state);
+        Map<String, Object?> event(
+          String channel,
+          String from,
+          String to,
+          String access,
+        ) =>
+            <String, Object?>{
+              'channel_id': channel,
+              'from_conversation_id': from,
+              'to_conversation_id': to,
+              'access_mode': access,
+              'moved_by': 'mallory',
+            };
+        for (final forged in [
+          // Into a direct conversation.
+          event(_open, 'conv_shared', 'conv_dm', 'private'),
+          event(_open, 'conv_shared', 'conv_group', 'private'),
+          // Into another channel's private conversation.
+          event(_open, 'conv_shared', 'conv_private', 'private'),
+          // Another channel's private conversation into the shared one.
+          event(_open, 'conv_private', 'conv_shared', 'open'),
+          event(_open, 'conv_dm', 'conv_shared', 'open'),
+          // Not from where the channel is.
+          event(_private, 'conv_shared', 'conv_new', 'private'),
+          // An open channel cannot be made open, a private one private.
+          event(_private, 'conv_private', 'conv_new', 'private'),
+          // A private channel opens only into the community's shared one.
+          event(_private, 'conv_private', 'conv_dm', 'open'),
+          event(_private, 'conv_private', 'conv_new', 'open'),
+          // A channel this device does not know.
+          event('chan_unknown', 'conv_shared', 'conv_new', 'private'),
+          // An access mode no move has.
+          event(_private, 'conv_private', 'conv_shared', 'everyone'),
+        ]) {
+          await state.channelMovedForTesting(forged);
+          expect(await rowsOf(state), before, reason: '$forged');
+        }
+        expect(crypto.notes, isEmpty);
+        expect(
+          state.channelsByCommunity[_community]!.map(
+            (c) => (c.id, c.kind, c.conversationId),
+          ),
           [
             (_open, 'open', 'conv_shared'),
-            (_private, 'private', 'conv_private')
-          ]);
-    });
+            (_private, 'private', 'conv_private'),
+          ],
+        );
+      },
+    );
   }
 
   test(
@@ -639,10 +727,11 @@ void main() {
       'access_mode': 'private',
     });
     expect(
-        state.channelsByCommunity[_community]!
-            .where((c) => c.id == _open)
-            .map((c) => (c.kind, c.conversationId)),
-        [('private', 'conv_new')]);
+      state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .map((c) => (c.kind, c.conversationId)),
+      [('private', 'conv_new')],
+    );
     await state.channelMovedForTesting(<String, Object?>{
       'channel_id': _open,
       'from_conversation_id': 'conv_new',
@@ -650,14 +739,18 @@ void main() {
       'access_mode': 'announcement',
     });
     expect(
-        state.channelsByCommunity[_community]!
-            .where((c) => c.id == _open)
-            .map((c) => (c.kind, c.conversationId)),
-        [('announcement', 'conv_shared')]);
+      state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .map((c) => (c.kind, c.conversationId)),
+      [('announcement', 'conv_shared')],
+    );
     expect(
-        (await state.localStore.loadMessages('conv_shared'))
-            .map((row) => (row.channelId, row.body)),
-        [(_open, 'open post')]);
+      (await state.localStore.loadMessages(
+        'conv_shared',
+      ))
+          .map((row) => (row.channelId, row.body)),
+      [(_open, 'open post')],
+    );
     expect(await state.localStore.loadMessages('conv_new'), isEmpty);
     // The channel list was read again before the event (sync start runs
     // both at once): the private channel already opens into the shared
@@ -667,12 +760,13 @@ void main() {
         for (final c in state.channelsByCommunity[_community]!)
           if (c.id == _private)
             Channel(
-                id: _private,
-                communityId: _community,
-                name: '',
-                kind: 'open',
-                conversationId: 'conv_shared',
-                layoutGeneration: 4)
+              id: _private,
+              communityId: _community,
+              name: '',
+              kind: 'open',
+              conversationId: 'conv_shared',
+              layoutGeneration: 4,
+            )
           else
             c,
       ],
@@ -693,8 +787,10 @@ void main() {
       'to_conversation_id': 'conv_shared',
       'access_mode': 'open',
     });
-    expect((await state.localStore.loadMessages('conv_ghost')).single.body,
-        'unlisted post');
+    expect(
+      (await state.localStore.loadMessages('conv_ghost')).single.body,
+      'unlisted post',
+    );
     expect(crypto.notes.map((n) => (n.channel, n.from, n.to)), [
       (_open, 'conv_shared', 'conv_new'),
       (_open, 'conv_new', 'conv_shared'),
@@ -706,86 +802,92 @@ void main() {
   for (final (name, answer) in <(String, _Answer)>[
     (
       'another channel',
-      (move: {'channel_id': 'chan_other'}, conversation: null)
+      (move: {'channel_id': 'chan_other'}, conversation: null),
     ),
     (
       'from elsewhere',
-      (move: {'from_conversation_id': 'conv_dm'}, conversation: null)
+      (move: {'from_conversation_id': 'conv_dm'}, conversation: null),
     ),
     (
       'a different conversation than its move',
-      (move: {'to_conversation_id': 'conv_other'}, conversation: null)
+      (move: {'to_conversation_id': 'conv_other'}, conversation: null),
     ),
     (
       'into a direct conversation',
       (
         move: {'to_conversation_id': 'conv_direct'},
         conversation: Conversation(
-            id: 'conv_direct',
-            kind: 'direct',
-            communityId: _community,
-            createdBy: 'alice')
-      )
+          id: 'conv_direct',
+          kind: 'direct',
+          communityId: _community,
+          createdBy: 'alice',
+        ),
+      ),
     ),
     (
       "into another channel's conversation",
       (
         move: {'to_conversation_id': 'conv_private'},
         conversation: Conversation(
-            id: 'conv_private',
-            kind: 'community_channel',
-            communityId: _community,
-            createdBy: 'alice')
-      )
+          id: 'conv_private',
+          kind: 'community_channel',
+          communityId: _community,
+          createdBy: 'alice',
+        ),
+      ),
     ),
     (
       'that names another channel',
       (
         move: <String, Object?>{},
         conversation: Conversation(
-            id: 'conv_new',
-            kind: 'community_channel',
-            communityId: _community,
-            channelId: 'chan_other',
-            createdBy: 'alice')
-      )
+          id: 'conv_new',
+          kind: 'community_channel',
+          communityId: _community,
+          channelId: 'chan_other',
+          createdBy: 'alice',
+        ),
+      ),
     ),
     (
       'into another community',
       (
         move: <String, Object?>{},
         conversation: Conversation(
-            id: 'conv_new',
-            kind: 'community_channel',
-            communityId: 'comm_other',
-            createdBy: 'alice')
-      )
+          id: 'conv_new',
+          kind: 'community_channel',
+          communityId: 'comm_other',
+          createdBy: 'alice',
+        ),
+      ),
     ),
     (
       'to an access it did not ask for',
-      (move: {'to_access': 'open'}, conversation: null)
+      (move: {'to_access': 'open'}, conversation: null),
     ),
   ]) {
     test(
-        'an answer to making a channel private $name is not followed (review M-A)',
-        () async {
-      final api = _Api()..answer = answer;
-      final (state, crypto) = _appWith(api);
-      await seedRows(state);
-      final before = await rowsOf(state);
-      final channel = state.channelsByCommunity[_community]!
-          .where((c) => c.id == _open)
-          .single;
-      expect(await state.convertChannel(channel, toPrivate: true), isFalse);
-      expect(await rowsOf(state), before);
-      expect(crypto.notes, isEmpty);
-      expect(
+      'an answer to making a channel private $name is not followed (review M-A)',
+      () async {
+        final api = _Api()..answer = answer;
+        final (state, crypto) = _appWith(api);
+        await seedRows(state);
+        final before = await rowsOf(state);
+        final channel = state.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .single;
+        expect(await state.convertChannel(channel, toPrivate: true), isFalse);
+        expect(await rowsOf(state), before);
+        expect(crypto.notes, isEmpty);
+        expect(
           state.channelsByCommunity[_community]!
               .where((c) => c.id == _open)
               .single
               .conversationId,
-          'conv_shared');
-    });
+          'conv_shared',
+        );
+      },
+    );
   }
 
   test(
@@ -801,19 +903,21 @@ void main() {
     api.answer = (
       move: {'to_conversation_id': 'conv_new'},
       conversation: Conversation(
-          id: 'conv_new',
-          kind: 'community_shared',
-          communityId: _community,
-          createdBy: 'alice'),
+        id: 'conv_new',
+        kind: 'community_shared',
+        communityId: _community,
+        createdBy: 'alice',
+      ),
     );
     expect(await state.convertChannel(channel, toPrivate: false), isFalse);
     api.answer = (
       move: <String, Object?>{},
       conversation: Conversation(
-          id: 'conv_shared',
-          kind: 'community_channel',
-          communityId: _community,
-          createdBy: 'alice'),
+        id: 'conv_shared',
+        kind: 'community_channel',
+        communityId: _community,
+        createdBy: 'alice',
+      ),
     );
     expect(await state.convertChannel(channel, toPrivate: false), isFalse);
     api.answer = (move: {'to_access': 'private'}, conversation: null);
@@ -860,9 +964,9 @@ void main() {
           .where((c) => c.id == _open)
           .single;
       expect(
-          await state
-              .convertChannel(channel, toPrivate: true, members: ['bob']),
-          isFalse);
+        await state.convertChannel(channel, toPrivate: true, members: ['bob']),
+        isFalse,
+      );
       expect(api.added, isEmpty);
       expect(await pending(state), _open);
       await state.channelMovedForTesting(ownMove());
@@ -879,70 +983,76 @@ void main() {
     });
 
   test(
-      'a re-tap after a lost answer asks under the same request id, and '
-      'another device of this account under its own (review L-6 residual)',
-      () async {
-    final api = _Api()..moveThrows = const SocketException('lost');
-    final (state, crypto) = _appWith(api);
-    Channel open(AppState s) =>
-        s.channelsByCommunity[_community]!.where((c) => c.id == _open).single;
-    expect(await state.convertChannel(open(state), toPrivate: true), isFalse);
-    expect(await pending(state), _open);
-    // The channel still looks open here; the person taps again.
-    expect(await state.convertChannel(open(state), toPrivate: true), isTrue);
-    expect(api.requestIds, hasLength(2));
-    expect(api.requestIds.toSet(), hasLength(1));
-    expect(await pending(state), isNull);
-    expect(crypto.notes.map((n) => n.own), [true]);
-    // A second device of the same account makes its own id, which the
-    // server refuses to answer as the first device's move.
-    final otherApi = _Api();
-    final (other, _) = _appWith(otherApi);
-    expect(await other.convertChannel(open(other), toPrivate: true), isTrue);
-    expect(otherApi.requestIds.single, isNot(api.requestIds.first));
-    // A later conversion of the channel here is a new request.
-    final again = _Api();
-    final (third, _) = _appWith(again);
-    await third.convertChannel(open(third), toPrivate: true);
-    expect(again.requestIds.single, isNot(api.requestIds.first));
-  });
+    'a re-tap after a lost answer asks under the same request id, and '
+    'another device of this account under its own (review L-6 residual)',
+    () async {
+      final api = _Api()..moveThrows = const SocketException('lost');
+      final (state, crypto) = _appWith(api);
+      Channel open(AppState s) =>
+          s.channelsByCommunity[_community]!.where((c) => c.id == _open).single;
+      expect(await state.convertChannel(open(state), toPrivate: true), isFalse);
+      expect(await pending(state), _open);
+      // The channel still looks open here; the person taps again.
+      expect(await state.convertChannel(open(state), toPrivate: true), isTrue);
+      expect(api.requestIds, hasLength(2));
+      expect(api.requestIds.toSet(), hasLength(1));
+      expect(await pending(state), isNull);
+      expect(crypto.notes.map((n) => n.own), [true]);
+      // A second device of the same account makes its own id, which the
+      // server refuses to answer as the first device's move.
+      final otherApi = _Api();
+      final (other, _) = _appWith(otherApi);
+      expect(await other.convertChannel(open(other), toPrivate: true), isTrue);
+      expect(otherApi.requestIds.single, isNot(api.requestIds.first));
+      // A later conversion of the channel here is a new request.
+      final again = _Api();
+      final (third, _) = _appWith(again);
+      await third.convertChannel(open(third), toPrivate: true);
+      expect(again.requestIds.single, isNot(api.requestIds.first));
+    },
+  );
 
   for (final other in ['alice', 'bob']) {
     test(
-        'a conversion pending here is forgotten, not asked again, when its '
-        'channel moved on (${other == 'alice' ? 'by another device of this account' : 'by another admin'}, review L-6)',
-        () async {
-      final api = _Api()..moveThrows = const SocketException('lost');
-      final (state, crypto) = _appWith(api);
-      final channel = state.channelsByCommunity[_community]!
-          .where((c) => c.id == _open)
-          .single;
-      expect(
-          await state
-              .convertChannel(channel, toPrivate: true, members: ['bob']),
-          isFalse);
-      expect(await pending(state), _open);
-      // The request never reached the server; the channel was made
-      // private and open again since.
-      await state.channelMovesForTesting([
-        {...ownMove(), 'moved_by': other, 'to_conversation_id': 'conv_other'},
-        <String, Object?>{
-          'channel_id': _open,
-          'from_conversation_id': 'conv_other',
-          'to_conversation_id': 'conv_shared',
-          'access_mode': 'open',
-          'moved_by': other,
-        },
-      ]);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(api.moves, [(_open, 'private')]);
-      expect(await pending(state), isNull);
-      // A later move like the one asked for finishes nothing either.
-      await state.channelMovedForTesting(ownMove());
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(api.moves, [(_open, 'private')]);
-      expect(crypto.notes.map((n) => n.own), [false, false, false]);
-    });
+      'a conversion pending here is forgotten, not asked again, when its '
+      'channel moved on (${other == 'alice' ? 'by another device of this account' : 'by another admin'}, review L-6)',
+      () async {
+        final api = _Api()..moveThrows = const SocketException('lost');
+        final (state, crypto) = _appWith(api);
+        final channel = state.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .single;
+        expect(
+          await state.convertChannel(
+            channel,
+            toPrivate: true,
+            members: ['bob'],
+          ),
+          isFalse,
+        );
+        expect(await pending(state), _open);
+        // The request never reached the server; the channel was made
+        // private and open again since.
+        await state.channelMovesForTesting([
+          {...ownMove(), 'moved_by': other, 'to_conversation_id': 'conv_other'},
+          <String, Object?>{
+            'channel_id': _open,
+            'from_conversation_id': 'conv_other',
+            'to_conversation_id': 'conv_shared',
+            'access_mode': 'open',
+            'moved_by': other,
+          },
+        ]);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(api.moves, [(_open, 'private')]);
+        expect(await pending(state), isNull);
+        // A later move like the one asked for finishes nothing either.
+        await state.channelMovedForTesting(ownMove());
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(api.moves, [(_open, 'private')]);
+        expect(crypto.notes.map((n) => n.own), [false, false, false]);
+      },
+    );
   }
 
   test(
@@ -956,13 +1066,15 @@ void main() {
     final lost = _Api()..moveThrows = const SocketException('lost');
     final (third, _) = _appWith(lost);
     expect(
-        await third.convertChannel(
-            third.channelsByCommunity[_community]!
-                .where((c) => c.id == _open)
-                .single,
-            toPrivate: true,
-            members: ['bob']),
-        isFalse);
+      await third.convertChannel(
+        third.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .single,
+        toPrivate: true,
+        members: ['bob'],
+      ),
+      isFalse,
+    );
     expect(await pending(third), _open);
     await third.channelMovedForTesting({...ownMove(), 'moved_by': 'bob'});
     // Refused: nothing moved.
@@ -970,13 +1082,15 @@ void main() {
       ..moveThrows = ApiException(403, '{"error":"forbidden"}');
     final (other, otherCrypto) = _appWith(refused);
     expect(
-        await other.convertChannel(
-            other.channelsByCommunity[_community]!
-                .where((c) => c.id == _open)
-                .single,
-            toPrivate: true,
-            members: ['bob']),
-        isFalse);
+      await other.convertChannel(
+        other.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .single,
+        toPrivate: true,
+        members: ['bob'],
+      ),
+      isFalse,
+    );
     expect(await pending(other), isNull);
     await other.channelMovedForTesting(ownMove());
     await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -1000,8 +1114,11 @@ void main() {
       final channel = state.channelsByCommunity[_community]!
           .where((c) => c.id == _open)
           .single;
-      final converting =
-          state.convertChannel(channel, toPrivate: true, members: ['bob']);
+      final converting = state.convertChannel(
+        channel,
+        toPrivate: true,
+        members: ['bob'],
+      );
       await settle(() => api.moves.isNotEmpty);
       await state.channelMovedForTesting(ownMove());
       api.moveGate!.complete();
@@ -1016,23 +1133,29 @@ void main() {
     });
   }
 
-  test('a second conversion of a channel while one runs asks nothing',
-      () async {
-    final api = _Api()..moveGate = Completer<void>();
-    final (state, _) = _appWith(api);
-    final channel = state.channelsByCommunity[_community]!
-        .where((c) => c.id == _open)
-        .single;
-    final first =
-        state.convertChannel(channel, toPrivate: true, members: ['bob']);
-    expect(
+  test(
+    'a second conversion of a channel while one runs asks nothing',
+    () async {
+      final api = _Api()..moveGate = Completer<void>();
+      final (state, _) = _appWith(api);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .single;
+      final first = state.convertChannel(
+        channel,
+        toPrivate: true,
+        members: ['bob'],
+      );
+      expect(
         await state.convertChannel(channel, toPrivate: true, members: ['bob']),
-        isFalse);
-    await settle(() => api.moves.isNotEmpty);
-    api.moveGate!.complete();
-    expect(await first, isTrue);
-    expect(api.moves, [(_open, 'private')]);
-  });
+        isFalse,
+      );
+      await settle(() => api.moves.isNotEmpty);
+      api.moveGate!.complete();
+      expect(await first, isTrue);
+      expect(api.moves, [(_open, 'private')]);
+    },
+  );
 
   test(
       'an admin who is not in a private channel cannot open it '
@@ -1052,20 +1175,23 @@ void main() {
     expect(api.moves, isEmpty);
     // An open channel is still made private by any admin.
     expect(
-        state.mayConvertChannel(state.channelsByCommunity[_community]!
+      state.mayConvertChannel(
+        state.channelsByCommunity[_community]!
             .where((c) => c.id == _open)
-            .single),
-        isTrue);
+            .single,
+      ),
+      isTrue,
+    );
   });
 
   test(
-      'converting moves the rows and notes an owed move; the work pass '
-      'proposes it with its layout generation and fetches moved pages',
-      () async {
-    final api = _Api();
-    final (state, crypto) = _appWith(api);
-    await state.localStore.importC7History(<MessageEffect>[
-      InsertMessageEffect(
+    'converting moves the rows and notes an owed move; the work pass '
+    'proposes it with its layout generation and fetches moved pages',
+    () async {
+      final api = _Api();
+      final (state, crypto) = _appWith(api);
+      await state.localStore.importC7History(<MessageEffect>[
+        InsertMessageEffect(
           key: 'dev_bob:p1',
           conversationId: 'conv_private',
           senderAccountId: 'bob',
@@ -1073,43 +1199,46 @@ void main() {
           kind: LocalMessageKind.text,
           createdAt: 1,
           state: LocalMessageState.received,
-          body: 'private earlier'),
-    ]);
-    final channel = state.channelsByCommunity[_community]!
-        .where((c) => c.id == _private)
-        .single;
-    expect(state.mayConvertChannel(channel), isTrue);
-    expect(await state.convertChannel(channel, toPrivate: false), isTrue);
-    expect(api.moves, [(_private, 'open')]);
-    final rows = await state.localStore.loadMessages('conv_shared');
-    expect(rows.single.channelId, _private);
-    expect(crypto.notes.first, (
-      channel: _private,
-      from: 'conv_private',
-      to: 'conv_shared',
-      own: true
-    ));
-    final converted = state.channelsByCommunity[_community]!
-        .where((c) => c.id == _private)
-        .single;
-    expect(converted.kind, 'open');
-    expect(converted.conversationId, 'conv_shared');
-    expect(converted.layoutGeneration, 4);
-    final due = C7DueMove('conv_shared', _private, 'conv_private');
-    crypto.due = <C7Due>[due];
-    api.moved['chan_x'] = _rows('chan_x', 2);
-    crypto.movesDue = <C7Move>[
-      const C7Move(
+          body: 'private earlier',
+        ),
+      ]);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _private)
+          .single;
+      expect(state.mayConvertChannel(channel), isTrue);
+      expect(await state.convertChannel(channel, toPrivate: false), isTrue);
+      expect(api.moves, [(_private, 'open')]);
+      final rows = await state.localStore.loadMessages('conv_shared');
+      expect(rows.single.channelId, _private);
+      expect(crypto.notes.first, (
+        channel: _private,
+        from: 'conv_private',
+        to: 'conv_shared',
+        own: true,
+      ));
+      final converted = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _private)
+          .single;
+      expect(converted.kind, 'open');
+      expect(converted.conversationId, 'conv_shared');
+      expect(converted.layoutGeneration, 4);
+      final due = C7DueMove('conv_shared', _private, 'conv_private');
+      crypto.due = <C7Due>[due];
+      api.moved['chan_x'] = _rows('chan_x', 2);
+      crypto.movesDue = <C7Move>[
+        const C7Move(
           channelId: 'chan_x',
           fromConversationId: 'conv_private',
-          toConversationId: 'conv_shared'),
-    ];
-    await state.c7WorkPassForTesting();
-    expect(crypto.moveProposals.last, (due, 4));
-    expect(api.movedAsked, contains(('chan_x', 'conv_private', true)));
-    expect(api.movedAsked, contains(('chan_x', 'conv_private', false)));
-    expect(crypto.movedImports, hasLength(1));
-  });
+          toConversationId: 'conv_shared',
+        ),
+      ];
+      await state.c7WorkPassForTesting();
+      expect(crypto.moveProposals.last, (due, 4));
+      expect(api.movedAsked, contains(('chan_x', 'conv_private', true)));
+      expect(api.movedAsked, contains(('chan_x', 'conv_private', false)));
+      expect(crypto.movedImports, hasLength(1));
+    },
+  );
 
   test(
       'making an open channel private adds the readers left ticked, and '
@@ -1119,32 +1248,44 @@ void main() {
     final (state, crypto) = _appWith(api);
     await state.localStore.importC7History(<MessageEffect>[
       InsertMessageEffect(
-          key: 'dev_bob:o1',
-          conversationId: 'conv_shared',
-          channelId: _open,
-          senderAccountId: 'bob',
-          senderDeviceId: 'dev_bob',
-          kind: LocalMessageKind.text,
-          createdAt: 1,
-          state: LocalMessageState.received,
-          body: 'open earlier'),
+        key: 'dev_bob:o1',
+        conversationId: 'conv_shared',
+        channelId: _open,
+        senderAccountId: 'bob',
+        senderDeviceId: 'dev_bob',
+        kind: LocalMessageKind.text,
+        createdAt: 1,
+        state: LocalMessageState.received,
+        body: 'open earlier',
+      ),
     ]);
     final channel = state.channelsByCommunity[_community]!
         .where((c) => c.id == _open)
         .single;
     // The screen lists everyone but this account, all ticked.
-    expect((await state.channelReaders(channel)).map((m) => m.accountId),
-        ['bob', 'carol', 'dave']);
+    expect((await state.channelReaders(channel)).map((m) => m.accountId), [
+      'bob',
+      'carol',
+      'dave',
+    ]);
     // Carol is unticked; this account is never added to its own channel.
     expect(
-        await state.convertChannel(channel,
-            toPrivate: true, members: ['bob', 'dave', 'alice']),
-        isTrue);
+      await state.convertChannel(
+        channel,
+        toPrivate: true,
+        members: ['bob', 'dave', 'alice'],
+      ),
+      isTrue,
+    );
     expect(api.moves, [(_open, 'private')]);
     expect(api.added, [('conv_new', 'bob'), ('conv_new', 'dave')]);
     expect(state.mlsReconcileNowForTesting('conv_new'), isTrue);
-    expect(crypto.notes.first,
-        (channel: _open, from: 'conv_shared', to: 'conv_new', own: true));
+    expect(crypto.notes.first, (
+      channel: _open,
+      from: 'conv_shared',
+      to: 'conv_new',
+      own: true,
+    ));
     final rows = await state.localStore.loadMessages('conv_new');
     expect(rows.single.body, 'open earlier');
     expect(await state.localStore.loadMessages('conv_shared'), isEmpty);
@@ -1159,9 +1300,13 @@ void main() {
         .where((c) => c.id == _open)
         .single;
     expect(
-        await state.convertChannel(channel,
-            toPrivate: true, members: ['bob', 'carol', 'dave']),
-        isTrue);
+      await state.convertChannel(
+        channel,
+        toPrivate: true,
+        members: ['bob', 'carol', 'dave'],
+      ),
+      isTrue,
+    );
     expect(api.added, [('conv_new', 'bob'), ('conv_new', 'dave')]);
     expect(state.channelConversionNotAdded, ['carol']);
     expect(state.error, isNotNull);
@@ -1180,8 +1325,9 @@ void main() {
         .where((c) => c.id == _private)
         .single;
     expect(
-        await state.convertChannel(channel, toPrivate: false, members: ['bob']),
-        isTrue);
+      await state.convertChannel(channel, toPrivate: false, members: ['bob']),
+      isTrue,
+    );
     expect(api.added, isEmpty);
   });
 
@@ -1193,49 +1339,54 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(crypto.proposals, isEmpty);
     expect(
-        await state.setChannelHistory(
-            state.channelsByCommunity[_community]!.first,
-            full: true),
-        isFalse);
+      await state.setChannelHistory(
+        state.channelsByCommunity[_community]!.first,
+        full: true,
+      ),
+      isFalse,
+    );
   });
 
   test(
-      'the work pass sends what is due in community groups only, proposes '
-      'stale records again with their layout generation, and arms a timer',
-      () async {
-    final (state, crypto) = _app();
-    crypto.due = <C7Due>[
-      const C7DueSync('conv_shared', 4),
-      const C7DueRequest('conv_private', 2),
-      C7DueRepropose('conv_shared', _open, full: true),
-      C7DueRepropose('conv_private', _private, full: false),
-    ];
-    crypto.next = DateTime.now().toUtc().add(const Duration(seconds: 30));
-    crypto.lines = {'dev_bob:act': true};
-    await state.c7WorkPassForTesting();
-    expect(crypto.asked.single, ['conv_private', 'conv_shared']);
-    expect(crypto.sent.map((d) => d.conversationId),
-        ['conv_shared', 'conv_private']);
-    expect(crypto.proposals, [
-      (
-        conversation: 'conv_shared',
-        channel: _open,
-        full: true,
-        create: false,
-        layoutGeneration: 3,
-      ),
-      (
-        conversation: 'conv_private',
-        channel: _private,
-        full: false,
-        create: false,
-        layoutGeneration: null,
-      ),
-    ]);
-    expect(state.channelHistoryLine('conv_shared', 'dev_bob:act'), isTrue);
-    expect(state.channelHistoryLine('conv_shared', 'dev_bob:other'), isNull);
-    expect(state.c7TimerArmed, isTrue);
-  });
+    'the work pass sends what is due in community groups only, proposes '
+    'stale records again with their layout generation, and arms a timer',
+    () async {
+      final (state, crypto) = _app();
+      crypto.due = <C7Due>[
+        const C7DueSync('conv_shared', 4),
+        const C7DueRequest('conv_private', 2),
+        C7DueRepropose('conv_shared', _open, full: true),
+        C7DueRepropose('conv_private', _private, full: false),
+      ];
+      crypto.next = DateTime.now().toUtc().add(const Duration(seconds: 30));
+      crypto.lines = {'dev_bob:act': true};
+      await state.c7WorkPassForTesting();
+      expect(crypto.asked.single, ['conv_private', 'conv_shared']);
+      expect(crypto.sent.map((d) => d.conversationId), [
+        'conv_shared',
+        'conv_private',
+      ]);
+      expect(crypto.proposals, [
+        (
+          conversation: 'conv_shared',
+          channel: _open,
+          full: true,
+          create: false,
+          layoutGeneration: 3,
+        ),
+        (
+          conversation: 'conv_private',
+          channel: _private,
+          full: false,
+          create: false,
+          layoutGeneration: null,
+        ),
+      ]);
+      expect(state.channelHistoryLine('conv_shared', 'dev_bob:act'), isTrue);
+      expect(state.channelHistoryLine('conv_shared', 'dev_bob:other'), isNull);
+      expect(state.c7TimerArmed, isTrue);
+    },
+  );
 
   test(
       'a member asks the server first: a history_sync the newcomers already '
@@ -1250,8 +1401,10 @@ void main() {
     await state.c7WorkPassForTesting();
     expect(api.asked, [('conv_shared', 4), ('conv_private', 2)]);
     expect(crypto.settled, [('conv_shared', 4)]);
-    expect(crypto.sent.map((d) => (d.conversationId, d.runtimeType)),
-        [('conv_private', C7DueSync), ('conv_private', C7DueRequest)]);
+    expect(crypto.sent.map((d) => (d.conversationId, d.runtimeType)), [
+      ('conv_private', C7DueSync),
+      ('conv_private', C7DueRequest),
+    ]);
   });
 
   test(
@@ -1266,19 +1419,27 @@ void main() {
       const C7DueSync('conv_private', 2),
       const C7DueRequest('conv_private', 3),
     ];
-    api.refusals['action-1'] =
-        ApiException(409, '{"error":"history_sync_delivered"}');
-    api.refusals['action-2'] =
-        ApiException(409, '{"error":"idempotency_conflict"}');
-    api.refusals['action-3'] =
-        ApiException(409, '{"error":"history_sync_request_too_soon"}');
+    api.refusals['action-1'] = ApiException(
+      409,
+      '{"error":"history_sync_delivered"}',
+    );
+    api.refusals['action-2'] = ApiException(
+      409,
+      '{"error":"idempotency_conflict"}',
+    );
+    api.refusals['action-3'] = ApiException(
+      409,
+      '{"error":"history_sync_request_too_soon"}',
+    );
     await state.c7WorkPassForTesting();
     for (var i = 0; i < 100 && api.sentKeys.length < 3; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(api.sentKeys,
-        containsAll(<String>['action-1', 'action-2', 'action-3']));
+    expect(
+      api.sentKeys,
+      containsAll(<String>['action-1', 'action-2', 'action-3']),
+    );
     final left = await state.localStore.pendingEnvelopeRecords();
     expect(left.map((r) => r.envelope.idempotencyKey), ['action-2']);
     expect(left.single.terminal, isTrue);
@@ -1295,12 +1456,13 @@ void main() {
       _community: [
         ...state.channelsByCommunity[_community]!,
         Channel(
-            id: second,
-            communityId: _community,
-            name: '',
-            kind: 'open',
-            conversationId: 'conv_shared',
-            layoutGeneration: 3),
+          id: second,
+          communityId: _community,
+          name: '',
+          kind: 'open',
+          conversationId: 'conv_shared',
+          layoutGeneration: 3,
+        ),
       ],
     };
     // Whatever each channel's mode: the app never asks before fetching.
@@ -1378,14 +1540,15 @@ void main() {
         crypto.importDue = <String>['conv_shared'];
         crypto.movesDue = <C7Move>[
           C7Move(
-              channelId: _open,
-              fromConversationId: 'conv_private',
-              toConversationId: 'conv_shared'),
+            channelId: _open,
+            fromConversationId: 'conv_private',
+            toConversationId: 'conv_shared',
+          ),
         ];
         await state.c7WorkPassForTesting();
         return (
           api.historyAsked.length - history,
-          api.movedAsked.length - moved
+          api.movedAsked.length - moved,
         );
       }
 
@@ -1422,15 +1585,23 @@ void main() {
     expect(state.channelHistoryEarlier('conv_shared'), isFalse);
   });
 
-  test('the switch proposes a switch, or a create for a channel with none',
-      () async {
-    final (state, crypto) = _app();
-    final open = state.channelsByCommunity[_community]!.first;
-    expect(await state.setChannelHistory(open, full: true), isTrue);
-    crypto.view = const C7ChannelView(
-        full: false, status: 'ok', pending: false, recorded: false);
-    expect(await state.setChannelHistory(open, full: false), isTrue);
-    expect(crypto.proposals.map((p) => (p.full, p.create, p.layoutGeneration)),
-        [(true, false, 3), (false, true, 3)]);
-  });
+  test(
+    'the switch proposes a switch, or a create for a channel with none',
+    () async {
+      final (state, crypto) = _app();
+      final open = state.channelsByCommunity[_community]!.first;
+      expect(await state.setChannelHistory(open, full: true), isTrue);
+      crypto.view = const C7ChannelView(
+        full: false,
+        status: 'ok',
+        pending: false,
+        recorded: false,
+      );
+      expect(await state.setChannelHistory(open, full: false), isTrue);
+      expect(
+        crypto.proposals.map((p) => (p.full, p.create, p.layoutGeneration)),
+        [(true, false, 3), (false, true, 3)],
+      );
+    },
+  );
 }

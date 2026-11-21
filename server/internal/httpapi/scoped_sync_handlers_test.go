@@ -97,8 +97,9 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 		if conversation.Scope != "conversation" || conversation.ScopeID != conversationID {
 			t.Fatalf("%s conversation envelope scope=%q scope_id=%q", name, conversation.Scope, conversation.ScopeID)
 		}
+		// A 200 carries the epoch only (D134); the bounds are on a 409.
 		for _, page := range []scopedSyncPage{account, conversation} {
-			if page.Epoch == "" || page.Epoch != legacy.Epoch || page.OldestEventID != legacy.OldestEventID || page.LatestEventID != legacy.LatestEventID {
+			if page.Epoch == "" || page.Epoch != legacy.Epoch || page.OldestEventID != 0 || page.LatestEventID != 0 {
 				t.Fatalf("%s bounds %+v differ from legacy %+v", name, page, legacy)
 			}
 		}
@@ -136,7 +137,7 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 		t.Fatalf("empty page body=%s err=%v", body, err)
 	}
 	// The scan position: never below the cursor, at the last event for a
-	// page that ended there, untruncated. The legacy route has neither field.
+	// page that ended there, untruncated.
 	if string(raw["scan_truncated"]) != "false" || string(raw["scanned_through"]) != "999999" {
 		t.Fatalf("empty page scan fields body=%s", body)
 	}
@@ -144,21 +145,20 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 	if n := len(full.Events); n == 0 || full.ScannedThrough != full.Events[n-1].ID || full.ScanTruncated {
 		t.Fatalf("conversation scan fields %+v", full)
 	}
-	_, plain := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200", ownerToken, nil)
-	var plainRaw map[string]json.RawMessage
-	if err := json.Unmarshal(plain, &plainRaw); err != nil {
+	// The scan fields do not depend on the opt-in (D134): the route is
+	// always bounded.
+	plain := getScopedSyncPage(t, handler, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200", ownerToken, http.StatusOK)
+	if n := len(plain.Events); n == 0 || plain.ScannedThrough != plain.Events[n-1].ID || plain.ScanTruncated {
+		t.Fatalf("conversation scan fields without the opt-in %+v", plain)
+	}
+	// The account route is always bounded too, and a 200 leaves out the bounds.
+	_, accountBody := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=200", ownerToken, nil)
+	var accountRaw map[string]json.RawMessage
+	if err := json.Unmarshal(accountBody, &accountRaw); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := plainRaw["scanned_through"]; ok {
-		t.Fatalf("scoped route sent scanned_through without the opt-in: %s", plain)
-	}
-	_, legacyBody := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=200", ownerToken, nil)
-	var legacyRaw map[string]json.RawMessage
-	if err := json.Unmarshal(legacyBody, &legacyRaw); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := legacyRaw["scanned_through"]; ok {
-		t.Fatalf("legacy route grew scanned_through: %s", legacyBody)
+	if _, ok := accountRaw["scanned_through"]; !ok {
+		t.Fatalf("account route lacks scanned_through: %s", accountBody)
 	}
 }
 

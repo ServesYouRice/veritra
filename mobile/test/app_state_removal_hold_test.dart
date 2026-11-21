@@ -21,38 +21,49 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('sends after a removal are encrypted only after the removal commit',
-      () async {
-    final h = await _Harness.start();
-    addTearDown(h.state.dispose);
-    h.api.bundleGate = Completer<void>();
+  test(
+    'sends after a removal are encrypted only after the removal commit',
+    () async {
+      final h = await _Harness.start();
+      addTearDown(h.state.dispose);
+      h.api.bundleGate = Completer<void>();
 
-    expect(await h.state.removeConversationMember('conv_a', _bob.accountId),
-        isTrue);
-    final text = h.state.sendMessageTo('conv_a', 'after removal');
-    final reaction = h.state.react('conv_a', 'msg_1', '👍');
-    // The coordinator stages the removal and the bundle reaches the server,
-    // which has not answered yet.
-    await _waitFor(() => h.api.bundles.isNotEmpty);
-    await h.frames(const Duration(milliseconds: 400));
-    expect(h.crypto.encrypted, isEmpty,
+      expect(
+        await h.state.removeConversationMember('conv_a', _bob.accountId),
+        isTrue,
+      );
+      final text = h.state.sendMessageTo('conv_a', 'after removal');
+      final reaction = h.state.react('conv_a', 'msg_1', '👍');
+      // The coordinator stages the removal and the bundle reaches the server,
+      // which has not answered yet.
+      await _waitFor(() => h.api.bundles.isNotEmpty);
+      await h.frames(const Duration(milliseconds: 400));
+      expect(
+        h.crypto.encrypted,
+        isEmpty,
         reason: 'nothing may be encrypted while the removed devices are '
-            'still in the group');
+            'still in the group',
+      );
 
-    // Another conversation is not held.
-    expect(await h.state.sendMessageTo('conv_b', 'elsewhere'), isTrue);
-    expect(h.crypto.encrypted.map((e) => e.conversationId), ['conv_b']);
+      // Another conversation is not held.
+      expect(await h.state.sendMessageTo('conv_b', 'elsewhere'), isTrue);
+      expect(h.crypto.encrypted.map((e) => e.conversationId), ['conv_b']);
 
-    h.api.bundleGate!.complete();
-    expect(await text, isTrue);
-    expect(await reaction, isTrue);
-    final held = h.crypto.encrypted.where((e) => e.conversationId == 'conv_a');
-    expect(
-        held.map((e) => e.type), [AppPayloadType.text, AppPayloadType.reaction],
-        reason: 'held sends go out in the order they were made');
-    expect(held.every((e) => e.removalApplied), isTrue);
-    await _waitFor(() => h.api.envelopes.length == 3);
-  });
+      h.api.bundleGate!.complete();
+      expect(await text, isTrue);
+      expect(await reaction, isTrue);
+      final held = h.crypto.encrypted.where(
+        (e) => e.conversationId == 'conv_a',
+      );
+      expect(
+        held.map((e) => e.type),
+        [AppPayloadType.text, AppPayloadType.reaction],
+        reason: 'held sends go out in the order they were made',
+      );
+      expect(held.every((e) => e.removalApplied), isTrue);
+      await _waitFor(() => h.api.envelopes.length == 3);
+    },
+  );
 
   test('a send made while others wait queues behind them', () async {
     final h = await _Harness.start();
@@ -70,8 +81,11 @@ void main() {
       AppPayloadType.delete,
       AppPayloadType.text,
     ]);
-    expect(
-        h.crypto.encrypted.map((e) => e.body['text']), ['one', null, 'three']);
+    expect(h.crypto.encrypted.map((e) => e.body['text']), [
+      'one',
+      null,
+      'three',
+    ]);
   });
 
   test('a held send does not poll while it waits', () async {
@@ -124,117 +138,136 @@ void main() {
     expect(h.api.bundles, isEmpty);
   });
 
-  test('a pending-changes read taken before the removal does not lift it',
-      () async {
-    final store = _CountingStore();
-    final h = await _Harness.start(
+  test(
+    'a pending-changes read taken before the removal does not lift it',
+    () async {
+      final store = _CountingStore();
+      final h = await _Harness.start(
         store: store,
         awaitRestore: false,
         fakes: (api, _) => api
           ..readGate = Completer<void>()
-          ..bundleGate = Completer<void>());
-    addTearDown(h.state.dispose);
-    // The startup reconcile has read the (empty) list and waits.
-    await _waitFor(() => h.api.pendingChangeCalls == 1);
-    final removed = h.state.removeConversationMember('conv_a', _bob.accountId);
-    await _waitFor(() => h.api.pendingRemovals.contains('conv_a'));
-    final held = h.state.sendMessageTo('conv_a', 'after removal');
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    // The stale, empty answer arrives after the removal.
-    h.api.readGate!.complete();
-    h.api.readGate = null;
-    expect(await removed, isTrue);
-    await _waitFor(() => h.api.bundles.isNotEmpty);
-    await h.frames(const Duration(milliseconds: 300));
-    expect(h.crypto.encrypted, isEmpty,
-        reason: 'a read older than the removal must not release it');
-    h.api.bundleGate!.complete();
-    expect(await held, isTrue);
-    expect(h.crypto.encrypted.single.removalApplied, isTrue);
-  });
+          ..bundleGate = Completer<void>(),
+      );
+      addTearDown(h.state.dispose);
+      // The startup reconcile has read the (empty) list and waits.
+      await _waitFor(() => h.api.pendingChangeCalls == 1);
+      final removed = h.state.removeConversationMember(
+        'conv_a',
+        _bob.accountId,
+      );
+      await _waitFor(() => h.api.pendingRemovals.contains('conv_a'));
+      final held = h.state.sendMessageTo('conv_a', 'after removal');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // The stale, empty answer arrives after the removal.
+      h.api.readGate!.complete();
+      h.api.readGate = null;
+      expect(await removed, isTrue);
+      await _waitFor(() => h.api.bundles.isNotEmpty);
+      await h.frames(const Duration(milliseconds: 300));
+      expect(
+        h.crypto.encrypted,
+        isEmpty,
+        reason: 'a read older than the removal must not release it',
+      );
+      h.api.bundleGate!.complete();
+      expect(await held, isTrue);
+      expect(h.crypto.encrypted.single.removalApplied, isTrue);
+    },
+  );
 
-  test('a send queued before a hold appeared still goes before later ones',
-      () async {
-    final h = await _Harness.start(
+  test(
+    'a send queued before a hold appeared still goes before later ones',
+    () async {
+      final h = await _Harness.start(
         pendingRemovals: {'conv_c'},
-        fakes: (api, crypto) => crypto.stageFailures.add('conv_c'));
-    addTearDown(h.state.dispose);
-    // conv_c keeps a removal listed, so every catch-up reconciles.
-    await _waitFor(() => h.state.sendHeldForRemoval('conv_c'));
-    h.store.capacityGate = Completer<void>();
-    h.api.bundleGate = Completer<void>();
-    final slow = h.state.sendMessageTo('conv_b', 'slow');
-    final first = h.state.sendMessageTo('conv_a', 'A');
-    // Another device removed Bob from conv_a meanwhile.
-    h.api.pendingRemovals.add('conv_a');
-    h.sync.frame();
-    await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
-    final second = h.state.sendMessageTo('conv_a', 'B');
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    h.store.capacityGate!.complete();
-    expect(await slow, isTrue);
-    await _waitFor(() => h.api.bundles.contains('conv_a'));
-    h.api.bundleGate!.complete();
-    expect(await Future.wait([first, second]), [true, true]);
-    expect(
+        fakes: (api, crypto) => crypto.stageFailures.add('conv_c'),
+      );
+      addTearDown(h.state.dispose);
+      // conv_c keeps a removal listed, so every catch-up reconciles.
+      await _waitFor(() => h.state.sendHeldForRemoval('conv_c'));
+      h.store.capacityGate = Completer<void>();
+      h.api.bundleGate = Completer<void>();
+      final slow = h.state.sendMessageTo('conv_b', 'slow');
+      final first = h.state.sendMessageTo('conv_a', 'A');
+      // Another device removed Bob from conv_a meanwhile.
+      h.api.pendingRemovals.add('conv_a');
+      h.sync.frame();
+      await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
+      final second = h.state.sendMessageTo('conv_a', 'B');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      h.store.capacityGate!.complete();
+      expect(await slow, isTrue);
+      await _waitFor(() => h.api.bundles.contains('conv_a'));
+      h.api.bundleGate!.complete();
+      expect(await Future.wait([first, second]), [true, true]);
+      expect(
         h.crypto.encrypted
             .where((e) => e.conversationId == 'conv_a')
             .map((e) => e.body['text']),
-        ['A', 'B']);
-  });
+        ['A', 'B'],
+      );
+    },
+  );
 
-  test('a removal the server withdraws at the same epoch releases the hold',
-      () async {
-    final h = await _Harness.start(
+  test(
+    'a removal the server withdraws at the same epoch releases the hold',
+    () async {
+      final h = await _Harness.start(
         pendingRemovals: {'conv_a'},
         fakes: (api, crypto) {
           crypto.stageFailures.add('conv_a');
           api.membersOf('conv_a').remove(_bob.accountId);
-        });
-    addTearDown(h.state.dispose);
-    await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
-    final held = h.state.sendMessageTo('conv_a', 'held');
-    await h.frames(const Duration(milliseconds: 200));
-    expect(h.crypto.encrypted, isEmpty);
-    // Bob is added back before any commit removed him: the epoch is still
-    // the one the removal was listed at.
-    h.api.pendingRemovals.remove('conv_a');
-    h.api.membersOf('conv_a').add(_bob.accountId);
-    h.sync.frame();
-    expect(await held.timeout(const Duration(seconds: 5)), isTrue);
-    expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
-  });
+        },
+      );
+      addTearDown(h.state.dispose);
+      await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
+      final held = h.state.sendMessageTo('conv_a', 'held');
+      await h.frames(const Duration(milliseconds: 200));
+      expect(h.crypto.encrypted, isEmpty);
+      // Bob is added back before any commit removed him: the epoch is still
+      // the one the removal was listed at.
+      h.api.pendingRemovals.remove('conv_a');
+      h.api.membersOf('conv_a').add(_bob.accountId);
+      h.sync.frame();
+      expect(await held.timeout(const Duration(seconds: 5)), isTrue);
+      expect(h.state.sendHeldForRemoval('conv_a'), isFalse);
+    },
+  );
 
   test('an abandoned revocation bundle does not hold sends', () async {
     final h = await _Harness.start(
-        fakes: (api, _) => api
-          ..bundleGate = Completer<void>()
-          ..refuseBundle =
-              () => ApiException(409, '{"error":"mls_epoch_conflict"}'));
+      fakes: (api, _) => api
+        ..bundleGate = Completer<void>()
+        ..refuseBundle =
+            () => ApiException(409, '{"error":"mls_epoch_conflict"}'),
+    );
     addTearDown(h.state.dispose);
     final counter = (await h.store.loadCryptoState())?.counter ?? 0;
-    await h.store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-      expectedCounter: counter,
-      expectedCursor: await h.store.loadSyncCursor(),
-      state: StoredCryptoState(
-        counter: counter + 1,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: const <int>[1],
-      ),
-      messages: <PendingMlsMessage>[
-        PendingMlsMessage(
-          idempotencyKey: 'revocation_1',
-          conversationId: 'conv_a',
-          kind: MlsCommitBundle.kind,
-          payload: const MlsCommitBundle(
-            epoch: 3,
-            commit: <int>[1],
-            removed: <MlsDeviceRef>[_bob],
-            revocationDeviceId: 'dev_bob',
-          ).encode(),
+    await h.store.commitOutgoingMlsTransition(
+      OutgoingMlsStateTransition(
+        expectedCounter: counter,
+        expectedCursor: await h.store.loadSyncCursor(),
+        state: StoredCryptoState(
+          counter: counter + 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: const <int>[1],
         ),
-      ],
-    ));
+        messages: <PendingMlsMessage>[
+          PendingMlsMessage(
+            idempotencyKey: 'revocation_1',
+            conversationId: 'conv_a',
+            kind: MlsCommitBundle.kind,
+            payload: const MlsCommitBundle(
+              epoch: 3,
+              commit: <int>[1],
+              removed: <MlsDeviceRef>[_bob],
+              revocationDeviceId: 'dev_bob',
+            ).encode(),
+          ),
+        ],
+      ),
+    );
     h.sync.frame();
     await _waitFor(() => h.api.bundles.isNotEmpty);
     final sent = h.state.sendMessageTo('conv_a', 'after revocation');
@@ -260,8 +293,9 @@ void main() {
 
   test('a hold whose group is gone locally is dropped', () async {
     final h = await _Harness.start(
-        pendingRemovals: {'conv_a'},
-        fakes: (api, crypto) => crypto.stageFailures.add('conv_a'));
+      pendingRemovals: {'conv_a'},
+      fakes: (api, crypto) => crypto.stageFailures.add('conv_a'),
+    );
     addTearDown(h.state.dispose);
     await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
     // A skipped Welcome (D74) leaves no group, and the server drops it.
@@ -271,26 +305,29 @@ void main() {
     await _waitFor(() => !h.state.sendHeldForRemoval('conv_a'));
   });
 
-  test('a failed outbox read while a send waits its turn is reported',
-      () async {
-    final h = await _Harness.start();
-    addTearDown(h.state.dispose);
-    h.store.capacityGate = Completer<void>();
-    final first = h.state.sendMessageTo('conv_a', 'A');
-    final second = h.state.sendMessageTo('conv_a', 'B');
-    h.store.failMlsReads = true;
-    h.store.capacityGate!.complete();
-    // Neither send throws: both fail closed and report it.
-    expect(await Future.wait([first, second]), [false, false]);
-    expect(h.state.errorFor(Ops.send), isNotNull);
-    expect(h.crypto.encrypted, isEmpty);
-    h.store.failMlsReads = false;
-  });
+  test(
+    'a failed outbox read while a send waits its turn is reported',
+    () async {
+      final h = await _Harness.start();
+      addTearDown(h.state.dispose);
+      h.store.capacityGate = Completer<void>();
+      final first = h.state.sendMessageTo('conv_a', 'A');
+      final second = h.state.sendMessageTo('conv_a', 'B');
+      h.store.failMlsReads = true;
+      h.store.capacityGate!.complete();
+      // Neither send throws: both fail closed and report it.
+      expect(await Future.wait([first, second]), [false, false]);
+      expect(h.state.errorFor(Ops.send), isNotNull);
+      expect(h.crypto.encrypted, isEmpty);
+      h.store.failMlsReads = false;
+    },
+  );
 
   test('a hold that cannot be checked does not stop a staged commit', () async {
     final h = await _Harness.start(
-        pendingRemovals: {'conv_a'},
-        fakes: (api, crypto) => crypto.stageFailures.add('conv_a'));
+      pendingRemovals: {'conv_a'},
+      fakes: (api, crypto) => crypto.stageFailures.add('conv_a'),
+    );
     addTearDown(h.state.dispose);
     await _waitFor(() => h.state.sendHeldForRemoval('conv_a'));
     h.api.pendingRemovals
@@ -298,8 +335,10 @@ void main() {
       ..add('conv_b');
     h.crypto.epochFailures.add('conv_a');
     h.sync.frame();
-    await _waitFor(() => h.api.bundles.contains('conv_b'),
-        timeout: const Duration(seconds: 2));
+    await _waitFor(
+      () => h.api.bundles.contains('conv_b'),
+      timeout: const Duration(seconds: 2),
+    );
   });
 
   test('this device\'s removal holds sends again after a restart', () async {
@@ -313,19 +352,23 @@ void main() {
 
     // After the restart the first pending-changes read has not answered.
     final h = await _Harness.start(
-        store: store,
-        crypto: crypto,
-        pendingRemovals: {'conv_a'},
-        awaitRestore: false,
-        fakes: (api, _) => api
-          ..readGate = Completer<void>()
-          ..membersOf('conv_a').remove(_bob.accountId));
+      store: store,
+      crypto: crypto,
+      pendingRemovals: {'conv_a'},
+      awaitRestore: false,
+      fakes: (api, _) => api
+        ..readGate = Completer<void>()
+        ..membersOf('conv_a').remove(_bob.accountId),
+    );
     addTearDown(h.state.dispose);
     await _waitFor(() => h.api.pendingChangeCalls == 1);
     final held = h.state.sendMessageTo('conv_a', 'held');
     await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(crypto.encrypted, isEmpty,
-        reason: 'the hold was kept on this device');
+    expect(
+      crypto.encrypted,
+      isEmpty,
+      reason: 'the hold was kept on this device',
+    );
     crypto.stageFailures.clear();
     h.api.readGate!.complete();
     h.api.readGate = null;
@@ -393,8 +436,10 @@ class _Harness {
 
 Future<void> _network() => Future<void>.delayed(Duration.zero);
 
-Future<void> _waitFor(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> _waitFor(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     if (await condition()) return;
@@ -428,7 +473,9 @@ class _Api extends ApiClient with LegacySyncPageFake {
   final Map<String, Set<String>> members = <String, Set<String>>{};
 
   Set<String> membersOf(String conversationId) => members.putIfAbsent(
-      conversationId, () => <String>{'acct_me', _bob.accountId});
+        conversationId,
+        () => <String>{'acct_me', _bob.accountId},
+      );
 
   int epochOf(String conversationId) => serverEpochs[conversationId] ?? 3;
 
@@ -440,7 +487,10 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<int?> removeConversationMember(
-      String token, String conversationId, String accountId) async {
+    String token,
+    String conversationId,
+    String accountId,
+  ) async {
     await _network();
     if (accountId == 'me') {
       members.remove(conversationId);
@@ -453,7 +503,9 @@ class _Api extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<List<ConversationMember>> conversationMembers(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     await _network();
     return <ConversationMember>[
       for (final account in membersOf(conversationId))
@@ -475,8 +527,11 @@ class _Api extends ApiClient with LegacySyncPageFake {
       const <String, Object?>{'enabled': false};
 
   @override
-  Future<List<SyncEvent>> syncEvents(String token,
-      {int after = 0, int limit = 100}) async {
+  Future<List<SyncEvent>> syncEvents(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
     await _network();
     return const <SyncEvent>[];
   }
@@ -578,27 +633,29 @@ class _Crypto implements MlsConversationCryptoService {
     }
     staged++;
     final counter = (await store.loadCryptoState())?.counter ?? 0;
-    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
-      expectedCounter: counter,
-      expectedCursor: await store.loadSyncCursor(),
-      state: StoredCryptoState(
-        counter: counter + 1,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: const <int>[1],
-      ),
-      messages: <PendingMlsMessage>[
-        PendingMlsMessage(
-          idempotencyKey: 'bundle_$staged',
-          conversationId: conversationId,
-          kind: MlsCommitBundle.kind,
-          payload: MlsCommitBundle(
-            epoch: epochOf(conversationId),
-            commit: const <int>[1],
-            removed: removes,
-          ).encode(),
+    await store.commitOutgoingMlsTransition(
+      OutgoingMlsStateTransition(
+        expectedCounter: counter,
+        expectedCursor: await store.loadSyncCursor(),
+        state: StoredCryptoState(
+          counter: counter + 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: const <int>[1],
         ),
-      ],
-    ));
+        messages: <PendingMlsMessage>[
+          PendingMlsMessage(
+            idempotencyKey: 'bundle_$staged',
+            conversationId: conversationId,
+            kind: MlsCommitBundle.kind,
+            payload: MlsCommitBundle(
+              epoch: epochOf(conversationId),
+              commit: const <int>[1],
+              removed: removes,
+            ).encode(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

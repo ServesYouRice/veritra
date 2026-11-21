@@ -21,7 +21,8 @@ List<int> _kf(int fill) => List<int>.filled(32, fill);
 
 /// What a franked text's `P` looks like (the exact bytes are the sender's).
 List<int> _payload(String text) => List<int>.unmodifiable(
-    '{"v":2,"type":"text","body":{"text":"$text"}}'.codeUnits);
+      '{"v":2,"type":"text","body":{"text":"$text"}}'.codeUnits,
+    );
 
 FrankReveal _reveal(String id, {String text = 'a franked secret'}) =>
     FrankReveal(
@@ -93,43 +94,49 @@ void main() {
   }) async {
     final counter = (await store.loadCryptoState())!.counter;
     final cursor = await store.loadSyncCursor();
-    await store.commitMlsTransition(MlsStateTransition(
-      messageId: 'application:${cursor + 1}:$id',
-      conversationId: _conversation,
-      expectedCounter: counter,
-      expectedCursor: cursor,
-      state: StoredCryptoState(
-        counter: counter + 1,
-        stateKey: List<int>.filled(32, 1),
-        sealedState: <int>[counter + 1],
+    await store.commitMlsTransition(
+      MlsStateTransition(
+        messageId: 'application:${cursor + 1}:$id',
+        conversationId: _conversation,
+        expectedCounter: counter,
+        expectedCursor: cursor,
+        state: StoredCryptoState(
+          counter: counter + 1,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: <int>[counter + 1],
+        ),
+        cursor: cursor + 1,
+        messageEffects: effects ?? <MessageEffect>[_insert(id)],
+        frankReveals: reveals ?? <FrankReveal>[_reveal(id)],
       ),
-      cursor: cursor + 1,
-      messageEffects: effects ?? <MessageEffect>[_insert(id)],
-      frankReveals: reveals ?? <FrankReveal>[_reveal(id)],
-    ));
+    );
   }
 
   group('a reveal is kept with a live received message', () {
-    test('kf, the exact P and the envelope id come back byte for byte',
-        () async {
-      final store = createStore();
-      await seedState(store);
-      await receive(store, 'one');
-      final reveal = await store.loadFrankReveal('dev_peer:one');
-      expect(reveal, isNotNull);
-      expect(reveal!.frankKey, _kf(7));
-      expect(reveal.payload, _payload('a franked secret'));
-      expect(reveal.envelopeId, 'msg_one');
-      expect(reveal.conversationId, _conversation);
-      // It is still there after the database is reopened.
-      for (final database in databases) {
-        await database.close();
-      }
-      databases.clear();
-      final reopened = createStore();
-      expect((await reopened.loadFrankReveal('dev_peer:one'))!.payload,
-          _payload('a franked secret'));
-    });
+    test(
+      'kf, the exact P and the envelope id come back byte for byte',
+      () async {
+        final store = createStore();
+        await seedState(store);
+        await receive(store, 'one');
+        final reveal = await store.loadFrankReveal('dev_peer:one');
+        expect(reveal, isNotNull);
+        expect(reveal!.frankKey, _kf(7));
+        expect(reveal.payload, _payload('a franked secret'));
+        expect(reveal.envelopeId, 'msg_one');
+        expect(reveal.conversationId, _conversation);
+        // It is still there after the database is reopened.
+        for (final database in databases) {
+          await database.close();
+        }
+        databases.clear();
+        final reopened = createStore();
+        expect(
+          (await reopened.loadFrankReveal('dev_peer:one'))!.payload,
+          _payload('a franked secret'),
+        );
+      },
+    );
 
     test('toString never prints the message', () {
       expect(_reveal('one').toString(), isNot(contains('secret')));
@@ -142,21 +149,28 @@ void main() {
       final store = createStore();
       await seedState(store);
       // No row of its own: the effect edits another message.
-      await receive(store, 'edit', effects: <MessageEffect>[
-        EditMessageEffect(
-          targetKey: 'dev_peer:nothing',
-          editorAccountId: 'acct_peer',
-          body: 'new',
-          at: 1,
-        ),
-      ], reveals: [
-        _reveal('edit')
-      ]);
+      await receive(
+        store,
+        'edit',
+        effects: <MessageEffect>[
+          EditMessageEffect(
+            targetKey: 'dev_peer:nothing',
+            editorAccountId: 'acct_peer',
+            body: 'new',
+            at: 1,
+          ),
+        ],
+        reveals: [_reveal('edit')],
+      );
       expect(await store.loadFrankReveal('dev_peer:edit'), isNull);
       expect(await store.loadSyncCursor(), 1);
       // Not even one effect: still consumed.
-      await receive(store, 'bare',
-          effects: <MessageEffect>[], reveals: [_reveal('bare')]);
+      await receive(
+        store,
+        'bare',
+        effects: <MessageEffect>[],
+        reveals: [_reveal('bare')],
+      );
       expect(await store.loadFrankReveal('dev_peer:bare'), isNull);
       expect(await store.loadSyncCursor(), 2);
     });
@@ -164,37 +178,50 @@ void main() {
     test('a message that arrived already expired keeps no reveal', () async {
       final store = createStore();
       await seedState(store);
-      await receive(store, 'old', effects: <MessageEffect>[
-        _insert('old',
+      await receive(
+        store,
+        'old',
+        effects: <MessageEffect>[
+          _insert(
+            'old',
             expiresAt: DateTime.now()
                 .subtract(const Duration(minutes: 1))
                 .toUtc()
-                .millisecondsSinceEpoch),
-      ], reveals: [
-        _reveal('old')
-      ]);
+                .millisecondsSinceEpoch,
+          ),
+        ],
+        reveals: [_reveal('old')],
+      );
       expect(await store.loadFrankReveal('dev_peer:old'), isNull);
       expect(await store.loadSyncCursor(), 1);
     });
 
-    test('a reveal that the table would refuse is skipped, not a failure',
-        () async {
-      final store = createStore();
-      await seedState(store);
-      await receive(store, 'big', reveals: [
-        FrankReveal(
-          messageKey: 'dev_peer:big',
-          conversationId: _conversation,
-          envelopeId: 'msg_big',
-          frankKey: _kf(1),
-          payload: List<int>.filled(frankRevealMaxPayloadBytes + 1, 1),
-        ),
-      ]);
-      expect(await store.loadFrankReveal('dev_peer:big'), isNull);
-      expect(await store.loadSyncCursor(), 1);
-      expect(
-          (await store.loadMessages(_conversation)).single.key, 'dev_peer:big');
-    });
+    test(
+      'a reveal that the table would refuse is skipped, not a failure',
+      () async {
+        final store = createStore();
+        await seedState(store);
+        await receive(
+          store,
+          'big',
+          reveals: [
+            FrankReveal(
+              messageKey: 'dev_peer:big',
+              conversationId: _conversation,
+              envelopeId: 'msg_big',
+              frankKey: _kf(1),
+              payload: List<int>.filled(frankRevealMaxPayloadBytes + 1, 1),
+            ),
+          ],
+        );
+        expect(await store.loadFrankReveal('dev_peer:big'), isNull);
+        expect(await store.loadSyncCursor(), 1);
+        expect(
+          (await store.loadMessages(_conversation)).single.key,
+          'dev_peer:big',
+        );
+      },
+    );
   });
 
   group('the reveal goes with the message', () {
@@ -204,17 +231,24 @@ void main() {
       await receive(store, 'one');
       await receive(store, 'two');
       expect(await store.loadFrankReveal('dev_peer:one'), isNotNull);
-      await receive(store, 'del', effects: <MessageEffect>[
-        DeleteMessageEffect(
-          targetKey: 'dev_peer:one',
-          deleterAccountId: 'acct_peer',
-          at: DateTime.now().millisecondsSinceEpoch,
-        ),
-      ], reveals: const <FrankReveal>[]);
+      await receive(
+        store,
+        'del',
+        effects: <MessageEffect>[
+          DeleteMessageEffect(
+            targetKey: 'dev_peer:one',
+            deleterAccountId: 'acct_peer',
+            at: DateTime.now().millisecondsSinceEpoch,
+          ),
+        ],
+        reveals: const <FrankReveal>[],
+      );
       // The row stays as a tombstone, so only the trigger can drop this.
       final rows = await store.loadMessages(_conversation);
       expect(
-          rows.firstWhere((m) => m.key == 'dev_peer:one').deletedAt, isNotNull);
+        rows.firstWhere((m) => m.key == 'dev_peer:one').deletedAt,
+        isNotNull,
+      );
       expect(await store.loadFrankReveal('dev_peer:one'), isNull);
       expect(await store.loadFrankReveal('dev_peer:two'), isNotNull);
     });
@@ -231,12 +265,17 @@ void main() {
       final store = createStore();
       await seedState(store);
       final soon = DateTime.now().toUtc().add(const Duration(minutes: 5));
-      await receive(store, 'soon', effects: <MessageEffect>[
-        _insert('soon', expiresAt: soon.millisecondsSinceEpoch),
-      ]);
+      await receive(
+        store,
+        'soon',
+        effects: <MessageEffect>[
+          _insert('soon', expiresAt: soon.millisecondsSinceEpoch),
+        ],
+      );
       expect(await store.loadFrankReveal('dev_peer:soon'), isNotNull);
       await store.purgeExpiredMessages(
-          now: soon.add(const Duration(seconds: 1)));
+        now: soon.add(const Duration(seconds: 1)),
+      );
       expect(await store.loadMessages(_conversation), isEmpty);
       expect(await store.loadFrankReveal('dev_peer:soon'), isNull);
     });
@@ -245,12 +284,15 @@ void main() {
       final store = createStore();
       await seedState(store);
       await receive(store, 'one');
-      await store.saveReportKeyPin(ReportKeyPin(
+      await store.saveReportKeyPin(
+        ReportKeyPin(
           origin: _origin,
           ownerAccountId: 'acct_owner',
           publicKey: _kf(3),
           keyRev: 1,
-          pinnedAt: 1));
+          pinnedAt: 1,
+        ),
+      );
       await store.clear();
       expect(await store.loadFrankReveal('dev_peer:one'), isNull);
       expect(await store.loadReportKeyPins(_origin), isEmpty);
@@ -258,91 +300,116 @@ void main() {
 
     test('an identity change drops reveals but not the pins', () async {
       final store = createStore();
-      await store.saveSession(const Session(
+      await store.saveSession(
+        const Session(
           baseUrl: _origin,
           token: 't',
           accountId: 'acct_me',
           deviceId: 'dev_me',
           username: 'me',
-          deviceSecret: 's'));
+          deviceSecret: 's',
+        ),
+      );
       await seedState(store);
       await receive(store, 'one');
-      await store.saveReportKeyPin(ReportKeyPin(
+      await store.saveReportKeyPin(
+        ReportKeyPin(
           origin: _origin,
           ownerAccountId: 'acct_owner',
           publicKey: _kf(3),
           keyRev: 1,
-          pinnedAt: 1));
-      await store.saveSession(const Session(
+          pinnedAt: 1,
+        ),
+      );
+      await store.saveSession(
+        const Session(
           baseUrl: _origin,
           token: 't2',
           accountId: 'acct_other',
           deviceId: 'dev_other',
           username: 'other',
-          deviceSecret: 's2'));
+          deviceSecret: 's2',
+        ),
+      );
       expect(await store.loadFrankReveal('dev_peer:one'), isNull);
       expect(await store.loadReportKeyPins(_origin), hasLength(1));
     });
   });
 
   group('pinned report keys', () {
-    test('a pin is stored per origin and owner and replaced when pinned again',
-        () async {
-      final store = createStore();
-      Future<void> pin(String origin, String owner, int fill, int rev) =>
-          store.saveReportKeyPin(ReportKeyPin(
-              origin: origin,
-              ownerAccountId: owner,
-              publicKey: _kf(fill),
-              keyRev: rev,
-              pinnedAt: 10 + rev));
-      await pin(_origin, 'acct_a', 1, 1);
-      await pin(_origin, 'acct_b', 2, 1);
-      await pin('https://other.example.org', 'acct_a', 9, 1);
-      expect(
+    test(
+      'a pin is stored per origin and owner and replaced when pinned again',
+      () async {
+        final store = createStore();
+        Future<void> pin(String origin, String owner, int fill, int rev) =>
+            store.saveReportKeyPin(
+              ReportKeyPin(
+                origin: origin,
+                ownerAccountId: owner,
+                publicKey: _kf(fill),
+                keyRev: rev,
+                pinnedAt: 10 + rev,
+              ),
+            );
+        await pin(_origin, 'acct_a', 1, 1);
+        await pin(_origin, 'acct_b', 2, 1);
+        await pin('https://other.example.org', 'acct_a', 9, 1);
+        expect(
           (await store.loadReportKeyPins(_origin)).map((p) => p.ownerAccountId),
-          ['acct_a', 'acct_b']);
-      await pin(_origin, 'acct_a', 5, 2);
-      final replaced = (await store.loadReportKeyPin(_origin, 'acct_a'))!;
-      expect(replaced.publicKey, _kf(5));
-      expect(replaced.keyRev, 2);
-      await store.deleteReportKeyPin(_origin, 'acct_b');
-      expect(await store.loadReportKeyPin(_origin, 'acct_b'), isNull);
-      expect(await store.loadReportKeyPins('https://other.example.org'),
-          hasLength(1));
-    });
+          ['acct_a', 'acct_b'],
+        );
+        await pin(_origin, 'acct_a', 5, 2);
+        final replaced = (await store.loadReportKeyPin(_origin, 'acct_a'))!;
+        expect(replaced.publicKey, _kf(5));
+        expect(replaced.keyRev, 2);
+        await store.deleteReportKeyPin(_origin, 'acct_b');
+        expect(await store.loadReportKeyPin(_origin, 'acct_b'), isNull);
+        expect(
+          await store.loadReportKeyPins('https://other.example.org'),
+          hasLength(1),
+        );
+      },
+    );
 
     test('a pin that is not 32 bytes is refused', () async {
       final store = createStore();
       expect(
-          () => store.saveReportKeyPin(ReportKeyPin(
-              origin: _origin,
-              ownerAccountId: 'acct_a',
-              publicKey: const [1, 2, 3],
-              keyRev: 1,
-              pinnedAt: 1)),
-          throwsA(anything));
+        () => store.saveReportKeyPin(
+          ReportKeyPin(
+            origin: _origin,
+            ownerAccountId: 'acct_a',
+            publicKey: const [1, 2, 3],
+            keyRev: 1,
+            pinnedAt: 1,
+          ),
+        ),
+        throwsA(anything),
+      );
     });
   });
 
   group('upgrade from schema 18', () {
     Future<int> version(EncryptedLocalDatabase db) async =>
-        (await db.customSelect('PRAGMA user_version').getSingle())
-            .read<int>('user_version');
+        (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+          'user_version',
+        );
 
     Future<Set<String>> objects(EncryptedLocalDatabase db) async => {
           for (final row in await db
               .customSelect(
-                  "SELECT name FROM sqlite_master WHERE name LIKE 'local_frank%' "
-                  "OR name LIKE 'local_report_key%'")
+                "SELECT name FROM sqlite_master WHERE name LIKE 'local_frank%' "
+                "OR name LIKE 'local_report_key%'",
+              )
               .get())
-            row.read<String>('name')
+            row.read<String>('name'),
         };
 
-    Future<void> commit(EncryptedLocalDatabase db,
-        {required int counter,
-        required String id,
-        List<FrankReveal> reveals = const <FrankReveal>[]}) {
+    Future<void> commit(
+      EncryptedLocalDatabase db, {
+      required int counter,
+      required String id,
+      List<FrankReveal> reveals = const <FrankReveal>[],
+    }) {
       return db.commitMlsTransition(
         messageId: 'application:$counter:$id',
         conversationId: _conversation,
@@ -362,48 +429,57 @@ void main() {
     test('a new database has the schema 19 tables and trigger', () async {
       final db = EncryptedLocalDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion,
-          greaterThanOrEqualTo(19));
+      expect(
+        EncryptedLocalDatabase.currentSchemaVersion,
+        greaterThanOrEqualTo(19),
+      );
       expect(await version(db), EncryptedLocalDatabase.currentSchemaVersion);
       expect(
-          await objects(db),
-          containsAll(<String>{
-            'local_frank_reveals',
-            'local_report_key_pins',
-            'local_frank_reveals_tombstone',
-          }));
+        await objects(db),
+        containsAll(<String>{
+          'local_frank_reveals',
+          'local_report_key_pins',
+          'local_frank_reveals_tombstone',
+        }),
+      );
     });
 
-    test('keeps every stored message, adds the tables, and then works',
-        () async {
-      final file = File('${directory.path}/schema18.db');
-      var db = EncryptedLocalDatabase(NativeDatabase(file));
-      await commit(db, counter: 1, id: 'old');
-      // A schema 18 database: the same data, without schema 19.
-      await stripFrankRevealSchema(db);
-      await db.customStatement('PRAGMA user_version = 18');
-      expect(await objects(db), isEmpty);
-      await db.close();
+    test(
+      'keeps every stored message, adds the tables, and then works',
+      () async {
+        final file = File('${directory.path}/schema18.db');
+        var db = EncryptedLocalDatabase(NativeDatabase(file));
+        await commit(db, counter: 1, id: 'old');
+        // A schema 18 database: the same data, without schema 19.
+        await stripFrankRevealSchema(db);
+        await db.customStatement('PRAGMA user_version = 18');
+        expect(await objects(db), isEmpty);
+        await db.close();
 
-      db = EncryptedLocalDatabase(NativeDatabase(file));
-      addTearDown(db.close);
-      expect(await version(db), EncryptedLocalDatabase.currentSchemaVersion);
-      expect(db.upgradeStarted, isTrue);
-      expect(await objects(db), hasLength(4));
-      // The message received before the upgrade is untouched and has no
-      // reveal: it cannot be reported.
-      expect((await db.readAllMessages()).map((m) => m.key), ['dev_peer:old']);
-      expect(await db.readFrankReveal('dev_peer:old'), isNull);
+        db = EncryptedLocalDatabase(NativeDatabase(file));
+        addTearDown(db.close);
+        expect(await version(db), EncryptedLocalDatabase.currentSchemaVersion);
+        expect(db.upgradeStarted, isTrue);
+        expect(await objects(db), hasLength(4));
+        // The message received before the upgrade is untouched and has no
+        // reveal: it cannot be reported.
+        expect((await db.readAllMessages()).map((m) => m.key), [
+          'dev_peer:old',
+        ]);
+        expect(await db.readFrankReveal('dev_peer:old'), isNull);
 
-      // A later message keeps its reveal, and a hide takes only that one.
-      await commit(db, counter: 2, id: 'new', reveals: [_reveal('new')]);
-      final kept = await db.readFrankReveal('dev_peer:new');
-      expect(kept!.payload, _payload('a franked secret'));
-      expect(kept.frankKey, _kf(7));
-      await db.hideMessage(_conversation, 'dev_peer:new', 5);
-      expect(await db.readFrankReveal('dev_peer:new'), isNull);
-      expect((await db.readAllMessages()).map((m) => m.key),
-          containsAll(['dev_peer:old', 'dev_peer:new']));
-    });
+        // A later message keeps its reveal, and a hide takes only that one.
+        await commit(db, counter: 2, id: 'new', reveals: [_reveal('new')]);
+        final kept = await db.readFrankReveal('dev_peer:new');
+        expect(kept!.payload, _payload('a franked secret'));
+        expect(kept.frankKey, _kf(7));
+        await db.hideMessage(_conversation, 'dev_peer:new', 5);
+        expect(await db.readFrankReveal('dev_peer:new'), isNull);
+        expect(
+          (await db.readAllMessages()).map((m) => m.key),
+          containsAll(['dev_peer:old', 'dev_peer:new']),
+        );
+      },
+    );
   });
 }

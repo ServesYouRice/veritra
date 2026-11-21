@@ -79,7 +79,9 @@ void main() {
 
   test('a legacy import stores each envelope expiry from its JSON', () async {
     final database = openEncryptedLocalDatabase(
-        File('${directory.path}/import.db'), 'cd' * 32);
+      File('${directory.path}/import.db'),
+      'cd' * 32,
+    );
     databases.add(database);
     final rows = <String, String>{
       'env_past': jsonEncode(_envelope('env_past', past).toJson()),
@@ -94,7 +96,7 @@ void main() {
         String id,
         String conversationId,
         int position,
-        String payloadJson
+        String payloadJson,
       })>[
         for (final entry in rows.entries)
           (
@@ -122,51 +124,57 @@ void main() {
     expect(await database.nextExpiry(), past.millisecondsSinceEpoch);
   });
 
-  test('a migrated legacy record expires its envelopes like any other',
-      () async {
-    final legacy = <String, Object?>{
-      'version': 3,
-      'cursor': 17,
-      'session': <String, Object?>{
-        'base_url': 'https://example.test',
-        'token': 'session-token',
-        'account_id': 'acct_1',
-        'device_id': 'dev_1',
-      },
-      'snapshot': <String, Object?>{
-        'conversations': <Object?>[
-          Conversation(id: 'conv_1', kind: 'dm').toJson(),
-        ],
-        'messages': <String, Object?>{
-          'conv_1': <Object?>[
-            _envelope('env_past', past).toJson(),
-            _envelope('env_future', future).toJson(),
-          ],
+  test(
+    'a migrated legacy record expires its envelopes like any other',
+    () async {
+      final legacy = <String, Object?>{
+        'version': 3,
+        'cursor': 17,
+        'session': <String, Object?>{
+          'base_url': 'https://example.test',
+          'token': 'session-token',
+          'account_id': 'acct_1',
+          'device_id': 'dev_1',
         },
-      },
-      'outbox': <Object?>[],
-    };
-    FlutterSecureStorage.setMockInitialValues(<String, String>{
-      'veritra.account_state.v2': jsonEncode(legacy),
-    });
+        'snapshot': <String, Object?>{
+          'conversations': <Object?>[
+            Conversation(id: 'conv_1', kind: 'dm').toJson(),
+          ],
+          'messages': <String, Object?>{
+            'conv_1': <Object?>[
+              _envelope('env_past', past).toJson(),
+              _envelope('env_future', future).toJson(),
+            ],
+          },
+        },
+        'outbox': <Object?>[],
+      };
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        'veritra.account_state.v2': jsonEncode(legacy),
+      });
 
-    final store = createStore();
-    // The migration verified and finished: the record is gone.
-    expect(await store.loadSyncCursor(), 17);
-    expect(await storage.read(key: 'veritra.account_state.v2'), isNull);
-    expect(await expiries(databases.single), <String, int?>{
-      'env_past': past.millisecondsSinceEpoch,
-      'env_future': future.millisecondsSinceEpoch,
-    });
-    expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
-        past.millisecondsSinceEpoch);
-    expect(await store.purgeExpiredMessages(), <String>{'conv_1'});
-    expect(await expiries(databases.single), <String, int?>{
-      'env_future': future.millisecondsSinceEpoch,
-    });
-    expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
-        future.millisecondsSinceEpoch);
-  });
+      final store = createStore();
+      // The migration verified and finished: the record is gone.
+      expect(await store.loadSyncCursor(), 17);
+      expect(await storage.read(key: 'veritra.account_state.v2'), isNull);
+      expect(await expiries(databases.single), <String, int?>{
+        'env_past': past.millisecondsSinceEpoch,
+        'env_future': future.millisecondsSinceEpoch,
+      });
+      expect(
+        (await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+        past.millisecondsSinceEpoch,
+      );
+      expect(await store.purgeExpiredMessages(), <String>{'conv_1'});
+      expect(await expiries(databases.single), <String, int?>{
+        'env_future': future.millisecondsSinceEpoch,
+      });
+      expect(
+        (await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+        future.millisecondsSinceEpoch,
+      );
+    },
+  );
 
   /// A database left by an older build: migration marker '1', no repair
   /// marker, and envelopes imported with no expiry. None of them is listed
@@ -182,69 +190,81 @@ void main() {
       (
         'env_future',
         jsonEncode(_envelope('env_future', future).toJson()),
-        null
+        null,
       ),
       ('env_none', jsonEncode(_envelope('env_none', null).toJson()), null),
       // Already carries an expiry that differs from its JSON: kept.
       (
         'env_kept',
         jsonEncode(_envelope('env_kept', past).toJson()),
-        later.millisecondsSinceEpoch
+        later.millisecondsSinceEpoch,
       ),
     ];
     var position = 0;
     for (final (id, json, expiresAt) in rows) {
       await database.customStatement(
-          'INSERT INTO local_ciphertext_envelopes '
-          '(id, conversation_id, position, payload_json, expires_at) '
-          'VALUES (?, ?, ?, ?, ?)',
-          <Object?>[id, 'conv_1', position++, json, expiresAt]);
+        'INSERT INTO local_ciphertext_envelopes '
+        '(id, conversation_id, position, payload_json, expires_at) '
+        'VALUES (?, ?, ?, ?, ?)',
+        <Object?>[id, 'conv_1', position++, json, expiresAt],
+      );
     }
     await closeAll();
   }
 
-  test('an already migrated database gets its envelope expiry on reopen',
-      () async {
-    await seedAlreadyMigrated();
+  test(
+    'an already migrated database gets its envelope expiry on reopen',
+    () async {
+      await seedAlreadyMigrated();
 
-    final store = createStore();
-    // No server refresh: only opening the store.
-    expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
-        past.millisecondsSinceEpoch);
-    final database = databases.single;
-    expect(await expiries(database), <String, int?>{
-      'env_past': past.millisecondsSinceEpoch,
-      'env_future': future.millisecondsSinceEpoch,
-      'env_none': null,
-      'env_kept': later.millisecondsSinceEpoch,
-    });
-    expect(await database.readMetadata(_repairMarker), isNotNull);
-    expect(await store.purgeExpiredMessages(), <String>{'conv_1'});
-    expect((await expiries(database)).keys,
-        unorderedEquals(<String>['env_future', 'env_none', 'env_kept']));
-    expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
-        future.millisecondsSinceEpoch);
+      final store = createStore();
+      // No server refresh: only opening the store.
+      expect(
+        (await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+        past.millisecondsSinceEpoch,
+      );
+      final database = databases.single;
+      expect(await expiries(database), <String, int?>{
+        'env_past': past.millisecondsSinceEpoch,
+        'env_future': future.millisecondsSinceEpoch,
+        'env_none': null,
+        'env_kept': later.millisecondsSinceEpoch,
+      });
+      expect(await database.readMetadata(_repairMarker), isNotNull);
+      expect(await store.purgeExpiredMessages(), <String>{'conv_1'});
+      expect(
+        (await expiries(database)).keys,
+        unorderedEquals(<String>['env_future', 'env_none', 'env_kept']),
+      );
+      expect(
+        (await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+        future.millisecondsSinceEpoch,
+      );
 
-    // A second open rewrites nothing: a value changed by hand survives.
-    await database.customStatement(
+      // A second open rewrites nothing: a value changed by hand survives.
+      await database.customStatement(
         'UPDATE local_ciphertext_envelopes SET expires_at = NULL '
-        "WHERE id = 'env_future'");
-    await closeAll();
-    final reopened = createStore();
-    await reopened.loadSyncCursor();
-    expect((await expiries(databases.single))['env_future'], isNull);
-  });
+        "WHERE id = 'env_future'",
+      );
+      await closeAll();
+      final reopened = createStore();
+      await reopened.loadSyncCursor();
+      expect((await expiries(databases.single))['env_future'], isNull);
+    },
+  );
 
   test('an interrupted repair runs again on the next open', () async {
     await seedAlreadyMigrated();
     // A repair cut short before its marker: one row done, no marker.
     final first = openEncryptedLocalDatabase(
-        File('${directory.path}/veritra-local.db'),
-        (await storage.read(key: 'veritra.database_key.v1'))!);
+      File('${directory.path}/veritra-local.db'),
+      (await storage.read(key: 'veritra.database_key.v1'))!,
+    );
     await first.customStatement(
-        'UPDATE local_ciphertext_envelopes SET expires_at = ? '
-        "WHERE id = 'env_past'",
-        <Object?>[past.millisecondsSinceEpoch]);
+      'UPDATE local_ciphertext_envelopes SET expires_at = ? '
+      "WHERE id = 'env_past'",
+      <Object?>[past.millisecondsSinceEpoch],
+    );
     expect(await first.readMetadata(_repairMarker), isNull);
     await first.close();
 
@@ -259,35 +279,42 @@ void main() {
     expect(await databases.single.readMetadata(_repairMarker), isNotNull);
   });
 
-  test('a refresh repairs a cached envelope whose stored expiry is missing',
-      () async {
-    await seedAlreadyMigrated();
-    final store = createStore();
-    await store.loadSyncCursor();
-    final database = databases.single;
-    // As if the repair had not reached it.
-    await database.customStatement(
+  test(
+    'a refresh repairs a cached envelope whose stored expiry is missing',
+    () async {
+      await seedAlreadyMigrated();
+      final store = createStore();
+      await store.loadSyncCursor();
+      final database = databases.single;
+      // As if the repair had not reached it.
+      await database.customStatement(
         'UPDATE local_ciphertext_envelopes SET expires_at = NULL '
-        "WHERE id = 'env_future'");
+        "WHERE id = 'env_future'",
+      );
 
-    await database.replaceSnapshot(
-      conversations: const <({String id, String payloadJson})>[],
-      envelopes: <({
-        String id,
-        String conversationId,
-        int position,
-        String payloadJson
-      })>[
-        (
-          id: 'env_future',
-          conversationId: 'conv_1',
-          position: 1,
-          payloadJson: jsonEncode(_envelope('env_future', future).toJson()),
-        ),
-      ],
-      cursor: null,
-    );
-    expect((await expiries(database))['env_future'],
-        future.millisecondsSinceEpoch);
-  });
+      await database.replaceSnapshot(
+        conversations: const <({String id, String payloadJson})>[],
+        envelopes: <({
+          String id,
+          String conversationId,
+          int position,
+          String payloadJson,
+        })>[
+          (
+            id: 'env_future',
+            conversationId: 'conv_1',
+            position: 1,
+            payloadJson: jsonEncode(
+              _envelope('env_future', future).toJson(),
+            ),
+          ),
+        ],
+        cursor: null,
+      );
+      expect(
+        (await expiries(database))['env_future'],
+        future.millisecondsSinceEpoch,
+      );
+    },
+  );
 }

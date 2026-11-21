@@ -112,8 +112,10 @@ class BoneDurations {
 ///
 /// Sizes and weights are that table's; tracking is converted from `em` to the
 /// logical pixels Flutter's `letterSpacing` expects, so -0.03em at 27px is
-/// -0.81. The one deviation is `title`, specified at weight 650 — a value
-/// [FontWeight] cannot express — which is rounded to [FontWeight.w600].
+/// -0.81. No size is under 12 (U10); `micro` keeps its 1.1 px tracking, which
+/// is 0.09em at 12.5. The one deviation is `title`, specified at weight 650 —
+/// a value [FontWeight] cannot express — which is rounded to
+/// [FontWeight.w600].
 ///
 /// No font is bundled. The platform faces (SF on iOS, Roboto on Android) carry
 /// the ramp, which is where nearly all of the improvement comes from; adding a
@@ -136,20 +138,20 @@ class BoneType {
   );
 
   static const TextStyle body = TextStyle(
-    fontSize: 14.5,
+    fontSize: 16,
     fontWeight: FontWeight.w400,
     letterSpacing: -0.15,
     height: 1.45,
   );
 
   static const TextStyle label = TextStyle(
-    fontSize: 13.5,
+    fontSize: 16,
     fontWeight: FontWeight.w600,
     height: 1.3,
   );
 
   static const TextStyle caption = TextStyle(
-    fontSize: 11.5,
+    fontSize: 13.5,
     fontWeight: FontWeight.w400,
     height: 1.35,
   );
@@ -157,7 +159,7 @@ class BoneType {
   /// Group headers, field labels and chips. Callers must uppercase the string
   /// themselves — Flutter has no text-transform.
   static const TextStyle micro = TextStyle(
-    fontSize: 11,
+    fontSize: 12.5,
     fontWeight: FontWeight.w700,
     letterSpacing: 1.1,
     height: 1.2,
@@ -200,6 +202,16 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   /// Neutral progress — syncing, connecting.
   final Color info;
 
+  /// The state colours of the theme in [context], or the palette for its
+  /// brightness when the theme carries none.
+  static VeritraStateColors of(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.extension<VeritraStateColors>() ??
+        (theme.brightness == Brightness.dark
+            ? VeritraStateColors.dark
+            : VeritraStateColors.light);
+  }
+
   static const VeritraStateColors dark = VeritraStateColors(
     verified: Color(0xff4ade80),
     warning: Color(0xfffbbf24),
@@ -213,11 +225,7 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   );
 
   @override
-  VeritraStateColors copyWith({
-    Color? verified,
-    Color? warning,
-    Color? info,
-  }) {
+  VeritraStateColors copyWith({Color? verified, Color? warning, Color? info}) {
     return VeritraStateColors(
       verified: verified ?? this.verified,
       warning: warning ?? this.warning,
@@ -226,10 +234,7 @@ class VeritraStateColors extends ThemeExtension<VeritraStateColors> {
   }
 
   @override
-  VeritraStateColors lerp(
-    ThemeExtension<VeritraStateColors>? other,
-    double t,
-  ) {
+  VeritraStateColors lerp(ThemeExtension<VeritraStateColors>? other, double t) {
     if (other is! VeritraStateColors) {
       return this;
     }

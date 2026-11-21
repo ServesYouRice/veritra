@@ -130,24 +130,36 @@ class _AccountRecoveryStartScreenState
                 padding: const EdgeInsets.all(BoneSpacing.xl),
                 children: <Widget>[
                   // U23: three points; the full text is the fine print.
-                  _point(context, Icons.devices_other_outlined,
-                      l10n.recoveryStartPointLost),
                   _point(
-                      context, Icons.key_outlined, l10n.recoveryStartPointNeed),
-                  _point(context, Icons.hourglass_top_outlined,
-                      l10n.recoveryStartPointWait),
+                    context,
+                    Icons.devices_other_outlined,
+                    l10n.recoveryStartPointLost,
+                  ),
+                  _point(
+                    context,
+                    Icons.key_outlined,
+                    l10n.recoveryStartPointNeed,
+                  ),
+                  _point(
+                    context,
+                    Icons.hourglass_top_outlined,
+                    l10n.recoveryStartPointWait,
+                  ),
                   ExpansionTile(
                     key: const ValueKey<String>('recovery-how-it-works'),
                     tilePadding: EdgeInsets.zero,
-                    childrenPadding:
-                        const EdgeInsets.only(bottom: BoneSpacing.md),
+                    childrenPadding: const EdgeInsets.only(
+                      bottom: BoneSpacing.md,
+                    ),
                     shape: const Border(),
                     collapsedShape: const Border(),
                     expandedAlignment: Alignment.centerLeft,
                     title: Text(l10n.recoveryStartHowItWorks),
                     children: <Widget>[
-                      Text(l10n.recoveryStartDetail,
-                          style: theme.textTheme.bodyMedium),
+                      Text(
+                        l10n.recoveryStartDetail,
+                        style: theme.textTheme.bodyMedium,
+                      ),
                     ],
                   ),
                   const SizedBox(height: BoneSpacing.lg),
@@ -219,15 +231,19 @@ class _AccountRecoveryStartScreenState
                     icon: busy
                         ? const SizedBox.square(
                             dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2))
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Icon(Icons.restore),
                     label: Text(l10n.recoveryStartSubmit),
                   ),
                   if (error != null) ...<Widget>[
                     const SizedBox(height: BoneSpacing.lg),
-                    Text(error,
-                        style: theme.textTheme.bodyMedium
-                            ?.copyWith(color: theme.colorScheme.error)),
+                    Text(
+                      error,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -350,10 +366,11 @@ class _AccountRecoveryWaitingScreenState
                 // claim waits; the claim itself is kept.
                 const AccountsShortcut(),
                 Icon(
-                    pending?.needsLogin ?? false
-                        ? Icons.login
-                        : Icons.hourglass_top_outlined,
-                    size: 48),
+                  pending?.needsLogin ?? false
+                      ? Icons.login
+                      : Icons.hourglass_top_outlined,
+                  size: 48,
+                ),
                 const SizedBox(height: BoneSpacing.lg),
                 Text(
                   pending?.needsLogin ?? false
@@ -364,10 +381,13 @@ class _AccountRecoveryWaitingScreenState
                 ),
                 if (pending != null) ...<Widget>[
                   const SizedBox(height: BoneSpacing.sm),
-                  Text(l10n.recoveryAccountLabel(pending.username),
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant)),
+                  Text(
+                    l10n.recoveryAccountLabel(pending.username),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(height: BoneSpacing.lg),
                   if (pending.needsLogin) ...<Widget>[
                     Text(l10n.recoveryLoginDetail, textAlign: TextAlign.center),
@@ -394,8 +414,12 @@ class _AccountRecoveryWaitingScreenState
                   ] else ...<Widget>[
                     if (!ready) ...<Widget>[
                       Text(
-                        l10n.recoveryTimeLeft(recoveryTimeLeftText(
-                            l10n, pending.readyAt.difference(now))),
+                        l10n.recoveryTimeLeft(
+                          recoveryTimeLeftText(
+                            l10n,
+                            pending.readyAt.difference(now),
+                          ),
+                        ),
                         key: const ValueKey<String>('recovery-countdown'),
                         textAlign: TextAlign.center,
                         style: theme.textTheme.titleLarge,
@@ -405,8 +429,12 @@ class _AccountRecoveryWaitingScreenState
                     Text(
                       ready
                           ? l10n.recoveryReadyDetail
-                          : l10n.recoveryWaitingDetail(formatDateTime(
-                              context, pending.readyAt.toLocal())),
+                          : l10n.recoveryWaitingDetail(
+                              formatDateTime(
+                                context,
+                                pending.readyAt.toLocal(),
+                              ),
+                            ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: BoneSpacing.lg),
@@ -416,7 +444,8 @@ class _AccountRecoveryWaitingScreenState
                       icon: busy
                           ? const SizedBox.square(
                               dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Icon(Icons.sync),
                       label: Text(l10n.recoveryCheckNow),
                     ),
@@ -431,10 +460,13 @@ class _AccountRecoveryWaitingScreenState
                 ],
                 if (error != null) ...<Widget>[
                   const SizedBox(height: BoneSpacing.lg),
-                  Text(error,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: theme.colorScheme.error)),
+                  Text(
+                    error,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -450,24 +482,5 @@ const Duration recoveryCountdownInterval = Duration(seconds: 30);
 
 /// U23: the time left in the recovery wait, in at most two units and
 /// rounded up, so it never reads zero while the wait is still on.
-String recoveryTimeLeftText(AppLocalizations l10n, Duration left) {
-  var minutes = (left.inSeconds + 59) ~/ 60;
-  if (minutes < 1) minutes = 1;
-  if (minutes < 60) return l10n.durationMinutes(minutes);
-  if (minutes < 24 * 60) {
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    return rest == 0
-        ? l10n.durationHours(hours)
-        : '${l10n.durationHours(hours)} ${l10n.durationMinutes(rest)}';
-  }
-  var days = minutes ~/ (24 * 60);
-  var hours = ((minutes % (24 * 60)) + 59) ~/ 60;
-  if (hours == 24) {
-    days += 1;
-    hours = 0;
-  }
-  return hours == 0
-      ? l10n.durationDays(days)
-      : '${l10n.durationDays(days)} ${l10n.durationHours(hours)}';
-}
+String recoveryTimeLeftText(AppLocalizations l10n, Duration left) =>
+    timeLeftInWords(l10n, left);

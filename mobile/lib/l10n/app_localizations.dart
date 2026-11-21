@@ -570,13 +570,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPushProvider.
   ///
   /// In en, this message translates to:
-  /// **'Push provider'**
+  /// **'Delivery service'**
   String get settingsPushProvider;
 
   /// No description provided for @settingsPushProviderDetail.
   ///
   /// In en, this message translates to:
-  /// **'Choose an Android UnifiedPush provider'**
+  /// **'Choose an Android UnifiedPush delivery service'**
   String get settingsPushProviderDetail;
 
   /// No description provided for @settingsTestPush.
@@ -651,17 +651,17 @@ abstract class AppLocalizations {
   /// **'1:1 audio/video'**
   String get settingsCallsComingSoonDetail;
 
-  /// No description provided for @settingsCallsRelayTitle.
+  /// No description provided for @settingsDirectCallsTitle.
   ///
   /// In en, this message translates to:
-  /// **'Calls'**
-  String get settingsCallsRelayTitle;
+  /// **'Direct calls'**
+  String get settingsDirectCallsTitle;
 
-  /// No description provided for @settingsCallsRelayNote.
+  /// No description provided for @settingsDirectCallsNote.
   ///
   /// In en, this message translates to:
-  /// **'Calls go through the server\'s relay, so the other side never sees your network address.'**
-  String get settingsCallsRelayNote;
+  /// **'Faster; the other person sees your IP.'**
+  String get settingsDirectCallsNote;
 
   /// No description provided for @settingsDeleteAccount.
   ///
@@ -672,7 +672,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeleteAccountDetail.
   ///
   /// In en, this message translates to:
-  /// **'Disables sign-in and revokes your devices. Some encrypted records may remain under server retention rules.'**
+  /// **'Permanently deletes your account, its devices and its keys on the server. Messages you already sent stay in other people\'s chats, encrypted.'**
   String get settingsDeleteAccountDetail;
 
   /// Identity header when the server gave no username.
@@ -684,7 +684,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRevokeDeviceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Revoke device?'**
+  /// **'Sign out device?'**
   String get settingsRevokeDeviceTitle;
 
   /// No description provided for @settingsRevokeDeviceMessage.
@@ -744,13 +744,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeleteAccountMessage.
   ///
   /// In en, this message translates to:
-  /// **'This disables your account, ends its sessions, and revokes its devices. Encrypted messages and other records may remain according to the server retention policy.'**
+  /// **'This permanently deletes your account. You lose:\n• your sign-in, passkeys, username and profile\n• every device signed in to it\n• your memberships, uploaded files, backups and recovery key on the server\n\nMessages you already sent stay in other people\'s chats, encrypted, and some encrypted records may stay under the server\'s retention rules. This cannot be undone.'**
   String get settingsDeleteAccountMessage;
 
   /// No description provided for @settingsDeleteAccountConfirm.
   ///
   /// In en, this message translates to:
-  /// **'Disable account'**
+  /// **'Delete account'**
   String get settingsDeleteAccountConfirm;
 
   /// No description provided for @settingsReauthTitle.
@@ -834,7 +834,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPushServerDisabledTitle.
   ///
   /// In en, this message translates to:
-  /// **'This server has no push provider'**
+  /// **'This server has no notification delivery service'**
   String get settingsPushServerDisabledTitle;
 
   /// No description provided for @settingsPushServerDisabledDetail.
@@ -942,7 +942,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeviceRevoked.
   ///
   /// In en, this message translates to:
-  /// **'Revoked'**
+  /// **'Signed out'**
   String get settingsDeviceRevoked;
 
   /// No description provided for @settingsDeviceCurrent.
@@ -972,19 +972,31 @@ abstract class AppLocalizations {
   /// No description provided for @inviteRevokeTitle.
   ///
   /// In en, this message translates to:
-  /// **'Revoke invite?'**
+  /// **'Turn off this invite?'**
   String get inviteRevokeTitle;
 
   /// No description provided for @inviteRevokeMessage.
   ///
   /// In en, this message translates to:
-  /// **'Code {code} stops working immediately. People who already joined with it keep their accounts.'**
-  String inviteRevokeMessage(String code);
+  /// **'It stops working immediately. People who already joined with it keep their accounts.'**
+  String get inviteRevokeMessage;
+
+  /// No description provided for @inviteTurnOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get inviteTurnOff;
+
+  /// No description provided for @inviteCannotReshare.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t be shared again'**
+  String get inviteCannotReshare;
 
   /// No description provided for @connectFreshInstanceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Fresh instance detected'**
+  /// **'This server is new'**
   String get connectFreshInstanceTitle;
 
   /// No description provided for @connectFreshInstanceMessage.
@@ -1002,7 +1014,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectInstanceUrl.
   ///
   /// In en, this message translates to:
-  /// **'Instance URL'**
+  /// **'Server address'**
   String get connectInstanceUrl;
 
   /// No description provided for @connectCheckApproval.
@@ -1080,7 +1092,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectInviteCodeHint.
   ///
   /// In en, this message translates to:
-  /// **'From an admin on this instance'**
+  /// **'From an admin of this server'**
   String get connectInviteCodeHint;
 
   /// No description provided for @connectInviteLink.
@@ -1164,7 +1176,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectUsernameHint.
   ///
   /// In en, this message translates to:
-  /// **'Your name on this instance'**
+  /// **'Your name on this server'**
   String get connectUsernameHint;
 
   /// No description provided for @connectUsernameInvalid.
@@ -1212,7 +1224,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectSetupToken.
   ///
   /// In en, this message translates to:
-  /// **'Setup token'**
+  /// **'Setup code'**
   String get connectSetupToken;
 
   /// No description provided for @connectSetupTokenHint.
@@ -1224,7 +1236,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectUrlRequired.
   ///
   /// In en, this message translates to:
-  /// **'Enter the instance URL.'**
+  /// **'Enter the server address.'**
   String get connectUrlRequired;
 
   /// No description provided for @connectUrlInvalid.
@@ -1236,13 +1248,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectUrlOriginOnly.
   ///
   /// In en, this message translates to:
-  /// **'Enter only the server origin, e.g. https://chat.example.org'**
+  /// **'Enter only the server address, with no path, e.g. https://chat.example.org'**
   String get connectUrlOriginOnly;
 
   /// No description provided for @connectUrlHttpsRequired.
   ///
   /// In en, this message translates to:
-  /// **'Veritra requires HTTPS. Use an https:// server origin.'**
+  /// **'Veritra requires HTTPS. Use an https:// server address.'**
   String get connectUrlHttpsRequired;
 
   /// No description provided for @connectUrlLoopbackOnly.
@@ -1284,7 +1296,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectModeOwnerDetail.
   ///
   /// In en, this message translates to:
-  /// **'First run only: create the owner account on a fresh self-hosted instance.'**
+  /// **'First run only: create the owner account on a new self-hosted server.'**
   String get connectModeOwnerDetail;
 
   /// No description provided for @connectModeSignInDetail.
@@ -1314,7 +1326,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectOriginFilled.
   ///
   /// In en, this message translates to:
-  /// **'Server origin filled. Verify it before continuing.'**
+  /// **'Server address filled. Check it before continuing.'**
   String get connectOriginFilled;
 
   /// No description provided for @connectConfirmServerTitle.
@@ -1326,13 +1338,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectConfirmServerMessage.
   ///
   /// In en, this message translates to:
-  /// **'This QR code suggests {origin}. The app will still probe the server before using it. Continue with this HTTPS origin?'**
+  /// **'This QR code suggests {origin}. The app will still check the server before using it. Continue with this HTTPS address?'**
   String connectConfirmServerMessage(String origin);
 
   /// No description provided for @connectUseOrigin.
   ///
   /// In en, this message translates to:
-  /// **'Use origin'**
+  /// **'Connect'**
   String get connectUseOrigin;
 
   /// No description provided for @connectSubmitOwner.
@@ -1356,7 +1368,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectSubmitLink.
   ///
   /// In en, this message translates to:
-  /// **'Claim link'**
+  /// **'Add this phone'**
   String get connectSubmitLink;
 
   /// No description provided for @connectTagline.
@@ -1632,7 +1644,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchHint.
   ///
   /// In en, this message translates to:
-  /// **'Search people, communities, channels…'**
+  /// **'Search communities, channels or @username…'**
   String get searchHint;
 
   /// No description provided for @searchClear.
@@ -1644,7 +1656,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchLookUpAccount.
   ///
   /// In en, this message translates to:
-  /// **'Look up this username'**
+  /// **'Look up an @username'**
   String get searchLookUpAccount;
 
   /// No description provided for @searchIntroTitle.
@@ -1656,7 +1668,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchIntroMessage.
   ///
   /// In en, this message translates to:
-  /// **'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.'**
+  /// **'Communities and channels are found on this device as you type. To find a person, type @ and their exact username, then press Enter: only that is sent to the server. Message contents are end-to-end encrypted and never searchable on the server.'**
   String get searchIntroMessage;
 
   /// No description provided for @searchNoResultsTitle.
@@ -1668,7 +1680,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchNoResultsMessage.
   ///
   /// In en, this message translates to:
-  /// **'Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.'**
+  /// **'Nothing matched. To find a person, type @ and their exact username. Only communities and channels whose names this device holds can be found.'**
   String get searchNoResultsMessage;
 
   /// No description provided for @searchNoOpenChannel.
@@ -1845,6 +1857,18 @@ abstract class AppLocalizations {
   /// **'Expires {time}'**
   String inviteExpiresAt(String time);
 
+  /// No description provided for @inviteExpiresIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires in {time}'**
+  String inviteExpiresIn(String time);
+
+  /// No description provided for @inviteExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'Expired'**
+  String get inviteExpired;
+
   /// No description provided for @inviteActions.
   ///
   /// In en, this message translates to:
@@ -1896,7 +1920,7 @@ abstract class AppLocalizations {
   /// No description provided for @profileThisInstance.
   ///
   /// In en, this message translates to:
-  /// **'this instance'**
+  /// **'this server'**
   String get profileThisInstance;
 
   /// No description provided for @profileTitle.
@@ -2052,7 +2076,7 @@ abstract class AppLocalizations {
   /// No description provided for @profileInstanceRole.
   ///
   /// In en, this message translates to:
-  /// **'Instance role'**
+  /// **'Server role'**
   String get profileInstanceRole;
 
   /// No description provided for @profileSectionEncryption.
@@ -2726,6 +2750,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Messages paused'**
   String get bannerPaused;
+
+  /// Button under the one notice that is showing, when others are folded behind it.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} more'**
+  String noticesMore(int count);
+
+  /// No description provided for @noticesShowFewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Show fewer'**
+  String get noticesShowFewer;
 
   /// No description provided for @bannerTryAgain.
   ///
@@ -3873,6 +3909,114 @@ abstract class AppLocalizations {
   /// **'Some of {name}\'s devices haven\'t joined yet.'**
   String chatDevicesNotJoined(String name);
 
+  /// No description provided for @chatHoldChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking {name}\'s devices. Sending in this chat is paused until they\'re checked.'**
+  String chatHoldChecking(String name);
+
+  /// No description provided for @chatHoldWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for {name} to open the app and approve their devices. Sending in this chat is paused.'**
+  String chatHoldWaiting(String name);
+
+  /// No description provided for @chatHoldRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device {name} removed is still in this chat. Sending is paused until it leaves.'**
+  String chatHoldRemoved(String name);
+
+  /// No description provided for @chatHoldOwnRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device you removed is still in this chat. Sending is paused until it leaves.'**
+  String get chatHoldOwnRemoved;
+
+  /// No description provided for @chatHoldUnapproved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device that isn\'t on {name}\'s approved list is in this chat. Sending is paused until it\'s approved or leaves.'**
+  String chatHoldUnapproved(String name);
+
+  /// No description provided for @chatHoldOwnUnapproved.
+  ///
+  /// In en, this message translates to:
+  /// **'A device you didn\'t approve was added to this chat. Sending is paused. Check your devices in Settings.'**
+  String get chatHoldOwnUnapproved;
+
+  /// No description provided for @chatHoldConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s device list changed in a way that can\'t be verified. Sending in this chat is paused.'**
+  String chatHoldConflict(String name);
+
+  /// No description provided for @chatHoldOwnConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Your device list changed in a way that can\'t be verified. Sending in this chat is paused.'**
+  String get chatHoldOwnConflict;
+
+  /// No description provided for @chatHoldCheckAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get chatHoldCheckAgain;
+
+  /// No description provided for @chatHoldCompare.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare safety numbers'**
+  String get chatHoldCompare;
+
+  /// No description provided for @chatHoldTrust.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust current list'**
+  String get chatHoldTrust;
+
+  /// No description provided for @chatHoldTrustTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust {name}\'s current device list?'**
+  String chatHoldTrustTitle(String name);
+
+  /// No description provided for @chatHoldTrustBody.
+  ///
+  /// In en, this message translates to:
+  /// **'One of {name}\'s devices, or their recovery key, signed two different versions of their device list. Ask {name} to check their devices and remove any they don\'t recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after {name} confirms the devices in this chat are theirs.'**
+  String chatHoldTrustBody(String name);
+
+  /// No description provided for @chatHoldTrustNewDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices that weren\'t on {name}\'s list before it changed: {count}. Trusting the list approves them, and they can be added to your chats.'**
+  String chatHoldTrustNewDevices(String name, int count);
+
+  /// No description provided for @chatHoldTrustRecoveryKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This version also changes {name}\'s recovery key. Whoever holds that key can replace all of {name}\'s devices.'**
+  String chatHoldTrustRecoveryKey(String name);
+
+  /// No description provided for @chatHoldTrustConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust list'**
+  String get chatHoldTrustConfirm;
+
+  /// No description provided for @chatHoldTrustRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The list the server shows now isn\'t one of the two signed versions, so nothing changed. Try again later.'**
+  String get chatHoldTrustRefused;
+
+  /// No description provided for @chatHoldTrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s current device list is trusted now.'**
+  String chatHoldTrusted(String name);
+
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
   /// In en, this message translates to:
@@ -3978,8 +4122,32 @@ abstract class AppLocalizations {
   /// No description provided for @chatPausedNotice.
   ///
   /// In en, this message translates to:
-  /// **'Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.'**
+  /// **'Sending is paused here: an encryption update for this conversation could not be sent. Try it again, or discard it. Other conversations still work.'**
   String get chatPausedNotice;
+
+  /// No description provided for @chatPausedDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard update'**
+  String get chatPausedDiscard;
+
+  /// Paused-chat notice when the stuck encryption update cannot be discarded (a group's first update, or one that is not a commit bundle).
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is paused here: an encryption update for this conversation could not be sent. Try it again. Other conversations still work.'**
+  String get chatPausedNoticeRetryOnly;
+
+  /// No description provided for @chatPausedDiscardRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'This encryption update cannot be discarded. Try it again, or leave the conversation.'**
+  String get chatPausedDiscardRefused;
+
+  /// No description provided for @chatPausedRoleChangeNotMade.
+  ///
+  /// In en, this message translates to:
+  /// **'The update was discarded, so the role change was not made. Make it again if you still want it.'**
+  String get chatPausedRoleChangeNotMade;
 
   /// No description provided for @chatSyncPausedNotice.
   ///
@@ -4338,7 +4506,7 @@ abstract class AppLocalizations {
   /// No description provided for @apiErrorSetupToken.
   ///
   /// In en, this message translates to:
-  /// **'The setup token is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).'**
+  /// **'The setup code is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).'**
   String get apiErrorSetupToken;
 
   /// No description provided for @apiErrorDraining.
@@ -4518,7 +4686,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorUnreachable.
   ///
   /// In en, this message translates to:
-  /// **'Could not reach the server. Check the instance URL and your connection.'**
+  /// **'Could not reach the server. Check the server address and your connection.'**
   String get errorUnreachable;
 
   /// No description provided for @probeChecking.
@@ -4542,7 +4710,7 @@ abstract class AppLocalizations {
   /// No description provided for @probeInvalidOrigin.
   ///
   /// In en, this message translates to:
-  /// **'Enter an HTTPS server origin, for example https://chat.example.org.'**
+  /// **'Enter an HTTPS server address, for example https://chat.example.org.'**
   String get probeInvalidOrigin;
 
   /// No description provided for @probeInsecure.
@@ -4674,7 +4842,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///
   /// In en, this message translates to:
-  /// **'Password login requires this device to be linked first.'**
+  /// **'New phone? Add it using a device you already use.'**
   String get errorPasswordLoginNeedsLink;
 
   /// No description provided for @attachmentSendFailedState.
@@ -4689,6 +4857,12 @@ abstract class AppLocalizations {
   /// **'This device must be linked again.'**
   String get errorRelinkRequired;
 
+  /// Shown when saving a new recovery key is refused because the recovery follow-up went back to its restore step first (Back was tapped while the save waited).
+  ///
+  /// In en, this message translates to:
+  /// **'You went back to the restore step, so this recovery key was not saved. Finish or skip the restore, then set a key.'**
+  String get recoveryKeyStepMovedBack;
+
   /// No description provided for @pushTestSent.
   ///
   /// In en, this message translates to:
@@ -4698,13 +4872,13 @@ abstract class AppLocalizations {
   /// No description provided for @pushTestGone.
   ///
   /// In en, this message translates to:
-  /// **'The push provider no longer accepts this device. Registering again.'**
+  /// **'The delivery service no longer accepts this device. Registering again.'**
   String get pushTestGone;
 
   /// No description provided for @pushTestRejected.
   ///
   /// In en, this message translates to:
-  /// **'The push provider did not accept the test. Try again later.'**
+  /// **'The delivery service did not accept the test. Try again later.'**
   String get pushTestRejected;
 
   /// No description provided for @pushTestRateLimited.
@@ -4728,7 +4902,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorServerNotAllowed.
   ///
   /// In en, this message translates to:
-  /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
+  /// **'This build does not allow the server address {url}. Use an https:// server address.'**
   String errorServerNotAllowed(String url);
 
   /// No description provided for @muteEightHours.
@@ -5220,7 +5394,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8PinDays.
   ///
   /// In en, this message translates to:
-  /// **'Pin for {days} days'**
+  /// **'{days, plural, =1{Pin for 1 day} other{Pin for {days} days}}'**
   String w8PinDays(int days);
 
   /// No description provided for @w8Forward.
@@ -5244,7 +5418,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8Star.
   ///
   /// In en, this message translates to:
-  /// **'Star on this device'**
+  /// **'Star'**
   String get w8Star;
 
   /// No description provided for @w8Unstar.
@@ -5256,13 +5430,25 @@ abstract class AppLocalizations {
   /// No description provided for @w8DeleteForMe.
   ///
   /// In en, this message translates to:
-  /// **'Delete for me on this device'**
+  /// **'Delete for me'**
   String get w8DeleteForMe;
+
+  /// No description provided for @w8DeletedForMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted on this device'**
+  String get w8DeletedForMe;
+
+  /// No description provided for @w8DeleteForMeUndoFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'This message could not be brought back.'**
+  String get w8DeleteForMeUndoFailed;
 
   /// No description provided for @w8Archive.
   ///
   /// In en, this message translates to:
-  /// **'Archive on this device'**
+  /// **'Archive'**
   String get w8Archive;
 
   /// No description provided for @w8Unarchive.
@@ -5274,7 +5460,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8PinChat.
   ///
   /// In en, this message translates to:
-  /// **'Pin chat on this device'**
+  /// **'Pin chat'**
   String get w8PinChat;
 
   /// No description provided for @w8UnpinChat.
@@ -5310,7 +5496,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatPreviewsSetting.
   ///
   /// In en, this message translates to:
-  /// **'Last message on chats'**
+  /// **'Show last message'**
   String get chatPreviewsSetting;
 
   /// No description provided for @chatPreviewsSettingDetail.
@@ -5340,7 +5526,7 @@ abstract class AppLocalizations {
   /// No description provided for @b2LinkPreviewsKnown.
   ///
   /// In en, this message translates to:
-  /// **'Known sites only'**
+  /// **'Known sites'**
   String get b2LinkPreviewsKnown;
 
   /// No description provided for @b2LinkPreviewsAll.
@@ -5358,8 +5544,20 @@ abstract class AppLocalizations {
   /// No description provided for @w8StarredMessages.
   ///
   /// In en, this message translates to:
-  /// **'Starred messages on this device'**
+  /// **'Starred messages'**
   String get w8StarredMessages;
+
+  /// No description provided for @w8MessageActionsLocalNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Star and Delete for me apply to this device only.'**
+  String get w8MessageActionsLocalNote;
+
+  /// No description provided for @w8ChatActionsLocalNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive and Pin chat apply to this device only.'**
+  String get w8ChatActionsLocalNote;
 
   /// No description provided for @k2CopiedHistory.
   ///
@@ -5540,6 +5738,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} of 13 groups match.'**
   String recoveryKeyGroupsMatched(int count);
+
+  /// No description provided for @recoveryKeyCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check my key'**
+  String get recoveryKeyCheck;
+
+  /// No description provided for @recoveryKeyCheckOk.
+  ///
+  /// In en, this message translates to:
+  /// **'This is your key. Nothing was saved yet.'**
+  String get recoveryKeyCheckOk;
+
+  /// No description provided for @recoveryKeyCheckSavedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check a saved key'**
+  String get recoveryKeyCheckSavedTitle;
+
+  /// No description provided for @recoveryKeyCheckSavedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the recovery key you saved, from your paper or password manager. It is checked on this device and is never sent. Dashes and spaces do not matter.'**
+  String get recoveryKeyCheckSavedDetail;
+
+  /// No description provided for @recoveryKeyCheckSavedCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'This is your account\'s current recovery key. Keep it safe, with your server address.'**
+  String get recoveryKeyCheckSavedCurrent;
+
+  /// No description provided for @recoveryKeyCheckSavedNotCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a recovery key, but not this account\'s current one. It may be an older key that was replaced, or the key of another account. If you cannot find the current one, create a new key.'**
+  String get recoveryKeyCheckSavedNotCurrent;
+
+  /// No description provided for @recoveryKeyCheckSavedUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'The key could not be checked right now. Try again later.'**
+  String get recoveryKeyCheckSavedUnknown;
 
   /// No description provided for @recoveryKeyTooLong.
   ///
@@ -5774,6 +6014,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Someone is recovering your account on “{device}”, finishing {date}. Not you? Cancel, or change your password or recovery key.'**
   String recoveryPendingNotice(String device, String date);
+
+  /// No description provided for @recoveryPendingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery attempt'**
+  String get recoveryPendingTitle;
+
+  /// No description provided for @recoveryPendingNotMe.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not me'**
+  String get recoveryPendingNotMe;
 
   /// No description provided for @recoveryPendingCancel.
   ///
@@ -6062,6 +6314,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No one is waiting.'**
   String get joinReqNone;
+
+  /// No description provided for @settingsInvitesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Community invitations'**
+  String get settingsInvitesSection;
+
+  /// No description provided for @settingsInvitesSharedOnlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Only accept community invites from people I share a group with'**
+  String get settingsInvitesSharedOnlyTitle;
+
+  /// No description provided for @settingsInvitesSharedOnlyNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Invites from anyone else are refused.'**
+  String get settingsInvitesSharedOnlyNote;
+
+  /// No description provided for @joinInviteFromStranger.
+  ///
+  /// In en, this message translates to:
+  /// **'You only accept community invites from people you share a group with. To join, turn this off in Settings › Privacy and safety › Blocked accounts.'**
+  String get joinInviteFromStranger;
+
+  /// No description provided for @joinRequestNoticeText.
+  ///
+  /// In en, this message translates to:
+  /// **'New join request'**
+  String get joinRequestNoticeText;
+
+  /// No description provided for @joinRequestNoticeDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get joinRequestNoticeDismiss;
+
+  /// No description provided for @joinReqPausedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitations are paused. You can decline requests now and approve them once the pause ends.'**
+  String get joinReqPausedNote;
+
+  /// No description provided for @moderationSectionDepartedTimeouts.
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out after leaving'**
+  String get moderationSectionDepartedTimeouts;
+
+  /// No description provided for @moderationDepartedTimeoutsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'These timeouts come back if the person rejoins.'**
+  String get moderationDepartedTimeoutsNote;
+
+  /// No description provided for @moderationNoDepartedTimeouts.
+  ///
+  /// In en, this message translates to:
+  /// **'No one who left is timed out.'**
+  String get moderationNoDepartedTimeouts;
+
+  /// No description provided for @moderationDepartedTimeoutUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Until {time}'**
+  String moderationDepartedTimeoutUntil(String time);
+
+  /// No description provided for @moderationLiftTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Lift timeout for {username}'**
+  String moderationLiftTimeout(String username);
 
   /// No description provided for @joinReqAskedAt.
   ///
@@ -6525,6 +6849,72 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 person} other{{count} people}}'**
   String roomPeople(int count);
 
+  /// No description provided for @roomCameraOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on camera'**
+  String get roomCameraOn;
+
+  /// No description provided for @roomCameraOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off camera'**
+  String get roomCameraOff;
+
+  /// No description provided for @roomPickSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose what to share'**
+  String get roomPickSourceTitle;
+
+  /// No description provided for @roomSourceScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen'**
+  String get roomSourceScreen;
+
+  /// No description provided for @roomSourceWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Window'**
+  String get roomSourceWindow;
+
+  /// No description provided for @roomSharingYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You are sharing your screen'**
+  String get roomSharingYou;
+
+  /// No description provided for @roomNoticeCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera could not be started.'**
+  String get roomNoticeCamera;
+
+  /// No description provided for @roomNoticeScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'The screen could not be shared.'**
+  String get roomNoticeScreen;
+
+  /// No description provided for @roomNoticeNoSource.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no screen or window to share.'**
+  String get roomNoticeNoSource;
+
+  /// No description provided for @roomNoticeVideoFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call has too many people for video. Voice only.'**
+  String get roomNoticeVideoFull;
+
+  /// No description provided for @roomTileScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s screen'**
+  String roomTileScreen(String name);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:
@@ -6572,6 +6962,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Timed out until {time}'**
   String memberTimedOutUntil(String time);
+
+  /// Under a community member's name, for owners and admins, while the server holds a running timeout that the verified role record lacks (it came back when they rejoined).
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out until {time} (server only)'**
+  String memberServerTimeoutUntil(String time);
+
+  /// Member menu action: writes the server-only timeout into the group's verified role record, so every member's app sees it.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply to the record'**
+  String get memberTimeoutApplyToRecord;
+
+  /// No description provided for @memberTimeoutAppliedToRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Timeout added to the record.'**
+  String get memberTimeoutAppliedToRecord;
 
   /// No description provided for @banTitle.
   ///
@@ -6750,7 +7158,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.'**
+  /// **'This sends this one message and the reason you pick, with what is needed to check it, to the people who handle reports here. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.'**
   String get c6ReportIntro;
 
   /// C6 reports.
@@ -6764,6 +7172,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.'**
   String get c6ReportPreviewNoText;
+
+  /// C6 reports (U33): heading above the fixed list of reasons. A reason must be chosen before sending.
+  ///
+  /// In en, this message translates to:
+  /// **'Why are you reporting it?'**
+  String get c6ReportReasonLabel;
+
+  /// C6 reports (U33): under the reason list. The reason is sealed inside the report; the server cannot read it.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the people who get the report see the reason. It is sealed with the message.'**
+  String get c6ReportReasonNote;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Spam or scam'**
+  String get c6ReportReasonSpam;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Harassment or bullying'**
+  String get c6ReportReasonHarassment;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Hate speech'**
+  String get c6ReportReasonHate;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Threats or violence'**
+  String get c6ReportReasonViolence;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Sexual content'**
+  String get c6ReportReasonSexual;
+
+  /// C6 report reason (U33): child safety.
+  ///
+  /// In en, this message translates to:
+  /// **'Puts a child at risk'**
+  String get c6ReportReasonChildSafety;
+
+  /// C6 report reason (U33).
+  ///
+  /// In en, this message translates to:
+  /// **'Self-harm or suicide'**
+  String get c6ReportReasonSelfHarm;
+
+  /// C6 report reason (U33): doxxing.
+  ///
+  /// In en, this message translates to:
+  /// **'Shares someone\'s private information'**
+  String get c6ReportReasonPrivateInfo;
+
+  /// C6 report reason (U33): the last choice, for anything the list does not name.
+  ///
+  /// In en, this message translates to:
+  /// **'Something else'**
+  String get c6ReportReasonOther;
 
   /// C6 reports.
   ///
@@ -6945,6 +7419,12 @@ abstract class AppLocalizations {
   /// **'Report key published.'**
   String get c6ReportsKeyReady;
 
+  /// C6 reports: the server refused a key publish because another device of the account published or replaced the key since this screen loaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device changed your report key while you were deciding. Nothing was changed here. Check the key below and choose again.'**
+  String get c6ReportsKeyChangedMeanwhile;
+
   /// C6 reports.
   ///
   /// In en, this message translates to:
@@ -7028,6 +7508,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reported by {account}'**
   String c6ReportsReporter(String account);
+
+  /// C6 reports (U33): the reporter's chosen reason, one of the c6ReportReason labels. It is the reporter's claim, not something the check proves.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason given by the reporter: {reason}'**
+  String c6ReportsReason(String reason);
+
+  /// C6 reports (U33): first part of an inbox row's second line. Names the reason as the reporter's claim, never a finding.
+  ///
+  /// In en, this message translates to:
+  /// **'Reporter\'s reason: {reason}'**
+  String c6ReportsRowReason(String reason);
+
+  /// C6 reports (U33): an opened report from before reasons existed.
+  ///
+  /// In en, this message translates to:
+  /// **'No reason given. Reports from older app versions carry none.'**
+  String get c6ReportsReasonNone;
+
+  /// C6 reports (U33): under the reason. Must not suggest the franking check says anything about the reason.
+  ///
+  /// In en, this message translates to:
+  /// **'The check covers the message only, not the reason.'**
+  String get c6ReportsReasonNotChecked;
 
   /// C6 reports.
   ///
@@ -7287,6 +7791,12 @@ abstract class AppLocalizations {
   /// **'Type recovery key'**
   String get autoBackupTypeKey;
 
+  /// No description provided for @autoBackupKeySubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on backups'**
+  String get autoBackupKeySubmit;
+
   /// No description provided for @autoBackupKeyWrong.
   ///
   /// In en, this message translates to:
@@ -7346,6 +7856,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The channel was created. Some members could not be added. Retry to add only those members.'**
   String get channelMembersFailed;
+
+  /// No description provided for @channelMembersSkipped.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 member was not added: they are in too many chats. Add them later from the channel\'s members.} other{{count} members were not added: they are in too many chats. Add them later from the channel\'s members.}}'**
+  String channelMembersSkipped(int count);
 
   /// No description provided for @channelAdminOnly.
   ///
@@ -7947,6 +8463,42 @@ abstract class AppLocalizations {
   /// **'Automatic update checks are turned off'**
   String get settingsUpdateDisabled;
 
+  /// No description provided for @settingsUpdateUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Update checks are not available in this build'**
+  String get settingsUpdateUnavailable;
+
+  /// No description provided for @settingsUpdateDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download update'**
+  String get settingsUpdateDownload;
+
+  /// No description provided for @settingsUpdateDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading the update…'**
+  String get settingsUpdateDownloading;
+
+  /// No description provided for @settingsUpdateDownloadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The update could not be downloaded or verified'**
+  String get settingsUpdateDownloadFailed;
+
+  /// No description provided for @settingsUpdateRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart to update'**
+  String get settingsUpdateRestart;
+
+  /// No description provided for @settingsUpdateReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is ready'**
+  String settingsUpdateReady(String version);
+
   /// No description provided for @settingsScreenGuard.
   ///
   /// In en, this message translates to:
@@ -8198,6 +8750,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You are the owner: your app ends this election by itself.'**
   String get rolesOwnerCancelNote;
+
+  /// No description provided for @rolesEarlyWin.
+  ///
+  /// In en, this message translates to:
+  /// **'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.'**
+  String get rolesEarlyWin;
+
+  /// No description provided for @rolesElectorHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.'**
+  String get rolesElectorHint;
 
   /// No description provided for @rolesOnlyAdminsPost.
   ///

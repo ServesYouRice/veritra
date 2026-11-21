@@ -38,8 +38,10 @@ class ProfileScope {
   /// directory itself for the empty namespace, else `profiles/<namespace>`.
   Directory directoryIn(Directory support) => namespace.isEmpty
       ? support
-      : Directory('${support.path}${Platform.pathSeparator}profiles'
-          '${Platform.pathSeparator}$namespace');
+      : Directory(
+          '${support.path}${Platform.pathSeparator}profiles'
+          '${Platform.pathSeparator}$namespace',
+        );
 
   /// A working-file root for this slot under [support]. The primary slot
   /// keeps the shared root it uses today; others get their own folder, so

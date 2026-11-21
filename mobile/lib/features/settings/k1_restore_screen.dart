@@ -88,11 +88,15 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
           if (_loading)
             Text(l10n.k1RestoreLoading)
           else if (entries == null)
-            Text(l10n.k1RestoreLoadFailed,
-                key: const ValueKey<String>('k1-restore-load-failed'))
+            Text(
+              l10n.k1RestoreLoadFailed,
+              key: const ValueKey<String>('k1-restore-load-failed'),
+            )
           else if (entries.isEmpty)
-            Text(l10n.k1RestoreEmpty,
-                key: const ValueKey<String>('k1-restore-empty'))
+            Text(
+              l10n.k1RestoreEmpty,
+              key: const ValueKey<String>('k1-restore-empty'),
+            )
           else
             TileGroup(
               children: <Widget>[
@@ -105,11 +109,13 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
                     // U37: an older copy says so in words; every row ends in
                     // an arrow because it opens the restore.
                     subtitle: entry.deviceRevoked || entry.superseded
-                        ? Text(<String>[
-                            if (entry.superseded) l10n.k1RestoreOlderCopy,
-                            if (entry.deviceRevoked)
-                              l10n.k1RestoreDeviceRevoked,
-                          ].join(' · '))
+                        ? Text(
+                            <String>[
+                              if (entry.superseded) l10n.k1RestoreOlderCopy,
+                              if (entry.deviceRevoked)
+                                l10n.k1RestoreDeviceRevoked,
+                            ].join(' · '),
+                          )
                         : null,
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _busy ? null : () => _restore(entry),
@@ -118,8 +124,10 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
             ),
           if (!_loading && widget.state.k1LegacyBackupsRefused) ...<Widget>[
             const SizedBox(height: BoneSpacing.md),
-            Text(l10n.k1RestoreLegacyRefused,
-                key: const ValueKey<String>('k1-restore-legacy-refused')),
+            Text(
+              l10n.k1RestoreLegacyRefused,
+              key: const ValueKey<String>('k1-restore-legacy-refused'),
+            ),
           ],
         ],
       ),

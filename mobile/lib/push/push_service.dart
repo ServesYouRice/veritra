@@ -202,8 +202,12 @@ class PlatformMobilePushService implements MobilePushService {
         final instance = event['instance'];
         final provider = event['provider'];
         if (instance is String) {
-          _events.add(PushRegistrationFailedEvent(instance,
-              provider: provider is String ? provider : null));
+          _events.add(
+            PushRegistrationFailedEvent(
+              instance,
+              provider: provider is String ? provider : null,
+            ),
+          );
         }
     }
   }
@@ -223,12 +227,14 @@ class PlatformMobilePushService implements MobilePushService {
   @override
   Future<NotificationPermission> notificationPermission() async =>
       _permissionFrom(
-          await _methods.invokeMethod<Object?>('notificationPermission'));
+        await _methods.invokeMethod<Object?>('notificationPermission'),
+      );
 
   @override
   Future<NotificationPermission> requestNotificationPermission() async =>
-      _permissionFrom(await _methods
-          .invokeMethod<Object?>('requestNotificationPermission'));
+      _permissionFrom(
+        await _methods.invokeMethod<Object?>('requestNotificationPermission'),
+      );
 
   @override
   Future<void> pickDistributor() =>
@@ -249,10 +255,9 @@ class PlatformMobilePushService implements MobilePushService {
   @override
   Future<bool> acknowledgeWake(int generation) async {
     if (generation <= 0) return false;
-    return await _methods.invokeMethod<bool>(
-          'acknowledgeWake',
-          <String, int>{'generation': generation},
-        ) ??
+    return await _methods.invokeMethod<bool>('acknowledgeWake', <String, int>{
+          'generation': generation,
+        }) ??
         false;
   }
 

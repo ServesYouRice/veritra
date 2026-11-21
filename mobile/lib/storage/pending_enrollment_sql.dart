@@ -84,19 +84,21 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
 
   Future<void> _createPendingEnrollment() async {
     await customStatement(
-        'CREATE TABLE IF NOT EXISTS local_pending_enrollment ('
-        'singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1), '
-        'kind TEXT NOT NULL, origin TEXT NOT NULL, account_id TEXT NOT NULL, '
-        'device_id TEXT NOT NULL, payload_json TEXT NOT NULL, '
-        'state_counter INTEGER, state_key BLOB, state_root BLOB, '
-        'CHECK ((state_counter IS NULL) = (state_key IS NULL) '
-        'AND (state_key IS NULL) = (state_root IS NULL)))');
+      'CREATE TABLE IF NOT EXISTS local_pending_enrollment ('
+      'singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1), '
+      'kind TEXT NOT NULL, origin TEXT NOT NULL, account_id TEXT NOT NULL, '
+      'device_id TEXT NOT NULL, payload_json TEXT NOT NULL, '
+      'state_counter INTEGER, state_key BLOB, state_root BLOB, '
+      'CHECK ((state_counter IS NULL) = (state_key IS NULL) '
+      'AND (state_key IS NULL) = (state_root IS NULL)))',
+    );
     // The state's record changes in the order the seal listed them.
     await customStatement(
-        'CREATE TABLE IF NOT EXISTS local_pending_enrollment_records ('
-        'position INTEGER PRIMARY KEY NOT NULL CHECK(position >= 0), '
-        'kind INTEGER NOT NULL, record_id BLOB NOT NULL, '
-        'generation INTEGER NOT NULL, sealed BLOB)');
+      'CREATE TABLE IF NOT EXISTS local_pending_enrollment_records ('
+      'position INTEGER PRIMARY KEY NOT NULL CHECK(position >= 0), '
+      'kind INTEGER NOT NULL, record_id BLOB NOT NULL, '
+      'generation INTEGER NOT NULL, sealed BLOB)',
+    );
   }
 
   /// Schema 16 to 17: the waiting K0 claim moves from its metadata setting
@@ -110,8 +112,9 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
   /// since a device holds one enrollment.
   Future<void> _movePendingRecoverySetting() async {
     final rows = await customSelect(
-        'SELECT value FROM local_metadata WHERE name = ?',
-        variables: [Variable.withString(_legacyPendingRecoveryName)]).get();
+      'SELECT value FROM local_metadata WHERE name = ?',
+      variables: [Variable.withString(_legacyPendingRecoveryName)],
+    ).get();
     if (rows.isEmpty) return;
     PendingEnrollmentRow? row;
     try {
@@ -122,26 +125,28 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
     if (row != null && await _readPendingEnrollmentInTransaction() == null) {
       await _insertPendingEnrollment(row);
     }
-    await customStatement('DELETE FROM local_metadata WHERE name = ?',
-        [_legacyPendingRecoveryName]);
+    await customStatement('DELETE FROM local_metadata WHERE name = ?', [
+      _legacyPendingRecoveryName,
+    ]);
   }
 
   Future<void> _insertPendingEnrollment(PendingEnrollmentRow row) async {
     final state = row.state;
     await customStatement(
-        'INSERT INTO local_pending_enrollment (singleton, kind, origin, '
-        'account_id, device_id, payload_json, state_counter, state_key, '
-        'state_root) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          row.kind,
-          row.origin,
-          row.accountId,
-          row.deviceId,
-          row.payloadJson,
-          state?.counter,
-          state == null ? null : Uint8List.fromList(state.stateKey),
-          state == null ? null : Uint8List.fromList(state.root),
-        ]);
+      'INSERT INTO local_pending_enrollment (singleton, kind, origin, '
+      'account_id, device_id, payload_json, state_counter, state_key, '
+      'state_root) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        row.kind,
+        row.origin,
+        row.accountId,
+        row.deviceId,
+        row.payloadJson,
+        state?.counter,
+        state == null ? null : Uint8List.fromList(state.stateKey),
+        state == null ? null : Uint8List.fromList(state.root),
+      ],
+    );
     await _insertPendingRecords(state);
   }
 
@@ -150,30 +155,31 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
     var position = 0;
     for (final record in state.records) {
       await customStatement(
-          'INSERT INTO local_pending_enrollment_records '
-          '(position, kind, record_id, generation, sealed) VALUES (?, ?, ?, ?, ?)',
-          [
-            position++,
-            record.kind,
-            Uint8List.fromList(record.recordId),
-            record.generation,
-            record.sealed == null ? null : Uint8List.fromList(record.sealed!),
-          ]);
+        'INSERT INTO local_pending_enrollment_records '
+        '(position, kind, record_id, generation, sealed) VALUES (?, ?, ?, ?, ?)',
+        [
+          position++,
+          record.kind,
+          Uint8List.fromList(record.recordId),
+          record.generation,
+          record.sealed == null ? null : Uint8List.fromList(record.sealed!),
+        ],
+      );
     }
   }
 
   Future<PendingEnrollmentRow?> _readPendingEnrollmentInTransaction() async {
     final row = await customSelect(
-            'SELECT * FROM local_pending_enrollment WHERE singleton = 1')
-        .getSingleOrNull();
+      'SELECT * FROM local_pending_enrollment WHERE singleton = 1',
+    ).getSingleOrNull();
     if (row == null) return null;
     final counter = row.read<int?>('state_counter');
     final key = row.read<Uint8List?>('state_key');
     final root = row.read<Uint8List?>('state_root');
     final records = <PendingEnrollmentRecord>[
       for (final r in await customSelect(
-              'SELECT * FROM local_pending_enrollment_records ORDER BY position')
-          .get())
+        'SELECT * FROM local_pending_enrollment_records ORDER BY position',
+      ).get())
         (
           kind: r.read<int>('kind'),
           recordId: List<int>.from(r.read<Uint8List>('record_id')),
@@ -208,7 +214,10 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
       transaction(() async {
         final row = await _readPendingEnrollmentInTransaction();
         if (row == null) return null;
-        if ((await _readPromotionsInTransaction(row.accountId, row.deviceId))
+        if ((await _readPromotionsInTransaction(
+          row.accountId,
+          row.deviceId,
+        ))
             .isNotEmpty) {
           await _clearPendingEnrollment();
           return null;
@@ -225,7 +234,10 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
   /// same way: it was made active once already.
   Future<void> writePendingEnrollment(PendingEnrollmentRow row) =>
       transaction(() async {
-        if ((await _readPromotionsInTransaction(row.accountId, row.deviceId))
+        if ((await _readPromotionsInTransaction(
+          row.accountId,
+          row.deviceId,
+        ))
             .isNotEmpty) {
           throw const PendingEnrollmentConflict();
         }
@@ -237,8 +249,10 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
 
   /// Deletes the pending enrollment if it is of [kind] (and of [deviceId],
   /// when given). Returns whether a row was deleted.
-  Future<bool> deletePendingEnrollment(
-          {required String kind, String? deviceId}) =>
+  Future<bool> deletePendingEnrollment({
+    required String kind,
+    String? deviceId,
+  }) =>
       transaction(() async {
         final existing = await _readPendingEnrollmentInTransaction();
         if (existing == null ||
@@ -260,7 +274,9 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
 /// [PendingEnrollmentSql.writePendingEnrollment]); throws
 /// [PendingEnrollmentConflict] where that must fail.
 PendingEnrollmentRow mergePendingEnrollment(
-    PendingEnrollmentRow? existing, PendingEnrollmentRow next) {
+  PendingEnrollmentRow? existing,
+  PendingEnrollmentRow next,
+) {
   if (existing == null) return next;
   if (existing.kind != next.kind ||
       existing.origin != next.origin ||
@@ -367,7 +383,11 @@ PendingEnrollmentRow? legacyPendingRecoveryRow(String raw) {
         'needs_login': json['needs_login'] == true,
       }),
       state: PendingEnrollmentState(
-          counter: counter, stateKey: stateKey, root: root, records: records),
+        counter: counter,
+        stateKey: stateKey,
+        root: root,
+        records: records,
+      ),
     );
   } catch (_) {
     return null;

@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
@@ -9,7 +12,9 @@ import '../../core/attachments.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
-import 'attachment_views.dart' show newOpenedCopy, openedFilesDirectory;
+import 'attachment_views.dart'
+    show deleteOpenedCopy, newOpenedCopy, openedFilesDirectory;
+import 'loopback_clip_server.dart';
 import 'voice_recorder.dart';
 
 /// "1:05" for a voice note position or length.
@@ -89,15 +94,75 @@ abstract class VoicePlayback {
   Stream<Duration> get positions;
   Stream<Duration> get durations;
   Future<void> play(String path);
+
+  /// Whether [playBytes] works on this platform (D134).
+  bool get supportsBytes;
+
+  /// Plays a note held in memory, with no file (D134). It throws
+  /// [LoopbackPlaybackException] when the platform refuses the loopback
+  /// path, and only then does the caller play from a temp file instead.
+  Future<void> playBytes(Uint8List bytes, {String? mimeType});
   Future<void> pause();
   Future<void> resume();
   Future<void> stop();
   Future<void> dispose();
 }
 
-/// [VoicePlayback] on the `audioplayers` plugin, playing a local file only.
+/// Playing a note from memory over loopback failed in a way a temp file can
+/// fix: the server could not bind (a sandbox without the entitlement), or the
+/// player refused the loopback URL (no ATS exception, no GStreamer HTTP
+/// source). Any other failure is not retried from a file, so a note that
+/// cannot play from memory never writes its plaintext to disk for nothing.
+class LoopbackPlaybackException implements Exception {
+  const LoopbackPlaybackException(this.cause);
+
+  final Object cause;
+
+  // The cause can name the loopback URL, whose path is the token.
+  @override
+  String toString() => 'LoopbackPlaybackException';
+}
+
+/// Starts the loopback server that feeds a clip to a player that cannot play
+/// bytes. A seam so tests need no socket.
+typedef ClipServerStarter = Future<LoopbackClipServer> Function(
+  Uint8List bytes, {
+  String? mimeType,
+});
+
+/// [VoicePlayback] on the `audioplayers` plugin.
+///
+/// A note in memory plays through `BytesSource` on Android and Windows. The
+/// plugin has no bytes source on iOS, macOS or Linux, so there the bytes are
+/// served to it by a [LoopbackClipServer] (127.0.0.1, one unguessable path,
+/// closed when playback stops or the app goes to the background). Nothing is
+/// written to disk either way.
 class AudioPlayersPlayback implements VoicePlayback {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayersPlayback({
+    AudioPlayer? player,
+    TargetPlatform? platform,
+    ClipServerStarter startServer = LoopbackClipServer.start,
+  })  : _player = player ?? AudioPlayer(),
+        _nativeBytes = _hasNativeBytes(platform ?? defaultTargetPlatform),
+        _startServer = startServer {
+    // The plugin prints a failing source, and a loopback source URL holds
+    // the clip's secret path: keep the plugin silent.
+    AudioLogger.logLevel = AudioLogLevel.none;
+  }
+
+  final AudioPlayer _player;
+  final bool _nativeBytes;
+  final ClipServerStarter _startServer;
+  LoopbackClipServer? _server;
+  _PauseObserver? _pauseObserver;
+
+  /// Bumped by every start, stop and dispose, so a server that finishes
+  /// binding after its playback was stopped is closed instead of kept.
+  int _epoch = 0;
+  bool _disposed = false;
+
+  static bool _hasNativeBytes(TargetPlatform platform) =>
+      platform == TargetPlatform.android || platform == TargetPlatform.windows;
 
   @override
   Stream<VoicePlaybackState> get states =>
@@ -119,52 +184,154 @@ class AudioPlayersPlayback implements VoicePlayback {
   Future<void> play(String path) => _player.play(DeviceFileSource(path));
 
   @override
+  bool get supportsBytes => true;
+
+  @override
+  Future<void> playBytes(Uint8List bytes, {String? mimeType}) async {
+    if (_disposed) throw StateError('Voice playback was disposed');
+    if (_nativeBytes) {
+      await _player.play(BytesSource(bytes, mimeType: mimeType));
+      return;
+    }
+    final epoch = ++_epoch;
+    await _closeServer();
+    final LoopbackClipServer server;
+    try {
+      server = await _startServer(bytes, mimeType: mimeType);
+    } catch (error) {
+      if (_disposed || epoch != _epoch) rethrow;
+      throw LoopbackPlaybackException(error);
+    }
+    if (_disposed || epoch != _epoch) {
+      await server.close();
+      throw StateError('Voice playback stopped while it was starting');
+    }
+    _server = server;
+    final observer = _PauseObserver(() => unawaited(_stopQuietly()));
+    _pauseObserver = observer;
+    WidgetsBinding.instance.addObserver(observer);
+    try {
+      await _player.play(UrlSource(server.url.toString(), mimeType: mimeType));
+    } catch (error) {
+      if (identical(_server, server)) await _closeServer();
+      if (_disposed || epoch != _epoch) rethrow;
+      throw LoopbackPlaybackException(error);
+    }
+  }
+
+  Future<void> _closeServer() async {
+    final observer = _pauseObserver;
+    _pauseObserver = null;
+    if (observer != null) WidgetsBinding.instance.removeObserver(observer);
+    final server = _server;
+    _server = null;
+    if (server != null) await server.close();
+  }
+
+  /// The app went to the background with a loopback server open: stop, so
+  /// the server closes and the tile wipes the note when the player reports
+  /// it stopped. iOS would reclaim the listening socket anyway.
+  Future<void> _stopQuietly() async {
+    try {
+      await stop();
+    } catch (_) {}
+  }
+
+  @override
   Future<void> pause() => _player.pause();
 
   @override
   Future<void> resume() => _player.resume();
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() async {
+    _epoch++;
+    try {
+      await _player.stop();
+    } finally {
+      await _closeServer();
+    }
+  }
 
   @override
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    _disposed = true;
+    _epoch++;
+    try {
+      await _closeServer();
+    } finally {
+      await _player.dispose();
+    }
+  }
 }
 
-/// Decrypts [entry] to a private temporary file for playback, in the same
-/// cache folder other opened attachments use (purged at startup). The caller
-/// deletes its folder when playback ends.
-Future<File> decryptVoiceNote(
+class _PauseObserver with WidgetsBindingObserver {
+  _PauseObserver(this.onPause);
+
+  final VoidCallback onPause;
+
+  // Only `paused` (the app is in the background on a phone): a minimised
+  // desktop window is `hidden` and keeps playing.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) onPause();
+  }
+}
+
+/// A decrypted voice note: the bytes of one that plays from memory, or a
+/// private temp file for one that does not (D134).
+class DecryptedVoice {
+  DecryptedVoice.bytes(Uint8List this.bytes) : file = null;
+  DecryptedVoice.file(File this.file) : bytes = null;
+
+  final Uint8List? bytes;
+  final File? file;
+
+  /// Wipes the bytes or deletes the file's folder. Call once playback is
+  /// finished with it.
+  Future<void> discard() async {
+    bytes?.fillRange(0, bytes!.length, 0);
+    final copy = file;
+    if (copy != null) await deleteOpenedCopy(copy);
+  }
+}
+
+/// Decrypts [entry] for playback. With [inMemory] the note stays in memory
+/// and no file is written; otherwise it goes to a private temporary file in
+/// the same cache folder other opened attachments use (purged at startup and
+/// by the hourly sweep). The caller calls [DecryptedVoice.discard] when
+/// playback ends.
+Future<DecryptedVoice> decryptVoiceNote(
   AppState state,
   AttachmentEntry entry, {
   required String conversationId,
+  required bool inMemory,
 }) async {
+  if (inMemory) {
+    return DecryptedVoice.bytes(
+      await state.loadAttachment(entry, conversationId: conversationId),
+    );
+  }
   final root = await openedFilesDirectory();
   final copy = await newOpenedCopy(root, entry.fileName);
   try {
-    await state.saveAttachment(
+    await state.decryptAttachmentToFile(
       entry,
       copy.path,
       conversationId: conversationId,
     );
   } catch (_) {
-    await deleteVoiceCopy(copy);
+    await deleteOpenedCopy(copy);
     rethrow;
   }
-  return copy;
-}
-
-Future<void> deleteVoiceCopy(File copy) async {
-  try {
-    await copy.parent.delete(recursive: true);
-  } on FileSystemException {
-    // Purged at the next start instead.
-  }
+  return DecryptedVoice.file(copy);
 }
 
 /// One voice note in a message bubble: play and pause, a progress bar and
-/// the length. The file is downloaded and decrypted on the first play and
-/// its plaintext copy is deleted when playback ends or the tile goes away.
+/// the length. The note is downloaded and decrypted on the first play. A
+/// small one plays from memory where the platform can ([attachmentMemoryLimit]);
+/// otherwise its plaintext copy is deleted when playback ends or the tile
+/// goes away.
 class VoiceNoteTile extends StatefulWidget {
   const VoiceNoteTile({
     required this.entry,
@@ -175,8 +342,9 @@ class VoiceNoteTile extends StatefulWidget {
 
   final AttachmentEntry entry;
 
-  /// Decrypts the voice note to a temporary file.
-  final Future<File> Function() load;
+  /// Decrypts the voice note, in memory when [inMemory] is true and to a
+  /// temporary file otherwise.
+  final Future<DecryptedVoice> Function(bool inMemory) load;
   final VoicePlayback Function() playbackFactory;
 
   @override
@@ -190,7 +358,7 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
   VoicePlayback? _playback;
   final List<StreamSubscription<Object?>> _subs =
       <StreamSubscription<Object?>>[];
-  File? _copy;
+  DecryptedVoice? _voice;
   VoicePlaybackState _state = VoicePlaybackState.stopped;
   Duration _position = Duration.zero;
   Duration? _length;
@@ -219,9 +387,9 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
         await playback.dispose();
       } catch (_) {}
     }
-    final copy = _copy;
-    _copy = null;
-    if (copy != null) await deleteVoiceCopy(copy);
+    final voice = _voice;
+    _voice = null;
+    if (voice != null) await voice.discard();
   }
 
   void _set(VoidCallback change) {
@@ -263,23 +431,43 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
     try {
       await _stopOthers();
       await _release();
-      final copy = await widget.load();
-      if (!mounted) {
-        await deleteVoiceCopy(copy);
-        return;
+      try {
+        await _open(allowMemory: true);
+      } on LoopbackPlaybackException {
+        // The platform refused the loopback path (iOS, macOS, Linux). Then
+        // the note plays from a private temp copy, as before. Any other
+        // failure, or a tile that went away, is not retried from a file.
+        await _release();
+        if (!mounted) rethrow;
+        await _open(allowMemory: false);
       }
-      _copy = copy;
-      final playback = widget.playbackFactory();
-      _playback = playback;
-      _subs.add(playback.states.listen(_onState));
-      _subs.add(playback.positions.listen(_onPosition));
-      _subs.add(playback.durations.listen(_onLength));
-      await playback.play(copy.path);
     } catch (_) {
       await _release();
       _set(() => _failed = true);
     } finally {
       _set(() => _loading = false);
+    }
+  }
+
+  Future<void> _open({required bool allowMemory}) async {
+    final playback = widget.playbackFactory();
+    _playback = playback;
+    final voice = await widget.load(
+      allowMemory && playback.supportsBytes && widget.entry.opensFromMemory,
+    );
+    if (!mounted) {
+      await voice.discard();
+      return;
+    }
+    _voice = voice;
+    _subs.add(playback.states.listen(_onState));
+    _subs.add(playback.positions.listen(_onPosition));
+    _subs.add(playback.durations.listen(_onLength));
+    final bytes = voice.bytes;
+    if (bytes != null) {
+      await playback.playBytes(bytes, mimeType: widget.entry.mediaType);
+    } else {
+      await playback.play(voice.file!.path);
     }
   }
 
@@ -295,11 +483,11 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
 
   void _onLength(Duration length) => _set(() => _length = length);
 
-  /// Playback finished: the plaintext copy is not needed until the next
-  /// play, which decrypts again.
+  /// Playback finished: the plaintext is not needed until the next play,
+  /// which decrypts again.
   Future<void> _dropCopy() async {
-    final copy = _copy;
-    _copy = null;
+    final voice = _voice;
+    _voice = null;
     final playback = _playback;
     _playback = null;
     for (final sub in _subs) {
@@ -311,7 +499,7 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
         await playback.dispose();
       } catch (_) {}
     }
-    if (copy != null) await deleteVoiceCopy(copy);
+    if (voice != null) await voice.discard();
   }
 
   @override

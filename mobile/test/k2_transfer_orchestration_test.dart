@@ -76,10 +76,11 @@ class _FaultStore extends MemoryLocalStore {
       throw StateError('disk full');
     }
     await super.commitHistoryTransferState(
-        expectedCounter: expectedCounter,
-        expectedCursor: expectedCursor,
-        state: state,
-        transfer: transfer);
+      expectedCounter: expectedCounter,
+      expectedCursor: expectedCursor,
+      state: state,
+      transfer: transfer,
+    );
     if (loseOutcomeStage == transfer.stage) {
       loseOutcomeStage = null;
       throw StateError('outcome lost');
@@ -96,8 +97,9 @@ class _FaultStore extends MemoryLocalStore {
   }
 
   @override
-  Future<List<int>> exportHistorySnapshot(
-          {bool omitDisappearing = false}) async =>
+  Future<List<int>> exportHistorySnapshot({
+    bool omitDisappearing = false,
+  }) async =>
       exported == null
           ? await super
               .exportHistorySnapshot(omitDisappearing: omitDisappearing)
@@ -185,7 +187,9 @@ class _FakeTransport implements HistoryTransferTransport {
 
   @override
   Future<HistoryTransferReceipt> status(
-      String linkId, HistoryTransferAuth auth) async {
+    String linkId,
+    HistoryTransferAuth auth,
+  ) async {
     if (stored == null) throw StateError('no transfer yet');
     return _receipt(stored!.state);
   }
@@ -258,15 +262,18 @@ LocalMessage _message(String action, String body, int now) => LocalMessage(
     );
 
 /// The source's history snapshot as it would export it.
-List<int> _snapshot(int now,
-        {int counter = 3, List<String> bodies = const []}) =>
+List<int> _snapshot(
+  int now, {
+  int counter = 3,
+  List<String> bodies = const [],
+}) =>
     HistorySnapshot(
       accountId: _account,
       sourceDeviceId: _sourceDevice,
       counter: counter,
       createdAt: now,
       conversations: const [
-        HistoryConversation('conv', 'dm', title: 'historical'),
+        HistoryConversation('conv', 'dm', title: 'historical')
       ],
       messages: [
         for (var index = 0; index < bodies.length; index++)
@@ -297,86 +304,118 @@ class _Pair {
 
   /// Links the two devices through the native controls and approves, so the
   /// source row is `approving` and the recipient's `awaiting_handoff`.
-  Future<void> link(
-      {List<String> bodies = const ['first', 'second'],
-      bool loseConfirmOutcome = false}) async {
+  Future<void> link({
+    List<String> bodies = const ['first', 'second'],
+    bool loseConfirmOutcome = false,
+  }) async {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     clock = DateTime.now().toUtc();
     final now = clock.millisecondsSinceEpoch;
     source = TestNativeCryptoService(
-        bindings: bindings, localStore: sourceStore, clock: () => clock);
+      bindings: bindings,
+      localStore: sourceStore,
+      clock: () => clock,
+    );
     recipient = TestNativeCryptoService(
-        bindings: bindings, localStore: recipientStore, clock: () => clock);
+      bindings: bindings,
+      localStore: recipientStore,
+      clock: () => clock,
+    );
     cacheDir = '${dir.path}/cache';
     downloadDir = '${dir.path}/download';
     sourceStore.exported = _snapshot(now, bodies: bodies);
 
     final sourceCredential = await source.createEnrollmentCredential(
-        const EnrollmentReservation(
-            id: 'res_src',
-            accountId: _account,
-            deviceId: _sourceDevice,
-            challenge: <int>[1, 2, 3]));
+      const EnrollmentReservation(
+        id: 'res_src',
+        accountId: _account,
+        deviceId: _sourceDevice,
+        challenge: <int>[1, 2, 3],
+      ),
+    );
     await sourceStore.saveSession(_sourceSession);
     await source.activateSession(_sourceSession);
 
     final newCredential = await recipient.createEnrollmentCredential(
-        const EnrollmentReservation(
-            id: 'res_new',
-            accountId: _account,
-            deviceId: _newDevice,
-            challenge: <int>[1, 2, 3]));
+      const EnrollmentReservation(
+        id: 'res_new',
+        accountId: _account,
+        deviceId: _newDevice,
+        challenge: <int>[1, 2, 3],
+      ),
+    );
     final sourceRandom = List<int>.filled(32, 6);
     final commitment = await source.k2SourceCommitment(_origin, sourceRandom);
     K2LinkContext context(List<int> key, List<int> random) => K2LinkContext(
-        id: id,
-        accountId: _account,
-        nonce: List<int>.filled(32, 9),
-        sourceDeviceId: _sourceDevice,
-        sourceSigningKey: sourceCredential.signingKey,
-        recipientDeviceId: _newDevice,
-        recipientSigningKey: newCredential.signingKey,
-        transferPublicKey: key,
-        sourceCommitment: commitment,
-        recipientRandom: random);
+          id: id,
+          accountId: _account,
+          nonce: List<int>.filled(32, 9),
+          sourceDeviceId: _sourceDevice,
+          sourceSigningKey: sourceCredential.signingKey,
+          recipientDeviceId: _newDevice,
+          recipientSigningKey: newCredential.signingKey,
+          transferPublicKey: key,
+          sourceCommitment: commitment,
+          recipientRandom: random,
+        );
     final secret = List<int>.filled(16, 8);
     final originalExpiresAt = now + const Duration(minutes: 30).inMilliseconds;
     final received = await recipient.k2ReceiveBegin(
-        context(List<int>.filled(32, 0), List<int>.filled(32, 0)), secret,
-        originalExpiresAt: originalExpiresAt);
+      context(List<int>.filled(32, 0), List<int>.filled(32, 0)),
+      secret,
+      originalExpiresAt: originalExpiresAt,
+    );
     final sealed = await recipient.sealPendingEnrollment();
-    await recipientStore.savePendingEnrollment(PendingEnrollment(
-      kind: PendingEnrollment.kindDeviceLinkV3,
-      origin: _origin,
-      accountId: _account,
-      deviceId: _newDevice,
-      payloadJson: '{}',
-      state: sealed,
-    ));
+    await recipientStore.savePendingEnrollment(
+      PendingEnrollment(
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        origin: _origin,
+        accountId: _account,
+        deviceId: _newDevice,
+        payloadJson: '{}',
+        state: sealed,
+      ),
+    );
     final verification = await source.k2SourceAccept(
-        context(received.transferPublicKey, received.recipientRandom), secret,
-        originalExpiresAt: originalExpiresAt,
-        transcriptHash: received.transcriptHash,
-        claimTag: received.claimTag,
-        sourceRandom: sourceRandom);
+      context(received.transferPublicKey, received.recipientRandom),
+      secret,
+      originalExpiresAt: originalExpiresAt,
+      transcriptHash: received.transcriptHash,
+      claimTag: received.claimTag,
+      sourceRandom: sourceRandom,
+    );
     // The pending (frozen) identity shows the same code from the reveal.
     expect(await recipient.k2RevealSas(id, sourceRandom), verification.sas);
     if (loseConfirmOutcome) {
       // The confirm committed, then the app crashed before the approval POST.
       sourceStore.loseOutcomeStage = HistoryTransferStage.approving;
       await expectLater(
-          source.k2SourceConfirm(id, verification.sas,
-              recipientDeviceId: _newDevice, claimRequestHash: _claimHash),
-          throwsA(isA<StateError>()));
-      expect((await sourceStore.loadHistoryTransfer(_origin, _linkId))!.stage,
-          HistoryTransferStage.approving);
+        source.k2SourceConfirm(
+          id,
+          verification.sas,
+          recipientDeviceId: _newDevice,
+          claimRequestHash: _claimHash,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        (await sourceStore.loadHistoryTransfer(_origin, _linkId))!.stage,
+        HistoryTransferStage.approving,
+      );
     }
-    await source.k2SourceConfirm(id, verification.sas,
-        recipientDeviceId: _newDevice, claimRequestHash: _claimHash);
+    await source.k2SourceConfirm(
+      id,
+      verification.sas,
+      recipientDeviceId: _newDevice,
+      claimRequestHash: _claimHash,
+    );
     final approval = await source.k2SourceApprovalRequest(id);
     approvedAt = now;
-    await source.k2ApplyApproval(id, approval.approvalTag,
-        approvedAt: approvedAt);
+    await source.k2ApplyApproval(
+      id,
+      approval.approvalTag,
+      approvedAt: approvedAt,
+    );
     await recipient.promotePendingEnrollment(
       _newSession,
       kind: PendingEnrollment.kindDeviceLinkV3,
@@ -398,17 +437,28 @@ class _Pair {
       ),
     );
     sourceFlow = HistoryTransferService(
-        crypto: source, localStore: sourceStore, transport: transport);
+      crypto: source,
+      localStore: sourceStore,
+      transport: transport,
+    );
     recipientFlow = HistoryTransferService(
-        crypto: recipient, localStore: recipientStore, transport: transport);
+      crypto: recipient,
+      localStore: recipientStore,
+      transport: transport,
+    );
   }
 
-  Future<HistoryTransferProgress> send() => sourceFlow.send(id,
-      sessionToken: _sourceSession.token, cacheDirectory: cacheDir);
+  Future<HistoryTransferProgress> send() => sourceFlow.send(
+        id,
+        sessionToken: _sourceSession.token,
+        cacheDirectory: cacheDir,
+      );
 
-  Future<HistoryTransferProgress> receive() => recipientFlow.receive(id,
-      auth: HistorySessionAuth(_newSession.token),
-      downloadDirectory: downloadDir);
+  Future<HistoryTransferProgress> receive() => recipientFlow.receive(
+        id,
+        auth: HistorySessionAuth(_newSession.token),
+        downloadDirectory: downloadDir,
+      );
 
   Future<HistoryTransferProgress?> sourceRow() =>
       sourceStore.loadHistoryTransfer(_origin, _linkId);
@@ -443,70 +493,80 @@ void main() {
   final skip = nativeCryptoSkip();
 
   test(
-      'history moves from the source to the new device and both clean up',
-      () => _withPair((pair) async {
-            final cursor = await pair.recipientStore.loadSyncCursor();
-            final sourceCounter =
-                (await pair.sourceStore.loadCryptoState())!.counter;
-            var sent = await pair.send();
-            expect(sent.stage, HistoryTransferStage.uploaded);
-            expect(File(sent.filePath!).existsSync(), isTrue);
-            expect(sent.handoff, isNotEmpty);
+    'history moves from the source to the new device and both clean up',
+    () => _withPair((pair) async {
+      final cursor = await pair.recipientStore.loadSyncCursor();
+      final sourceCounter = (await pair.sourceStore.loadCryptoState())!.counter;
+      var sent = await pair.send();
+      expect(sent.stage, HistoryTransferStage.uploaded);
+      expect(File(sent.filePath!).existsSync(), isTrue);
+      expect(sent.handoff, isNotEmpty);
 
-            final received = await pair.receive();
-            expect(received.stage, HistoryTransferStage.acknowledged);
-            expect(await pair.recipientRow(), isNull);
-            expect(_fileGone(Directory(pair.downloadDir)), isTrue);
+      final received = await pair.receive();
+      expect(received.stage, HistoryTransferStage.acknowledged);
+      expect(await pair.recipientRow(), isNull);
+      expect(_fileGone(Directory(pair.downloadDir)), isTrue);
 
-            final messages = await pair.recipientStore.loadMessages('conv');
-            expect(messages.map((m) => m.body), ['first', 'second']);
-            expect(messages.every((m) => m.state == 'restored'), isTrue);
-            final namespace = await pair.recipientStore.loadHistoryNamespace();
-            expect(namespace.imports, hasLength(1));
-            // Importing never moves the sync cursor.
-            expect(await pair.recipientStore.loadSyncCursor(), cursor);
+      final messages = await pair.recipientStore.loadMessages('conv');
+      expect(messages.map((m) => m.body), ['first', 'second']);
+      expect(messages.every((m) => m.state == 'restored'), isTrue);
+      final namespace = await pair.recipientStore.loadHistoryNamespace();
+      expect(namespace.imports, hasLength(1));
+      // Importing never moves the sync cursor.
+      expect(await pair.recipientStore.loadSyncCursor(), cursor);
 
-            sent = await pair.send();
-            expect(sent.stage, HistoryTransferStage.acknowledged);
-            expect(await pair.sourceRow(), isNull);
-            expect(_fileGone(Directory(pair.cacheDir)), isTrue);
-            expect((await pair.sourceStore.loadCryptoState())!.counter,
-                greaterThan(sourceCounter));
+      sent = await pair.send();
+      expect(sent.stage, HistoryTransferStage.acknowledged);
+      expect(await pair.sourceRow(), isNull);
+      expect(_fileGone(Directory(pair.cacheDir)), isTrue);
+      expect(
+        (await pair.sourceStore.loadCryptoState())!.counter,
+        greaterThan(sourceCounter),
+      );
 
-            // The native records are gone, and both devices still work: the
-            // in-memory state is the stored one after every commit.
-            await expectLater(
-                pair.source.k2Inspect(pair.id), throwsA(anything));
-            await expectLater(
-                pair.recipient.k2Inspect(pair.id), throwsA(anything));
-            await pair.source.createReplenishmentKeyPackages(count: 1);
-            await pair.recipient.createReplenishmentKeyPackages(count: 1);
-          }),
-      skip: skip);
+      // The native records are gone, and both devices still work: the
+      // in-memory state is the stored one after every commit.
+      await expectLater(pair.source.k2Inspect(pair.id), throwsA(anything));
+      await expectLater(pair.recipient.k2Inspect(pair.id), throwsA(anything));
+      await pair.source.createReplenishmentKeyPackages(count: 1);
+      await pair.recipient.createReplenishmentKeyPackages(count: 1);
+    }),
+    skip: skip,
+  );
 
-  test('the approval tag is released only after the intent is committed',
-      () async {
-    final dir = Directory.systemTemp.createTempSync('k2-orchestration');
-    final pair = _Pair(dir);
-    try {
-      pair.bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      final store = _FaultStore();
-      final service =
-          TestNativeCryptoService(bindings: pair.bindings, localStore: store);
-      await service.createEnrollmentCredential(const EnrollmentReservation(
-          id: 'r',
-          accountId: _account,
-          deviceId: _sourceDevice,
-          challenge: [1]));
-      await store.saveSession(_sourceSession);
-      await service.activateSession(_sourceSession);
-      await expectLater(service.k2SourceApprovalRequest(pair.id),
-          throwsA(isA<K2TransferException>()));
-      await service.dispose();
-    } finally {
-      dir.deleteSync(recursive: true);
-    }
-  }, skip: skip);
+  test(
+    'the approval tag is released only after the intent is committed',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('k2-orchestration');
+      final pair = _Pair(dir);
+      try {
+        pair.bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+        final store = _FaultStore();
+        final service = TestNativeCryptoService(
+          bindings: pair.bindings,
+          localStore: store,
+        );
+        await service.createEnrollmentCredential(
+          const EnrollmentReservation(
+            id: 'r',
+            accountId: _account,
+            deviceId: _sourceDevice,
+            challenge: [1],
+          ),
+        );
+        await store.saveSession(_sourceSession);
+        await service.activateSession(_sourceSession);
+        await expectLater(
+          service.k2SourceApprovalRequest(pair.id),
+          throwsA(isA<K2TransferException>()),
+        );
+        await service.dispose();
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    },
+    skip: skip,
+  );
 
   test('an approved transfer refuses a later confirm', () async {
     final dir = Directory.systemTemp.createTempSync('k2-orchestration');
@@ -519,9 +579,14 @@ void main() {
       expect(before!.stage, HistoryTransferStage.approving);
       // An approved transfer is past its approval: the retry is refused.
       await expectLater(
-          pair.source.k2SourceConfirm(pair.id, '00000000',
-              recipientDeviceId: _newDevice, claimRequestHash: _claimHash),
-          throwsA(anything));
+        pair.source.k2SourceConfirm(
+          pair.id,
+          '00000000',
+          recipientDeviceId: _newDevice,
+          claimRequestHash: _claimHash,
+        ),
+        throwsA(anything),
+      );
       expect((await pair.sourceRow())!.stage, HistoryTransferStage.approving);
     } finally {
       await pair.dispose();
@@ -529,412 +594,456 @@ void main() {
     }
   }, skip: skip);
 
-  test('the pending state cannot grow a transfer record after its seal',
-      () async {
-    final dir = Directory.systemTemp.createTempSync('k2-orchestration');
-    try {
-      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      final service = TestNativeCryptoService(
-          bindings: bindings, localStore: _FaultStore());
-      final credential = await service.createEnrollmentCredential(
+  test(
+    'the pending state cannot grow a transfer record after its seal',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('k2-orchestration');
+      try {
+        final bindings = NativeCryptoBindings.open(
+          requireNativeCryptoLibrary(),
+        );
+        final service = TestNativeCryptoService(
+          bindings: bindings,
+          localStore: _FaultStore(),
+        );
+        final credential = await service.createEnrollmentCredential(
           const EnrollmentReservation(
-              id: 'r',
-              accountId: _account,
-              deviceId: _newDevice,
-              challenge: [1]));
-      await service.sealPendingEnrollment();
-      await expectLater(
+            id: 'r',
+            accountId: _account,
+            deviceId: _newDevice,
+            challenge: [1],
+          ),
+        );
+        await service.sealPendingEnrollment();
+        await expectLater(
           service.k2ReceiveBegin(
-              K2LinkContext(
-                  id: const K2TransferId(_origin, _linkId),
-                  accountId: _account,
-                  nonce: List<int>.filled(32, 9),
-                  sourceDeviceId: _sourceDevice,
-                  sourceSigningKey: credential.signingKey,
-                  recipientDeviceId: _newDevice,
-                  recipientSigningKey: credential.signingKey,
-                  transferPublicKey: List<int>.filled(32, 0),
-                  sourceCommitment: List<int>.filled(32, 3),
-                  recipientRandom: List<int>.filled(32, 0)),
-              List<int>.filled(16, 8),
-              originalExpiresAt: DateTime.now().millisecondsSinceEpoch + 1000),
-          throwsA(isA<K2TransferException>()));
-      await service.dispose();
-    } finally {
-      dir.deleteSync(recursive: true);
-    }
-  }, skip: skip);
-
-  test(
-      'a snapshot commit that fails leaves no cache and the next try works',
-      () => _withPair((pair) async {
-            pair.sourceStore.failBeforeStage =
-                HistoryTransferStage.snapshotReady;
-            await expectLater(pair.send(), throwsA(isA<StateError>()));
-            expect((await pair.sourceRow())!.stage,
-                HistoryTransferStage.approving);
-            expect(_fileGone(Directory(pair.cacheDir)), isTrue);
-            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-          }),
-      skip: skip);
-
-  test(
-      'a snapshot commit whose outcome was lost keeps its frozen copy',
-      () => _withPair((pair) async {
-            pair.sourceStore.loseOutcomeStage =
-                HistoryTransferStage.snapshotReady;
-            await expectLater(pair.send(), throwsA(isA<StateError>()));
-            final stored = (await pair.sourceRow())!;
-            expect(stored.stage, HistoryTransferStage.snapshotReady);
-            expect(File(stored.filePath!).existsSync(), isTrue);
-            // The retry uploads exactly the stored copy and handoff.
-            final resumed = await pair.send();
-            expect(resumed.stage, HistoryTransferStage.uploaded);
-            expect(resumed.transferId, stored.transferId);
-            expect(resumed.handoff, stored.handoff);
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-          }),
-      skip: skip);
-
-  test(
-      'a lost upload reply is retried without a second copy',
-      () => _withPair((pair) async {
-            pair.transport.loseUploadReply = true;
-            await expectLater(pair.send(), throwsA(isA<SocketException>()));
-            expect((await pair.sourceRow())!.stage,
-                HistoryTransferStage.snapshotReady);
-            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
-            expect(pair.transport.uploads, 2);
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-          }),
-      skip: skip);
-
-  test(
-      'a cached copy that went missing is refused, never regenerated',
-      () => _withPair((pair) async {
-            pair.transport.loseUploadReply = true;
-            await expectLater(pair.send(), throwsA(isA<SocketException>()));
-            final row = (await pair.sourceRow())!;
-            File(row.filePath!).deleteSync();
-            await expectLater(pair.send(), throwsA(isA<K2TransferException>()));
-            expect((await pair.sourceRow())!.transferId, row.transferId);
-            await pair.sourceFlow
-                .abandon(pair.id, HistorySessionAuth(_sourceSession.token));
-            expect(pair.transport.cancelled, isTrue);
-            expect(await pair.sourceRow(), isNull);
-            await expectLater(
-                pair.source.k2Inspect(pair.id), throwsA(anything));
-          }),
-      skip: skip);
-
-  test(
-      'a crash after the import committed re-imports as a no-op',
-      () => _withPair((pair) async {
-            await pair.send();
-            pair.recipientStore.failSaveStage = HistoryTransferStage.imported;
-            await expectLater(pair.receive(), throwsA(isA<StateError>()));
-            expect((await pair.recipientRow())!.stage,
-                HistoryTransferStage.downloaded);
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-            final done = await pair.receive();
-            expect(done.stage, HistoryTransferStage.acknowledged);
-            // The ledger made the second import a no-op: no duplicates.
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-            expect((await pair.recipientStore.loadHistoryNamespace()).imports,
-                hasLength(1));
-          }),
-      skip: skip);
-
-  test(
-      'a crash after the ACK is finished by the next call',
-      () => _withPair((pair) async {
-            await pair.send();
-            pair.recipientStore.failSaveStage =
-                HistoryTransferStage.acknowledged;
-            await expectLater(pair.receive(), throwsA(isA<StateError>()));
-            expect(pair.transport.stored!.state, 'acknowledged');
-            expect((await pair.recipientRow())!.stage,
-                HistoryTransferStage.imported);
-            // The server accepts an exact replay of the ACK.
-            final done = await pair.receive();
-            expect(done.stage, HistoryTransferStage.acknowledged);
-            expect(await pair.recipientRow(), isNull);
-          }),
-      skip: skip);
-
-  test(
-      'a corrupt download imports nothing and is fetched again',
-      () => _withPair((pair) async {
-            await pair.send();
-            pair.transport.corruptDownload = true;
-            await expectLater(
-                pair.receive(), throwsA(isA<HistoryTransferMismatch>()));
-            expect((await pair.recipientRow())!.stage,
-                HistoryTransferStage.downloading);
-            expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
-            expect(_fileGone(Directory(pair.downloadDir)), isTrue);
-            pair.transport.corruptDownload = false;
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-          }),
-      skip: skip);
-
-  test(
-      'a receipt that names another transfer is refused before anything is kept',
-      () => _withPair((pair) async {
-            await pair.send();
-            pair.transport.wrongTransferId = 'd' * 64;
-            await expectLater(
-                pair.receive(), throwsA(isA<K2TransferException>()));
-            final row = (await pair.recipientRow())!;
-            expect(row.stage, HistoryTransferStage.awaitingHandoff);
-            expect(row.handoff, isNull);
-            expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
-          }),
-      skip: skip);
-
-  test(
-      'a recipient resuming after the link expired still applies the approval',
-      () => _withPair((pair) async {
-            // The harness link expires 30 minutes after `link()`; the transfer
-            // itself stays live for seven days from the approval.
-            pair.clock = pair.clock.add(const Duration(hours: 1));
-            await pair.send();
-            final received = await pair.receive();
-            expect(received.stage, HistoryTransferStage.acknowledged);
-            final messages = await pair.recipientStore.loadMessages('conv');
-            expect(messages.map((m) => m.body), ['first', 'second']);
-          }),
-      skip: skip);
-
-  test(
-      'an expired transfer is refused and then swept',
-      () => _withPair((pair) async {
-            await pair.send();
-            // Past the seven-day window.
-            pair.clock = pair.clock.add(const Duration(days: 8));
-            await expectLater(pair.receive(), throwsA(anything));
-            expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
-            expect(await pair.recipient.k2ExpireTransfers(), 1);
-            expect(await pair.recipientRow(), isNull);
-            await expectLater(
-                pair.recipient.k2Inspect(pair.id), throwsA(anything));
-            expect(await pair.source.k2ExpireTransfers(), 1);
-            expect(await pair.sourceRow(), isNull);
-            expect(_fileGone(Directory(pair.cacheDir)), isTrue);
-          }),
-      skip: skip);
-
-  test(
-      'a bundle the history importer refuses keeps its stage and imports nothing',
-      () => _withPair((pair) async {
-            // A snapshot of another account passes native (the bytes are
-            // opaque to it) and is refused by the importer's own checks.
-            pair.sourceStore.exported = HistorySnapshot(
-              accountId: 'someone_else',
+            K2LinkContext(
+              id: const K2TransferId(_origin, _linkId),
+              accountId: _account,
+              nonce: List<int>.filled(32, 9),
               sourceDeviceId: _sourceDevice,
-              counter: 3,
-              createdAt: pair.clock.millisecondsSinceEpoch,
-              conversations: const [],
-              messages: const [],
-              reactions: const [],
-              pins: const [],
-              starred: const {},
-              preferences: const [],
-            ).encode();
-            await pair.send();
-            await expectLater(pair.receive(), throwsA(isA<FormatException>()));
-            expect((await pair.recipientRow())!.stage,
-                HistoryTransferStage.downloaded);
-            expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
-          }),
-      skip: skip);
+              sourceSigningKey: credential.signingKey,
+              recipientDeviceId: _newDevice,
+              recipientSigningKey: credential.signingKey,
+              transferPublicKey: List<int>.filled(32, 0),
+              sourceCommitment: List<int>.filled(32, 3),
+              recipientRandom: List<int>.filled(32, 0),
+            ),
+            List<int>.filled(16, 8),
+            originalExpiresAt: DateTime.now().millisecondsSinceEpoch + 1000,
+          ),
+          throwsA(isA<K2TransferException>()),
+        );
+        await service.dispose();
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    },
+    skip: skip,
+  );
 
   test(
-      'a confirm whose outcome was lost is retried onto the same row',
-      () => _withPair(loseConfirmOutcome: true, (pair) async {
-            final row = (await pair.sourceRow())!;
-            expect(row.stage, HistoryTransferStage.approving);
-            final original =
-                (await pair.source.k2Inspect(pair.id)).originalExpiresAt;
-            expect(row.expiresAt, original + _week.inMilliseconds);
-            // The whole transfer still completes from that row.
-            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-          }),
-      skip: skip);
+    'a snapshot commit that fails leaves no cache and the next try works',
+    () => _withPair((pair) async {
+      pair.sourceStore.failBeforeStage = HistoryTransferStage.snapshotReady;
+      await expectLater(pair.send(), throwsA(isA<StateError>()));
+      expect((await pair.sourceRow())!.stage, HistoryTransferStage.approving);
+      expect(_fileGone(Directory(pair.cacheDir)), isTrue);
+      expect((await pair.send()).stage, HistoryTransferStage.uploaded);
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+    }),
+    skip: skip,
+  );
 
   test(
-      'a copy the server closed is refused and can be abandoned',
-      () => _withPair((pair) async {
-            await pair.send();
-            final base = pair.transport.stored!;
-            pair.transport.stored = HistoryTransferReceipt(
-              transferId: base.transferId,
-              linkId: base.linkId,
-              accountId: base.accountId,
-              sourceDeviceId: base.sourceDeviceId,
-              recipientDeviceId: base.recipientDeviceId,
-              claimRequestHash: base.claimRequestHash,
-              transcriptHash: base.transcriptHash,
-              ciphertextSha256: base.ciphertextSha256,
-              sizeBytes: base.sizeBytes,
-              state: 'cancelled',
-              createdAt: base.createdAt,
-              expiresAt: base.expiresAt,
-            );
-            await expectLater(pair.send(), throwsA(isA<K2TransferException>()));
-            expect(
-                (await pair.sourceRow())!.stage, HistoryTransferStage.uploaded);
-            await pair.sourceFlow
-                .abandon(pair.id, HistorySessionAuth(_sourceSession.token));
-            expect(await pair.sourceRow(), isNull);
-            expect(_fileGone(Directory(pair.cacheDir)), isTrue);
-          }),
-      skip: skip);
+    'a snapshot commit whose outcome was lost keeps its frozen copy',
+    () => _withPair((pair) async {
+      pair.sourceStore.loseOutcomeStage = HistoryTransferStage.snapshotReady;
+      await expectLater(pair.send(), throwsA(isA<StateError>()));
+      final stored = (await pair.sourceRow())!;
+      expect(stored.stage, HistoryTransferStage.snapshotReady);
+      expect(File(stored.filePath!).existsSync(), isTrue);
+      // The retry uploads exactly the stored copy and handoff.
+      final resumed = await pair.send();
+      expect(resumed.stage, HistoryTransferStage.uploaded);
+      expect(resumed.transferId, stored.transferId);
+      expect(resumed.handoff, stored.handoff);
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+    }),
+    skip: skip,
+  );
 
   test(
-      'an ACK on a copy the server closed is a typed refusal and the row stays',
-      () => _withPair((pair) async {
-            await pair.send();
-            for (final status in [404, 409, 410]) {
-              pair.transport.ackRefusedWith = status;
-              await expectLater(
-                  pair.receive(),
-                  throwsA(isA<K2TransferException>().having(
-                      (e) => e.reason, 'reason', contains('server closed'))));
-              // The history is imported and stays; the row is not
-              // acknowledged, so the caller abandons it.
-              expect((await pair.recipientRow())!.stage,
-                  HistoryTransferStage.imported);
-              expect(
-                  await pair.recipientStore.loadMessages('conv'), hasLength(2));
-            }
-            // Any other failure keeps its own type.
-            pair.transport.ackRefusedWith = 500;
-            await expectLater(pair.receive(), throwsA(isA<ApiException>()));
-            pair.transport.ackRefusedWith = null;
-            await pair.recipientFlow
-                .abandon(pair.id, HistorySessionAuth(_newSession.token));
-            expect(await pair.recipientRow(), isNull);
-            expect(
-                await pair.recipientStore.loadMessages('conv'), hasLength(2));
-          }),
-      skip: skip);
+    'a lost upload reply is retried without a second copy',
+    () => _withPair((pair) async {
+      pair.transport.loseUploadReply = true;
+      await expectLater(pair.send(), throwsA(isA<SocketException>()));
+      expect(
+        (await pair.sourceRow())!.stage,
+        HistoryTransferStage.snapshotReady,
+      );
+      expect((await pair.send()).stage, HistoryTransferStage.uploaded);
+      expect(pair.transport.uploads, 2);
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a link ID that could name another path is refused before any file',
-      () => _withPair((pair) async {
-            for (final bad in ['../x', 'a/b', r'a\b', '.', 'C:x', '']) {
-              expect(() => k2DownloadFileName(bad),
-                  throwsA(isA<K2TransferException>()),
-                  reason: bad);
-              await expectLater(
-                  pair.source.k2SourcePrepare(K2TransferId(_origin, bad),
-                      cacheDirectory: pair.cacheDir),
-                  throwsA(isA<K2TransferException>()),
-                  reason: bad);
-              await expectLater(
-                  pair.recipient.k2ReceiveHandoff(K2TransferId(_origin, bad),
-                      handoff: const [1],
-                      transferId: 'a' * 64,
-                      ciphertextSha256: List<int>.filled(32, 1),
-                      ciphertextSize: 1,
-                      downloadPath: '${pair.downloadDir}/x'),
-                  throwsA(isA<K2TransferException>()),
-                  reason: bad);
-            }
-            expect(k2DownloadFileName('link_1-A'), 'k2-link_1-A.download');
-            expect(Directory(pair.cacheDir).existsSync(), isFalse);
-          }),
-      skip: skip);
+    'a cached copy that went missing is refused, never regenerated',
+    () => _withPair((pair) async {
+      pair.transport.loseUploadReply = true;
+      await expectLater(pair.send(), throwsA(isA<SocketException>()));
+      final row = (await pair.sourceRow())!;
+      File(row.filePath!).deleteSync();
+      await expectLater(pair.send(), throwsA(isA<K2TransferException>()));
+      expect((await pair.sourceRow())!.transferId, row.transferId);
+      await pair.sourceFlow.abandon(
+        pair.id,
+        HistorySessionAuth(_sourceSession.token),
+      );
+      expect(pair.transport.cancelled, isTrue);
+      expect(await pair.sourceRow(), isNull);
+      await expectLater(pair.source.k2Inspect(pair.id), throwsA(anything));
+    }),
+    skip: skip,
+  );
 
   test(
-      'only a digest failure answers false; other failures keep the file',
-      () => _withPair((pair) async {
-            await pair.send();
-            pair.transport.stopAfterDownload = true;
-            await expectLater(pair.receive(), throwsA(isA<SocketException>()));
-            final row = (await pair.recipientRow())!;
-            expect(row.stage, HistoryTransferStage.downloading);
-            final file = File(row.filePath!);
-            expect(file.existsSync(), isTrue);
-            expect(await pair.recipient.k2VerifyDownload(pair.id), isTrue);
-
-            // A flipped byte fails native authentication: false.
-            final bytes = file.readAsBytesSync();
-            bytes[bytes.length ~/ 2] ^= 1;
-            file.writeAsBytesSync(bytes);
-            expect(await pair.recipient.k2VerifyDownload(pair.id), isFalse);
-
-            // A missing file says nothing about the bytes: it throws.
-            file.deleteSync();
-            await expectLater(pair.recipient.k2VerifyDownload(pair.id),
-                throwsA(isA<K2TransferException>()));
-            // So does a transfer with no record.
-            await expectLater(
-                pair.recipient
-                    .k2VerifyDownload(const K2TransferId(_origin, 'link_2')),
-                throwsA(isA<K2TransferException>()));
-          }),
-      skip: skip);
+    'a crash after the import committed re-imports as a no-op',
+    () => _withPair((pair) async {
+      await pair.send();
+      pair.recipientStore.failSaveStage = HistoryTransferStage.imported;
+      await expectLater(pair.receive(), throwsA(isA<StateError>()));
+      expect(
+        (await pair.recipientRow())!.stage,
+        HistoryTransferStage.downloaded,
+      );
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+      final done = await pair.receive();
+      expect(done.stage, HistoryTransferStage.acknowledged);
+      // The ledger made the second import a no-op: no duplicates.
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+      expect(
+        (await pair.recipientStore.loadHistoryNamespace()).imports,
+        hasLength(1),
+      );
+    }),
+    skip: skip,
+  );
 
   test(
-      'orphan source copies are swept; a copy a row names never is',
-      () => _withPair((pair) async {
-            final sent = await pair.send();
-            final kept = File(sent.filePath!);
-            final cache = Directory(pair.cacheDir);
-            final orphan = File('${cache.path}/k2-source-${'e' * 64}.bin')
-              ..writeAsBytesSync([1, 2, 3]);
-            final orphanPart =
-                File('${cache.path}/k2-source-${'f' * 64}.bin.part')
-                  ..writeAsBytesSync([4]);
-            final other = File('${cache.path}/notes.txt')
-              ..writeAsStringSync('x');
-            expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 2);
-            expect(orphan.existsSync(), isFalse);
-            expect(orphanPart.existsSync(), isFalse);
-            expect(kept.existsSync(), isTrue);
-            expect(other.existsSync(), isTrue);
-            expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 0);
-            expect(
-                await pair.source
-                    .k2SweepOrphanCaches('${pair.dir.path}/nowhere'),
-                0);
-            // The transfer still completes from its stored copy.
-            expect((await pair.receive()).stage,
-                HistoryTransferStage.acknowledged);
-            expect(
-                (await pair.send()).stage, HistoryTransferStage.acknowledged);
-          }),
-      skip: skip);
+    'a crash after the ACK is finished by the next call',
+    () => _withPair((pair) async {
+      await pair.send();
+      pair.recipientStore.failSaveStage = HistoryTransferStage.acknowledged;
+      await expectLater(pair.receive(), throwsA(isA<StateError>()));
+      expect(pair.transport.stored!.state, 'acknowledged');
+      expect((await pair.recipientRow())!.stage, HistoryTransferStage.imported);
+      // The server accepts an exact replay of the ACK.
+      final done = await pair.receive();
+      expect(done.stage, HistoryTransferStage.acknowledged);
+      expect(await pair.recipientRow(), isNull);
+    }),
+    skip: skip,
+  );
 
   test(
-      'a confirm retry cannot replace the claim digest the row stored',
-      () => _withPair((pair) async {
-            await expectLater(
-                pair.source.k2SourceConfirm(pair.id, '00000000',
-                    recipientDeviceId: _newDevice, claimRequestHash: 'd' * 64),
-                throwsA(isA<K2TransferException>()));
-            final row = (await pair.sourceRow())!;
-            expect(row.stage, HistoryTransferStage.approving);
-            expect(
-                jsonDecode(row.payloadJson)['claim_request_hash'], _claimHash);
-            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
-          }),
-      skip: skip);
+    'a corrupt download imports nothing and is fetched again',
+    () => _withPair((pair) async {
+      await pair.send();
+      pair.transport.corruptDownload = true;
+      await expectLater(
+        pair.receive(),
+        throwsA(isA<HistoryTransferMismatch>()),
+      );
+      expect(
+        (await pair.recipientRow())!.stage,
+        HistoryTransferStage.downloading,
+      );
+      expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
+      expect(_fileGone(Directory(pair.downloadDir)), isTrue);
+      pair.transport.corruptDownload = false;
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a receipt that names another transfer is refused before anything is kept',
+    () => _withPair((pair) async {
+      await pair.send();
+      pair.transport.wrongTransferId = 'd' * 64;
+      await expectLater(pair.receive(), throwsA(isA<K2TransferException>()));
+      final row = (await pair.recipientRow())!;
+      expect(row.stage, HistoryTransferStage.awaitingHandoff);
+      expect(row.handoff, isNull);
+      expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a recipient resuming after the link expired still applies the approval',
+    () => _withPair((pair) async {
+      // The harness link expires 30 minutes after `link()`; the transfer
+      // itself stays live for seven days from the approval.
+      pair.clock = pair.clock.add(const Duration(hours: 1));
+      await pair.send();
+      final received = await pair.receive();
+      expect(received.stage, HistoryTransferStage.acknowledged);
+      final messages = await pair.recipientStore.loadMessages('conv');
+      expect(messages.map((m) => m.body), ['first', 'second']);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'an expired transfer is refused and then swept',
+    () => _withPair((pair) async {
+      await pair.send();
+      // Past the seven-day window.
+      pair.clock = pair.clock.add(const Duration(days: 8));
+      await expectLater(pair.receive(), throwsA(anything));
+      expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
+      expect(await pair.recipient.k2ExpireTransfers(), 1);
+      expect(await pair.recipientRow(), isNull);
+      await expectLater(pair.recipient.k2Inspect(pair.id), throwsA(anything));
+      expect(await pair.source.k2ExpireTransfers(), 1);
+      expect(await pair.sourceRow(), isNull);
+      expect(_fileGone(Directory(pair.cacheDir)), isTrue);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a bundle the history importer refuses keeps its stage and imports nothing',
+    () => _withPair((pair) async {
+      // A snapshot of another account passes native (the bytes are
+      // opaque to it) and is refused by the importer's own checks.
+      pair.sourceStore.exported = HistorySnapshot(
+        accountId: 'someone_else',
+        sourceDeviceId: _sourceDevice,
+        counter: 3,
+        createdAt: pair.clock.millisecondsSinceEpoch,
+        conversations: const [],
+        messages: const [],
+        reactions: const [],
+        pins: const [],
+        starred: const {},
+        preferences: const [],
+      ).encode();
+      await pair.send();
+      await expectLater(pair.receive(), throwsA(isA<FormatException>()));
+      expect(
+        (await pair.recipientRow())!.stage,
+        HistoryTransferStage.downloaded,
+      );
+      expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a confirm whose outcome was lost is retried onto the same row',
+    () => _withPair(loseConfirmOutcome: true, (pair) async {
+      final row = (await pair.sourceRow())!;
+      expect(row.stage, HistoryTransferStage.approving);
+      final original = (await pair.source.k2Inspect(pair.id)).originalExpiresAt;
+      expect(row.expiresAt, original + _week.inMilliseconds);
+      // The whole transfer still completes from that row.
+      expect((await pair.send()).stage, HistoryTransferStage.uploaded);
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a copy the server closed is refused and can be abandoned',
+    () => _withPair((pair) async {
+      await pair.send();
+      final base = pair.transport.stored!;
+      pair.transport.stored = HistoryTransferReceipt(
+        transferId: base.transferId,
+        linkId: base.linkId,
+        accountId: base.accountId,
+        sourceDeviceId: base.sourceDeviceId,
+        recipientDeviceId: base.recipientDeviceId,
+        claimRequestHash: base.claimRequestHash,
+        transcriptHash: base.transcriptHash,
+        ciphertextSha256: base.ciphertextSha256,
+        sizeBytes: base.sizeBytes,
+        state: 'cancelled',
+        createdAt: base.createdAt,
+        expiresAt: base.expiresAt,
+      );
+      await expectLater(pair.send(), throwsA(isA<K2TransferException>()));
+      expect((await pair.sourceRow())!.stage, HistoryTransferStage.uploaded);
+      await pair.sourceFlow.abandon(
+        pair.id,
+        HistorySessionAuth(_sourceSession.token),
+      );
+      expect(await pair.sourceRow(), isNull);
+      expect(_fileGone(Directory(pair.cacheDir)), isTrue);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'an ACK on a copy the server closed is a typed refusal and the row stays',
+    () => _withPair((pair) async {
+      await pair.send();
+      for (final status in [404, 409, 410]) {
+        pair.transport.ackRefusedWith = status;
+        await expectLater(
+          pair.receive(),
+          throwsA(
+            isA<K2TransferException>().having(
+              (e) => e.reason,
+              'reason',
+              contains('server closed'),
+            ),
+          ),
+        );
+        // The history is imported and stays; the row is not
+        // acknowledged, so the caller abandons it.
+        expect(
+          (await pair.recipientRow())!.stage,
+          HistoryTransferStage.imported,
+        );
+        expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+      }
+      // Any other failure keeps its own type.
+      pair.transport.ackRefusedWith = 500;
+      await expectLater(pair.receive(), throwsA(isA<ApiException>()));
+      pair.transport.ackRefusedWith = null;
+      await pair.recipientFlow.abandon(
+        pair.id,
+        HistorySessionAuth(_newSession.token),
+      );
+      expect(await pair.recipientRow(), isNull);
+      expect(await pair.recipientStore.loadMessages('conv'), hasLength(2));
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a link ID that could name another path is refused before any file',
+    () => _withPair((pair) async {
+      for (final bad in ['../x', 'a/b', r'a\b', '.', 'C:x', '']) {
+        expect(
+          () => k2DownloadFileName(bad),
+          throwsA(isA<K2TransferException>()),
+          reason: bad,
+        );
+        await expectLater(
+          pair.source.k2SourcePrepare(
+            K2TransferId(_origin, bad),
+            cacheDirectory: pair.cacheDir,
+          ),
+          throwsA(isA<K2TransferException>()),
+          reason: bad,
+        );
+        await expectLater(
+          pair.recipient.k2ReceiveHandoff(
+            K2TransferId(_origin, bad),
+            handoff: const [1],
+            transferId: 'a' * 64,
+            ciphertextSha256: List<int>.filled(32, 1),
+            ciphertextSize: 1,
+            downloadPath: '${pair.downloadDir}/x',
+          ),
+          throwsA(isA<K2TransferException>()),
+          reason: bad,
+        );
+      }
+      expect(k2DownloadFileName('link_1-A'), 'k2-link_1-A.download');
+      expect(Directory(pair.cacheDir).existsSync(), isFalse);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'only a digest failure answers false; other failures keep the file',
+    () => _withPair((pair) async {
+      await pair.send();
+      pair.transport.stopAfterDownload = true;
+      await expectLater(pair.receive(), throwsA(isA<SocketException>()));
+      final row = (await pair.recipientRow())!;
+      expect(row.stage, HistoryTransferStage.downloading);
+      final file = File(row.filePath!);
+      expect(file.existsSync(), isTrue);
+      expect(await pair.recipient.k2VerifyDownload(pair.id), isTrue);
+
+      // A flipped byte fails native authentication: false.
+      final bytes = file.readAsBytesSync();
+      bytes[bytes.length ~/ 2] ^= 1;
+      file.writeAsBytesSync(bytes);
+      expect(await pair.recipient.k2VerifyDownload(pair.id), isFalse);
+
+      // A missing file says nothing about the bytes: it throws.
+      file.deleteSync();
+      await expectLater(
+        pair.recipient.k2VerifyDownload(pair.id),
+        throwsA(isA<K2TransferException>()),
+      );
+      // So does a transfer with no record.
+      await expectLater(
+        pair.recipient.k2VerifyDownload(const K2TransferId(_origin, 'link_2')),
+        throwsA(isA<K2TransferException>()),
+      );
+    }),
+    skip: skip,
+  );
+
+  test(
+    'orphan source copies are swept; a copy a row names never is',
+    () => _withPair((pair) async {
+      final sent = await pair.send();
+      final kept = File(sent.filePath!);
+      final cache = Directory(pair.cacheDir);
+      final orphan = File('${cache.path}/k2-source-${'e' * 64}.bin')
+        ..writeAsBytesSync([1, 2, 3]);
+      final orphanPart = File('${cache.path}/k2-source-${'f' * 64}.bin.part')
+        ..writeAsBytesSync([4]);
+      final other = File('${cache.path}/notes.txt')..writeAsStringSync('x');
+      expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 2);
+      expect(orphan.existsSync(), isFalse);
+      expect(orphanPart.existsSync(), isFalse);
+      expect(kept.existsSync(), isTrue);
+      expect(other.existsSync(), isTrue);
+      expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 0);
+      expect(
+        await pair.source.k2SweepOrphanCaches('${pair.dir.path}/nowhere'),
+        0,
+      );
+      // The transfer still completes from its stored copy.
+      expect((await pair.receive()).stage, HistoryTransferStage.acknowledged);
+      expect((await pair.send()).stage, HistoryTransferStage.acknowledged);
+    }),
+    skip: skip,
+  );
+
+  test(
+    'a confirm retry cannot replace the claim digest the row stored',
+    () => _withPair((pair) async {
+      await expectLater(
+        pair.source.k2SourceConfirm(
+          pair.id,
+          '00000000',
+          recipientDeviceId: _newDevice,
+          claimRequestHash: 'd' * 64,
+        ),
+        throwsA(isA<K2TransferException>()),
+      );
+      final row = (await pair.sourceRow())!;
+      expect(row.stage, HistoryTransferStage.approving);
+      expect(jsonDecode(row.payloadJson)['claim_request_hash'], _claimHash);
+      expect((await pair.send()).stage, HistoryTransferStage.uploaded);
+    }),
+    skip: skip,
+  );
 }

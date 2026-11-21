@@ -9,48 +9,53 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 void main() {
   final now = DateTime.utc(2026, 10, 27, 12);
   const session = Session(
-      baseUrl: 'https://example.test',
-      token: 'fixture',
-      accountId: 'me',
-      deviceId: 'my_device');
+    baseUrl: 'https://example.test',
+    token: 'fixture',
+    accountId: 'me',
+    deviceId: 'my_device',
+  );
   final envelope = ReceivedMessageEnvelope(
-      id: 'server_message',
-      conversationId: 'chat',
-      senderAccountId: 'friend',
-      senderDeviceId: 'their_device',
-      idempotencyKey: 'action',
-      ciphertext: const [1],
-      cryptoProtocol: 'mls10-openmls-v1',
-      createdAt: now);
+    id: 'server_message',
+    conversationId: 'chat',
+    senderAccountId: 'friend',
+    senderDeviceId: 'their_device',
+    idempotencyKey: 'action',
+    ciphertext: const [1],
+    cryptoProtocol: 'mls10-openmls-v1',
+    createdAt: now,
+  );
   final local = LocalMessage(
-      key: 'their_device:action',
-      serverMessageId: 'server_message',
-      conversationId: 'chat',
-      senderAccountId: 'friend',
-      senderDeviceId: 'their_device',
-      kind: LocalMessageKind.text,
-      body: '@me hello',
-      createdAt: now.millisecondsSinceEpoch,
-      state: LocalMessageState.received,
-      formatJson: jsonEncode({
-        'mentions': [
-          {'account_id': 'me', 'offset': 0, 'length': 3}
-        ]
-      }));
-  MessageNoticeCandidate? decide(
-          {LocalMessage? row,
-          bool blocked = false,
-          bool accepted = true,
-          DateTime? at,
-          ReceivedMessageEnvelope? event,
-          Session identity = session}) =>
+    key: 'their_device:action',
+    serverMessageId: 'server_message',
+    conversationId: 'chat',
+    senderAccountId: 'friend',
+    senderDeviceId: 'their_device',
+    kind: LocalMessageKind.text,
+    body: '@me hello',
+    createdAt: now.millisecondsSinceEpoch,
+    state: LocalMessageState.received,
+    formatJson: jsonEncode({
+      'mentions': [
+        {'account_id': 'me', 'offset': 0, 'length': 3},
+      ],
+    }),
+  );
+  MessageNoticeCandidate? decide({
+    LocalMessage? row,
+    bool blocked = false,
+    bool accepted = true,
+    DateTime? at,
+    ReceivedMessageEnvelope? event,
+    Session identity = session,
+  }) =>
       messageNoticeCandidate(
-          session: identity,
-          envelope: event ?? envelope,
-          message: row ?? local,
-          now: at ?? now,
-          blocked: blocked,
-          conversationAccepted: accepted);
+        session: identity,
+        envelope: event ?? envelope,
+        message: row ?? local,
+        now: at ?? now,
+        blocked: blocked,
+        conversationAccepted: accepted,
+      );
 
   test('only an authenticated valid-range account mention overrides mute', () {
     final mention = decide()!;
@@ -61,22 +66,23 @@ void main() {
       null,
       jsonEncode({
         'mentions': [
-          {'account_id': 'me', 'offset': 99, 'length': 3}
-        ]
+          {'account_id': 'me', 'offset': 99, 'length': 3},
+        ],
       }),
       jsonEncode({
         'mentions': [
-          {'account_id': 'other', 'offset': 0, 'length': 3}
-        ]
+          {'account_id': 'other', 'offset': 0, 'length': 3},
+        ],
       }),
       jsonEncode({
         'mentions': [
-          {'account_id': 'me', 'offset': 4, 'length': 3}
-        ]
+          {'account_id': 'me', 'offset': 4, 'length': 3},
+        ],
       }),
     ]) {
-      final ordinary =
-          decide(row: local.copyWith(formatJson: Value(decoration)))!;
+      final ordinary = decide(
+        row: local.copyWith(formatJson: Value(decoration)),
+      )!;
       expect(ordinary.mentionsAccount, isFalse);
       expect(ordinary.allowedWhenMuted(mentionsInMutedChats: true), isFalse);
     }
@@ -86,18 +92,25 @@ void main() {
     expect(decide(blocked: true), isNull);
     expect(decide(accepted: false), isNull);
     expect(
-        decide(
-            identity: const Session(
-                baseUrl: 'https://example.test', token: 'fixture')),
-        isNull);
+      decide(
+        identity: const Session(
+          baseUrl: 'https://example.test',
+          token: 'fixture',
+        ),
+      ),
+      isNull,
+    );
     expect(
-        decide(
-            identity: const Session(
-                baseUrl: 'https://example.test',
-                token: 'fixture',
-                accountId: 'friend',
-                deviceId: 'different')),
-        isNull);
+      decide(
+        identity: const Session(
+          baseUrl: 'https://example.test',
+          token: 'fixture',
+          accountId: 'friend',
+          deviceId: 'different',
+        ),
+      ),
+      isNull,
+    );
   });
 
   test('actions, hidden or changed rows and expired content never notify', () {
@@ -106,9 +119,13 @@ void main() {
       LocalMessageKind.attachment,
       LocalMessageKind.invalid,
       LocalMessageKind.unverifiable,
-      LocalMessageKind.unsupported
+      LocalMessageKind.unsupported,
     ]) {
-      expect(decide(row: local.copyWith(kind: kind)), isNull, reason: kind);
+      expect(
+        decide(row: local.copyWith(kind: kind)),
+        isNull,
+        reason: kind,
+      );
     }
     for (final row in [
       local.copyWith(hiddenAt: const Value(1)),
@@ -128,30 +145,37 @@ void main() {
       local.copyWith(key: 'their_device:other'),
       local.copyWith(conversationId: 'another_chat'),
       local.copyWith(senderAccountId: 'stranger'),
-      local.copyWith(senderDeviceId: 'another_device')
+      local.copyWith(senderDeviceId: 'another_device'),
     ]) {
       expect(decide(row: row), isNull);
     }
   });
 
   test(
-      'copied history and substituted creation times cannot become new notices',
-      () {
-    expect(
-        decide(row: local.copyWith(state: LocalMessageState.restored)), isNull);
-    expect(decide(row: local.copyWith(createdAt: local.createdAt - 1)), isNull);
-    expect(decide(at: now.subtract(const Duration(minutes: 3))), isNull);
-  });
+    'copied history and substituted creation times cannot become new notices',
+    () {
+      expect(
+        decide(row: local.copyWith(state: LocalMessageState.restored)),
+        isNull,
+      );
+      expect(
+        decide(row: local.copyWith(createdAt: local.createdAt - 1)),
+        isNull,
+      );
+      expect(decide(at: now.subtract(const Duration(minutes: 3))), isNull);
+    },
+  );
 
   test('phone attachment notices are generic and never override a mute', () {
     final result = messageNoticeCandidate(
-        session: session,
-        envelope: envelope,
-        message: local.copyWith(kind: LocalMessageKind.attachment),
-        now: now,
-        blocked: false,
-        conversationAccepted: true,
-        includeGenericAttachments: true)!;
+      session: session,
+      envelope: envelope,
+      message: local.copyWith(kind: LocalMessageKind.attachment),
+      now: now,
+      blocked: false,
+      conversationAccepted: true,
+      includeGenericAttachments: true,
+    )!;
     expect(result.text, isEmpty);
     expect(result.mentionsAccount, isFalse);
     expect(result.allowedWhenMuted(mentionsInMutedChats: true), isFalse);
@@ -159,20 +183,28 @@ void main() {
 
   test('spoiler preview is derived from valid entities, not raw JSON text', () {
     final spoiler = decide(
-        row: local.copyWith(
-            formatJson: Value(jsonEncode({
-      'entities': [
-        {'type': 'spoiler', 'offset': 0, 'length': 3}
-      ]
-    }))))!;
+      row: local.copyWith(
+        formatJson: Value(
+          jsonEncode({
+            'entities': [
+              {'type': 'spoiler', 'offset': 0, 'length': 3},
+            ],
+          }),
+        ),
+      ),
+    )!;
     expect(spoiler.concealsSpoiler, isTrue);
     final invalid = decide(
-        row: local.copyWith(
-            formatJson: Value(jsonEncode({
-      'entities': [
-        {'type': 'spoiler', 'offset': 99, 'length': 3}
-      ]
-    }))))!;
+      row: local.copyWith(
+        formatJson: Value(
+          jsonEncode({
+            'entities': [
+              {'type': 'spoiler', 'offset': 99, 'length': 3},
+            ],
+          }),
+        ),
+      ),
+    )!;
     expect(invalid.concealsSpoiler, isFalse);
   });
 }

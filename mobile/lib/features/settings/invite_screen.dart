@@ -17,12 +17,17 @@ import '../../ui/widgets/tile_group.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Mint invite codes for the invite-only registration flow. Invites the
-/// account has created are listed from the server (`GET /invites`), so codes
-/// survive restarts.
+/// account has created are listed from the server (`GET /invites`). The
+/// server keeps only a hash of each code, so a code shows only where this
+/// device kept it when it created the invite; others can be turned off but
+/// not shared again.
 class InviteScreen extends StatefulWidget {
-  const InviteScreen({required this.state, super.key});
+  const InviteScreen({required this.state, this.now, super.key});
 
   final AppState state;
+
+  /// The clock for "expires in ...", for tests; the device clock when null.
+  final DateTime? now;
 
   @override
   State<InviteScreen> createState() => _InviteScreenState();
@@ -105,9 +110,7 @@ class _InviteScreenState extends State<InviteScreen> {
                                       for (final days in const <int>[1, 7, 30])
                                         DropdownMenuItem(
                                           value: days,
-                                          child: Text(
-                                            l10n.durationDays(days),
-                                          ),
+                                          child: Text(l10n.durationDays(days)),
                                         ),
                                     ],
                                     onChanged: (value) =>
@@ -173,6 +176,7 @@ class _InviteScreenState extends State<InviteScreen> {
                         _InviteRow(
                           invite: invite,
                           link: _linkFor(invite),
+                          now: widget.now,
                           onRevoke: () => _confirmRevoke(context, invite),
                         ),
                     ],
@@ -198,8 +202,8 @@ class _InviteScreenState extends State<InviteScreen> {
     final confirmed = await confirmAction(
       context,
       title: context.l10n.inviteRevokeTitle,
-      message: context.l10n.inviteRevokeMessage(invite.code),
-      confirmLabel: context.l10n.commonRevoke,
+      message: context.l10n.inviteRevokeMessage,
+      confirmLabel: context.l10n.inviteTurnOff,
       destructive: true,
     );
     if (!confirmed) return;
@@ -209,8 +213,9 @@ class _InviteScreenState extends State<InviteScreen> {
     // fails, so an error here belongs to this revoke, not an earlier one.
     final error = widget.state.error;
     if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -263,30 +268,50 @@ class _InviteRow extends StatelessWidget {
     required this.invite,
     required this.link,
     required this.onRevoke,
+    this.now,
   });
 
   final Invite invite;
   final AccountInviteLink? link;
   final VoidCallback onRevoke;
 
+  /// The clock, for tests; the device clock when null.
+  final DateTime? now;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final expires = invite.expiresAt;
     final exhausted = invite.maxUses > 0 && invite.uses >= invite.maxUses;
+    // The server keeps only a hash of the code, so the code is here only
+    // when this device created the invite and kept it. Without it the row
+    // cannot be shared again and offers only "Turn off"; it never shows a
+    // made-up code.
+    final hasCode = invite.code.isNotEmpty;
     return ListTile(
+      // U34: the row's main action shares the invitation as one link.
+      onTap: link == null
+          ? null
+          : () {
+              Clipboard.setData(ClipboardData(text: link!.url));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(context.l10n.inviteLinkCopied)),
+              );
+            },
       leading: const Icon(Icons.confirmation_number_outlined),
       title: Row(
         children: <Widget>[
           Flexible(
-            child: SelectableText(
-              invite.code,
-              style: BoneType.mono.copyWith(
-                fontSize: 15,
-                letterSpacing: 1.2,
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
+            child: hasCode
+                ? SelectableText(
+                    invite.code,
+                    style: BoneType.mono.copyWith(
+                      fontSize: 15,
+                      letterSpacing: 1.2,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  )
+                : Text(context.l10n.inviteCannotReshare),
           ),
           const SizedBox(width: BoneSpacing.sm),
           // Uses are the fact that decides whether the code still works, so
@@ -302,9 +327,7 @@ class _InviteRow extends StatelessWidget {
         ],
       ),
       subtitle: Text(
-        expires == null
-            ? context.l10n.inviteNeverExpires
-            : context.l10n.inviteExpiresAt(formatDateTime(context, expires)),
+        _expiryInWords(context, expires),
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),
@@ -336,24 +359,36 @@ class _InviteRow extends StatelessWidget {
               child: Text(context.l10n.inviteShowQr),
             ),
           ],
+          if (hasCode)
+            MenuItemButton(
+              leadingIcon: const Icon(Icons.copy_outlined),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: invite.code));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(context.l10n.inviteCodeCopied)),
+                );
+              },
+              child: Text(context.l10n.inviteCopyCode),
+            ),
           MenuItemButton(
-            leadingIcon: const Icon(Icons.copy_outlined),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: invite.code));
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(context.l10n.inviteCodeCopied)),
-              );
-            },
-            child: Text(context.l10n.inviteCopyCode),
-          ),
-          MenuItemButton(
+            key: const ValueKey<String>('invite-turn-off'),
             leadingIcon: const Icon(Icons.block_outlined),
             onPressed: onRevoke,
-            child: Text(context.l10n.commonRevoke),
+            child: Text(context.l10n.inviteTurnOff),
           ),
         ],
       ),
     );
+  }
+
+  /// "Expires in 6 days 23 hours", "Expires in 40 minutes" or "Never
+  /// expires": the time left, not a calendar date to subtract from.
+  String _expiryInWords(BuildContext context, DateTime? expires) {
+    final l10n = context.l10n;
+    if (expires == null) return l10n.inviteNeverExpires;
+    final left = expires.difference(now ?? DateTime.now());
+    if (left <= Duration.zero) return l10n.inviteExpired;
+    return l10n.inviteExpiresIn(timeLeftInWords(l10n, left));
   }
 
   /// The link as a QR code, for the joiner's "Scan QR code" (U21).
@@ -386,10 +421,7 @@ class _InviteRow extends StatelessWidget {
               ),
             ),
             const SizedBox(height: BoneSpacing.md),
-            Text(
-              context.l10n.inviteQrHint,
-              textAlign: TextAlign.center,
-            ),
+            Text(context.l10n.inviteQrHint, textAlign: TextAlign.center),
           ],
         ),
         actions: <Widget>[

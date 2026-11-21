@@ -112,16 +112,21 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
   Future<void> _newCategory() async {
     final name = await _askName(context.l10n.communityCategoryNew);
     if (name == null || !mounted) return;
-    await _save(() async =>
-        await state.createCommunityCategory(_communityId, name) != null);
+    await _save(
+      () async =>
+          await state.createCommunityCategory(_communityId, name) != null,
+    );
   }
 
   Future<void> _renameCategory(String categoryId) async {
-    final name = await _askName(context.l10n.communityCategoryRename,
-        initial: state.categoryDisplayName(categoryId) ?? '');
+    final name = await _askName(
+      context.l10n.communityCategoryRename,
+      initial: state.categoryDisplayName(categoryId) ?? '',
+    );
     if (name == null || !mounted) return;
     await _save(
-        () => state.renameCommunityCategory(_communityId, categoryId, name));
+      () => state.renameCommunityCategory(_communityId, categoryId, name),
+    );
   }
 
   Future<void> _deleteCategory(String categoryId) async {
@@ -178,7 +183,10 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
                 child: icon == null
                     ? const ExcludeSemantics(child: fallback)
                     : PhotoAvatar(
-                        png: icon.png, radius: 40, fallback: fallback),
+                        png: icon.png,
+                        radius: 40,
+                        fallback: fallback,
+                      ),
               ),
               if (admin) ...<Widget>[
                 const SizedBox(height: BoneSpacing.md),
@@ -197,8 +205,10 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
                         key: const Key('community-icon-remove'),
                         onPressed: _saving
                             ? null
-                            : () => _save(() =>
-                                state.setCommunityIcon(_communityId, null)),
+                            : () => _save(
+                                  () => state.setCommunityIcon(
+                                      _communityId, null),
+                                ),
                         child: Text(l10n.communityIconRemove),
                       ),
                   ],
@@ -210,8 +220,9 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
                   child: Text(
                     _error!,
                     textAlign: TextAlign.center,
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
               SectionHeader(l10n.communityCategories),
@@ -260,25 +271,32 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
                   children: <Widget>[
                     for (final channel in channels)
                       ListTile(
-                        leading: Icon(channel.kind == 'private'
-                            ? Icons.lock_outline
-                            : Icons.tag),
-                        title: Text(state.channelDisplayName(channel) ??
-                            (channel.kind == 'private'
-                                ? l10n.channelPrivatePlaceholderName
-                                : l10n.channelPlaceholderName)),
+                        leading: Icon(
+                          channel.kind == 'private'
+                              ? Icons.lock_outline
+                              : Icons.tag,
+                        ),
+                        title: Text(
+                          state.channelDisplayName(channel) ??
+                              (channel.kind == 'private'
+                                  ? l10n.channelPrivatePlaceholderName
+                                  : l10n.channelPlaceholderName),
+                        ),
                         trailing: DropdownButton<String?>(
                           value: state.channelCategory(channel),
                           onChanged: _saving ||
                                   !(channel.kind == 'private'
                                       ? state.mayEditCommunityInfo(
-                                              _communityId, 'channel') &&
+                                            _communityId,
+                                            'channel',
+                                          ) &&
                                           state.channelDisplayName(channel) !=
                                               null
                                       : admin)
                               ? null
-                              : (id) =>
-                                  _save(() => state.placeChannel(channel, id)),
+                              : (id) => _save(
+                                    () => state.placeChannel(channel, id),
+                                  ),
                           items: <DropdownMenuItem<String?>>[
                             DropdownMenuItem<String?>(
                               value: null,

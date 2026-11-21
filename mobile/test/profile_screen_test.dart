@@ -12,8 +12,9 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'test_crypto_service.dart';
 
 void main() {
-  testWidgets('profile exposes account and current-device identity',
-      (tester) async {
+  testWidgets('profile exposes account and current-device identity', (
+    tester,
+  ) async {
     final state = AppState(
       apiClientFactory: (_) => ApiClient(baseUrl: 'https://example.test'),
       cryptoService: TestOnlyCryptoService(),
@@ -37,9 +38,7 @@ void main() {
         ),
       ];
 
-    await tester.pumpWidget(
-      MaterialApp(home: ProfileScreen(state: state)),
-    );
+    await tester.pumpWidget(MaterialApp(home: ProfileScreen(state: state)));
 
     expect(find.text('@alice'), findsWidgets);
     expect(find.text('Alice phone'), findsOneWidget);

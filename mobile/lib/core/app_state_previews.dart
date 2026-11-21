@@ -1,5 +1,9 @@
 part of 'app_state.dart';
 
+/// The stored direct-calls switch (D56/D134). Only the exact value `true`
+/// turns it on, so a missing or odd value keeps calls relay-only.
+const String directCallsSetting = 'd134.direct_calls';
+
 /// The stored switch, read like `screen_guard_chats`.
 const String _chatPreviewsSetting = 'u12.chat_previews';
 
@@ -73,7 +77,8 @@ extension ChatPreviews on AppState {
             reactions: const [],
           );
           row = history.latestForPreview(
-              nowMs: DateTime.now().millisecondsSinceEpoch);
+            nowMs: DateTime.now().millisecondsSinceEpoch,
+          );
         } catch (_) {
           // A failed read is a row without a preview, not a failed list.
         }

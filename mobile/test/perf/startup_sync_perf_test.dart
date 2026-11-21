@@ -141,8 +141,11 @@ void main() {
     final conversations = benchConversations(conversationCount);
     final cached = <String, List<ReceivedMessageEnvelope>>{
       for (final conversation in conversations)
-        conversation.id:
-            benchEnvelopes(conversation.id, 0, _envelopesPerConversation),
+        conversation.id: benchEnvelopes(
+          conversation.id,
+          0,
+          _envelopesPerConversation,
+        ),
     };
     final history = benchEnvelopes(longConversationId, 0, _history);
     cached[longConversationId] = history.take(200).toList(growable: false);
@@ -152,93 +155,105 @@ void main() {
     return conversations;
   }
 
-  testWidgets('cold start to the first chat-list frame from the local database',
-      (tester) async {
-    final conversations = await tester.runAsync(populate);
-    setBenchWindow(tester, benchPhone);
-    // Two starts on the same database: the first also pays for compiling
-    // the UI code (JIT), which a release build does not; the second is the
-    // closer stand-in for an AOT start with a cold database handle.
-    for (final pass in <String>['first', 'second']) {
-      final store = openStore();
-      // The server is unreachable, so the first frame can only come from the
-      // encrypted cache; that is the path a phone on a bad network takes.
-      final api = BenchApi(conversationList: conversations)..offline = true;
-      final state = benchState(api: api, store: store);
-      await tester.pumpWidget(benchApp(state));
-      final restoreWatch = Stopwatch()..start();
-      await tester.runAsync(state.tryRestoreSession);
-      final restoreMicros = restoreWatch.elapsedMicroseconds;
-      final frameMicros = await timedPump(tester);
-      final totalMicros = restoreWatch.elapsedMicroseconds;
-      expect(state.lifecycle, SessionLifecycle.ready);
-      expect(state.conversations, hasLength(_conversations));
-      expect(find.byType(ChatListScreen), findsOneWidget);
-      expect(find.text('Long group'), findsOneWidget);
-      benchReport(
+  testWidgets(
+    'cold start to the first chat-list frame from the local database',
+    (tester) async {
+      final conversations = await tester.runAsync(populate);
+      setBenchWindow(tester, benchPhone);
+      // Two starts on the same database: the first also pays for compiling
+      // the UI code (JIT), which a release build does not; the second is the
+      // closer stand-in for an AOT start with a cold database handle.
+      for (final pass in <String>['first', 'second']) {
+        final store = openStore();
+        // The server is unreachable, so the first frame can only come from the
+        // encrypted cache; that is the path a phone on a bad network takes.
+        final api = BenchApi(conversationList: conversations)..offline = true;
+        final state = benchState(api: api, store: store);
+        await tester.pumpWidget(benchApp(state));
+        final restoreWatch = Stopwatch()..start();
+        await tester.runAsync(state.tryRestoreSession);
+        final restoreMicros = restoreWatch.elapsedMicroseconds;
+        final frameMicros = await timedPump(tester);
+        final totalMicros = restoreWatch.elapsedMicroseconds;
+        expect(state.lifecycle, SessionLifecycle.ready);
+        expect(state.conversations, hasLength(_conversations));
+        expect(find.byType(ChatListScreen), findsOneWidget);
+        expect(find.text('Long group'), findsOneWidget);
+        benchReport(
           'cold start ($pass), $_conversations conversations cached',
           <String, Object>{
             'restore_ms': restoreMicros / 1000,
             'first_frame_ms': frameMicros / 1000,
             'total_ms': totalMicros / 1000,
-            'cached_envelopes': state.messagesByConversation.values
-                .fold<int>(0, (sum, list) => sum + list.length),
-          });
-      await tester.runAsync(() async {
-        // Let the offline catch-up finish before the database closes.
-        while (state.connectionStatus != ConnectionStatus.offline) {
-          await Future<void>.delayed(const Duration(milliseconds: 1));
-        }
-      });
-      await tester.pumpWidget(const SizedBox());
-      await tester.runAsync(() async {
-        await _disposeQuietly(state);
-        await closeAll();
-      });
-    }
-  });
+            'cached_envelopes': state.messagesByConversation.values.fold<int>(
+              0,
+              (sum, list) => sum + list.length,
+            ),
+          },
+        );
+        await tester.runAsync(() async {
+          // Let the offline catch-up finish before the database closes.
+          while (state.connectionStatus != ConnectionStatus.offline) {
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
+        });
+        await tester.pumpWidget(const SizedBox());
+        await tester.runAsync(() async {
+          await _disposeQuietly(state);
+          await closeAll();
+        });
+      }
+    },
+  );
 
-  test('a burst of incoming messages through sync catch-up', () async {
-    final conversations =
-        await populate(conversationCount: _burstCacheConversations);
-    final store = openStore();
-    final api = BenchApi(conversationList: conversations);
-    final state = benchState(api: api, store: store);
-    await state.tryRestoreSession();
-    await _untilSynced(state);
-    // The conversation is open, so its history is in memory as on screen.
-    await state.refreshHistory(longConversationId);
-    final reloadWatch = Stopwatch()..start();
-    await state.refreshHistory(longConversationId);
-    final reloadMicros = reloadWatch.elapsedMicroseconds;
-    final crypto = state.cryptoService as BenchMlsCrypto;
-    var notifications = 0;
-    state.addListener(() => notifications++);
-    store
-      ..messageLoads = 0
-      ..reactionLoads = 0
-      ..projectionWrites = 0;
-    final startCursor = await store.loadSyncCursor();
-    api.events = <SyncEvent>[
-      for (var i = 0; i < _burst; i++)
-        benchEnvelopeEvent(startCursor + 1 + i,
-            benchEnvelope(longConversationId, _history + i)),
-    ];
-    final cached = state.messagesByConversation.values
-        .fold<int>(0, (sum, list) => sum + list.length);
-    final synced = state.lastSyncedAt;
-    final watch = Stopwatch()..start();
-    state.handleAppLifecycleState(AppLifecycleState.resumed);
-    // Polls memory only: a database read here would queue behind, and slow
-    // down, the app's own requests to the single database isolate.
-    while (state.historyFor(longConversationId).messages.length <
-        _history + _burst) {
-      await Future<void>.delayed(const Duration(milliseconds: 2));
-      if (watch.elapsed > const Duration(minutes: 3)) fail('burst stalled');
-    }
-    final micros = watch.elapsedMicroseconds;
-    await _untilSynced(state, after: synced);
-    benchReport(
+  test(
+    'a burst of incoming messages through sync catch-up',
+    () async {
+      final conversations = await populate(
+        conversationCount: _burstCacheConversations,
+      );
+      final store = openStore();
+      final api = BenchApi(conversationList: conversations);
+      final state = benchState(api: api, store: store);
+      await state.tryRestoreSession();
+      await _untilSynced(state);
+      // The conversation is open, so its history is in memory as on screen.
+      await state.refreshHistory(longConversationId);
+      final reloadWatch = Stopwatch()..start();
+      await state.refreshHistory(longConversationId);
+      final reloadMicros = reloadWatch.elapsedMicroseconds;
+      final crypto = state.cryptoService as BenchMlsCrypto;
+      var notifications = 0;
+      state.addListener(() => notifications++);
+      store
+        ..messageLoads = 0
+        ..reactionLoads = 0
+        ..projectionWrites = 0;
+      final startCursor = await store.loadSyncCursor();
+      api.events = <SyncEvent>[
+        for (var i = 0; i < _burst; i++)
+          benchEnvelopeEvent(
+            startCursor + 1 + i,
+            benchEnvelope(longConversationId, _history + i),
+          ),
+      ];
+      final cached = state.messagesByConversation.values.fold<int>(
+        0,
+        (sum, list) => sum + list.length,
+      );
+      final synced = state.lastSyncedAt;
+      final watch = Stopwatch()..start();
+      state.handleAppLifecycleState(AppLifecycleState.resumed);
+      // Polls memory only: a database read here would queue behind, and slow
+      // down, the app's own requests to the single database isolate.
+      while (state.historyFor(longConversationId).messages.length <
+          _history + _burst) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        if (watch.elapsed > const Duration(minutes: 3)) fail('burst stalled');
+      }
+      final micros = watch.elapsedMicroseconds;
+      await _untilSynced(state, after: synced);
+      benchReport(
         'sync burst, $_burst messages into $_history, '
         '$cached cached envelopes',
         <String, Object>{
@@ -250,26 +265,36 @@ void main() {
           'reaction_loads': store.reactionLoads,
           'notifications': notifications,
           'snapshot_writes': store.projectionWrites,
-        });
-    expect(await store.loadSyncCursor(), startCursor + _burst);
-    expect(crypto.applied, _burst);
-    expect(state.historyFor(longConversationId).messages,
-        hasLength(_history + _burst));
-    expect(state.timelineFor(longConversationId).first.id,
-        '$longConversationId-m${_history + _burst - 1}');
-    // Received messages are published in batches of at most 50 per sync
-    // page, each with one history read (T49C fix; it was one per message).
-    expect(store.messageLoads, lessThanOrEqualTo(_burst ~/ 50));
-    expect(notifications, lessThan(_burst ~/ 10));
-    await _disposeQuietly(state);
-  }, timeout: const Timeout(Duration(minutes: 3)));
+        },
+      );
+      expect(await store.loadSyncCursor(), startCursor + _burst);
+      expect(crypto.applied, _burst);
+      expect(
+        state.historyFor(longConversationId).messages,
+        hasLength(_history + _burst),
+      );
+      expect(
+        state.timelineFor(longConversationId).first.id,
+        '$longConversationId-m${_history + _burst - 1}',
+      );
+      // Received messages are published in batches of at most 50 per sync
+      // page, each with one history read (T49C fix; it was one per message).
+      expect(store.messageLoads, lessThanOrEqualTo(_burst ~/ 50));
+      expect(notifications, lessThan(_burst ~/ 10));
+      await _disposeQuietly(state);
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
 
   test('opening a conversation rewrites the cached snapshot', () async {
     final conversations = await populate();
     final store = openStore();
     final api = BenchApi(conversationList: conversations)
-      ..pages[longConversationId] =
-          benchEnvelopes(longConversationId, _history - 50, _history);
+      ..pages[longConversationId] = benchEnvelopes(
+        longConversationId,
+        _history - 50,
+        _history,
+      );
     final state = benchState(api: api, store: store);
     final restoreWatch = Stopwatch()..start();
     await state.tryRestoreSession();
@@ -282,7 +307,9 @@ void main() {
     final micros = watch.elapsedMicroseconds;
     final single = Stopwatch()..start();
     await store.saveProjection(
-        state.conversations, state.messagesByConversation);
+      state.conversations,
+      state.messagesByConversation,
+    );
     final writeMicros = single.elapsedMicroseconds;
     benchReport('online restore and open conversation', <String, Object>{
       'online_restore_ms': restoreMicros / 1000,
@@ -290,8 +317,10 @@ void main() {
       'loadMessages_ms': micros / 1000,
       'snapshot_writes': store.projectionWrites,
       'one_snapshot_write_ms': writeMicros / 1000,
-      'cached_envelopes': state.messagesByConversation.values
-          .fold<int>(0, (sum, list) => sum + list.length),
+      'cached_envelopes': state.messagesByConversation.values.fold<int>(
+        0,
+        (sum, list) => sum + list.length,
+      ),
     });
     expect(state.historyFor(longConversationId).messages, hasLength(_history));
     await _disposeQuietly(state);
@@ -337,9 +366,7 @@ void main() {
 
     // What restore, a conversation refresh or opening a chat writes when
     // nothing changed.
-    final unchanged = <_RewriteRun>[
-      for (var i = 0; i < 3; i++) await write(),
-    ];
+    final unchanged = <_RewriteRun>[for (var i = 0; i < 3; i++) await write()];
     // One new message at the head of a cached conversation, which also
     // moves that conversation to the top of the list.
     final newMessage = <_RewriteRun>[];
@@ -384,15 +411,20 @@ void main() {
     expect(unchanged.map((run) => run.rows), everyElement(0));
 
     final stored = (await store.loadSnapshot())!;
-    expect(stored.conversations.map((item) => item.id),
-        list.map((item) => item.id));
-    expect(stored.messagesByConversation.keys,
-        unorderedEquals(messages.keys.where((id) => messages[id]!.isNotEmpty)));
+    expect(
+      stored.conversations.map((item) => item.id),
+      list.map((item) => item.id),
+    );
+    expect(
+      stored.messagesByConversation.keys,
+      unorderedEquals(messages.keys.where((id) => messages[id]!.isNotEmpty)),
+    );
     for (final entry in messages.entries) {
       expect(
-          stored.messagesByConversation[entry.key]?.map((item) => item.id) ??
-              const <String>[],
-          entry.value.take(200).map((item) => item.id));
+        stored.messagesByConversation[entry.key]?.map((item) => item.id) ??
+            const <String>[],
+        entry.value.take(200).map((item) => item.id),
+      );
     }
     expect(conversations, hasLength(_conversations));
     await closeAll();
@@ -401,12 +433,14 @@ void main() {
   test('store reads and commits that scan the whole cache', () async {
     final conversations = await populate();
     final store = openStore();
-    await store.acquireSyncLease(const LocalSyncLease(
-      origin: 'https://chat.example.org',
-      accountId: 'acct_me',
-      deviceId: 'dev_me',
-      generation: 1,
-    ));
+    await store.acquireSyncLease(
+      const LocalSyncLease(
+        origin: 'https://chat.example.org',
+        accountId: 'acct_me',
+        deviceId: 'dev_me',
+        generation: 1,
+      ),
+    );
     final crypto = BenchMlsCrypto(store);
 
     Future<double> timedReload(String conversationId) async {
@@ -424,7 +458,9 @@ void main() {
       for (var i = 0; i < count; i++) {
         final cursor = await store.loadSyncCursor();
         await crypto.processApplicationMessage(
-            benchEnvelope('conv_0001', 100000 + crypto.applied), cursor + 1);
+          benchEnvelope('conv_0001', 100000 + crypto.applied),
+          cursor + 1,
+        );
       }
       return watch.elapsedMicroseconds / count / 1000;
     }
@@ -435,7 +471,9 @@ void main() {
     // The same commits with the ciphertext cache emptied (the conversation
     // list stays): what remains is the commit itself.
     await store.saveProjection(
-        conversations, const <String, List<ReceivedMessageEnvelope>>{});
+      conversations,
+      const <String, List<ReceivedMessageEnvelope>>{},
+    );
     final applyWithoutCache = await timedApply(40);
     benchReport('store scans', <String, Object>{
       'history_reload_2000_msgs_ms': longReload,
