@@ -1597,7 +1597,9 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 		return nil, err
 	}
 	defer rows.Close()
-	results := make([]domain.MetadataSearchResult, 0, limit)
+	// No capacity hint from limit: it comes from the request, and the exact
+	// username match returns at most a couple of rows anyway.
+	results := []domain.MetadataSearchResult{}
 	for rows.Next() {
 		var result domain.MetadataSearchResult
 		if err := rows.Scan(&result.Type, &result.ID, &result.Label); err != nil {

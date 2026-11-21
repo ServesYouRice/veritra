@@ -14,20 +14,18 @@ ADVISORY_ID = re.compile(r"^RUSTSEC-[0-9]{4}-[0-9]{4}$")
 UTC_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
 )
-APPROVED_REVIEW_DEADLINE = "2026-12-31T00:00:00Z"
+APPROVED_REVIEW_DEADLINE = "2027-03-31T00:00:00Z"
 APPROVED_CARGO_AUDIT_VERSION = "0.22.2"
-# Owner-approved on 2026-10-22 (G27 reopened): libcrux-kem 0.0.9 is locked
-# only because hpke-rs 0.7's `std` feature names the optional
-# hpke-rs-libcrux backend; it is never built (audit-rust.sh fails if it
-# enters the build graph). The fix needs hpke-rs 0.8, which no released
-# openmls_rust_crypto accepts yet. Remove both IDs when one does.
 # Owner-approved on 2026-10-24: RUSTSEC-2026-0387 (crypto-bigint 0.5.5) is in
 # the NIST-curve arithmetic that elliptic-curve 0.13 brings in; Veritra pins an
-# X25519/Ed25519 suite, so it never runs on our keys. Remove it when the
-# OpenMLS stack moves to elliptic-curve 0.14.
-APPROVED_EXCEPTION_IDS: frozenset = frozenset(
-    {"RUSTSEC-2026-0330", "RUSTSEC-2026-0331", "RUSTSEC-2026-0387"}
-)
+# X25519/Ed25519 suite, so it never runs on our keys. Remove it when an
+# openmls_rust_crypto/openmls_basic_credential release is on p256 0.14
+# (elliptic-curve 0.14) and voprf 0.6 is stable. The owner extended its
+# deadline from 2026-12-31 to 2027-03-31 on 2026-11-21 (trigger unchanged).
+# RUSTSEC-2026-0330/0331 (libcrux-kem 0.0.9) were retired on 2026-11-21: the
+# empty crypto/rust/stubs/hpke-rs-libcrux placeholder keeps libcrux-kem out of
+# Cargo.lock, so cargo audit fails again if it ever comes back.
+APPROVED_EXCEPTION_IDS: frozenset = frozenset({"RUSTSEC-2026-0387"})
 # An exception's scope is machine-checked against the audited Cargo.lock:
 # the crate, the only locked versions it may have, the only crates allowed
 # to depend on it, and whether it may be built or is only locked.

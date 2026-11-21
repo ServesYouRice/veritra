@@ -59,3 +59,23 @@ Limits / outstanding verification:
   intermediate file" and "symlink to a deeper folder". Guard and fixtures are
   unchanged by this branch; the POSIX-only fixture limitation is recorded,
   rather than changing a release boundary during this review.
+
+## 2026-11-21: F-Droid build postponed (owner)
+
+The first CI runs that got past Gradle configuration (the build script had
+not compiled since 2026-11-07) showed that the `fdroid` runtime graph cannot
+pass the Firebase / Google Play services check. Firebase is gone from it, but
+two Flutter plugins pull Google Play services into every flavor:
+
+- `passkeys_android` 2.15.0: `com.google.android.gms:play-services-auth` and
+  `play-services-fido`, plus `androidx.credentials:credentials-play-services-auth`.
+- `mobile_scanner` 7.5.0: `com.google.mlkit:barcode-scanning`, which depends
+  on `play-services-basement` and `play-services-mlkit-barcode-scanning`.
+
+Flutter has no per-flavor plugins, so the flavor alone cannot leave them out.
+The owner postponed the F-Droid build. CI still builds the `fdroid` release
+APK, so the flavor code keeps compiling, but the check "Verify F-Droid
+excludes Firebase and Google Play services" in `.github/workflows/ci.yml` runs
+only when the repository variable `VERITRA_FDROID_BUILD` is `true`. The check
+is kept unchanged; set the variable, and make the check pass, before any
+F-Droid release. No release script or workflow publishes an F-Droid artifact.

@@ -1,3 +1,8 @@
+// Imported, not written as java.util.Base64 inline: the Kotlin DSL resolves
+// `java` to a member in scope before the package, so the inline form fails
+// with "Unresolved reference 'util'" (Kotlin K2 in Gradle 9).
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -17,7 +22,7 @@ fun quotedBuildValue(name: String): String {
 fun dartDefine(name: String): String? {
     val raw = providers.gradleProperty("dart-defines").orNull ?: return null
     return raw.split(',').mapNotNull {
-        runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull()
+        runCatching { String(Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull()
     }.lastOrNull { it.startsWith("$name=") }?.substringAfter('=')
 }
 val phoneNoticesBuild = dartDefine("VERITRA_DEMO") == "true" && dartDefine("VERITRA_PHONE_NOTICES") != "false"
