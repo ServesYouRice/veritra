@@ -244,7 +244,25 @@ class _RoomControls extends ChangeNotifier implements RoomMediaControls {
   @override
   bool sharingScreen = false;
   @override
+  bool cameraOn = false;
+  @override
+  bool get canUseCamera => true;
+  @override
   bool get canShareScreen => true;
+  @override
+  bool get screenNeedsSource => false;
+
+  @override
+  bool get requestingPermission => false;
+  @override
+  RoomMediaNotice? get notice => null;
+  @override
+  void dismissNotice() {}
+  @override
+  List<RoomVideoTile> get videoTiles => const <RoomVideoTile>[];
+
+  @override
+  Future<List<ScreenSource>> screenSources() async => const <ScreenSource>[];
 
   @override
   Future<void> setMicMuted(bool muted) async {
@@ -253,7 +271,13 @@ class _RoomControls extends ChangeNotifier implements RoomMediaControls {
   }
 
   @override
-  Future<void> setSharingScreen(bool on) async {
+  Future<void> setCameraOn(bool on) async {
+    cameraOn = on;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setSharingScreen(bool on, {String? sourceId}) async {
     sharingScreen = on;
     notifyListeners();
   }
