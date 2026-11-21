@@ -190,7 +190,7 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	// the memberships are dropped only afterwards, since groups without a
 	// recorded roster are found through them.
 	for _, deviceID := range deviceIDs {
-		if err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
+		if _, err := queueMLSRevocations(ctx, tx, accountID, deviceID, now); err != nil {
 			return nil, err
 		}
 		// A device that will never confirm another device's revocation

@@ -185,6 +185,17 @@ extension FrankRevealSql on EncryptedLocalDatabase {
     }
   }
 
+  /// L2-3: the keys of [conversationId]'s messages whose kept reveal came
+  /// sealed (it names the sender MLS authenticated).
+  Future<Set<String>> readSealedMessageKeys(String conversationId) async {
+    final rows = await customSelect(
+      'SELECT message_key FROM local_frank_reveals '
+      'WHERE conversation_id = ? AND sender_account_id IS NOT NULL',
+      variables: [Variable.withString(conversationId)],
+    ).get();
+    return {for (final row in rows) row.read<String>('message_key')};
+  }
+
   /// The reveal kept for the message [messageKey], or null.
   Future<FrankReveal?> readFrankReveal(String messageKey) async {
     final row = await customSelect(

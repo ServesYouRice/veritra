@@ -1913,6 +1913,7 @@ class AppState extends ChangeNotifier
       reactions: reactions,
       copiedKeys:
           (await localStore.loadHistoryNamespace()).provenance.keys.toSet(),
+      sealedKeys: await localStore.loadSealedMessageKeys(conversationId),
     );
   }
 
@@ -2000,6 +2001,9 @@ class AppState extends ChangeNotifier
           local.createdAt,
           isUtc: true,
         ),
+        // L2-3: kept so [timelineFor] hides a blocked sender's sealed
+        // message shown from local history (the server cannot hide it).
+        sealed: history.isSealed(local.key),
       );
     }
     return byKey.values.toList()
@@ -10210,6 +10214,7 @@ class AppState extends ChangeNotifier
                 messages: cached.messages.where(live).toList(),
                 reactions: const [],
                 copiedKeys: cached.copiedKeys,
+                sealedKeys: cached.sealedKeys,
               );
             }
             _historyReloadPending.add(id);

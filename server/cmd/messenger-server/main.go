@@ -137,12 +137,21 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "reset-owner-password":
 		return resetOwnerPassword(ctx, cfg, recoveryAccount, passwordFile, stdout)
 	case "version":
+		if testHooksCompiled {
+			fmt.Fprintf(stdout, "veritra %s (%s) with test hooks, not for production\n", version, commit)
+			return nil
+		}
 		fmt.Fprintf(stdout, "veritra %s (%s)\n", version, commit)
 		return nil
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
 	default:
+		// Present only in a binary built with the veritra_testhooks tag
+		// (testhooks.go); every other build answers "unknown command".
+		if handled, err := runTestHook(ctx, cfg, command, fs.Args(), stdout); handled {
+			return err
+		}
 		return fmt.Errorf("unknown command %q", command)
 	}
 }
@@ -278,6 +287,13 @@ func passwordFileModeAllowed(goos string, mode os.FileMode) bool {
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
+	if testHooksCompiled {
+		// A test-hook build is never a production server, whatever it is
+		// called or wherever it is copied.
+		if err := requireTestHookEnvironment(cfg); err != nil {
+			return err
+		}
+	}
 	if err := cfg.ValidateServe(); err != nil {
 		return err
 	}

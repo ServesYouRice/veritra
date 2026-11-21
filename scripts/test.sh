@@ -63,6 +63,10 @@ else
   docker run --rm -v "$ROOT:/workspace" -w /workspace/server "golang:${GO_VERSION}@sha256:7af425da11f4fc1a9308eb704369e3f6d1c44e35bac0f874a59ade3f20fdc07e" go test ./...
 fi
 
+# The Android rules that are plain Java and their JVM tests (TASK-012): a
+# JDK is enough, no Android SDK.
+sh "$ROOT/scripts/test-android-rules.sh"
+
 if command -v cargo >/dev/null 2>&1; then
   (cd "$ROOT/crypto/rust" && cargo test)
 else

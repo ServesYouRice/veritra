@@ -2953,6 +2953,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `mobile/test/demo_e2e_test.dart` K1-7 now runs with the client's audit
   interval and fallback unchanged and no app resume.
 
+- **Pending revocations published live (2026-11-21, L1-5 live run):** no
+  ABI, payload, schema, migration or client change. Found by
+  `mobile/test/l1_live_e2e_test.dart`: revoking a device
+  (`DELETE /api/v1/devices/{id}`) wrote one `mls.revocation.pending` sync
+  event per group but published none live, so a coordinator on another
+  account committed the leaf removal only at its next catch-up for some
+  other reason (minutes, or never in an idle chat), and messages it sent
+  meanwhile were still encrypted to the revoked leaf. The route now
+  publishes each of those events, after `device_list.updated`, to the
+  conversation's member accounts: the accounts and payload (`device_id`,
+  `account_id` of the revoked device) the durable event already reaches
+  through sync, as `mls.revocation.completed` already is. The client
+  already runs a catch-up, then its revocation pass, on any live event. No
+  push wake (a background pass sends no commits). Not covered: revocations
+  queued by recovery completion (the D96 change-4 notice starts the
+  coordinator's catch-up in practice), by expired link cleanup and by
+  account deletion still wait for the next catch-up. Test:
+  `server/internal/httpapi/revocation_pending_live_test.go`.
+
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
   the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
