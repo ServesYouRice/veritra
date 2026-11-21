@@ -5039,7 +5039,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Провера ажурирања није доступна у овој верзији';
 
   @override
-  String get settingsUpdateDownload => 'Преузми ажурирање';
+  String get settingsUpdateDownload => 'Преузмите ажурирање';
 
   @override
   String get settingsUpdateDownloading => 'Преузимање ажурирања…';
@@ -5049,7 +5049,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ажурирање није могло да се преузме или провери';
 
   @override
-  String get settingsUpdateRestart => 'Поново покрени ради ажурирања';
+  String get settingsUpdateRestart => 'Поново покрените ради ажурирања';
 
   @override
   String settingsUpdateReady(String version) {
@@ -10514,7 +10514,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Provera ažuriranja nije dostupna u ovoj verziji';
 
   @override
-  String get settingsUpdateDownload => 'Preuzmi ažuriranje';
+  String get settingsUpdateDownload => 'Preuzmite ažuriranje';
 
   @override
   String get settingsUpdateDownloading => 'Preuzimanje ažuriranja…';
@@ -10524,7 +10524,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ažuriranje nije moglo da se preuzme ili proveri';
 
   @override
-  String get settingsUpdateRestart => 'Ponovo pokreni radi ažuriranja';
+  String get settingsUpdateRestart => 'Ponovo pokrenite radi ažuriranja';
 
   @override
   String settingsUpdateReady(String version) {

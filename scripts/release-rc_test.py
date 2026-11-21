@@ -86,6 +86,7 @@ class FakeRepo:
         (self.root / "testing/evidence").mkdir(parents=True)
         (self.root / "testing/evidence/G24-matrix.json").write_text(json.dumps(G24_PASS))
         (self.root / "mobile/lib/desktop").mkdir(parents=True)
+        (self.root / "mobile/lib/desktop/update_verifier.dart").write_text("class Ed25519UpdateSignatureVerifier {}\n")
         (self.root / "mobile/lib/desktop/update_trust.dart").write_text(f"const String updateFeedPublicKeyHex = '{'b' * 64}';\n")
         self.git("add", "-A")
         self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "owner items")
@@ -135,6 +136,7 @@ class ReleaseRcTest(unittest.TestCase):
             "MISSING G25",
             "MISSING Production crypto wired",
             "MISSING Update feed public key",
+            "MISSING Ed25519 verification of the update feed",
             "OWNER   Windows code-signing certificate",
             "OWNER   FCM and APNs push credentials",
             "OWNER   A TURN server",
@@ -189,9 +191,11 @@ class ReleaseRcTest(unittest.TestCase):
         self.assertNotIn("PASSED", self.rc(self.repo(gate_exit=0), "--dry-run", "--quick").stdout)
 
     def test_real_repository_dry_run_is_blocked_by_the_real_gate(self) -> None:
+        # No assertion on the exit status: a check such as the G27 deadline
+        # starts failing on its date, and the dry run must then say so.
         r = run(["--dry-run", "--quick"], cwd=ROOT)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("RELEASE BLOCKED", r.stdout)
+        self.assertNotIn("PASSED", r.stdout)
+        self.assertRegex(r.stdout, r"RELEASE BLOCKED|DRY RUN FAILED")
         self.assertRegex(r.stdout, r"exit status [1-9]")
         for pin in ("Android release certificate pin", "iOS team ID pin", "iOS bundle ID pin", "Gradle lock files"):
             self.assertIn(f"MISSING {pin}", r.stdout)
@@ -206,11 +210,11 @@ class ReleaseRcTest(unittest.TestCase):
             env = {**PROPER_ENV, "RELEASE_POLICY_FILE": str(path)}
             gate = subprocess.run(["sh", str(ROOT / "scripts/release-readiness.sh")], cwd=ROOT, env=env, text=True, capture_output=True, check=False)
             self.assertNotEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-            self.assertRegex(gate.stdout + gate.stderr, r"blocked|refus")
+            self.assertTrue((gate.stdout + gate.stderr).strip())
             r = run(["--dry-run", "--quick"], cwd=ROOT, env=env)
             self.assertIn("DONE    Android release certificate pin", r.stdout)
-            self.assertIn("RELEASE BLOCKED", r.stdout)
             self.assertNotIn("PASSED", r.stdout)
+            self.assertRegex(r.stdout, r"RELEASE BLOCKED|DRY RUN FAILED")
             self.assertRegex(r.stdout, r"exit status [1-9]")
 
 

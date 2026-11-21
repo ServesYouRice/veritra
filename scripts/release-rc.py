@@ -200,6 +200,15 @@ def crypto_gate_open(root: Path) -> bool:
     return True
 
 
+def feed_verifier_exists(root: Path) -> bool:
+    """A real verifier class in the app (the shipped one accepts nothing)."""
+    directory = root / "mobile" / "lib" / "desktop"
+    try:
+        return any("class Ed25519UpdateSignatureVerifier" in p.read_text(encoding="utf-8") for p in directory.glob("*.dart"))
+    except OSError:
+        return False
+
+
 def g24_state(root: Path) -> tuple[str, str]:
     path = root / "testing" / "evidence" / "G24-matrix.json"
     try:
@@ -245,12 +254,17 @@ def owner_items(root: Path) -> list[tuple[str, str, str]]:
     items.append((
         "Production crypto wired (PM_CRYPTO_UNAVAILABLE and UnavailableCryptoService gone)",
         DONE if crypto_gate_open(root) else MISSING,
-        "only after G25 and G24 (AGENTS.md, Governing principle); release-readiness.sh never reaches this check while an earlier gate refuses",
+        "made in the candidate after G25 passes; the G24 matrix then runs on that commit (AGENTS.md, Governing principle). release-readiness.sh never reaches this check while an earlier gate refuses",
     ))
     items.append((
         "Signed release records and release evidence",
         DONE if (root / "dist" / "release-evidence.json").is_file() else MISSING,
         "signed builds of the frozen commit, then scripts/write-release-evidence.py",
+    ))
+    items.append((
+        "Ed25519 verification of the update feed in the app (native function and ABI bump)",
+        DONE if feed_verifier_exists(root) else MISSING,
+        "docs/release-engineering.md, Update channel: the app's verifier accepts nothing until this exists",
     ))
     items.append((
         "Update feed public key compiled into the Windows app",

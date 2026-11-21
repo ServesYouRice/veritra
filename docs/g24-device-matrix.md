@@ -16,6 +16,11 @@ account name or log.
 2. **A frozen candidate commit** in which messaging works: the matrix cannot run
    on a commit that still has `PM_CRYPTO_UNAVAILABLE` or
    `UnavailableCryptoService`. The preflight refuses such a commit and says why.
+   So the production crypto switch is made in the candidate **after G25 passes**,
+   and G24 runs on that commit. `security-review.md` also says the gates change
+   "after G24 is rerun on the final reviewed commit": read together, the order is
+   review, then the switch in the candidate, then G24 on it. Whether the owner
+   wants it that way is an open question; this page and the script follow it.
 3. **Signed builds of that commit**: the Android `.apk` (play flavor, signed with
    the pinned key) and, for iOS, the signed `.ipa`. Build and sign them from the
    frozen commit only.
