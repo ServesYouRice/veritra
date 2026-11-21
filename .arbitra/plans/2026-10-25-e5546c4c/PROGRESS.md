@@ -18,6 +18,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Built with L1-3 (D100 A): device link v4, source commitment before the claim, reveal after it, SAS over the revealed random. ABI 18, migration 0060.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
 - [x] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
+  - 2026-11-21 (leftovers): unchanged. The Kotlin wake-tests (`mobile/android/wake-tests`) need an Android SDK and were never run on any machine without one; left for CI or a device.
   - Fixed (d4d5632, merged): native pending record plus pendingEndpoint/acknowledgeEndpoint; push_state_test and push_service_test pass. Kotlin wake-tests not run locally.
 - [x] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
 - [x] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
@@ -143,6 +144,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 123 `TASK-123` Add opt-in registry verification that the pinned golang digest belongs to golang:${GO_VERSION}
 - [x] 124 `TASK-124` Detect all common dynamic Gradle versions across every Android build file and fail closed
 - [x] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
+  - 2026-11-21 (leftovers): a gradle-wrapper.jar tracked by git is now refused unless its SHA-256 is pinned (the list is empty; Flutter generates the untracked jar). The pinned distributionSha256Sum could not be re-checked against services.gradle.org here (no network); Gradle verifies it on the first wrapper run.
   - Official Gradle 9.1.0-all.zip checksum added to gradle-wrapper.properties; check-gradle-inputs.py requires distributionSha256Sum (VAL-160). No gradle-wrapper.jar is committed.
 - [x] 126 `TASK-126` Build the release image from the captured commit and re-verify HEAD after checks
 - [x] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
@@ -228,6 +230,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
 - [x] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
+  - 2026-11-21 (leftovers): the cancel covered only the legacy links. Approved protocol-v3 links (the app's) past `expires_at` are now cancelled the same way (cancelExpiredApprovedDeviceLinksV3); device_link_v3_expiry_test.go.
   - Fixed (D100/D114 remedy d): PruneOperationalRows cancels approved links that expired unconsumed, revoking the device, its key packages and MLS membership; test TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
@@ -237,6 +240,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
 - [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); done 2026-11-11 on the account route `GET /api/v1/sync/events?scan=bounded` and the app catch-up (a 200 omits the bounds); without `scan=bounded` the route is unchanged; no heads route.
+  - 2026-11-21 (leftovers): the "Not done" below is stale for the account route: the app sends `scan=bounded` and `advanceToScan` persists the scanned-through cursor after the page is applied. Still true: a client that omits `scan=bounded` rescans the hidden tail.
   - Built on the scoped routes behind `?scan=bounded` (opt-in). Not done: the legacy global stream still rescans its hidden tail, `_runOwnedCatchUp` does not persist a scanned-through cursor (that is C1-B2 to B4), no benchmark.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete

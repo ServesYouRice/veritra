@@ -850,6 +850,9 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	if err := cancelExpiredApprovedDeviceLinks(ctx, tx, now); err != nil {
 		return 0, err
 	}
+	if err := cancelExpiredApprovedDeviceLinksV3(ctx, tx, now); err != nil {
+		return 0, err
+	}
 	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string

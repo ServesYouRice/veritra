@@ -73,7 +73,28 @@ Both the iOS phase and the evidence check use one function,
 with `--crypto-build-info`), so it needs `python3` on the Mac, as
 `build-mobile-crypto.sh` already does. Debug and Profile builds copy whatever
 record there is and never refuse; the signed `.ipa` check still catches one
-that ships. Not checked anywhere: that `source_revision` is the release commit.
+that ships.
+
+**The record is tied to the release.** `source_tree_dirty=false` says the
+library came from committed sources, not which. The release evidence check
+(`crypto_build_binding_error`, for the Android APK and the iOS `.ipa` alike)
+also requires, for each signed artifact's record:
+
+- `source_revision` and `cargo_lock_sha256` each present exactly once and
+  well formed;
+- `source_revision` is a commit this repository has (an unknown commit, for
+  example in a shallow clone, refuses) and has a `crypto/rust` tree;
+- `git rev-parse <source_revision>:crypto/rust` equals
+  `git rev-parse <release commit>:crypto/rust`: the library was built from
+  the release's crypto sources, even if other files changed since;
+- `cargo_lock_sha256` is the SHA-256 of the release commit's
+  `crypto/rust/Cargo.lock`.
+
+Any mismatch refuses, naming the two trees. The Xcode phase's
+`--crypto-build-info` mode cannot know the release commit, so it still checks
+only the dirty flag; the binding is enforced on the signed `.ipa` by
+`check-release-evidence.py`. Tests: `scripts/check-release-evidence_test.py`
+(`crypto_binding_cases`, run for both platforms; they fail without the guard).
 
 ## Windows installer
 

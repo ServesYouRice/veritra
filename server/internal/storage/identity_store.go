@@ -748,7 +748,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 	// no device shows evidence, and mlsRevocationCoordinator re-checks it.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.conversation_id,
-		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+` THEN d.id END), MIN(d.id))
+		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id")+` THEN d.id END), MIN(d.id))
 		FROM memberships m
 		JOIN memberships participants ON participants.conversation_id = m.conversation_id
 		JOIN devices d ON d.account_id = participants.account_id
@@ -806,7 +806,7 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			JOIN devices d ON d.account_id = m.account_id
 			WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
 			  AND ((NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
-			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+`)
+			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id")+`)
 			       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
 			                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 			item.conversationID, deviceID, item.conversationID, deviceID); err != nil {

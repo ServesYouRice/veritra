@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -87,6 +88,24 @@ const (
 	ShutdownDrain  = 18 * time.Second
 )
 
+// warnNewerSchema logs, once at start, that the database was migrated by a
+// newer server than this binary (a rollback). The binary starts anyway; the
+// warning is what tells an operator the older code is running on a schema it
+// does not know, which is safe only if those migrations were additive.
+func warnNewerSchema(ctx context.Context, logger *slog.Logger, store *storage.Store, known fs.FS) {
+	unknown, err := store.UnknownAppliedMigrations(ctx, known)
+	if err != nil {
+		logger.Warn("schema_check_failed", "err", err)
+		return
+	}
+	if len(unknown) == 0 {
+		return
+	}
+	logger.Warn("database_schema_newer_than_binary",
+		"unknown_migrations", len(unknown), "first", unknown[0], "newest", unknown[len(unknown)-1],
+		"hint", "rolled back across a schema change: safe only if those migrations were additive; otherwise restore the matching backup")
+}
+
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
@@ -101,6 +120,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		_ = store.Close()
 		return nil, err
 	}
+	warnNewerSchema(ctx, logger, store, migrations.FS)
 	setupRequired, err := store.SetupRequired(ctx)
 	if err != nil {
 		_ = store.Close()
