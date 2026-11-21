@@ -2792,7 +2792,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `server/internal/storage/mls_legacy_leaf_evidence_test.go` (a recovered
   device stays ineligible after the older messages are pruned: fails with the
   moving rule; a welcomed device keeps its evidence after its Welcome is
-  pruned; the 0094 seed). Not changed: a legacy group whose every message was
+  pruned; the 0094 seed). Sender evidence was always forgeable: any member
+  device can post a junk commit through the legacy route
+  `POST /conversations/{id}/mls/messages` (a recovered device included), and
+  that evidence used to age out with retention and now does not. The app never
+  uses that route and no legacy group is created any more (D55), so the
+  exposure is a hand-made request against a pre-I51 group; closing it means
+  retiring the route. Not changed: a legacy group whose every message was
   pruned still queues no revocation (`queueMLSRevocations` and
   `mlsRevocationTargetInGroup` look for a retained message).
 

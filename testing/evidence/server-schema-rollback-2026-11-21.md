@@ -52,14 +52,16 @@ network.
    it. The operations rule stands: across an incompatible migration restore
    the matching pre-upgrade backup (below the table). With this change a
    release carrying the new warning tells the operator at the next rollback.
-2. **An applied migration was edited after release.** Commit `8eb373f` changed
-   `0090_l2_sealed_tokens.sql` and `0091_l2_sealed_envelopes.sql` by one
-   comment line each ("D123" to "D122"). The checksum covers the whole file,
-   so a database that already applied the earlier text refuses to start on the
-   current code (`checksum mismatch`), the third row above. There are no real
-   deployments (D55), so nothing is stranded, but the rule "never edit an
-   applied migration, even a comment" should be kept from here on; a
-   test comparing the checksums of released migrations would catch it.
+2. **Two byte-different versions of an applied migration existed.** Commit
+   `8eb373f` made `0090_l2_sealed_tokens.sql` and
+   `0091_l2_sealed_envelopes.sql` byte-identical to the sealed branch's, which
+   differs from the earlier text by one comment word each ("D123" to "D122").
+   The checksum covers the whole file, so a database migrated by a build from
+   the other line refuses to start on the current code (`checksum mismatch`),
+   the third row above. Nothing was released and there are no real
+   deployments (D55), so nothing is stranded; but a comment-only edit to a
+   migration is still a schema change to the checker. A test that pins the
+   checksums of the migrations already on `main` would catch the next one.
 3. Rolling forward again after a rollback worked in every row: nothing is
    lost, because the older binary adds no schema of its own.
 

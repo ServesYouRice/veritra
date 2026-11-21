@@ -51,9 +51,10 @@ Format-3 migration: 7 ms (1 group fixture), 23 ms and 10 ms in the later runs
 
 - **A message costs one group record plus the root, not the whole state.**
   At 1,000 groups the state is 8.6 MB but one send writes 59.9 KB (0.7%).
-  Of that, the root manifest is the larger part and grows with the record
-  count (about 53 KB at 1,000 records, the same figure the Rust run found:
-  one entry per record). The send time stays flat (13 to 29 ms) from 1 to
+  Most of that is consistent with the root manifest, which grows with the
+  record count (the Rust run found 53 KB at 1,000 records, one entry per
+  record); this run did not split root from group record, so the share is
+  inferred, not measured. The send time stays flat (13 to 29 ms) from 1 to
   1,000 groups; the machine's load, not N, explains the spread.
 - **Activation is the cost that grows with N.** At 1,000 groups it takes
   1.7 s on this loaded host: 0.7 s reading 1,002 sealed records from SQLite

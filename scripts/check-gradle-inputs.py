@@ -21,7 +21,7 @@ A gradle-wrapper.jar tracked by git is refused unless its SHA-256 is in
 PINNED_WRAPPER_JAR_SHA256 (empty: none is pinned, and the repository commits
 no jar; Flutter generates the untracked one at build time). A committed jar
 is code that runs on every build, so it must match a hash someone reviewed
-(TASK-125). If git cannot say what is tracked, the jar is not judged.
+(TASK-125). If git is missing or the directory is not a checkout, the jar is not judged; any other git failure refuses.
 
 Fails closed: a missing app build script (app/build.gradle.kts or
 app/build.gradle), a missing or empty wrapper properties file, an unreadable
@@ -241,16 +241,25 @@ def check_wrapper(android: Path) -> list[str]:
 def check_wrapper_jar(android: Path) -> None:
     """Raise GradleInputError for a git-tracked wrapper jar that is not pinned."""
     jar = android / WRAPPER_JAR
+    if not jar.is_file():
+        return  # nothing committed, nothing generated yet
     try:
-        tracked = subprocess.run(
+        result = subprocess.run(
             ["git", "-C", str(android), "ls-files", "--error-unmatch", "--", WRAPPER_JAR.as_posix()],
             capture_output=True,
             check=False,
-        ).returncode == 0
+        )
     except OSError:
         return  # no git: nothing to say about what is committed
-    if not tracked:
-        return
+    if result.returncode == 1:
+        return  # not tracked: the jar Flutter generated at build time
+    if result.returncode != 0:
+        if b"not a git repository" in result.stderr:
+            return  # a source archive or fixture, not a checkout
+        raise GradleInputError(
+            f"cannot tell whether {jar} is tracked by git (git exit {result.returncode}: "
+            f"{result.stderr.decode('utf-8', 'replace').strip()})"
+        )
     try:
         digest = hashlib.sha256(jar.read_bytes()).hexdigest()
     except OSError as exc:
