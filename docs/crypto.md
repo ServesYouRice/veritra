@@ -1796,6 +1796,17 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   commit. Receiving two-part messages needs no switch. The sealed body is
   kept in the outbox entry, so a retry is byte-identical, and the server's
   replay check compares it. With C7 off nothing changes on the wire.
+- **L1 hold states and conflict reset (2026-11-21):** a held chat names
+  each holding account and why (conflict, never approved, removed, no list
+  yet, checking) and offers Check again. A contact's sticky list conflict
+  can be reset by the person, only to a chain with the pinned list
+  identity that carries one of the two proven statements at every fork
+  version; it is fetched and verified first and replaces the conflicted
+  pin by compare-and-swap, so the account is never pinless. The own
+  account's conflict cannot be reset. No ABI, schema, migration or
+  dependency change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Adversarial
+  tests: `testing/evidence/L1-adversarial.md`. Needs the independent review.
 - **L1 complete adds, join notice, recovery retype and pre-L1 RK
   confirmation (2026-11-11):** held groups the server reports no change
   for are audited against signed lists (bounded, after the reconcile

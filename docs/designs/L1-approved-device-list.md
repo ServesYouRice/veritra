@@ -276,7 +276,10 @@ A fork needs a signature from a key on the pinned list, so the server alone
 cannot make one for a pinned account: it takes a stolen device or a stolen
 RK. A conflict is sticky. The user clears it only by verifying the safety
 number with the contact and choosing to trust the branch the contact's
-devices show (the app then re-pins from that branch's version 1).
+devices show (the app then re-pins from that branch's version 1). As built
+(2026-11-21), the re-pin takes only a chain from the same list identity
+that carries one of the two proven statements, verified before it replaces
+the pin; see [Hold states and the conflict reset](L1-approved-devices.md#hold-states-and-the-conflict-reset-2026-11-21).
 
 ### Results when a list is missing, stale or in conflict
 

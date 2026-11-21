@@ -30,7 +30,6 @@ enum ApprovalHoldReason {
 
 /// One account that holds a conversation, with the most serious reason
 /// among its held leaves. [own] is this device's own account.
-
 class ApprovalHoldAccount {
   const ApprovalHoldAccount({
     required this.accountId,
@@ -90,7 +89,13 @@ extension AppStateL1Holds on AppState {
     final current = session;
     if (pins == null || current == null) return;
     final generation = _sessionGeneration;
-    final next = await _readApprovalHolds(pins, current, conversationId);
+    final List<ApprovalHoldAccount> next;
+    try {
+      next = await _readApprovalHolds(pins, current, conversationId);
+    } on Object {
+      // Unreadable now: the banner keeps what it showed; read again later.
+      return;
+    }
     if (generation != _sessionGeneration) return;
     final before = _l1Holds.shown[conversationId] ?? const [];
     if (listEquals(before, next)) return;
