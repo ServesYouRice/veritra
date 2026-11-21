@@ -519,8 +519,12 @@ process exits and never go stale.
 
 ## Release image
 
-`scripts/release-image.sh` is the one local release command (no hosted CI).
-It refuses a dirty tree and any commit that is not on `origin/main` (fetched
+`scripts/release-image.sh` is the local release command. `release.yml` builds
+the image on a version tag with GitHub's provenance attestation (allowed by
+the owner on 2026-11-21, handbook OWN-19), but it cannot publish until
+`scripts/release-readiness.sh` passes, which needs the signed-device evidence
+and the independent review. Which of the two images production pins is the owner's call.
+`scripts/release-image.sh` refuses a dirty tree and any commit that is not on `origin/main` (fetched
 fresh); runs `scripts/check-go-toolchain.sh` with
 `VERITRA_VERIFY_GO_IMAGE_DIGEST=1`, which asks Docker Hub for the image
 config behind the `golang` digest pinned in `server/Dockerfile` and stops
