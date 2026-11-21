@@ -1304,6 +1304,68 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 private channel membership (2026-11-21; no ABI, wire, server,
+  migration or local schema change; new commit-acceptance rule):** who can
+  read a private channel is who is in its own MLS group, and until now any
+  member's device committed whatever accounts the server listed for it
+  (reconcile, and the creator's first commit). A server that listed an
+  outsider, with one honest device's reconcile, made the channel readable to
+  them (posts, the channel's info key on add delivery, its C7 handover).
+  Now, in a private channel's group (the authority says so, or this device
+  pinned it as one, below):
+  - **Receivers.** A commit whose account roster after it holds an account
+    the roster before did not (a *new account*; a new device of an account
+    that already holds a leaf is not one) is accepted only when the
+    committer is the owner or an admin under the community's verified C4
+    record (the shared group's, as the device holds it) and the committer's
+    leaf is `approved` by its account's L1 list (`checking` retries later).
+    Otherwise it is *held* (`GovernanceHeldException`,
+    `private_add_unauthorized` or `committer_unapproved`; C4 "held
+    commits"), never refused: the two groups have no common order, so a
+    promotion in the shared group may simply not have arrived yet, and a
+    retry merges once it has. Nothing merges meanwhile, so this device never
+    encrypts to the newcomer, sends no `history_sync` for that epoch and
+    answers no key request from it. No record (none held, or a server
+    topology that maps the group to none) accepts no new account.
+    Moderators do not add (the C3 design: admins pick the members; D115
+    lets moderators remove only). Code:
+    `NativeCryptoService._judgePrivateChannelCommit`, rule
+    `privateChannelAddAccepted` in
+    `mobile/lib/core/roles/private_channel_membership.dart`.
+  - **Producers.** A device stages a new account into a private channel's
+    group only while its account is the owner or an admin under that record
+    *and* its own user picked the account: `AppState.addConversationMember`
+    and an open-to-private conversion (D127) save the pick
+    (`c3.private_picks.<conversation>`, account to expiry, seven days)
+    before they ask the server, and drop it when the server refuses. The
+    pick is spent (removed) when a commit adding the account is accepted,
+    this device's own or another's. A new device of an account already in
+    the group, and this account's own devices, are always addable (L1 still
+    approves each device). The creator's first commit adds only its own
+    devices; picked readers join by the next commit. The rule runs before
+    any key package is claimed (`PrivateChannelAddGate.privateChannelAddable`
+    from AppState's add discovery), and again in `initializeConversation`
+    and `stageMembershipChange`, which leave an unpicked account out and
+    refuse a change that would add nothing else
+    (`PrivateChannelAddRefusedException`; the server keeps it pending).
+  - **Pin.** `c3.private_group.<conversation>` is set when the app's
+    community refresh lists a routed private channel, before a private
+    channel or a conversion target is set up, and by any judgment or add
+    gate that sees the authority's private label. It is never cleared, so
+    a server that later labels the group as something else cannot switch
+    the rule off.
+  - **Residuals.** The first label still comes from the server: a device
+    that never saw the group as private (pinned nothing) applies no rule
+    there, and a server that maps the group to a community the attacker
+    owns supplies that community's record (the C3 topology residual). An
+    admin's own pick is trusted; the server learns the picks, as it already
+    learns the member list. A pick written while a pruning commit is merged
+    can be lost (last writer wins); the admin adds again. The server still
+    lets moderators add members to a private channel (`CanManageMembers`);
+    such an add stays pending, since no honest device commits it (owner
+    question). Tests: `mobile/test/c3_private_membership_native_test.dart`
+    (each guard removed in turn fails it).
+
 - **D134 stuck MLS update: Retry or Discard (2026-11-14, follows I34 and
   I51, bug-hunt c6ed/Q-006; no ABI, wire, server, migration or local
   schema change):** a control message that failed for good (I34: a
@@ -1776,6 +1838,27 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   exempts such commits from the self-update interval). No ABI, local schema
   or server migration change. Rules: "Group role state (C4)", "C4 app
   wiring" below. Needs the independent review; not yet covered by tests.
+
+- **C4 hostile-member tests and the handover warning (2026-11-21):** the
+  wiring is now exercised end to end through `processMlsMessage` against a
+  modified client (`mobile/test/c4_adversarial_native_test.dart`): ten
+  forged record changes from a moderator (ownership, self-promotion,
+  promotion above her rank, demoting an admin, posting switches, a skipped
+  or replayed `rev`, a forged `ownerRev`, an election she may not open) are
+  refused on every honest app and stay refused after a restart; a commit on
+  a superseded epoch and a replayed commit change nothing; a moderator's
+  kick of an admin is held, the admin's kick of the moderator merges and
+  prunes; a leaf added under the owner's account id with the attacker's key
+  cannot act as the owner (held `committer_unapproved`). Each guard was
+  removed in turn and its test failed. New: `stageRoleChange` runs
+  `validateCommit` on whatever its builder returns (the producer rule
+  above; `GovernanceCommands` already did, any other builder did not); a
+  won election or claim this device's own clocks would have refused sets
+  `c4.early_win.<group>` with the commit, and the roles screen warns while
+  it is the owner's last decision; the roles screen asks the owner to mark
+  trusted admins as electors; `AppState.verifiedRoleOf` is the read API for
+  C2/C3 (null without a verified record, never the server's role). No ABI,
+  local schema, wire or server change. Rules: "C4 app wiring" below.
 
 - **C7 two-part messages, first slice (2026-11-11):** no ABI or schema
   change; behind the server's `PRIVATE_MESSENGER_C7_HISTORY` (off by
@@ -2785,16 +2868,58 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
   the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
-  skips devices with no evidence of a leaf. Evidence means the device sent
-  an MLS message in the conversation, received a Welcome there, or is no
-  newer than the oldest retained MLS message. Revocations queued in a legacy
+  skips devices with no evidence of a leaf. Evidence means the device
+  received a Welcome there from a device with evidence, or is no newer than
+  the group's first MLS message. Revocations queued in a legacy
   group store such a coordinator and require confirmations only from such
-  devices. A device recovered through K0 has no leaf, so it is skipped while
-  the group keeps an MLS message older than the device. Known limit
-  (accepted; legacy groups come only from pre-I51 data and there are no real
-  users, D55): once sync retention prunes every older message, the third
-  rule admits it again and a revocation can wait on it. A durable per-group
-  low-water mark would close this and needs a schema change.
+  devices. A device recovered through K0 has no leaf, so it is skipped.
+  **Closed (migration 0096, no ABI or payload change).** The first version
+  measured "no newer than the oldest retained message", which moved forward
+  as retention pruned the oldest messages until it admitted the recovered
+  device again. The evidence is now durable: `mls_legacy_leaf_evidence` holds
+  one row per (conversation, device) and `mls_legacy_marks` the time of the
+  group's first message, both filled by trigger from the MLS messages a
+  conversation without a roster receives, and seeded at upgrade from the
+  messages still retained. Pruning does not touch them. Evidence comes only
+  from a device that already has it, as in MLS, where only a leaf holder can
+  add someone: the devices that existed at the group's first message, and
+  the recipient of a Welcome whose sender had evidence when it was sent. A
+  device's own messages give it none. (The first draft of 0096 counted every
+  sender and every Welcome recipient. The legacy route
+  `POST /conversations/{id}/mls/messages` takes any message from any member
+  device, so a recovered device could post a junk commit, or have a leafless
+  sibling post a junk Welcome naming it, and hold evidence for good. Second
+  review, 2026-11-21.) Veritra has no external commits, so no leaf comes
+  from a device's own commit. A recovered device, or any device created
+  later with no Welcome from a device with evidence, has no row, so it stays
+  ineligible however old the group's messages get. A device that already
+  holds a leaf can still post a junk Welcome for a leafless one; that is no
+  more than it could do by adding it for real, or by never confirming.
+  Upgrade limits: what retention pruned before the upgrade is not
+  recoverable, so a device that only those pruned messages named has no
+  evidence (it is then not a coordinator or required confirmer; a
+  revocation only stops waiting for it). The seed's mark is the oldest
+  RETAINED message, so it can admit a device the moved rule had already
+  admitted; devices that a completed recovery still on record
+  (`account_recovery_requests`) created are taken out of that grant, but
+  recovery records older than their retention are gone. Tests:
+  `server/internal/storage/mls_legacy_leaf_evidence_test.go` (a recovered
+  device stays ineligible after the older messages are pruned: fails with the
+  moving rule; a welcomed device keeps its evidence after its Welcome is
+  pruned; a leafless device's own commit and junk Welcomes between leafless
+  devices give no evidence, coordinator or confirmer role, while a Welcome
+  from a leaf holder does; the 0096 seed, including the forged and recovered
+  cases). Still open, for the owner: the legacy route itself. The current
+  app builds only commit bundles and uses it only to drain non-bundle outbox
+  items an older app queued, but the server still accepts it from any member
+  device, including a first message in a conversation whose group does not
+  exist yet. That makes the conversation legacy, so the creator's first
+  bundle is refused (`ErrMLSGroupLegacy`) until retention prunes the junk
+  message. Retiring the route, or limiting it to conversations that are
+  already legacy, closes that; it is a separate change. Not changed: a
+  legacy group whose every message was pruned still queues no revocation
+  (`queueMLSRevocations` and `mlsRevocationTargetInGroup` look for a
+  retained message).
 
 - **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
   format 4 (see "Sealed state, format 4" above). ABI 10 removes
@@ -4727,7 +4852,10 @@ replacement, revocation) computes `requiredRecord` for itself and, when it
 differs from the current record, stages it with `stageCommitWithRoles`
 after running `validateCommit` on it. Role commands (`GovernanceCommands`:
 set role, electors, posting, transfer, open, vote, close) are role-only
-commits through the same call. The owner's periodic self-update, while an
+commits through the same call, and `stageRoleChange` runs `validateCommit`
+on whatever record its builder returns before staging it (2026-11-21), so
+no builder can send a record every receiver would refuse (which would pause
+the group under I33). The owner's periodic self-update, while an
 election is open, is replaced by the cancel (a path-only update carries no
 record and receivers refuse an owner commit that leaves an election open).
 A bundle that carries a record is marked `role_change: true`; the server
@@ -4846,12 +4974,30 @@ Owner posts in a private channel's group do not count (their record is the
 shared group's), which can only make a challenge happen sooner; the owner's
 app cancels it.
 
+*Early handover* (2026-11-21, the design's "an honest app that sees a win
+its own clock would have refused should say so"). When a commit that is not
+the owner's sets a new owner (a won election or claim), the receiver reads
+its observations saved before that commit; if they show owner activity in
+the last 30 days, or this election open here for less than 7 days (or never
+seen open), it saves `c4.early_win.<group>` = the commit's `rev` with the
+commit's transition. The commit still merges: receivers judge order and
+roles only, so every device keeps the same record. The roles screen shows a
+warning while the record's `ownerRev` equals that `rev` (the new owner's
+first role decision ends it). A device with no saved clocks says nothing.
+
 **Owner cancel.** On each self-update pass the owner's app schedules, for
 each record group with an open election, one cancel after a random delay
 of up to 24 hours; it sends it only if the election is still open.
 
 **Using the record.** `AppState.governanceOf` maps a community channel to
-its shared group. `roleOf`, `mayPost`, `canCreateChannel`, the C2 drop and
+its shared group. Other packages read a role with
+`AppState.verifiedRoleOf(conversationId, accountId)` (a `BuiltInRole`, or
+null when there is no verified record; it never falls back to the server)
+or the record itself (`governanceOf(...)`: `roleOf`, `rankOf`, `mayPost`,
+`mayActOn`, `isRestricted`); `AppState.roleOf` is the display helper that
+falls back to the server's role where there is no record. None of them
+judges a device: where the actor is a leaf, D120 (owner decision B) still
+needs its verdict. `roleOf`, `mayPost`, `canCreateChannel`, the C2 drop and
 the C3 info checks read the record first, the server's role only where
 there is none. Granting a role or transferring ownership commits the record
 and then updates the server's row, so the server's own route checks follow
@@ -4891,6 +5037,22 @@ record are record changes, so the same rule covers them.
 **Residuals.**
 - A plain member's forced removal needs no proof; it moves only `joined`,
   which orders the no-admin claim.
+- The rosters the rules see are every leaf's account, approved or not (the
+  committer is gated, the rosters are not: an L1 verdict differs between
+  devices, and the roster must not). A leaf a member adds under another
+  account's id can therefore keep that account in the roster: the account
+  is not pruned, its removal needs no proof while the extra leaf stays (its
+  real devices can be taken out unproven, and it keeps its role, which no
+  device of it can then use), it keeps counting in an election's snapshot
+  and blocks a no-admin claim while it is an admin. An extra leaf only ever
+  adds accounts, so this can delay or block a role change (an election may
+  never reach its majority; the group keeps its owner), never grant one.
+  Every honest member's sends are held while the leaf is unapproved (D94),
+  so the group notices.
+- Any member can stop a group's sync for everyone with a commit the rules
+  refuse (the server cannot read the record, so it relays it). This is
+  I33's rule for every invalid control message; leaving the conversation
+  stays offered.
 - An account deleted without sending `member_leave` (or a server removal
   of a governing account nobody can prove) stays in the tree: its removal
   stays pending and the D68 send hold in that group does not release.

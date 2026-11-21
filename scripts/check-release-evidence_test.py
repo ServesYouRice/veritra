@@ -155,6 +155,7 @@ def build_app_zip(
     bundle_id: str | None = BUNDLE_ID,
     before: tuple[tuple[str, bytes], ...] = (),
     comment: bytes = b"",
+    build_info: bytes | None = None,
 ) -> str:
     """``before`` members are written first (duplicate names allowed)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +173,8 @@ def build_app_zip(
                 archive.writestr(prefix + "_CodeSignature/CodeResources", b"synthetic placeholder")
             if provisioning is not None:
                 archive.writestr(prefix + "embedded.mobileprovision", provisioning)
+            if build_info is not None:
+                archive.writestr(prefix + "veritra-crypto/build-info.txt", build_info)
             archive.writestr(prefix + "Frameworks/App.framework/App", b"synthetic")
             for app in extra_apps:
                 archive.writestr(f"Payload/{app}/Info.plist", b"")
@@ -179,8 +182,26 @@ def build_app_zip(
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# The crypto build record is tied to the release: its commit must hold the
+# release's crypto/rust tree and its lock hash must be the release's. fixture()
+# fills these from the repository it builds.
+CRYPTO_RECORD = {"revision": "0" * 40, "lock": "0" * 64}
+CRYPTO_LOCK = b"# synthetic Cargo.lock\n"
+CRYPTO_SOURCE = b"// synthetic crypto source\n"
+DEFAULT_RECORD = object()  # "the clean record for this release", resolved when used
+
+
+def clean_build_info(*, revision: str | None = None, lock: str | None = None, dirty: bool = False) -> bytes:
+    return (
+        f"source_revision={revision or CRYPTO_RECORD['revision']}\n"
+        f"cargo_lock_sha256={lock or CRYPTO_RECORD['lock']}\n"
+        f"source_tree_dirty={'true' if dirty else 'false'}\nrustc 1\n"
+    ).encode()
+
+
 def build_signed_ipa(path: Path, **overrides: object) -> str:
-    options: dict[str, object] = {"provisioning": profile(False)}
+    # The Runner's Crypto Build Record phase copies the record into the bundle.
+    options: dict[str, object] = {"provisioning": profile(False), "build_info": clean_build_info()}
     options.update(overrides)
     return build_app_zip(path, **options)  # type: ignore[arg-type]
 
@@ -540,7 +561,7 @@ def build_apk(
     manifest: bytes | None = None,
     dex: bool = True,
     crypto: bool = True,
-    build_info: bytes | None = b"source_revision=" + b"0" * 40 + b"\ncargo_lock_sha256=" + b"0" * 64 + b"\nsource_tree_dirty=false\nrustc 1\n",
+    build_info: object = DEFAULT_RECORD,
     signers: dict[int, list[bytes]] | None = None,
     signer_options: dict[str, object] | None = None,
     options_schemes: tuple[int, ...] | None = None,
@@ -558,6 +579,8 @@ def build_apk(
     ``before`` entries are written first (duplicate names allowed), and
     ``comment`` becomes the zip comment.
     """
+    if build_info is DEFAULT_RECORD:
+        build_info = clean_build_info()
     buffer = io.BytesIO()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # zipfile warns on the duplicate names under test
@@ -903,7 +926,15 @@ def fixture() -> tuple[Path, dict[str, object]]:
     global COMMIT, TREE, APPROVALS_COMMIT
     temp = Path(tempfile.mkdtemp(prefix="veritra-release-evidence-"))
     git(temp, "init", "-q", "-b", "main")
-    base = commit_on(temp, "", {"README": b"base\n"}, "base")
+    base = commit_on(temp, "", {
+        "README": b"base\n",
+        "crypto/rust/Cargo.lock": CRYPTO_LOCK,
+        "crypto/rust/src/lib.rs": CRYPTO_SOURCE,
+    }, "base")
+    # The build records name the base commit, whose crypto tree the candidate
+    # shares: they describe exactly the release's crypto sources.
+    CRYPTO_RECORD["revision"] = base
+    CRYPTO_RECORD["lock"] = hashlib.sha256(CRYPTO_LOCK).hexdigest()
     # The policy and the toolchain version are part of the candidate commit:
     # the checker binds both, and the checkout, to it.
     COMMIT = commit_on(temp, base, {
@@ -1028,6 +1059,29 @@ def expect_blocked(
         raise AssertionError(
             f"expected {missing or reasons!r} without {leaked!r}, got rc={result.returncode}: {result.stderr.strip()}"
         )
+
+
+def crypto_binding_cases(root: Path) -> list[tuple[str, bytes, str]]:
+    """(name, build record, expected refusal) for a record not tied to the release.
+
+    The record must name a commit this repository has, whose crypto/rust tree
+    is the release's, and the hash of the release's crypto/rust/Cargo.lock.
+    """
+    other_source = commit_on(root, CRYPTO_RECORD["revision"], {"crypto/rust/src/lib.rs": CRYPTO_SOURCE + b"// edited\n"}, "other crypto source")
+    other_lock = commit_on(root, CRYPTO_RECORD["revision"], {"crypto/rust/Cargo.lock": CRYPTO_LOCK + b"# edited\n"}, "other lock")
+    no_crypto = commit_on(root, CRYPTO_RECORD["revision"], {"crypto/rust/src/lib.rs": None, "crypto/rust/Cargo.lock": None}, "no crypto")
+    wrong_lock = hashlib.sha256(b"another lock").hexdigest()
+    return [
+        ("unknown-commit", clean_build_info(revision="1" * 40), "which this repository does not have"),
+        ("other-source", clean_build_info(revision=other_source), "was built from another crypto source tree than the release commit"),
+        ("other-lock-tree", clean_build_info(revision=other_lock), "was built from another crypto source tree than the release commit"),
+        ("no-crypto-tree", clean_build_info(revision=no_crypto), "which has no crypto/rust tree"),
+        ("wrong-lock-hash", clean_build_info(lock=wrong_lock), "Cargo.lock hash that is not the release commit's"),
+        ("short-revision", clean_build_info(revision="abc123"), "source_revision that is not 40 hex characters"),
+        ("no-revision", b"cargo_lock_sha256=" + CRYPTO_RECORD["lock"].encode() + b"\nsource_tree_dirty=false\n", "has no single source_revision record"),
+        ("no-lock", b"source_revision=" + CRYPTO_RECORD["revision"].encode() + b"\nsource_tree_dirty=false\n", "has no single cargo_lock_sha256 record"),
+        ("twice", clean_build_info() + b"source_revision=" + b"1" * 40 + b"\n", "has no single source_revision record"),
+    ]
 
 
 def qa01_cases(root: Path, manifest: dict[str, object]) -> None:
@@ -1374,6 +1428,34 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         no_signed,
     )
     expect_blocked(root, with_record(signed_bytes("no-lc-sig.ipa", executable=macho(code_signature=False))), "signed ios executable has no code signature")
+    # D134: a crypto library built from uncommitted sources never ships.
+    dirty = b"source_revision=" + b"0" * 40 + b"\nsource_tree_dirty=true\n"
+    expect_blocked(root, with_record(signed_bytes("dirty-crypto.ipa", build_info=dirty)),
+                   "signed ios artifact crypto library was built from uncommitted crypto sources", no_signed)
+    expect_blocked(root, with_record(signed_bytes("no-build-info.ipa", build_info=None)), "signed ios artifact has no crypto build record", no_signed)
+    for name, text in (("empty", b""), ("odd", b"source_tree_dirty=maybe\n"), ("twice", b"source_tree_dirty=false\nsource_tree_dirty=true\n")):
+        expect_blocked(root, with_record(signed_bytes(f"bad-info-{name}.ipa", build_info=text)),
+                       "signed ios artifact crypto library has no single, valid source_tree_dirty record", no_signed)
+    # The record is tied to the release (not only "clean"): its commit must
+    # hold the release's crypto tree and its lock hash must be the release's.
+    for name, text, reason in crypto_binding_cases(root):
+        expect_blocked(root, with_record(signed_bytes(f"binding-{name}.ipa", build_info=text)),
+                       reason, no_signed)
+    # The release commit itself names the same crypto tree: that record is fine.
+    expect_valid(root, with_record(signed_bytes("binding-candidate.ipa", build_info=clean_build_info(revision=COMMIT))))
+    # Only the app's own record counts, not one elsewhere in the archive.
+    expect_blocked(root, with_record(signed_bytes("misplaced-info.ipa", build_info=None, before=(("Frameworks/veritra-crypto/build-info.txt", clean_build_info()),))),
+                   "signed ios artifact has no crypto build record", no_signed)
+    # A bad record is reported even when the bundle is missing its executable.
+    build_signed_ipa(dist / "no-exe.ipa", build_info=dirty)
+    with zipfile.ZipFile(dist / "no-exe.ipa") as archive:
+        members = [(i.filename, archive.read(i)) for i in archive.infolist() if not i.filename.endswith("/Runner")]
+    with zipfile.ZipFile(dist / "no-exe.ipa", "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in members:
+            archive.writestr(name, content)
+    no_exe = "sha256:" + hashlib.sha256((dist / "no-exe.ipa").read_bytes()).hexdigest()
+    expect_blocked(root, with_record(record(file="no-exe.ipa", digest=no_exe)),
+                   "signed ios app bundle is missing its executable", "signed ios artifact crypto library was built from uncommitted crypto sources")
     # Development-signed or unverified signatures are not release evidence.
     expect_blocked(root, with_record(signed_bytes("development.ipa", provisioning=profile(True))), "signed ios provisioning profile is not a distribution profile")
     expect_blocked(root, with_record(signed_bytes("bad-profile.ipa", provisioning=b"not a profile")), "provisioning profile has no readable property list")
@@ -1758,7 +1840,7 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     mixed_path = dist / "good-v2-bad-v3.apk"
     build_apk(mixed_path, signers={APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}, signer_options={"tamper": "signature"},
               options_schemes=(APK_V3,))
-    both = checker.apk_errors(mixed_path, fingerprint(RELEASE_CERT))
+    both = checker.apk_errors(mixed_path, fingerprint(RELEASE_CERT), lambda text: None)
     assert len(both) == 1 and "Scheme v3 signature does not verify: signature 0x0103" in both[0], both
     # Edited after signing: the digests no longer cover the file. Flip a byte
     # of an entry the checker never reads, so only the digest check can see it.
@@ -1783,7 +1865,7 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # Sections over 2 MiB are chunked: the digests of a large APK verify too.
     big = dist / "big.apk"
     build_apk(big, before=(("assets/big.bin", random.Random(7).randbytes(2_600_000)),))
-    assert checker.apk_errors(big, fingerprint(RELEASE_CERT)) == []
+    assert checker.apk_errors(big, fingerprint(RELEASE_CERT), lambda text: None) == []
     # Valid fixtures: SHA-512 PKCS#1 signatures verify as well.
     expect_valid(root, with_android(apk("sha512.apk", signer_options={"algorithm": 0x0104})))
     for bad in (fingerprint(RELEASE_CERT).upper(), fingerprint(RELEASE_CERT)[:63], "sha256:" + fingerprint(RELEASE_CERT), "", None, 7):
@@ -1826,6 +1908,9 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_android(apk("no-build-info.apk", build_info=None)), "has no crypto build record")
     for name, text in (("empty", b""), ("odd", b"source_tree_dirty=maybe\n"), ("twice", b"source_tree_dirty=false\nsource_tree_dirty=true\n")):
         expect_blocked(root, with_android(apk(f"bad-info-{name}.apk", build_info=text)), "has no single, valid source_tree_dirty record")
+    for name, text, reason in crypto_binding_cases(root):
+        expect_blocked(root, with_android(apk(f"binding-{name}.apk", build_info=text)), reason, "has no valid android signed-release artifact")
+    expect_valid(root, with_android(apk("binding-candidate.apk", build_info=clean_build_info(revision=COMMIT))))
     expect_blocked(root, with_android(apk("no-dex.apk", dex=False)), "signed android artifact is not an Android app package")
     expect_blocked(root, with_android(apk("text-manifest.apk", manifest=b"<manifest package='org.veritra.private_messenger'/>")),
                    "signed android artifact is not a readable APK")

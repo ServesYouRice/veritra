@@ -519,12 +519,23 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 // ListJoinRequests lists the pending requests for a target, with usernames,
 // for its owners and admins. A request whose invitation can no longer be used
 // (revoked, expired, used up, creator no longer owner or admin) is left out: approving it would fail.
+// While a community's invitations are paused (C5) none can be approved, so
+// the list is empty until the pause ends; the requests stay pending.
 func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, actorAccountID string) ([]domain.JoinRequest, error) {
 	if !target.valid() {
 		return nil, ErrInvalidInput
 	}
 	if err := inviteAdminRoleTx(ctx, s.db, target, actorAccountID); err != nil {
 		return nil, err
+	}
+	if target.Kind == domain.InviteTargetCommunity {
+		var paused sql.NullString
+		if err := s.db.QueryRowContext(ctx, `SELECT invites_paused_until FROM communities WHERE id = ?`, target.ID).Scan(&paused); err != nil {
+			return nil, err
+		}
+		if paused.Valid && parseTime(paused.String).After(time.Now().UTC()) {
+			return make([]domain.JoinRequest, 0), nil
+		}
 	}
 	community, conversation := target.columns()
 	rows, err := s.db.QueryContext(ctx, `

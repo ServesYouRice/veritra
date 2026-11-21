@@ -39,6 +39,10 @@ extension ReportActions on AppState {
       senderFrankKey: _deviceListPins == null
           ? null
           : (account, device) => _deviceListPins!.frankKeyOf(account, device),
+      otherInboxes: () => <String?>[
+        if (isInstanceOwner) null,
+        for (final community in communities) community.id,
+      ],
       onSeedChanged: () {
         _reportKeyMemo = null;
         _reportKeyUnlisted.clear();

@@ -108,8 +108,8 @@ tail the cursor passes is not replayed after an unblock. The app's paused
 conversation replay keeps paging while `scan_truncated` and moves to
 `scanned_through`. Not built: the heads route, `scope_head`, per-scope
 client cursors (C1-B2 to B4), and the legacy global stream is unchanged.
-`PRIVATE_MESSENGER_SCOPED_SYNC` still defaults to off in `config.go`; the
-brief said it now defaults on, but main does not.
+(Superseded: `PRIVATE_MESSENGER_SCOPED_SYNC` is on by default in
+`config.go`, D98; see the 2026-11-21 section.)
 
 ## 2026-11-14 bounded sync only (D134, TASK-209)
 
@@ -135,3 +135,51 @@ Remaining: the community-to-shared-group anchor, encrypted group/community
 rename app wiring, native end-to-end community approval/removal evidence,
 and independent security review. Existing request, leave, removal and
 username screens remain in place. No STATE.md or release gate changed.
+
+## 2026-11-21 review of what is left (agent/c1-c8)
+
+**Scoped sync stays on by default (D98); nothing to flip.** The switch is
+`!envOff(...)` in `config.go` and `TestLoadScopedSyncDefaultsOn` pins it. The
+earlier worry, "bounds are still account-wide; decide per-conversation bounds
+before a client uses them", is closed by how the client uses the routes:
+
+- The app reads only `events`, `scope`, `scope_id`, `scanned_through` and
+  `scan_truncated` from the scoped conversation route
+  (`ApiClient.conversationSyncPage`). It never reads the envelope's
+  `sync_epoch`, `oldest_event_id` or `latest_event_id` there; the D70 leave
+  floor fallback `syncLatestEventId` calls the legacy route.
+- It uses the conversation route only for a conversation the P1 pause froze
+  (`conversation_pause.dart`), never as the main stream, so it has no
+  per-scope cursor, head or "caught up" mark to get wrong. The account
+  stream route is not called at all.
+- D134 made `scanned_through` and `scan_truncated` part of every page, which
+  is the per-scope progress a replaying client needs.
+- Expiry is the server's 409, from the per-scope prune marks.
+
+So the `scope_head` and `/sync/heads` design in
+[C1-scoped-sync-bounds](C1-scoped-sync-bounds.md) is not needed by the built
+hybrid (see "Built slice (P1)" in C1-sync-isolation). It becomes needed only
+if a later package makes scoped streams the main path (the full design with
+per-scope cursors); until then the envelope's account-wide bounds are
+documented as "do not read" and no client reads them.
+
+**Rename is built, through W11 and C3, not through a rename route.** A group
+name is the encrypted group profile (W11): `group-profile-tile` in
+`conversation_details_screen.dart` opens `ProfileEditScreen.group`. A
+community's and a channel's name and topic are encrypted info records (C3):
+`EditInfoDialog` in `community_screen.dart`, offered to owners and admins
+(community) and per D80 (channel). No plaintext rename route exists, by
+design.
+
+**Still open in C1** (not built here, see the report):
+
+1. The community-to-shared-group anchor: a community target id differs from
+   the shared MLS group id, and the signed invitation does not carry it, so a
+   community join does not yet pin the inviter's key the way a group join
+   does. This changes what an invitation signs (second-opinion area).
+2. Join-request notification: admins still see a request only when they open
+   the list. A generic push ("something needs your attention") would need
+   the L2/W8 push design and an owner decision on what it may reveal.
+3. Independent security review of invite v2 (the 2026-11-09 port was done
+   solo at the owner's request), and native end-to-end evidence for a
+   community approval and removal on devices.

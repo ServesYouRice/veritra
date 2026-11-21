@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/core/roles/posting_verdict.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/c7_two_part.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -12,6 +14,7 @@ import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
 import 'native_test_env.dart';
+import 'private_channel_picks.dart';
 
 // C7 step 4 (docs/designs/C7-channel-history.md, "Core idea"): the two-part
 // send and receive through real OpenMLS devices and NativeCryptoService.
@@ -25,7 +28,19 @@ const _conversation = 'conv_private_c7';
 
 /// A private channel's own group in the C0 layout.
 class _PrivateGroup
-    implements ConversationAuthority, ConversationCommunitySource {
+    implements
+        ConversationAuthority,
+        ConversationCommunitySource,
+        VerifiedRoleSource {
+  // C3: the community's record names alice owner, so her adds are hers to
+  // make (docs/crypto.md, "C3 private channel membership").
+  @override
+  GovernanceState? governanceOf(String conversationId) =>
+      GovernanceState.genesis('acct_alice');
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) =>
+      false;
+
   @override
   String? conversationKind(String conversationId) => 'community_channel';
   @override
@@ -57,6 +72,7 @@ void main() {
       client.service.conversationAuthority = _PrivateGroup();
       client.service.c7SealedBodies = true;
     }
+    await pickForPrivateChannel(alice.store, _conversation, [bob.accountId]);
     await alice.service.initializeConversation(
       _conversation,
       <DeviceKeyPackage>[await bob.keyPackage()],

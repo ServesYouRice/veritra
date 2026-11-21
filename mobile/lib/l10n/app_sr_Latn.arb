@@ -1156,6 +1156,24 @@
       }
     }
   },
+  "roomCameraOn": "Uključi kameru",
+  "roomCameraOff": "Isključi kameru",
+  "roomPickSourceTitle": "Izaberite šta želite da podelite",
+  "roomSourceScreen": "Ekran",
+  "roomSourceWindow": "Prozor",
+  "roomSharingYou": "Delite svoj ekran",
+  "roomNoticeCamera": "Kamera nije mogla da se pokrene.",
+  "roomNoticeScreen": "Ekran nije mogao da se podeli.",
+  "roomNoticeNoSource": "Nema ekrana ni prozora za deljenje.",
+  "roomNoticeVideoFull": "U ovom pozivu ima previše ljudi za video. Samo glas.",
+  "roomTileScreen": "Ekran: {name}",
+  "@roomTileScreen": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "moderationTitle": "Moderacija",
   "moderationDetail": "Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti",
   "moderationLoadFailed": "Nije moguće učitati",
@@ -1525,6 +1543,8 @@
   "rolesVoteFor": "Glasaj za: {name}",
   "rolesCloseElection": "Završi izbor",
   "rolesOwnerCancelNote": "Vi ste vlasnik: vaša aplikacija sama završava ovaj izbor.",
+  "rolesEarlyWin": "Ova predaja je došla ranije nego što ovaj uređaj dozvoljava: 30 dana bez vlasnika i 7 dana otvorenog izbora, oba po njegovom satu. Pitajte ostale članove da li je to bilo očekivano.",
+  "rolesElectorHint": "Administratori bez oznake za glasanje ne mogu da izaberu novog vlasnika ako vas nema. Dajte je administratorima kojima verujete.",
   "rolesOnlyAdminsPost": "Samo administratori objavljuju",
   "channelHistoryTitle": "Istorija za nove članove",
   "channelHistoryFullLabel": "Ljudi koji se pridruže kasnije mogu da čitaju ranije objave",

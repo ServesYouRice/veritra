@@ -145,8 +145,62 @@ void main() {
     expect(infoPlist, contains('<key>NSCameraUsageDescription</key>'));
     expect(
       infoPlist,
-      contains('Veritra uses the camera to scan device-link QR codes.'),
+      contains('Veritra uses the camera to scan device-link QR codes'),
     );
+    // Video calls and group calls use it too, so the prompt says so.
+    expect(infoPlist, contains('video calls and group calls'));
+  });
+
+  // In-memory voice playback (D134) serves a decrypted note to AVPlayer over
+  // http://127.0.0.1 (`LoopbackClipServer`). iOS needs ATS to allow local
+  // loads and the macOS sandbox needs the server entitlement to listen.
+  // Both stay this narrow: no arbitrary loads, no exception domains.
+  test('Apple ATS allows local loads only, for loopback voice playback', () {
+    for (final path in <String>[
+      'ios/Runner/Info.plist',
+      'macos/Runner/Info.plist',
+    ]) {
+      final infoPlist = File(path).readAsStringSync();
+      final start = infoPlist.indexOf('<key>NSAppTransportSecurity</key>');
+      expect(start, isNonNegative, reason: path);
+      final dict = infoPlist.substring(
+        infoPlist.indexOf('<dict>', start),
+        infoPlist.indexOf('</dict>', start) + '</dict>'.length,
+      );
+      expect(
+        RegExp(r'<key>([^<]+)</key>')
+            .allMatches(dict)
+            .map((m) => m.group(1))
+            .toList(),
+        <String>['NSAllowsLocalNetworking'],
+      );
+      expect(
+        dict.replaceAll(RegExp(r'\s'), ''),
+        contains('<key>NSAllowsLocalNetworking</key><true/>'),
+      );
+      expect(infoPlist, isNot(contains('NSAllowsArbitraryLoads')));
+      expect(infoPlist, isNot(contains('NSExceptionDomains')));
+    }
+    expect(
+      File('lib/features/chat/loopback_clip_server.dart').readAsStringSync(),
+      contains('HttpServer.bind(InternetAddress.loopbackIPv4, 0)'),
+    );
+  });
+
+  test('macOS release may listen, for loopback voice playback', () {
+    for (final path in <String>[
+      'macos/Runner/Release.entitlements',
+      'macos/Runner/DebugProfile.entitlements',
+    ]) {
+      final text = File(path).readAsStringSync().replaceAll(RegExp(r'\s'), '');
+      expect(
+          text, contains('<key>com.apple.security.app-sandbox</key><true/>'));
+      expect(
+        text,
+        contains('<key>com.apple.security.network.server</key><true/>'),
+        reason: path,
+      );
+    }
   });
 
   // K1 second copy on phones (D91). These are text checks of native code

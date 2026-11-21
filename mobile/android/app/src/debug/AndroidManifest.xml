@@ -4,7 +4,20 @@
          the Flutter tool needs it to communicate with the running application
          to allow setting breakpoints, to provide hot reload, etc.
     -->
+    <!-- B6 screen share (demo builds are debug builds): Android 14 refuses a
+         screen capture without a foreground service of type mediaProjection.
+         Declared here, not in the main manifest, so a release or profile
+         build neither declares the permissions nor the service. Moving it to
+         the main manifest is a platform-policy decision for the owner (Play
+         foreground service declaration) and belongs with the G25 release. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <application
         android:usesCleartextTraffic="true"
-        tools:replace="android:usesCleartextTraffic" />
+        tools:replace="android:usesCleartextTraffic">
+        <service
+            android:name=".RoomCallService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+    </application>
 </manifest>

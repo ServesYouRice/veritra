@@ -7,6 +7,7 @@ import contextlib
 import importlib.util
 import io
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -202,6 +203,35 @@ def test_missing_wrapper_checksum_is_rejected() -> None:
     assert "https://services.gradle.org/distributions/gradle-9.1.0-all.zip.sha256" in stderr, stderr
 
 
+def test_committed_wrapper_jar_must_be_pinned() -> None:
+    """An ignored (generated) jar is not judged; a tracked one needs a reviewed hash."""
+    jar_bytes = b"PK synthetic wrapper jar"
+    with android_copy() as android:
+        git = ["git", "-C", str(android.parent)]
+        subprocess.run([*git, "init", "-q"], check=True)
+        jar = android / "gradle/wrapper/gradle-wrapper.jar"
+        jar.write_bytes(jar_bytes)
+        # Untracked (as Flutter generates it): not judged.
+        code, stderr = run(android)
+        assert code == 0, stderr
+        subprocess.run([*git, "add", "-f", "android/gradle/wrapper/gradle-wrapper.jar"], check=True)
+        code, stderr = run(android)
+        assert code == 1 and "is not a reviewed wrapper jar" in stderr, (code, stderr)
+        # Pinned by its hash: accepted. Any other bytes under the same name: refused.
+        import hashlib
+
+        original = checker.PINNED_WRAPPER_JAR_SHA256
+        checker.PINNED_WRAPPER_JAR_SHA256 = frozenset({hashlib.sha256(jar_bytes).hexdigest()})
+        try:
+            code, stderr = run(android)
+            assert code == 0, stderr
+            jar.write_bytes(jar_bytes + b" swapped")
+            code, stderr = run(android)
+            assert code == 1 and "is not a reviewed wrapper jar" in stderr, (code, stderr)
+        finally:
+            checker.PINNED_WRAPPER_JAR_SHA256 = original
+
+
 if __name__ == "__main__":
     test_real_tree_passes()
     test_dynamic_forms_fail_in_the_app_script()
@@ -210,4 +240,5 @@ if __name__ == "__main__":
     test_fails_closed()
     test_wrapper_must_be_pinned_to_services_gradle_org()
     test_missing_wrapper_checksum_is_rejected()
+    test_committed_wrapper_jar_must_be_pinned()
     print("Gradle input fixture tests passed")

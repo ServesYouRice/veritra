@@ -21,6 +21,11 @@ fun dartDefine(name: String): String? {
     }.lastOrNull { it.startsWith("$name=") }?.substringAfter('=')
 }
 val phoneNoticesBuild = dartDefine("VERITRA_DEMO") == "true" && dartDefine("VERITRA_PHONE_NOTICES") != "false"
+// The foreground service a screen share in a group call needs (B6). Demo
+// builds only, decided here at build time and never from Dart; the service and
+// its permissions are declared only in the debug manifest, and the flag is
+// forced off below for release and profile.
+val roomServiceBuild = dartDefine("VERITRA_DEMO") == "true"
 
 android {
     namespace = "org.veritra.private_messenger"
@@ -47,6 +52,7 @@ android {
         buildConfigField("String", "VERITRA_FCM_PROJECT_ID", quotedBuildValue("VERITRA_FCM_PROJECT_ID"))
         buildConfigField("String", "VERITRA_FCM_SENDER_ID", quotedBuildValue("VERITRA_FCM_SENDER_ID"))
         buildConfigField("boolean", "VERITRA_PHONE_NOTICES", phoneNoticesBuild.toString())
+        buildConfigField("boolean", "VERITRA_ROOM_SERVICE", roomServiceBuild.toString())
     }
 
     flavorDimensions += "distribution"
@@ -66,6 +72,7 @@ android {
             signingConfig = null
             // Release builds never carry phone notices, whatever the defines.
             buildConfigField("boolean", "VERITRA_PHONE_NOTICES", "false")
+            buildConfigField("boolean", "VERITRA_ROOM_SERVICE", "false")
         }
     }
 }
@@ -73,6 +80,7 @@ android {
 // Flutter adds a "profile" type that copies debug; keep it off like iOS Profile.
 android.buildTypes.matching { it.name == "profile" }.configureEach {
     buildConfigField("boolean", "VERITRA_PHONE_NOTICES", "false")
+    buildConfigField("boolean", "VERITRA_ROOM_SERVICE", "false")
 }
 
 kotlin {

@@ -691,3 +691,70 @@ func retireDeviceLinksV3ForDevice(ctx context.Context, tx *sql.Tx, accountID, de
 	_, err := tx.ExecContext(ctx, `DELETE FROM device_links_v3 WHERE account_id=? AND (source_device_id=? OR recipient_device_id=?)`, accountID, deviceID, deviceID)
 	return err
 }
+
+// cancelExpiredApprovedDeviceLinksV3 ends every v3 device link that was
+// approved but never completed before its first-completion deadline
+// (expires_at; CompleteDeviceLinkV3 refuses an approved link after it).
+// TASK-201 (D100/D114 remedy d) for the protocol the app uses: approval
+// inserted the recipient device, listed it and told the account's groups to
+// add it, but with no completion the new device can never get a session, so
+// the device would stay an active, never-used member of every group. Fail
+// closed, as the legacy route does (cancelExpiredApprovedDeviceLinks): the
+// device is revoked like any other (event, sessions, MLS removal from its
+// groups, its link context) and its unclaimed key packages are deleted so
+// nothing can still add it.
+func cancelExpiredApprovedDeviceLinksV3(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, account_id, recipient_device_id FROM device_links_v3
+		WHERE state = ? AND completed_at IS NULL AND revoked_at IS NULL AND recipient_device_id IS NOT NULL AND expires_at <= ?
+		ORDER BY expires_at, id LIMIT 100`, domain.DeviceLinkApproved, formatTime(now.UTC()))
+	if err != nil {
+		return err
+	}
+	type expired struct{ linkID, accountID, deviceID string }
+	var found []expired
+	for rows.Next() {
+		var e expired
+		if err := rows.Scan(&e.linkID, &e.accountID, &e.deviceID); err != nil {
+			rows.Close()
+			return err
+		}
+		found = append(found, e)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	at := formatTime(now.UTC())
+	for _, e := range found {
+		// Claim the link first, guarded by its state, as the legacy route
+		// does: a link completed or revoked meanwhile is left alone and its
+		// device is not touched. revokeDeviceTx below deletes the link row,
+		// so the claim must come before it.
+		result, err := tx.ExecContext(ctx, `UPDATE device_links_v3 SET state = 'revoked', revoked_at = ?
+			WHERE id = ? AND state = ? AND completed_at IS NULL AND revoked_at IS NULL`, at, e.linkID, domain.DeviceLinkApproved)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
+		var alreadyRevoked int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NOT NULL`, e.deviceID, e.accountID).Scan(&alreadyRevoked); err != nil {
+			return err
+		}
+		if alreadyRevoked == 0 {
+			// Also retires the link (and any history transfer) of the device.
+			if _, err := revokeDeviceTx(ctx, tx, e.accountID, e.deviceID, "device.revoked", at); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, e.deviceID); err != nil {
+			return err
+		}
+	}
+	return nil
+}

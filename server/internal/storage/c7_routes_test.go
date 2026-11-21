@@ -498,3 +498,62 @@ func TestC7GroupLevelExemptionIsOnlyForHistorySyncSizes(t *testing.T) {
 		t.Fatalf("member history_sync in the shared group: %v", err)
 	}
 }
+
+// A former member is refused the history fetch and the former-member keys,
+// whichever way it left (kicked, banned or by leaving), even while its
+// device is still in the group's MLS roster: the remaining members have not
+// committed its removal yet, so the roster check alone would let it in.
+func TestC7FormerMemberIsRefusedTheHistoryRoutes(t *testing.T) {
+	ways := map[string]func(f layoutFixture, ctx context.Context) error{
+		"kicked": func(f layoutFixture, ctx context.Context) error {
+			_, err := f.store.KickCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID)
+			return err
+		},
+		"banned": func(f layoutFixture, ctx context.Context) error {
+			_, err := f.store.BanCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID)
+			return err
+		},
+		"left": func(f layoutFixture, ctx context.Context) error {
+			_, err := f.store.RemoveCommunityMember(ctx, f.community.ID, f.member.Account.ID, f.member.Account.ID)
+			return err
+		},
+	}
+	for name, remove := range ways {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newC7Fixture(t, ctx)
+			f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+			f.atEpoch(t, ctx, f.shared, 1)
+			before, joinedAfter, err := f.postBody(ctx, f.shared, f.owner, "before", f.epochMetadata(f.open.ID, 1, 1), c7Body(c7PostBytes, 1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.inGroup(t, ctx, f.shared, f.member, joinedAfter, 2)
+			// While a member, the device gets the post sync withheld.
+			rows, err := f.store.ListHistoryBodies(ctx, f.member.Account.ID, f.member.Device.ID, f.shared, f.open.ID, "", 0)
+			if err != nil || len(rows) != 1 || rows[0].MessageID != before.ID {
+				t.Fatalf("member history = %+v err=%v", rows, err)
+			}
+			if _, err := f.store.ListFormerMemberKeys(ctx, f.member.Account.ID, f.member.Device.ID, f.shared); err != nil {
+				t.Fatalf("member former-member keys: %v", err)
+			}
+
+			if err := remove(f, ctx); err != nil {
+				t.Fatalf("remove: %v", err)
+			}
+			var current int
+			if err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversation_mls_devices WHERE conversation_id = ? AND device_id = ? AND removed_after_event_id IS NULL`, f.shared, f.member.Device.ID).Scan(&current); err != nil {
+				t.Fatal(err)
+			}
+			if current != 1 {
+				t.Fatalf("the device left the roster with the membership (rows=%d): this test no longer isolates the membership check", current)
+			}
+			if rows, err := f.store.ListHistoryBodies(ctx, f.member.Account.ID, f.member.Device.ID, f.shared, f.open.ID, "", 0); !errors.Is(err, ErrNotMember) {
+				t.Fatalf("former member history: %d rows, err=%v, want ErrNotMember", len(rows), err)
+			}
+			if keys, err := f.store.ListFormerMemberKeys(ctx, f.member.Account.ID, f.member.Device.ID, f.shared); !errors.Is(err, ErrNotMember) {
+				t.Fatalf("former member keys = %+v err=%v, want ErrNotMember", keys, err)
+			}
+		})
+	}
+}

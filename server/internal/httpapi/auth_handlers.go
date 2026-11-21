@@ -880,6 +880,12 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 		return
 	}
 	passwordHash, deviceAuthHash, err := a.Store.ReauthenticationRecord(r.Context(), principal.AccountID, principal.DeviceID)
+	if err != nil && !errors.Is(err, storage.ErrUnauthorized) {
+		// A storage failure says nothing about the password: answer it as
+		// transient and do not count it towards the reauth backoff.
+		a.refuseSessionLookup(w, r, err)
+		return
+	}
 	passwords := a.passwordService()
 	check, verifyErr := passwords.Verify(r.Context(), auth.SignedIn, passwordHash, req.Password)
 	if verifyErr != nil {
@@ -905,8 +911,10 @@ func (a *API) reauthenticate(w http.ResponseWriter, r *http.Request, principal d
 		a.rotateReauthenticatedSession(w, r, principal, token, backoffKeys)
 		return
 	}
-	if a.Store.MarkSessionRecentlyAuthenticated(r.Context(), auth.HashToken(token)) != nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+	if err := a.Store.MarkSessionRecentlyAuthenticated(r.Context(), auth.HashToken(token)); err != nil {
+		// Only a session that is gone is a 401; the app ends its session
+		// on one. A storage failure is transient (refuseSessionLookup).
+		a.refuseSessionLookup(w, r, err)
 		return
 	}
 	a.LoginBackoff.SucceededAny(backoffKeys...)

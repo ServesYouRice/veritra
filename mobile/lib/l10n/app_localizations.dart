@@ -6777,6 +6777,72 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 person} other{{count} people}}'**
   String roomPeople(int count);
 
+  /// No description provided for @roomCameraOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on camera'**
+  String get roomCameraOn;
+
+  /// No description provided for @roomCameraOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off camera'**
+  String get roomCameraOff;
+
+  /// No description provided for @roomPickSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose what to share'**
+  String get roomPickSourceTitle;
+
+  /// No description provided for @roomSourceScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen'**
+  String get roomSourceScreen;
+
+  /// No description provided for @roomSourceWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Window'**
+  String get roomSourceWindow;
+
+  /// No description provided for @roomSharingYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You are sharing your screen'**
+  String get roomSharingYou;
+
+  /// No description provided for @roomNoticeCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera could not be started.'**
+  String get roomNoticeCamera;
+
+  /// No description provided for @roomNoticeScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'The screen could not be shared.'**
+  String get roomNoticeScreen;
+
+  /// No description provided for @roomNoticeNoSource.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no screen or window to share.'**
+  String get roomNoticeNoSource;
+
+  /// No description provided for @roomNoticeVideoFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call has too many people for video. Voice only.'**
+  String get roomNoticeVideoFull;
+
+  /// No description provided for @roomTileScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s screen'**
+  String roomTileScreen(String name);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:
@@ -8552,6 +8618,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You are the owner: your app ends this election by itself.'**
   String get rolesOwnerCancelNote;
+
+  /// No description provided for @rolesEarlyWin.
+  ///
+  /// In en, this message translates to:
+  /// **'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.'**
+  String get rolesEarlyWin;
+
+  /// No description provided for @rolesElectorHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.'**
+  String get rolesElectorHint;
 
   /// No description provided for @rolesOnlyAdminsPost.
   ///

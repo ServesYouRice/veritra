@@ -4150,6 +4150,42 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get roomCameraOn => 'Turn on camera';
+
+  @override
+  String get roomCameraOff => 'Turn off camera';
+
+  @override
+  String get roomPickSourceTitle => 'Choose what to share';
+
+  @override
+  String get roomSourceScreen => 'Screen';
+
+  @override
+  String get roomSourceWindow => 'Window';
+
+  @override
+  String get roomSharingYou => 'You are sharing your screen';
+
+  @override
+  String get roomNoticeCamera => 'The camera could not be started.';
+
+  @override
+  String get roomNoticeScreen => 'The screen could not be shared.';
+
+  @override
+  String get roomNoticeNoSource => 'There is no screen or window to share.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'This call has too many people for video. Voice only.';
+
+  @override
+  String roomTileScreen(String name) {
+    return '$name\'s screen';
+  }
+
+  @override
   String get moderationTitle => 'Moderation';
 
   @override
@@ -5239,6 +5275,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get rolesOwnerCancelNote =>
       'You are the owner: your app ends this election by itself.';
+
+  @override
+  String get rolesEarlyWin =>
+      'This handover came sooner than this device allows: 30 days without the owner and 7 days with the election open, both by its own clock. Ask the other members if it was expected.';
+
+  @override
+  String get rolesElectorHint =>
+      'Admins without the vote mark cannot choose a new owner if you are away. Give it to the admins you trust.';
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';

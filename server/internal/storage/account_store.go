@@ -225,6 +225,8 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM account_recovery_keys WHERE account_id = ?`,
 		`DELETE FROM encrypted_profiles WHERE subject_kind = 'account' AND subject_id = ?`,
 		`DELETE FROM account_recovery_requests WHERE account_id = ?`,
+		// A deleted account never rejoins; its remembered C5 timeouts go.
+		`DELETE FROM member_timeouts WHERE account_id = ?`,
 		// A deleted account's approved-device list goes with it (L1-2). The
 		// account row stays as a deleted marker, so the cascade does not run.
 		`DELETE FROM device_list_devices WHERE account_id = ?`,

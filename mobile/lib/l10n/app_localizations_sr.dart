@@ -4168,6 +4168,42 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get roomCameraOn => 'Укључи камеру';
+
+  @override
+  String get roomCameraOff => 'Искључи камеру';
+
+  @override
+  String get roomPickSourceTitle => 'Изаберите шта желите да поделите';
+
+  @override
+  String get roomSourceScreen => 'Екран';
+
+  @override
+  String get roomSourceWindow => 'Прозор';
+
+  @override
+  String get roomSharingYou => 'Делите свој екран';
+
+  @override
+  String get roomNoticeCamera => 'Камера није могла да се покрене.';
+
+  @override
+  String get roomNoticeScreen => 'Екран није могао да се подели.';
+
+  @override
+  String get roomNoticeNoSource => 'Нема екрана ни прозора за дељење.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'У овом позиву има превише људи за видео. Само глас.';
+
+  @override
+  String roomTileScreen(String name) {
+    return 'Екран: $name';
+  }
+
+  @override
   String get moderationTitle => 'Модерација';
 
   @override
@@ -5260,6 +5296,14 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get rolesOwnerCancelNote =>
       'Ви сте власник: ваша апликација сама завршава овај избор.';
+
+  @override
+  String get rolesEarlyWin =>
+      'Ова предаја је дошла раније него што овај уређај дозвољава: 30 дана без власника и 7 дана отвореног избора, оба по његовом сату. Питајте остале чланове да ли је то било очекивано.';
+
+  @override
+  String get rolesElectorHint =>
+      'Администратори без ознаке за гласање не могу да изаберу новог власника ако вас нема. Дајте је администраторима којима верујете.';
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
@@ -9702,6 +9746,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   }
 
   @override
+  String get roomCameraOn => 'Uključi kameru';
+
+  @override
+  String get roomCameraOff => 'Isključi kameru';
+
+  @override
+  String get roomPickSourceTitle => 'Izaberite šta želite da podelite';
+
+  @override
+  String get roomSourceScreen => 'Ekran';
+
+  @override
+  String get roomSourceWindow => 'Prozor';
+
+  @override
+  String get roomSharingYou => 'Delite svoj ekran';
+
+  @override
+  String get roomNoticeCamera => 'Kamera nije mogla da se pokrene.';
+
+  @override
+  String get roomNoticeScreen => 'Ekran nije mogao da se podeli.';
+
+  @override
+  String get roomNoticeNoSource => 'Nema ekrana ni prozora za deljenje.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'U ovom pozivu ima previše ljudi za video. Samo glas.';
+
+  @override
+  String roomTileScreen(String name) {
+    return 'Ekran: $name';
+  }
+
+  @override
   String get moderationTitle => 'Moderacija';
 
   @override
@@ -10796,6 +10876,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get rolesOwnerCancelNote =>
       'Vi ste vlasnik: vaša aplikacija sama završava ovaj izbor.';
+
+  @override
+  String get rolesEarlyWin =>
+      'Ova predaja je došla ranije nego što ovaj uređaj dozvoljava: 30 dana bez vlasnika i 7 dana otvorenog izbora, oba po njegovom satu. Pitajte ostale članove da li je to bilo očekivano.';
+
+  @override
+  String get rolesElectorHint =>
+      'Administratori bez oznake za glasanje ne mogu da izaberu novog vlasnika ako vas nema. Dajte je administratorima kojima verujete.';
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';

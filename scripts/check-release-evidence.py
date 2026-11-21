@@ -13,6 +13,13 @@ recorded digest:
   provisioning profile, for the team and bundle ID pinned in the policy
   (``ios.team_id``, ``ios.bundle_id``). While either pin is null, no iOS
   signed-release record counts.
+- iOS and Android: the crypto build record inside the app says, exactly once,
+  ``source_tree_dirty=false`` (D134: no library built from uncommitted crypto
+  sources ships), and the record is tied to the release: its recorded
+  commit must be a commit this repository has, whose ``crypto/rust`` tree
+  equals the release commit's, and its ``cargo_lock_sha256`` must be the
+  hash of the release commit's ``crypto/rust/Cargo.lock``. An unknown
+  commit, another tree or another lock refuses.
 - Both: an unambiguous zip (no comment, one end record, no ZIP64, no
   duplicate entry names).
 - Android: an APK of the Veritra app, not debuggable, minSdkVersion 24 or
@@ -55,7 +62,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -139,8 +146,14 @@ SIGNING_PINS = {
     },
 }
 ANDROID_APPLICATION_ID = "org.veritra.private_messenger"
+GIT_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+LOCK_HASH_RE = re.compile(r"[0-9a-f]{64}")
 ANDROID_CRYPTO_LIBRARY = "lib/arm64-v8a/libprivate_messenger_crypto.so"
 ANDROID_CRYPTO_BUILD_INFO = "assets/veritra-crypto/build-info.txt"  # written by scripts/build-mobile-crypto.sh
+# Inside Payload/<name>.app/: build-mobile-crypto.sh ios writes the record and
+# the Runner's "Crypto Build Record" phase (scripts/ios-crypto-build-record.sh)
+# copies it into the bundle, where the code signature seals it.
+IOS_CRYPTO_BUILD_INFO = "veritra-crypto/build-info.txt"
 ANDROID_DEBUG_CERTIFICATE_MARKER = b"Android Debug"  # CN of the SDK debug keystore
 APK_SIG_BLOCK_MAGIC = b"APK Sig Block 42"
 ZIP_EOCD_MAGIC, ZIP64_LOCATOR_MAGIC, ZIP_EOCD_SIZE = b"PK\x05\x06", b"PK\x06\x07", 22
@@ -588,7 +601,7 @@ def read_member(archive: zipfile.ZipFile, name: str) -> bytes:
     return archive.read(info)
 
 
-def ipa_errors(path: Path, pins: dict[str, str] | None) -> list[str]:
+def ipa_errors(path: Path, pins: dict[str, str] | None, crypto_binding: Callable[[str], str | None] | None = None) -> list[str]:
     """Structural device-signing checks; cryptographic checks happen in G24.
 
     The app must be the pinned bundle ID under the pinned team; with no pins,
@@ -636,6 +649,19 @@ def ipa_errors(path: Path, pins: dict[str, str] | None) -> list[str]:
             executable = info.get("CFBundleExecutable")
             if not isinstance(executable, str) or not FILE_RE.fullmatch(executable):
                 return errors + ["signed ios Info.plist has no valid executable name"]
+            # D134: a crypto library built from uncommitted sources never ships.
+            if app + IOS_CRYPTO_BUILD_INFO not in names:
+                errors.append("signed ios artifact has no crypto build record")
+            else:
+                record = read_member(archive, app + IOS_CRYPTO_BUILD_INFO).decode("utf-8", "replace")
+                problem = crypto_build_info_error(record)
+                if problem:
+                    errors.append(f"signed ios artifact crypto library {problem}")
+                # Tied to the release, too (the caller's binding): the record
+                # must describe this release's crypto sources.
+                problem = crypto_binding(record) if crypto_binding else "build record cannot be compared with the release"
+                if problem:
+                    errors.append(f"signed ios artifact crypto build record {problem}")
             if app + "_CodeSignature/CodeResources" not in names:
                 errors.append("signed ios app bundle has no code signature resources")
             if app + "embedded.mobileprovision" not in names:
@@ -1221,7 +1247,63 @@ def crypto_build_info_error(text: str) -> str | None:
     return "has no single, valid source_tree_dirty record"
 
 
-def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
+def crypto_build_binding_error(text: str, root: Path, candidate: str) -> str | None:
+    """Why the crypto build record does not describe the release's crypto, or None.
+
+    The dirty flag only says the library came from committed sources; this
+    says which ones. The record's ``source_revision`` must be a commit this
+    repository holds whose ``crypto/rust`` tree is the release commit's, and
+    its ``cargo_lock_sha256`` must be the hash of the release commit's
+    ``crypto/rust/Cargo.lock``. Anything unreadable fails closed.
+    """
+    values: dict[str, str] = {}
+    for key, pattern, kind in (
+        ("source_revision", GIT_COMMIT_RE, "40 hex characters"),
+        ("cargo_lock_sha256", LOCK_HASH_RE, "64 hex characters"),
+    ):
+        found = [line[len(key) + 1 :] for line in text.splitlines() if line.startswith(key + "=")]
+        if len(found) != 1:
+            return f"has no single {key} record"
+        if not pattern.fullmatch(found[0]):
+            return f"has a {key} that is not {kind}"
+        values[key] = found[0]
+    recorded = values["source_revision"]
+    if git_text(root, "rev-parse", "--verify", "--quiet", f"{recorded}^{{commit}}") != recorded:
+        return f"names source commit {recorded}, which this repository does not have"
+    recorded_tree = git_text(root, "rev-parse", "--verify", "--quiet", f"{recorded}:crypto/rust")
+    if not recorded_tree:
+        return f"names source commit {recorded}, which has no crypto/rust tree"
+    release_tree = git_text(root, "rev-parse", "--verify", "--quiet", f"{candidate}:crypto/rust")
+    if not release_tree:
+        return "cannot be compared: the release commit has no crypto/rust tree"
+    if recorded_tree != release_tree:
+        return (
+            f"was built from another crypto source tree than the release commit "
+            f"(recorded {recorded}: crypto/rust {recorded_tree}; release {candidate}: crypto/rust {release_tree})"
+        )
+    lock = git(root, "cat-file", "blob", f"{candidate}:crypto/rust/Cargo.lock")
+    if lock is None:
+        return "cannot be compared: the release commit has no crypto/rust/Cargo.lock"
+    if hashlib.sha256(lock).hexdigest() != values["cargo_lock_sha256"]:
+        return "has a Cargo.lock hash that is not the release commit's crypto/rust/Cargo.lock"
+    return None
+
+
+def crypto_build_info_main(path: Path) -> int:
+    """Exit status for ``--crypto-build-info``: 0 only for a committed-source record."""
+    try:
+        text = path.read_bytes().decode("utf-8", "replace")
+    except OSError:
+        print(f"crypto build record not found or unreadable: {path}", file=sys.stderr)
+        return 1
+    problem = crypto_build_info_error(text)
+    if problem:
+        print(f"the crypto library {problem} ({path})", file=sys.stderr)
+        return 1
+    return 0
+
+
+def apk_errors(path: Path, pinned_certificate: str | None, crypto_binding: Callable[[str], str | None] | None = None) -> list[str]:
     """Release-signing checks: structure, pinned signer, and the v2/v3 signatures
     and content digests themselves (``apk_scheme_error``).
 
@@ -1257,9 +1339,13 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
             if ANDROID_CRYPTO_BUILD_INFO not in names:
                 errors.append("signed android artifact has no crypto build record")
             else:
-                problem = crypto_build_info_error(read_member(archive, ANDROID_CRYPTO_BUILD_INFO).decode("utf-8", "replace"))
+                record = read_member(archive, ANDROID_CRYPTO_BUILD_INFO).decode("utf-8", "replace")
+                problem = crypto_build_info_error(record)
                 if problem:
                     errors.append(f"signed android artifact crypto library {problem}")
+                problem = crypto_binding(record) if crypto_binding else "build record cannot be compared with the release"
+                if problem:
+                    errors.append(f"signed android artifact crypto build record {problem}")
     except Exception:  # BadZipFile, struct, index and decode errors all fail closed
         return ["signed android artifact is not a readable APK"]
     try:
@@ -1294,6 +1380,7 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
 def check_mobile_record(
     index: int,
     record: Any,
+    root: Path,
     candidate: str,
     ci_run_id: Any,
     artifacts_dir: Path,
@@ -1392,6 +1479,9 @@ def check_mobile_record(
         )
         if workflow == CI_WORKFLOW or job == debug_job or same_run:
             errors.append(f"{label} provenance is the debug {rules['debug_build']} CI build")
+        def binding(text: str) -> str | None:
+            return crypto_build_binding_error(text, root, candidate)
+
         if file_name and digest:
             path = artifacts_dir / file_name
             if not path.is_file():
@@ -1399,9 +1489,9 @@ def check_mobile_record(
             elif sha256_file(path) != digest:
                 errors.append(f"{label} file does not match its recorded digest")
             elif platform == "ios":
-                errors.extend(ipa_errors(path, platform_pins))
+                errors.extend(ipa_errors(path, platform_pins, binding))
             else:
-                errors.extend(apk_errors(path, pinned_certificate))
+                errors.extend(apk_errors(path, pinned_certificate, binding))
     if len(errors) != start or digest is None:
         return None
     return platform, artifact_type, digest
@@ -1409,6 +1499,7 @@ def check_mobile_record(
 
 def validate_mobile_artifacts(
     manifest: dict[str, Any],
+    root: Path,
     candidate: str,
     artifacts_dir: Path,
     pins: dict[str, dict[str, str] | None],
@@ -1421,7 +1512,7 @@ def validate_mobile_artifacts(
     sound = []
     for index, record in enumerate(records):
         result = check_mobile_record(
-            index, record, candidate, manifest.get("ci_run_id"), artifacts_dir, pins, errors
+            index, record, root, candidate, manifest.get("ci_run_id"), artifacts_dir, pins, errors
         )
         if result is not None:
             sound.append(result)
@@ -1504,7 +1595,7 @@ def validate_manifest(
     if artifacts_dir is None:
         errors.append("no mobile artifact directory to verify signed artifacts against")
     else:
-        validate_mobile_artifacts(manifest, candidate, artifacts_dir, signing_pins(policy), errors)
+        validate_mobile_artifacts(manifest, root, candidate, artifacts_dir, signing_pins(policy), errors)
     return errors
 
 
@@ -1524,7 +1615,14 @@ def main() -> int:
         help="signed mobile artifact directory (default: $MOBILE_ARTIFACTS_DIR, else the evidence file's directory)",
     )
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument(
+        "--crypto-build-info",
+        type=Path,
+        help="only check one crypto build record (D134) and exit; the iOS release build runs this",
+    )
     args = parser.parse_args()
+    if args.crypto_build_info is not None:
+        return crypto_build_info_main(args.crypto_build_info)
 
     root = args.root.resolve()
     policy_path = (args.policy or root / "release/release-policy.json").resolve()

@@ -32,7 +32,21 @@ import 'webrtc_frame_keys.dart';
 ///    handed to the session only after that start has run and the track has
 ///    been disabled again ("re-mute after start"; LiveKit's internal
 ///    `EngineTrackAddedEvent` is not part of its public API). A track that
-///    never starts is unsubscribed.
+///    never starts is unsubscribed;
+///  - a remote mute or unmute of a local track (B6 review, round 9): B6
+///    never mutes its own tracks through LiveKit, so any such change comes
+///    from the SFU, whose later unmute would restart or re-enable the
+///    capture on a sender that may not carry a cryptor yet, or switch on a
+///    microphone the person muted. Every local track is cut from its RTP
+///    senders inside the event's callback and the call ends;
+///  - a camera or screen published on anything but one VP8 sender with
+///    dynacast off ends the call: the SFU can move the codec, and with
+///    dynacast on (LiveKit turns it on for SVC codecs) it can ask for a
+///    backup codec, which LiveKit then sends on a second RTP sender with no
+///    cryptor, whatever the publish options say;
+///  - every capture this connection published is stopped when it is
+///    unpublished and when the connection ends, also one whose publish
+///    finished after the room was gone.
 class LiveKitSfuConnection implements SfuConnection {
   LiveKitSfuConnection(
     WebRtcFrameKeys keys, {
@@ -57,6 +71,7 @@ class LiveKitSfuConnection implements SfuConnection {
   final Set<String> _awaitingCryptor = {};
   int _publishing = 0;
   bool _poisoned = false;
+  bool _closed = false;
   final Map<String, _LiveKitRemoteTrack> _starting = {};
 
   /// Whether the connection reconnected or saw a track it did not key: no
@@ -82,6 +97,14 @@ class LiveKitSfuConnection implements SfuConnection {
   void _onRoomEvent(LiveKitRoomEvent event) {
     switch (event) {
       case LiveKitReconnecting() || LiveKitDisconnected():
+        _failClosedNow();
+      case LiveKitLocalMuteChanged(:final media):
+        // Cut first: LiveKit's own unmute must find no sender to restart
+        // or re-enable the capture on.
+        _cut(media);
+        for (final track in _local) {
+          _cut(track.media);
+        }
         _failClosedNow();
       case LiveKitLocalTrackPublished(:final sid, :final media):
         final sender = media?.sender;
@@ -115,6 +138,20 @@ class LiveKitSfuConnection implements SfuConnection {
   static void _disable(LiveKitMedia media) {
     try {
       media.enabled = false;
+    } catch (_) {}
+  }
+
+  static void _cut(LiveKitLocalMedia? media) {
+    if (media == null) return;
+    _disable(media);
+    try {
+      media.cutSenders();
+    } catch (_) {}
+  }
+
+  static Future<void> _stop(LiveKitLocalMedia media) async {
+    try {
+      await media.stop();
     } catch (_) {}
   }
 
@@ -161,27 +198,53 @@ class LiveKitSfuConnection implements SfuConnection {
   }
 
   @override
-  Future<SfuLocalTrack> publishDisabled(int slot) async {
-    if (slot != roomSlotVoice) {
-      throw UnsupportedError(
-        'only voice is published (camera and screen '
-        'share are not built)',
-      );
+  Future<SfuLocalTrack> publishDisabled(int slot, {String? sourceId}) async {
+    if (slot != roomSlotVoice &&
+        slot != roomSlotCamera &&
+        slot != roomSlotScreen) {
+      // Screen audio has no capture path on any platform yet.
+      throw UnsupportedError('slot $slot is not published');
     }
-    if (_poisoned) throw StateError('the SFU connection is not fail closed');
+    if (_poisoned || _closed) {
+      throw StateError('the SFU connection is not fail closed');
+    }
     final LiveKitLocalMedia media;
     _publishing++;
     try {
-      media = await _driver.publishVoiceDisabled();
+      media = slot == roomSlotVoice
+          ? await _driver.publishVoiceDisabled()
+          : await _driver.publishVideoDisabled(slot, sourceId);
       _awaitingCryptor.add(media.sid);
     } finally {
       _publishing--;
+    }
+    if (_closed) {
+      // The publish finished after the call ended: release the capture.
+      _disable(media);
+      _awaitingCryptor.remove(media.sid);
+      await _stop(media);
+      throw StateError('the SFU connection is closed');
     }
     final track = _LiveKitLocalTrack(this, media, slot);
     _local.add(track);
     if (_poisoned || media.enabled) {
       _disable(media);
       throw StateError('the SFU connection is not fail closed');
+    }
+    if (slot != roomSlotVoice &&
+        (media.codec?.toLowerCase() != roomVideoCodec ||
+            media.extraSenders != 0 ||
+            _driver.dynacast)) {
+      // Not the one VP8 sender asked for: the SFU moved the codec or made
+      // room for a backup codec sender that would carry no cryptor. The
+      // capture is still disabled; it is cut, unpublished and stopped, and
+      // the call ends (dynacast stays on for the room once LiveKit set it).
+      _cut(media);
+      _failClosedNow();
+      try {
+        await unpublish(track);
+      } catch (_) {}
+      throw StateError('video was not published on one VP8 sender');
     }
     return track;
   }
@@ -192,7 +255,12 @@ class LiveKitSfuConnection implements SfuConnection {
     _disable(local.media);
     _local.remove(local);
     _awaitingCryptor.remove(local.sid);
-    await _driver.unpublish(local.sid);
+    try {
+      await _driver.unpublish(local.sid);
+    } finally {
+      // The camera light goes out even if LiveKit no longer knows the track.
+      await _stop(local.media);
+    }
   }
 
   @override
@@ -229,6 +297,7 @@ class LiveKitSfuConnection implements SfuConnection {
 
   @override
   Future<void> disconnect() async {
+    _closed = true;
     for (final track in _local) {
       _disable(track.media);
     }
@@ -236,6 +305,10 @@ class LiveKitSfuConnection implements SfuConnection {
     try {
       await _driver.disconnect();
     } finally {
+      for (final track in _local.toList()) {
+        await _stop(track.media);
+      }
+      _local.clear();
       await _events.close();
     }
   }
@@ -253,8 +326,28 @@ abstract interface class LiveKitMedia {
 abstract interface class LiveKitLocalMedia implements LiveKitMedia {
   String get sid;
 
+  /// Fires when the capture ends by itself.
+  Stream<void> get ended;
+
+  /// The capture's stream for a camera preview, or null.
+  Object? get preview;
+
   /// The RTP sender carrying it now (a full reconnect replaces it).
   Object? get sender;
+
+  /// The video codec LiveKit published it with (null for voice).
+  String? get codec;
+
+  /// RTP senders beyond [sender] carrying this capture (backup codecs).
+  int get extraSenders;
+
+  /// Detaches the capture from every RTP sender it has, synchronously, so
+  /// that nothing LiveKit does to the track afterwards reaches the network.
+  void cutSenders();
+
+  /// Stops the capture (the camera light, the screen, the microphone).
+  /// Stopping twice is harmless.
+  Future<void> stop();
 }
 
 abstract interface class LiveKitRemoteMedia implements LiveKitMedia {
@@ -265,6 +358,8 @@ abstract interface class LiveKitRemoteMedia implements LiveKitMedia {
 
   /// Whether LiveKit has started it (its start enables it).
   bool get isActive;
+  bool get isVideo;
+  Object? get stream;
   Object? get receiver;
   Future<void> unsubscribe();
 }
@@ -297,6 +392,14 @@ class LiveKitTrackUnsubscribed extends LiveKitRoomEvent {
   final String sid;
 }
 
+/// A local track was muted or unmuted by someone other than B6 (which never
+/// mutes its own tracks through LiveKit): the SFU.
+class LiveKitLocalMuteChanged extends LiveKitRoomEvent {
+  const LiveKitLocalMuteChanged(this.sid, this.media);
+  final String sid;
+  final LiveKitLocalMedia? media;
+}
+
 class LiveKitDataReceived extends LiveKitRoomEvent {
   const LiveKitDataReceived(this.participant, this.data);
   final String? participant;
@@ -308,6 +411,10 @@ class LiveKitDataReceived extends LiveKitRoomEvent {
 /// called synchronously from inside LiveKit's own listener callbacks.
 abstract interface class LiveKitRoomDriver {
   String? get localIdentity;
+
+  /// Whether the room runs dynacast now. B6 turns it off; LiveKit turns it
+  /// on by itself when it publishes an SVC codec.
+  bool get dynacast;
   Future<void> connect(
     String url,
     String token,
@@ -316,6 +423,12 @@ abstract interface class LiveKitRoomDriver {
 
   /// Creates the voice capture, starts and disables it, then publishes it.
   Future<LiveKitLocalMedia> publishVoiceDisabled();
+
+  /// The same for the camera ([roomSlotCamera]) or a shared screen or window
+  /// ([roomSlotScreen], [sourceId] on desktop), published with
+  /// [roomCameraPublishOptions] or [roomScreenPublishOptions]. Throws
+  /// [SfuCaptureDenied] when the capture cannot be created.
+  Future<LiveKitLocalMedia> publishVideoDisabled(int slot, String? sourceId);
   Future<void> unpublish(String sid);
   Future<void> publishData(Uint8List data);
   Future<void> disconnect();
@@ -325,6 +438,30 @@ abstract interface class LiveKitRoomDriver {
     String participantId,
   );
 }
+
+/// The only video codec B6 sends (S1 checks its clear bytes and IVs).
+const roomVideoCodec = 'vp8';
+
+/// Camera publish options, fixed and test-visible (B6 fail-closed rules):
+///  - one layer: simulcast runs up to three encoders under one frame key, and
+///    the design asks S1 to confirm the IV never repeats across them first;
+///  - no backup codec: it would add a second RTP sender that carries no
+///    frame cryptor;
+///  - VP8, the codec every platform has.
+const roomCameraPublishOptions = lk.VideoPublishOptions(
+  videoCodec: roomVideoCodec,
+  simulcast: false,
+  backupVideoCodec: lk.BackupVideoCodec(enabled: false),
+  videoEncoding: lk.VideoEncoding(maxBitrate: 600000, maxFramerate: 24),
+);
+
+/// Screen share publish options: the same fixed rules, at 15 frames a second.
+const roomScreenPublishOptions = lk.VideoPublishOptions(
+  videoCodec: roomVideoCodec,
+  simulcast: false,
+  backupVideoCodec: lk.BackupVideoCodec(enabled: false),
+  screenShareEncoding: lk.VideoEncoding(maxBitrate: 1500000, maxFramerate: 15),
+);
 
 class _LkRoomDriver implements LiveKitRoomDriver {
   _LkRoomDriver(this.keys);
@@ -338,6 +475,7 @@ class _LkRoomDriver implements LiveKitRoomDriver {
     ),
   );
   lk.EventsListener<lk.RoomEvent>? _listener;
+  final Map<String, StreamController<void>> _ended = {};
 
   /// Constant 32 kbit/s voice, DTX and RED off (O4). libwebrtc may still
   /// vary the Opus packet size, and the audio-level header extension cannot
@@ -350,6 +488,9 @@ class _LkRoomDriver implements LiveKitRoomDriver {
 
   @override
   String? get localIdentity => _room.localParticipant?.identity;
+
+  @override
+  bool get dynacast => _room.roomOptions.dynacast;
 
   @override
   Future<void> connect(
@@ -373,6 +514,36 @@ class _LkRoomDriver implements LiveKitRoomDriver {
             track == null ? null : _LkLocalMedia(track, event.publication.sid),
           ),
         );
+      })
+      ..on<lk.TrackMutedEvent>((event) {
+        if (event.participant is! lk.LocalParticipant) return;
+        final track = event.publication.track;
+        onEvent(
+          LiveKitLocalMuteChanged(
+            event.publication.sid,
+            track is lk.LocalTrack
+                ? _LkLocalMedia(track, event.publication.sid)
+                : null,
+          ),
+        );
+      })
+      ..on<lk.TrackUnmutedEvent>((event) {
+        if (event.participant is! lk.LocalParticipant) return;
+        final track = event.publication.track;
+        onEvent(
+          LiveKitLocalMuteChanged(
+            event.publication.sid,
+            track is lk.LocalTrack
+                ? _LkLocalMedia(track, event.publication.sid)
+                : null,
+          ),
+        );
+      })
+      ..on<lk.LocalTrackUnpublishedEvent>((event) {
+        final controller = _ended.remove(event.publication.sid);
+        if (controller == null) return;
+        controller.add(null);
+        unawaited(controller.close());
       })
       ..on<lk.TrackSubscribedEvent>(
         (event) => onEvent(
@@ -419,6 +590,67 @@ class _LkRoomDriver implements LiveKitRoomDriver {
   }
 
   @override
+  Future<LiveKitLocalMedia> publishVideoDisabled(
+    int slot,
+    String? sourceId,
+  ) async {
+    final participant = _room.localParticipant;
+    if (participant == null) throw StateError('not connected');
+    final lk.LocalVideoTrack track;
+    try {
+      track = slot == roomSlotCamera
+          ? await lk.LocalVideoTrack.createCameraTrack(
+              const lk.CameraCaptureOptions(
+                params: lk.VideoParametersPresets.h540_169,
+                maxFrameRate: 24,
+              ),
+            )
+          : await lk.LocalVideoTrack.createScreenShareTrack(
+              lk.ScreenShareCaptureOptions(
+                sourceId: sourceId,
+                maxFrameRate: 15,
+                params: lk.VideoParametersPresets.screenShareH1080FPS15,
+              ),
+            );
+    } catch (_) {
+      // Permission refused, no camera, the picker cancelled. Nothing is open.
+      throw const SfuCaptureDenied();
+    }
+    // Started and disabled before it is published, as for voice: until its
+    // cryptor holds a key the encoder sees black frames only.
+    final media = _LkLocalMedia(track, '');
+    String? sid;
+    try {
+      await track.start();
+      _setEnabled(media, false);
+      final publication = await participant.publishVideoTrack(
+        track,
+        publishOptions: slot == roomSlotCamera
+            ? roomCameraPublishOptions
+            : roomScreenPublishOptions,
+      );
+      sid = publication.sid;
+      // LiveKit unpublishes a track whose capture ended by itself (the user
+      // stopped sharing, the window closed): that is the end signal.
+      final ended =
+          _ended[publication.sid] = StreamController<void>.broadcast();
+      return _LkLocalMedia(track, publication.sid, ended.stream);
+    } catch (_) {
+      // Never leave a capture (the camera light, the screen) running, or a
+      // publication behind.
+      if (sid != null) {
+        try {
+          await participant.removePublishedTrack(sid);
+        } catch (_) {}
+      }
+      try {
+        await track.stop();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> unpublish(String sid) async {
     await _room.localParticipant?.removePublishedTrack(sid);
   }
@@ -460,16 +692,29 @@ class _LkRoomDriver implements LiveKitRoomDriver {
   Future<void> disconnect() async {
     await _listener?.dispose();
     _listener = null;
+    for (final controller in _ended.values) {
+      unawaited(controller.close());
+    }
+    _ended.clear();
     await _room.disconnect();
     await _room.dispose();
   }
 }
 
 class _LkLocalMedia implements LiveKitLocalMedia {
-  _LkLocalMedia(this.track, this.sid);
-  final lk.Track track;
+  _LkLocalMedia(this.track, this.sid, [this.ended = const Stream.empty()]);
+  final lk.LocalTrack track;
   @override
   final String sid;
+
+  @override
+  final Stream<void> ended;
+
+  @override
+  Object? get preview =>
+      track.kind == lk.TrackType.VIDEO && track.source == lk.TrackSource.camera
+          ? track.mediaStream
+          : null;
 
   @override
   bool get enabled => track.mediaStreamTrack.enabled;
@@ -478,6 +723,45 @@ class _LkLocalMedia implements LiveKitLocalMedia {
 
   @override
   Object? get sender => track.sender;
+
+  @override
+  String? get codec => track.kind == lk.TrackType.VIDEO ? track.codec : null;
+
+  @override
+  int get extraSenders {
+    final video = track;
+    if (video is! lk.LocalVideoTrack) return 0;
+    return video.simulcastCodecs.values.where((s) => s.sender != null).length;
+  }
+
+  /// Read in `livekit_client` 2.13.2: `LocalTrack.restartTrack` (an unmute)
+  /// refuses to run without `transceiver.sender`, and backup codec senders
+  /// are reached only through `simulcastCodecs[..].sender`. With both gone
+  /// and every sender's track replaced by none, a later `enable()` turns on
+  /// a capture no sender carries.
+  @override
+  void cutSenders() {
+    final senders = <rtc.RTCRtpSender>[
+      if (track.sender != null) track.sender!,
+    ];
+    track.transceiver = null;
+    final video = track;
+    if (video is lk.LocalVideoTrack) {
+      for (final simulcast in video.simulcastCodecs.values) {
+        final sender = simulcast.sender;
+        if (sender != null) senders.add(sender);
+        simulcast.sender = null;
+      }
+    }
+    for (final sender in senders) {
+      unawaited(sender.replaceTrack(null).catchError((Object _) {}));
+    }
+  }
+
+  @override
+  Future<void> stop() async {
+    await track.stop();
+  }
 }
 
 class _LkRemoteMedia implements LiveKitRemoteMedia {
@@ -499,6 +783,12 @@ class _LkRemoteMedia implements LiveKitRemoteMedia {
 
   @override
   bool get isActive => track.isActive;
+
+  @override
+  bool get isVideo => track.kind == lk.TrackType.VIDEO;
+
+  @override
+  Object? get stream => track.mediaStream;
 
   @override
   Object? get receiver => track.receiver;
@@ -536,10 +826,24 @@ class _LiveKitLocalTrack implements SfuLocalTrack {
   final int slot;
 
   @override
+  Stream<void> get ended => media.ended;
+
+  @override
+  Object? get preview => media.preview;
+
+  @override
   Future<void> setEnabled(bool enabled) async {
     if (enabled && _connection._poisoned) {
       _setEnabled(media, false);
       throw StateError('the SFU connection is not fail closed');
+    }
+    if (enabled &&
+        slot != roomSlotVoice &&
+        (media.extraSenders != 0 || _connection._driver.dynacast)) {
+      // A second sender (a backup codec) appeared after the publish check.
+      LiveKitSfuConnection._cut(media);
+      _connection._failClosedNow();
+      throw StateError('video gained a sender with no cryptor');
     }
     _setEnabled(media, enabled);
   }
@@ -557,6 +861,12 @@ class _LiveKitRemoteTrack implements SfuRemoteTrack {
 
   @override
   String get participant => media.participant;
+
+  @override
+  bool get isVideo => media.isVideo;
+
+  @override
+  Object? get stream => media.stream;
 
   @override
   Future<void> setPlaying(bool on) async {

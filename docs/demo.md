@@ -131,8 +131,19 @@ it missed.
   Stage 5 (D28). A device sees messages from the moment it joined, not
   earlier ones. Groups created before Stage 5 cannot change members; start a
   new group.
-- Calls are not in the demo yet. Attachments work: phones open images only;
-  desktops also save other files.
+- Calls are in the demo (B5 one-to-one, B6 group rooms) but need two extra
+  services you run yourself: a coturn-compatible TURN service for one-to-one
+  calls (`PRIVATE_MESSENGER_TURN_URLS` and the shared secret, see
+  `docs/operations.md`; the demo script does not start one, and without it a
+  call fails with "none is configured") and a LiveKit server for group rooms
+  (`deploy/livekit/livekit.example.yaml`). Camera and screen share are built
+  for every platform but not yet run on a device or a desktop session (S1):
+  the camera is meant to work everywhere; a screen share is meant to work on
+  desktops (you pick a screen or window; Linux is X11, Wayland is unconfirmed)
+  and on Android debug builds (system consent screen, then a notification
+  while it runs); iPhones and iPads can watch a share but not send one. A
+  phone that goes to the background leaves the room. Attachments work: phones
+  open images only; desktops also save other files.
 - Cross-machine demos need HTTPS and are not covered yet.
 - A demo server database that already ran the first draft of the timed-mute
   migration (`0035_mute_until`) needs a fresh database: that migration is now

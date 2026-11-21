@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/roles/governance.dart';
+import '../../core/roles/governance_commands.dart';
 import '../../crypto/crypto_service.dart' show GovernanceView;
 import '../../l10n/l10n.dart';
 import '../../ui/confirm.dart';
@@ -33,6 +34,7 @@ class RolesScreen extends StatefulWidget {
 class _RolesScreenState extends State<RolesScreen> {
   GovernanceView? _view;
   bool _loaded = false;
+  bool _early = false;
 
   AppState get state => widget.state;
 
@@ -51,9 +53,12 @@ class _RolesScreenState extends State<RolesScreen> {
 
   Future<void> _reload() async {
     final view = await state.governanceViewFor(widget.conversationId);
+    final early =
+        view != null && await state.ownerChangedEarly(widget.conversationId);
     if (!mounted) return;
     setState(() {
       _view = view;
+      _early = early;
       _loaded = true;
     });
   }
@@ -276,20 +281,46 @@ class _RolesScreenState extends State<RolesScreen> {
     final id = widget.conversationId;
     final election = record.election;
     final tiles = <Widget>[];
+    // D81: a handover this device's own clocks would have refused.
+    if (_early) {
+      tiles.add(
+        ListTile(
+          leading: Icon(
+            Icons.warning_amber_rounded,
+            color: Theme.of(context).colorScheme.error,
+          ),
+          title: Text(l10n.rolesEarlyWin),
+        ),
+      );
+    }
+    // The design's prompt: admins the owner has not marked as electors
+    // cannot vote (or only under D82's ownerRev rule).
+    if (self != null &&
+        self == record.owner &&
+        record.admins.keys.any(
+          (a) => view.roster.contains(a) && !record.electors.contains(a),
+        )) {
+      tiles.add(ListTile(subtitle: Text(l10n.rolesElectorHint)));
+    }
     if (election == null) {
       tiles.add(ListTile(title: Text(l10n.rolesElectionNone)));
-      // Offered where the local rules would build it; the command checks
-      // the 30 days against this device's own clock and refuses otherwise.
+      // Offered only where the command itself would build it (the 30 days
+      // on this device's own clock, and who may open: an elector, D82's
+      // admins by ownerRev, or with no admin the longest-serving member).
       final observed = view.observations;
-      final admins = record.admins.keys.where(view.roster.contains).toList();
-      final mayOpen = self != null &&
-          self != record.owner &&
-          observed != null &&
-          mayOpenElectionNow(
-            now: DateTime.now().toUtc(),
-            lastOwnerActivity: observed.lastOwnerActivity,
-          ) &&
-          (admins.isEmpty || record.admins.containsKey(self));
+      var mayOpen = false;
+      if (self != null && self != record.owner && observed != null) {
+        try {
+          GovernanceCommands(
+            state: record,
+            actor: self,
+            members: view.roster,
+          ).openElection(observed, DateTime.now().toUtc());
+          mayOpen = true;
+        } catch (_) {
+          mayOpen = false;
+        }
+      }
       if (mayOpen) {
         tiles.add(
           ListTile(

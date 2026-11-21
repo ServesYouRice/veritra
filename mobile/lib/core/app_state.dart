@@ -67,6 +67,7 @@ import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
+import 'roles/private_channel_membership.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -128,6 +129,8 @@ part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 part 'app_state_roles.dart';
 part 'app_state_previews.dart';
+part 'app_state_private_channels.dart';
+part 'app_state_posting.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -2634,6 +2637,15 @@ class AppState extends ChangeNotifier
       return;
     }
     final generation = _sessionGeneration;
+    // The ids this device held a code for before asking: only those may be
+    // forgotten below, so an invite created while the list was on its way
+    // keeps its code.
+    Set<String> known = const <String>{};
+    try {
+      known = await _updateInviteCodes((codes) => codes.keys.toSet());
+    } catch (_) {
+      // Unreadable local copies: the list still loads, without codes.
+    }
     List<Invite>? list;
     try {
       list = await client.listInvites(current.token);
@@ -2643,7 +2655,24 @@ class AppState extends ChangeNotifier
     // A reply for a session that has since ended or been replaced is
     // dropped whole, success or failure.
     if (!_refreshOwned(current, generation)) return;
-    if (list != null) invites = list;
+    if (list != null) {
+      final listed = list;
+      List<Invite> merged;
+      try {
+        merged = await _updateInviteCodes((codes) {
+          // Gone from the server (turned off, used up or expired): its
+          // code can never register again, so this device forgets it.
+          final live = <String>{for (final invite in listed) invite.id};
+          codes
+              .removeWhere((id, _) => known.contains(id) && !live.contains(id));
+          return _withLocalInviteCodes(listed, codes);
+        });
+      } catch (_) {
+        merged = _withLocalInviteCodes(listed, const <String, String>{});
+      }
+      if (!_refreshOwned(current, generation)) return;
+      invites = merged;
+    }
     invitesLoadFailed = list == null;
     invitesLoaded = true;
     notifyListeners();
@@ -2720,6 +2749,9 @@ class AppState extends ChangeNotifier
       communities = list;
       channelsByCommunity = channels;
       _channelCreationAccess.addAll(creationAccess);
+      // C3: a private channel's group stays one here, whatever the server
+      // labels it later.
+      await _pinRoutedPrivateChannels();
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
     }
@@ -3077,12 +3109,23 @@ class AppState extends ChangeNotifier
       if (current == null || client == null) {
         return;
       }
-      created = await client.createInvite(
+      final invite = await client.createInvite(
         current.token,
         maxUses: maxUses,
         expiresAt: expiresAt,
       );
-      invites = <Invite>[created!, ...invites];
+      created = invite;
+      // The only time the server hands out the code: keep it on this device
+      // so the invite can be shared again after a restart.
+      if (invite.code.isNotEmpty) {
+        try {
+          await _updateInviteCodes((codes) => codes[invite.id] = invite.code);
+        } catch (_) {
+          // Shown for now all the same; after a restart it reads "Can't be
+          // shared again".
+        }
+      }
+      invites = <Invite>[invite, ...invites];
     });
     return error == null ? created : null;
   }
@@ -3096,8 +3139,66 @@ class AppState extends ChangeNotifier
       }
       await client.revokeInvite(current.token, inviteId);
       invites = invites.where((invite) => invite.id != inviteId).toList();
+      try {
+        await _updateInviteCodes((codes) => codes.remove(inviteId));
+      } catch (_) {
+        // Forgotten at the next refresh, which no longer lists it.
+      }
     });
   }
+
+  /// Local setting holding the codes of the registration invites this device
+  /// created, as a JSON object from invite id to code. The server keeps only
+  /// a hash of each code, so this encrypted local copy is the one way to
+  /// share an invite again. Codes are bearer credentials: never logged.
+  static const String inviteCodesSetting = 'invites.codes';
+
+  Future<void> _inviteCodesQueue = Future<void>.value();
+
+  /// Runs [change] on the stored invite codes, one change at a time, and
+  /// saves them when [change] altered them.
+  Future<T> _updateInviteCodes<T>(
+      T Function(Map<String, String> codes) change) {
+    final run = _inviteCodesQueue.then((_) async {
+      final codes = <String, String>{};
+      final raw = await localStore.loadSetting(inviteCodesSetting);
+      Object? decoded;
+      try {
+        decoded = raw == null ? null : jsonDecode(raw);
+      } on FormatException {
+        // Unreadable: start again, overwritten by the next change.
+      }
+      if (decoded is Map) {
+        for (final entry in decoded.entries) {
+          if (entry.key is String && entry.value is String) {
+            codes[entry.key as String] = entry.value as String;
+          }
+        }
+      }
+      final before = Map<String, String>.of(codes);
+      final result = change(codes);
+      if (!mapEquals(before, codes)) {
+        await localStore.saveSetting(inviteCodesSetting, jsonEncode(codes));
+      }
+      return result;
+    });
+    _inviteCodesQueue = run.then((_) {}, onError: (Object _) {});
+    return run;
+  }
+
+  /// [listed] with each invite's code from [codes] when this device has one,
+  /// else the code the server sent (older servers), else none.
+  static List<Invite> _withLocalInviteCodes(
+    List<Invite> listed,
+    Map<String, String> codes,
+  ) =>
+      <Invite>[
+        for (final invite in listed)
+          switch (codes[invite.id]) {
+            final code? when code.isNotEmpty => invite.withCode(code),
+            _ => invite,
+          },
+      ];
 
   Future<Community?> createCommunity(String name) async {
     Community? created;
@@ -3186,6 +3287,10 @@ class AppState extends ChangeNotifier
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
+        // C3: its creator's devices only; picked members join by commit.
+        if (creation.channel.kind == 'private' && creation.channel.isRouted) {
+          await _pinPrivateChannelGroup(creation.conversation.id);
+        }
         await _setUpConversationGroup(
           creation.conversation.id,
           kind: creation.conversation.kind,
@@ -3230,8 +3335,13 @@ class AppState extends ChangeNotifier
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
         if (routed.shared) await publishCommunityInfo(communityId);
-        // C4: an announcement channel is restricted in the record too.
+        // C4: an announcement channel is restricted in the record too,
+        // retried on later sync passes until it lands (C2).
         if (routed.shared && routed.channel.kind == 'announcement') {
+          await _rememberAnnouncementRecord(
+            routed.channel.conversationId!,
+            routed.channel.id,
+          );
           await _recordAnnouncementChannel(
             routed.channel.conversationId!,
             routed.channel.id,
@@ -3261,12 +3371,23 @@ class AppState extends ChangeNotifier
       // a group device, and here there is none: the add would wait forever.
       final refusal = await _noPeerRefusal(conversationId);
       if (refusal != null) throw UserFacingException(refusal);
-      await client.addConversationMember(
-        current.token,
-        conversationId,
-        accountId,
-        role: role,
-      );
+      // C3: in a private channel, only an account this user picked joins
+      // by this device's commit (the server's list only proposes).
+      final picked = await _isPrivateChannelGroup(conversationId);
+      if (picked) await _pickPrivateChannelMember(conversationId, accountId);
+      try {
+        await client.addConversationMember(
+          current.token,
+          conversationId,
+          accountId,
+          role: role,
+        );
+      } catch (_) {
+        if (picked) {
+          await _unpickPrivateChannelMember(conversationId, accountId);
+        }
+        rethrow;
+      }
       added = true;
       // Their devices join the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
@@ -4097,6 +4218,8 @@ class AppState extends ChangeNotifier
         conversationId,
         policy,
       );
+      // C2: owed to the record until a sync pass finds it written.
+      await _rememberPostingRecord(conversationId, policy == 'admins');
       conversations = [
         for (final c in conversations)
           if (c.id == updated.id)
@@ -7674,6 +7797,8 @@ class AppState extends ChangeNotifier
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();
+          // C2: posting settings this device still owes the record.
+          await _retryPostingRecords();
           // C6: announce this moderator's report key where it is due. Not
           // awaited, like the C3 refresh: sending never holds up sync.
           unawaited(_announceReportKeys());
@@ -9069,6 +9194,8 @@ class AppState extends ChangeNotifier
         throw StateError('the server answered with a different move');
       }
       if (!conversation.isCommunityShared) {
+        // C3: going private, only the ticked readers join, by commit.
+        if (access == 'private') await _pinPrivateChannelGroup(conversation.id);
         await _setUpConversationGroup(conversation.id, kind: conversation.kind);
       }
       final layout = result.move['layout_generation'];
@@ -9107,6 +9234,8 @@ class AppState extends ChangeNotifier
         own: true,
       );
       for (final account in adds) {
+        // C3: the admin's pick, so this device commits the add.
+        await _pickPrivateChannelMember(conversation.id, account);
         try {
           await client.addConversationMember(
             current.token,
@@ -9114,11 +9243,13 @@ class AppState extends ChangeNotifier
             account,
           );
         } on ApiException catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           // A lost session is _run's to handle.
           if (err.statusCode == 401) rethrow;
           addFailure ??= err;
           notAdded.add(account);
         } catch (err) {
+          await _unpickPrivateChannelMember(conversation.id, account);
           addFailure ??= err;
           notAdded.add(account);
         }
@@ -9807,6 +9938,8 @@ class AppState extends ChangeNotifier
         preserveOutbox: preserveOutbox,
         keepDrafts: keepDrafts,
       );
+      // Invite codes are bearer credentials: they leave with the session.
+      await _updateInviteCodes((codes) => codes.clear());
     } else {
       await localStore.clear();
       // The MLS outbox went with the store; an item kept for a later
@@ -10836,11 +10969,14 @@ class AppState extends ChangeNotifier
     // call adds them), except one this change removes from the
     // conversation: a departing account never gains a device. A device
     // revoke keeps its account in the list, so its siblings still join.
-    final missing = await discovery.missingApprovedDevices(
+    final listed = await discovery.missingApprovedDevices(
       creating ? null : conversationId,
       memberIds,
       excluding: removing.difference(memberIds),
     );
+    // C3: in a private channel's group, a server-proposed account nobody
+    // here picked is left out before a key package is claimed for it.
+    final missing = await _privateChannelRefs(conversationId, listed);
     // The server and native commit format cap each bundle at 256 changes.
     return missing.take(256).toList();
   }

@@ -6,8 +6,10 @@ removal proofs, L1 gate, roles screen, owner cancel) are built; server
 succession is built (migration 0087, 2026-11-11, "Server succession" in
 `docs/crypto.md`, "C4 app wiring"); review fixes 2026-11-11 (held commits,
 leave notice, role-only interval, owner decision B); the leave proof in the
-commit is designed, approved and not built; the wiring is not yet
-independently reviewed.** Rescoped
+commit is built (crypto ABI 24); 2026-11-21: the wiring is exercised end to
+end against a hostile member's modified client, the handover warning and
+the elector prompt are built (section "Round 4" below); the wiring still
+needs the human G25 review.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -548,3 +550,38 @@ residuals: `docs/crypto.md`, "C4 app wiring". Server succession is built
 (2026-11-11). The leave proof in the commit is built at crypto ABI 24
 (2026-11-11; `docs/crypto.md`, "C4 leave proof in the commit"). Still open:
 an independent review of it, and more tests of the wiring.
+
+## Round 4: hostile-member tests and the last design items (2026-11-21)
+
+Checked against the code, not the board: the producers, the two-phase
+receiver, the removal proofs (kick, `member_leave`, signed statement in the
+commit, L1 revocation), the L1 gate on privileged committers, the owner's
+automatic cancel, the roles screen and server succession were all already
+wired (see "App wiring and removal proofs" above). What this round adds:
+
+- **Tests through the app's receive path** with a modified client
+  (`mobile/test/c4_adversarial_native_test.dart`): forged record changes,
+  stale and replayed commits, an unproven kick of an admin, a leaf under the
+  owner's account id, the producer's own check, and the D81 handover with
+  and without the waits. Each guard was removed in turn and its test failed.
+- **Producer check for every builder.** `stageRoleChange` runs
+  `validateCommit` on what its builder returns before staging.
+- **"An honest app that sees a win its own clock would have refused should
+  say so"** (Clocks stay local, above): built as `c4.early_win.<group>` and a
+  warning on the roles screen (`docs/crypto.md`, "C4 app wiring",
+  *Early handover*).
+- **"The roles screen should list admins promoted by others since
+  `owner_rev` and prompt the owner to flag electors":** the owner sees a
+  prompt while any admin in the roster is not an elector, and each admin row
+  says whether it votes.
+- **Read API for C2/C3:** `AppState.verifiedRoleOf(conversationId,
+  accountId)` returns the verified `BuiltInRole` or null (no record: a DM, a
+  group from before C4); it never falls back to the server's role.
+  `AppState.governanceOf` returns the record for the finer checks
+  (`mayPost`, `mayActOn`, `isRestricted`).
+
+Residual recorded (`docs/crypto.md`, "C4 app wiring", Residuals): the
+rosters the rules use count unapproved leaves, so a leaf added under another
+account's id can keep that account in the roster; this can delay or block a
+role change but never grant one.
+
