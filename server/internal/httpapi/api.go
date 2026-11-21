@@ -245,7 +245,7 @@ func (a *API) withAuth(next authedHandler) http.HandlerFunc {
 		// stored timestamps are fresh so most requests never take the writer.
 		principal, activity, err := a.Store.SessionPrincipal(r.Context(), tokenHash)
 		if err != nil {
-			refuseUnauthenticated(w, r)
+			a.refuseSessionLookup(w, r, err)
 			return
 		}
 		if !admitAccount(w, r, principal.AccountID) {
@@ -288,9 +288,29 @@ func recentlyAuthenticated(principal domain.Principal) bool {
 	return principal.DeviceID != "" && principal.RecentAuthAt != nil && principal.RecentAuthAt.After(time.Now().UTC().Add(-5*time.Minute))
 }
 
+// refuseSessionLookup answers a session lookup that failed. Only
+// storage.ErrUnauthorized (no such session, or it expired, was revoked or
+// its account or device is gone) is a 401: the app ends its session on a
+// 401, so any other failure (a busy or timed-out database, a closed store,
+// a cancelled request) must not read as one. Those answer 503
+// session_check_unavailable with Retry-After, and the app retries. A request
+// whose own context ended (the client went away) is not logged; anything
+// else is, without the token or its hash.
+func (a *API) refuseSessionLookup(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, storage.ErrUnauthorized) {
+		refuseUnauthenticated(w, r)
+		return
+	}
+	if !errors.Is(r.Context().Err(), context.Canceled) {
+		a.warn("session_lookup_failed", "err", err)
+	}
+	w.Header().Set("Retry-After", "1")
+	writeError(w, http.StatusServiceUnavailable, "session_check_unavailable")
+}
+
 // authenticate resolves the request's session for handlers outside withAuth
-// and charges it to the account's request budget. It writes the 401 or 429
-// itself and reports whether the handler may go on.
+// and charges it to the account's request budget. It writes the 401, 429 or
+// 503 itself and reports whether the handler may go on.
 func (a *API) authenticate(w http.ResponseWriter, r *http.Request) (domain.Principal, bool) {
 	tokenHash, ok := bearerTokenHash(r)
 	if !ok {
@@ -299,7 +319,7 @@ func (a *API) authenticate(w http.ResponseWriter, r *http.Request) (domain.Princ
 	}
 	principal, err := a.Store.PrincipalByTokenHash(r.Context(), tokenHash)
 	if err != nil {
-		refuseUnauthenticated(w, r)
+		a.refuseSessionLookup(w, r, err)
 		return domain.Principal{}, false
 	}
 	if !admitAccount(w, r, principal.AccountID) {
