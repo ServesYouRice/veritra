@@ -43,6 +43,11 @@ network.
 | `8eb373f` (0093 is the newest) | 0094 only (new tables and triggers) | yes | ok | same as HEAD (201 / 400) | ok |
 | `e9aef04` (before 8eb373f) | 0090 to 0094 | **no**: `migration 0090_l2_sealed_tokens.sql checksum mismatch` | n/a | n/a | ok |
 
+The rows were measured on the `leftovers` branch before it merged the
+integration branch: there 0094 was the legacy leaf-evidence migration, which
+is now `0096_mls_legacy_leaf_evidence.sql` (0094 is the invite-code hash,
+0095 belongs to a parallel change). The crossings are otherwise the same.
+
 ## Findings
 
 1. **A rollback across a non-additive migration starts, passes health and the
@@ -60,8 +65,10 @@ network.
    the other line refuses to start on the current code (`checksum mismatch`),
    the third row above. Nothing was released and there are no real
    deployments (D55), so nothing is stranded; but a comment-only edit to a
-   migration is still a schema change to the checker. A test that pins the
-   checksums of the migrations already on `main` would catch the next one.
+   migration is still a schema change to the checker. Now pinned:
+   `TestReleasedMigrationChecksumsArePinned`
+   (`server/internal/storage/migration_checksum_test.go`) holds the checksums
+   of 0090 and 0091 as they are on `origin/main`, so the next edit fails.
 3. Rolling forward again after a rollback worked in every row: nothing is
    lost, because the older binary adds no schema of its own.
 

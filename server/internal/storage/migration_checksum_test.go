@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"private-messenger/server/migrations"
 )
 
 // legacyMigrationStore is a store whose schema_migrations table predates the
@@ -172,5 +175,29 @@ func TestMigrateOnANewerDatabaseLeavesUnknownMigrationsAloneAndStillRefusesEdits
 	edited := fstest.MapFS{"0001_a.sql": {Data: []byte(a + " -- edited")}}
 	if err := store.Migrate(ctx, edited); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("edited known migration err = %v, want checksum mismatch", err)
+	}
+}
+
+// Applied migrations are checked by checksum (the whole file, comments
+// included), so a database migrated by one text refuses to start on another.
+// 0090 and 0091 existed in two byte-different versions before 8eb373f made
+// them identical to the sealed branch's (testing/evidence/
+// server-schema-rollback-2026-11-21.md, finding 2). These are their checksums
+// as on origin/main; any edit, even to a comment, fails here first. The
+// earlier text (e9aef04: 0090 abbaab21..., 0091 9025146f...) must never come
+// back. Add a migration here once it is on main.
+func TestReleasedMigrationChecksumsArePinned(t *testing.T) {
+	pinned := map[string]string{
+		"0090_l2_sealed_tokens.sql":    "460e7a607585c828f9fbc312e52e493db9686f9bca896082acafa25a17633f91",
+		"0091_l2_sealed_envelopes.sql": "4c305a377b5641751181cfa0132a92a006b2ecef010f790e4df3f6b43c7a5e68",
+	}
+	for name, want := range pinned {
+		data, err := fs.ReadFile(migrations.FS, name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if got := migrationChecksum(data); got != want {
+			t.Errorf("%s checksum = %s, want %s: an applied migration must never change", name, got, want)
+		}
 	}
 }

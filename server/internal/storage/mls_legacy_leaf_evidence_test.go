@@ -9,7 +9,7 @@ import (
 	"private-messenger/server/migrations"
 )
 
-// K0-R known limit, closed (migration 0094): a legacy group's leaf evidence
+// K0-R known limit, closed (migration 0096): a legacy group's leaf evidence
 // survives retention. Before, "no newer than the oldest retained MLS message"
 // moved forward as retention pruned the oldest messages, until it admitted a
 // device recovered through K0 (which never has a leaf) as coordinator and as
@@ -146,13 +146,13 @@ func TestLegacyEvidenceIsNotKeptForRosteredGroups(t *testing.T) {
 	_ = tablet
 }
 
-// Upgrade: migration 0094 seeds the evidence from the messages still
+// Upgrade: migration 0096 seeds the evidence from the messages still
 // retained, by the three old rules; a device created after the group's first
 // message and named by neither a send nor a Welcome gets none.
-func TestMigration0094SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
+func TestMigration0096SeedsLegacyEvidenceFromRetainedMessages(t *testing.T) {
 	ctx := context.Background()
 	store, _ := openBareStoreAt(t)
-	old, _ := migrationsUpTo(t, "0093")
+	old, _ := migrationsUpTo(t, "0095")
 	if err := store.Migrate(ctx, old); err != nil {
 		t.Fatal(err)
 	}

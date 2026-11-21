@@ -2797,7 +2797,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   newer than the group's first MLS message. Revocations queued in a legacy
   group store such a coordinator and require confirmations only from such
   devices. A device recovered through K0 has no leaf, so it is skipped.
-  **Closed (migration 0094, no ABI or payload change).** The first version
+  **Closed (migration 0096, no ABI or payload change).** The first version
   measured "no newer than the oldest retained message", which moved forward
   as retention pruned the oldest messages until it admitted the recovered
   device again. The evidence is now durable: `mls_legacy_leaf_evidence` holds
@@ -2813,7 +2813,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `server/internal/storage/mls_legacy_leaf_evidence_test.go` (a recovered
   device stays ineligible after the older messages are pruned: fails with the
   moving rule; a welcomed device keeps its evidence after its Welcome is
-  pruned; the 0094 seed). Sender evidence was always forgeable: any member
+  pruned; the 0096 seed). Sender evidence was always forgeable: any member
   device can post a junk commit through the legacy route
   `POST /conversations/{id}/mls/messages` (a recovered device included), and
   that evidence used to age out with retention and now does not. The app never
