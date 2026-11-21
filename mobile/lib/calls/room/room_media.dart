@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'room_capture.dart';
 import 'room_engine.dart';
 import 'room_ports.dart';
 import 'webrtc_frame_keys.dart';
@@ -32,6 +33,19 @@ const roomSlotCamera = 1;
 const roomSlotScreen = 2;
 const roomSlotScreenAudio = 3;
 
+/// Camera and screen share work in rooms of at most this many devices; a
+/// bigger room is voice only (O3).
+const roomVideoCap = 25;
+
+/// The capture could not be created (permission refused, no camera, the user
+/// cancelled the picker). Nothing was published. Unlike a cryptor that will
+/// not enable, it does not end the call.
+class SfuCaptureDenied implements Exception {
+  const SfuCaptureDenied();
+  @override
+  String toString() => 'SfuCaptureDenied';
+}
+
 /// A frame cryptor on one sender or receiver.
 abstract interface class RoomFrameCryptor {
   Future<bool> setEnabled(bool enabled);
@@ -46,6 +60,15 @@ abstract interface class SfuLocalTrack {
 
   /// Whether the capture reaches the encoder. Off sends silence or black.
   Future<void> setEnabled(bool enabled);
+
+  /// Fires once when the capture ends by itself (the user stopped sharing
+  /// from the system's own control, the window closed, the camera was
+  /// unplugged).
+  Stream<void> get ended;
+
+  /// The capture's local stream for a preview tile (camera only), or null.
+  /// An opaque handle for the tile builder.
+  Object? get preview;
 }
 
 abstract interface class SfuRemoteTrack {
@@ -54,6 +77,13 @@ abstract interface class SfuRemoteTrack {
   /// The SFU identity of the participant that publishes it: a pseudonym,
   /// used only to check an announcement against its sender's connection.
   String get participant;
+
+  /// Whether the track carries video (a camera or a shared screen).
+  bool get isVideo;
+
+  /// The received stream, an opaque handle for the tile builder. Drawn only
+  /// once the track is bound.
+  Object? get stream;
 
   /// Whether received frames reach the speaker or the screen.
   Future<void> setPlaying(bool playing);
@@ -93,8 +123,10 @@ abstract interface class SfuConnection {
   Stream<SfuEvent> get events;
 
   /// Creates the capture for [slot] with its track disabled, then publishes
-  /// it. The capture must stay disabled until the caller enables it.
-  Future<SfuLocalTrack> publishDisabled(int slot);
+  /// it. The capture must stay disabled until the caller enables it. Throws
+  /// [SfuCaptureDenied] when no capture could be created. [sourceId] picks
+  /// the screen or window for [roomSlotScreen] on desktop.
+  Future<SfuLocalTrack> publishDisabled(int slot, {String? sourceId});
   Future<void> unpublish(SfuLocalTrack track);
 
   /// Frame cryptors keyed by [participantId] in [WebRtcFrameKeys.provider].
@@ -116,6 +148,7 @@ class _Sender {
   _Sender(this.track, this.cryptor);
   final SfuLocalTrack track;
   final RoomFrameCryptor cryptor;
+  StreamSubscription<void>? endedSub;
 }
 
 class _Receiver {
@@ -135,12 +168,21 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     required this.keys,
     required this.sfu,
     this.publishVoice = true,
+    this.capture = const NoRoomCapture(),
+    this.videoCap = roomVideoCap,
   });
 
   final RoomEngine engine;
   final WebRtcFrameKeys keys;
   final SfuConnection sfu;
   final bool publishVoice;
+
+  /// What this platform can capture and the consent steps before it.
+  final RoomCapture capture;
+
+  /// Camera and screen share are refused in a room with more devices than
+  /// this, and stop if the room grows past it (O3).
+  final int videoCap;
 
   /// Announcement payload version.
   static const announcementVersion = 1;
@@ -151,7 +193,17 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   bool _closed = false;
   int? _announcedEpoch;
   Set<String> _roster = const {};
-  _Sender? _voice;
+  final Map<int, _Sender> _senders = {};
+
+  /// Capture creations in flight: the OS may be asking for permission.
+  int _capturing = 0;
+
+  /// OS consent steps in flight (screen capture permission).
+  int _preparing = 0;
+
+  /// Slots whose capture is being started, before they are registered.
+  final Set<int> _videoStarting = {};
+  RoomMediaNotice? _notice;
   StreamSubscription<SfuEvent>? _events;
   final Map<String, _Receiver> _receivers = {};
 
@@ -222,15 +274,61 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     await _announce(force: true);
   }
 
+  /// Voice at connect: capture, then register, in one serial step.
   Future<void> _publish(int slot) async {
-    final track = await sfu.publishDisabled(slot);
-    final cryptor = await sfu.senderCryptor(track, '${engine.selfId}:$slot');
-    if (!await cryptor.setEnabled(true)) {
-      throw StateError('sender cryptor did not enable');
+    final track = await _capture(slot, null);
+    if (track != null) await _register(slot, track);
+  }
+
+  /// Attaches the sender cryptor to a published (still disabled) [track],
+  /// then sets its key index and only then lets it through. A cryptor that
+  /// will not enable ends the call ([_serial]).
+  Future<void> _register(int slot, SfuLocalTrack track) async {
+    final _Sender sender;
+    try {
+      final cryptor = await sfu.senderCryptor(track, '${engine.selfId}:$slot');
+      if (!await cryptor.setEnabled(true)) {
+        await cryptor.dispose();
+        throw StateError('sender cryptor did not enable');
+      }
+      sender = _Sender(track, cryptor);
+    } catch (_) {
+      // Published without a working cryptor: stays disabled; the call ends.
+      await track.setEnabled(false);
+      rethrow;
     }
-    final sender = _Sender(track, cryptor);
-    if (slot == roomSlotVoice) _voice = sender;
+    _senders[slot] = sender;
+    if (slot != roomSlotVoice) {
+      sender.endedSub = track.ended.listen(
+        (_) => unawaited(_serial(() => _stopVideo(slot))),
+      );
+    }
     await _applySendIndex(sender);
+    if (slot != roomSlotVoice) {
+      await _announce(force: true);
+      notifyListeners();
+    }
+  }
+
+  /// Creates and publishes the (disabled) capture for [slot], counting it as
+  /// a permission request while the OS may be asking. Null when the capture
+  /// was refused: the notice says why and the call goes on.
+  Future<SfuLocalTrack?> _capture(int slot, String? sourceId) async {
+    _capturing++;
+    notifyListeners();
+    try {
+      return await sfu.publishDisabled(slot, sourceId: sourceId);
+    } on SfuCaptureDenied {
+      if (slot == roomSlotCamera) {
+        _setNotice(RoomMediaNotice.cameraUnavailable);
+      } else if (slot == roomSlotScreen) {
+        _setNotice(RoomMediaNotice.screenUnavailable);
+      }
+      return null;
+    } finally {
+      _capturing--;
+      notifyListeners();
+    }
   }
 
   /// Sets the sender's key index, waiting for the keys before it, and only
@@ -249,10 +347,13 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     await sender.track.setEnabled(on);
   }
 
+  /// Every sender moves to the new epoch's key: a track left on the old
+  /// index would go dark when the receivers drop that key.
   void _onSendIndex() => unawaited(
         _serial(() async {
-          final voice = _voice;
-          if (voice != null) await _applySendIndex(voice);
+          for (final sender in _senders.values.toList()) {
+            await _applySendIndex(sender);
+          }
         }),
       );
 
@@ -262,6 +363,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     final epoch = engine.epoch;
     final rosterChanged = !setEquals(roster, _roster);
     _roster = roster;
+    if (roster.length > videoCap) await _stopAllVideo();
     if (epoch != _announcedEpoch) {
       _heard.clear();
       // Bindings came in sealed for an earlier epoch; senders repeat them.
@@ -287,7 +389,10 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
       jsonEncode({
         'v': announcementVersion,
         'sfu': identity,
-        'tracks': {if (_voice != null) _voice!.track.sid: _voice!.track.slot},
+        'tracks': {
+          for (final sender in _senders.values)
+            sender.track.sid: sender.track.slot,
+        },
       }),
     );
     final sealed = await engine.sealSignal(Uint8List.fromList(payload));
@@ -305,6 +410,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
         if (receiver != null) {
           keys.unbindAlias(receiverKeyId(sid));
           await receiver.cryptor.dispose();
+          notifyListeners();
         }
       case SfuData(:final participant, :final data):
         await _announcement(participant, data);
@@ -418,21 +524,205 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     _micMuted = muted;
     notifyListeners();
     await _serial(() async {
-      final voice = _voice;
+      final voice = _senders[roomSlotVoice];
       if (voice != null) await _applySendIndex(voice);
     });
   }
 
-  /// Screen share is not built yet (design, "Not built"): the platform
-  /// capture pickers come with it.
   @override
-  bool get canShareScreen => false;
+  bool get requestingPermission => _capturing > 0 || _preparing > 0;
 
   @override
-  bool get sharingScreen => false;
+  RoomMediaNotice? get notice => _notice;
 
   @override
-  Future<void> setSharingScreen(bool on) async {}
+  void dismissNotice() {
+    if (_notice == null) return;
+    _notice = null;
+    notifyListeners();
+  }
+
+  void _setNotice(RoomMediaNotice notice) {
+    _notice = notice;
+    notifyListeners();
+  }
+
+  /// Video needs a room of at most [videoCap] devices (O3).
+  bool get _videoRoomOk => engine.roster.length <= videoCap;
+
+  @override
+  bool get canUseCamera => _connected && !_closed && capture.canUseCamera;
+
+  @override
+  bool get cameraOn =>
+      _senders.containsKey(roomSlotCamera) ||
+      _videoStarting.contains(roomSlotCamera);
+
+  @override
+  Future<void> setCameraOn(bool on) async {
+    if (!on) {
+      await _serial(() => _stopVideo(roomSlotCamera));
+      return;
+    }
+    if (!canUseCamera || cameraOn) return;
+    _notice = null;
+    if (!_videoRoomOk) {
+      _setNotice(RoomMediaNotice.videoRoomFull);
+      return;
+    }
+    await _startVideo(roomSlotCamera);
+  }
+
+  @override
+  bool get canShareScreen => _connected && !_closed && capture.canShareScreen;
+
+  @override
+  bool get sharingScreen =>
+      _senders.containsKey(roomSlotScreen) ||
+      _videoStarting.contains(roomSlotScreen);
+
+  @override
+  bool get screenNeedsSource => capture.screenNeedsSource;
+
+  @override
+  Future<List<ScreenSource>> screenSources() => capture.screenSources();
+
+  @override
+  Future<void> setSharingScreen(bool on, {String? sourceId}) async {
+    if (!on) {
+      await _serial(() => _stopVideo(roomSlotScreen));
+      return;
+    }
+    if (!canShareScreen || sharingScreen) return;
+    _notice = null;
+    if (!_videoRoomOk) {
+      _setNotice(RoomMediaNotice.videoRoomFull);
+      return;
+    }
+    if (capture.screenNeedsSource && (sourceId == null || sourceId.isEmpty)) {
+      _setNotice(RoomMediaNotice.screenNoSource);
+      return;
+    }
+    await _startVideo(roomSlotScreen, sourceId: sourceId);
+  }
+
+  /// Starts the camera or the screen share. The platform consent and the
+  /// capture creation run outside the serial queue: the OS may wait on the
+  /// person for a long time, and key switches and announcements must not wait
+  /// behind it. Registering the track (its cryptor, key index and announce)
+  /// is queued like every other media step.
+  Future<void> _startVideo(int slot, {String? sourceId}) async {
+    _videoStarting.add(slot);
+    notifyListeners();
+    SfuLocalTrack? track;
+    try {
+      if (slot == roomSlotScreen) {
+        _preparing++;
+        notifyListeners();
+        final bool ready;
+        try {
+          ready = await capture.beginScreenShare();
+        } finally {
+          _preparing--;
+        }
+        if (!ready) {
+          _setNotice(RoomMediaNotice.screenUnavailable);
+          return;
+        }
+      }
+      if (_closed) return;
+      track = await _capture(slot, sourceId);
+      if (track == null) return;
+      if (_closed) {
+        // The call ended while the OS was asking: nothing may stay open.
+        await _release(track);
+        track = null;
+        return;
+      }
+      final published = track;
+      track = null;
+      await _serial(() => _register(slot, published));
+      // The call ended while this step waited its turn (it was skipped).
+      if (_closed) await _release(published);
+    } catch (_) {
+      // An unexpected failure in the platform step: not a cryptor refusal,
+      // so only this video stops. A failure after the track was published
+      // is handled by [_serial] (the call ends).
+      if (track != null) await _release(track);
+      _setNotice(
+        slot == roomSlotCamera
+            ? RoomMediaNotice.cameraUnavailable
+            : RoomMediaNotice.screenUnavailable,
+      );
+    } finally {
+      _videoStarting.remove(slot);
+      if (slot == roomSlotScreen && !_senders.containsKey(slot)) {
+        await capture.endScreenShare();
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> _release(SfuLocalTrack track) async {
+    try {
+      await track.setEnabled(false);
+      await sfu.unpublish(track);
+    } catch (_) {}
+  }
+
+  /// Stops one video: the capture, its cryptor and its publication, so the
+  /// camera light goes out, then tells the room.
+  Future<void> _stopVideo(int slot) async {
+    final sender = _senders.remove(slot);
+    if (sender == null) return;
+    await sender.endedSub?.cancel();
+    try {
+      await sender.track.setEnabled(false);
+      await sender.cryptor.dispose();
+      await sfu.unpublish(sender.track);
+    } catch (_) {}
+    if (slot == roomSlotScreen) await capture.endScreenShare();
+    if (_connected && !_closed) await _announce(force: true);
+    notifyListeners();
+  }
+
+  Future<void> _stopAllVideo() async {
+    final had = _senders.keys.any((s) => s != roomSlotVoice);
+    await _stopVideo(roomSlotCamera);
+    await _stopVideo(roomSlotScreen);
+    if (had) _setNotice(RoomMediaNotice.videoRoomFull);
+  }
+
+  @override
+  List<RoomVideoTile> get videoTiles {
+    final tiles = <RoomVideoTile>[];
+    final preview = _senders[roomSlotCamera]?.track.preview;
+    if (preview != null) {
+      tiles.add(
+        RoomVideoTile(
+            id: 'local-camera', slot: roomSlotCamera, stream: preview),
+      );
+    }
+    for (final entry in _receivers.entries) {
+      final bound = entry.value.boundTo;
+      final stream = entry.value.track.stream;
+      if (bound == null || stream == null || !entry.value.track.isVideo) {
+        continue;
+      }
+      final colon = bound.lastIndexOf(':');
+      final slot = int.tryParse(bound.substring(colon + 1));
+      if (slot != roomSlotCamera && slot != roomSlotScreen) continue;
+      tiles.add(
+        RoomVideoTile(
+          id: entry.key,
+          memberId: bound.substring(0, colon),
+          slot: slot!,
+          stream: stream,
+        ),
+      );
+    }
+    return tiles;
+  }
 
   // ---- ending -------------------------------------------------------------
 
@@ -449,15 +739,19 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     keys.sendIndex.removeListener(_onSendIndex);
     keys.failed.removeListener(_onKeysFailed);
     await _events?.cancel();
-    final voice = _voice;
-    _voice = null;
-    if (voice != null) {
+    final hadScreen = _senders.containsKey(roomSlotScreen) ||
+        _videoStarting.contains(roomSlotScreen);
+    final senders = _senders.values.toList();
+    _senders.clear();
+    for (final sender in senders) {
+      await sender.endedSub?.cancel();
       try {
-        await voice.track.setEnabled(false);
-        await voice.cryptor.dispose();
-        await sfu.unpublish(voice.track);
+        await sender.track.setEnabled(false);
+        await sender.cryptor.dispose();
+        await sfu.unpublish(sender.track);
       } catch (_) {}
     }
+    if (hadScreen) await capture.endScreenShare();
     for (final entry in _receivers.entries) {
       try {
         await entry.value.track.setPlaying(false);

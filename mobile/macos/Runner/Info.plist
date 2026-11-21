@@ -22,8 +22,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Veritra uses the camera only when you turn it on in a video call or group call.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Veritra uses the microphone when you record a voice note.</string>
+	<string>Veritra uses the microphone during calls you start or answer and when you record a voice note.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>

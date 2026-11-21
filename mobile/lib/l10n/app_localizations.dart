@@ -6669,6 +6669,72 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 person} other{{count} people}}'**
   String roomPeople(int count);
 
+  /// No description provided for @roomCameraOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on camera'**
+  String get roomCameraOn;
+
+  /// No description provided for @roomCameraOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off camera'**
+  String get roomCameraOff;
+
+  /// No description provided for @roomPickSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose what to share'**
+  String get roomPickSourceTitle;
+
+  /// No description provided for @roomSourceScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen'**
+  String get roomSourceScreen;
+
+  /// No description provided for @roomSourceWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Window'**
+  String get roomSourceWindow;
+
+  /// No description provided for @roomSharingYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You are sharing your screen'**
+  String get roomSharingYou;
+
+  /// No description provided for @roomNoticeCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera could not be started.'**
+  String get roomNoticeCamera;
+
+  /// No description provided for @roomNoticeScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'The screen could not be shared.'**
+  String get roomNoticeScreen;
+
+  /// No description provided for @roomNoticeNoSource.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no screen or window to share.'**
+  String get roomNoticeNoSource;
+
+  /// No description provided for @roomNoticeVideoFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call has too many people for video. Voice only.'**
+  String get roomNoticeVideoFull;
+
+  /// No description provided for @roomTileScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s screen'**
+  String roomTileScreen(String name);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:

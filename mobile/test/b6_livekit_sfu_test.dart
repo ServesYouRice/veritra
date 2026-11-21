@@ -21,6 +21,10 @@ class FakeLocalMedia implements LiveKitLocalMedia {
   bool enabled = true; // a started capture
   @override
   Object? sender = Object();
+  @override
+  Stream<void> get ended => const Stream.empty();
+  @override
+  Object? get preview => null;
 }
 
 class FakeRemoteMedia implements LiveKitRemoteMedia {
@@ -33,6 +37,10 @@ class FakeRemoteMedia implements LiveKitRemoteMedia {
   bool enabled = true;
   @override
   bool isActive = false;
+  @override
+  bool get isVideo => false;
+  @override
+  Object? get stream => null;
   @override
   final Object receiver = Object();
   bool unsubscribed = false;
@@ -86,6 +94,19 @@ class FakeRoom implements LiveKitRoomDriver {
     await Future<void>.delayed(Duration.zero);
     return media;
   }
+
+  @override
+  Future<LiveKitLocalMedia> publishVideoDisabled(
+    int slot,
+    String? sourceId,
+  ) async {
+    videoRequests.add((slot, sourceId));
+    if (denyVideo) throw const SfuCaptureDenied();
+    return publishVoiceDisabled();
+  }
+
+  final List<(int, String?)> videoRequests = [];
+  bool denyVideo = false;
 
   /// What LiveKit does on `EngineRestartedEvent`: the same track published
   /// again on a new RTP sender, with no frame cryptor.
@@ -314,5 +335,89 @@ void main() {
     expect(callRoom.disconnected, isTrue);
     expect(voice.enabled, isFalse);
     engine.dispose();
+  });
+
+  group('video', () {
+    test('camera and screen are published disabled and need their cryptor',
+        () async {
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      final screen = await sfu.publishDisabled(
+        roomSlotScreen,
+        sourceId: 'screen_0',
+      );
+      expect(room.videoRequests, [
+        (roomSlotCamera, null),
+        (roomSlotScreen, 'screen_0'),
+      ]);
+      expect(room.published.every((m) => !m.enabled), isTrue);
+      await sfu.senderCryptor(camera, 'acct_a/dev_a:1');
+      await sfu.senderCryptor(screen, 'acct_a/dev_a:2');
+      await camera.setEnabled(true);
+      await screen.setEnabled(true);
+      await microtasks();
+      expect(sfu.poisoned, isFalse);
+      expect(room.published.every((m) => m.enabled), isTrue);
+    });
+
+    test('screen audio has no capture and is refused', () async {
+      await expectLater(
+        sfu.publishDisabled(roomSlotScreenAudio),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('a refused capture is reported, nothing is published', () async {
+      room.denyVideo = true;
+      await expectLater(
+        sfu.publishDisabled(roomSlotCamera),
+        throwsA(isA<SfuCaptureDenied>()),
+      );
+      expect(room.published, isEmpty);
+      expect(sfu.poisoned, isFalse);
+    });
+
+    test('a reconnect disables the video as well as the voice', () async {
+      await publishVoice();
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      await sfu.senderCryptor(camera, 'acct_a/dev_a:1');
+      await camera.setEnabled(true);
+      await microtasks();
+      expect(room.published.every((m) => m.enabled), isTrue);
+      room.deliver(const LiveKitReconnecting());
+      await microtasks();
+      expect(room.published.every((m) => !m.enabled), isTrue);
+      expect(sfu.poisoned, isTrue);
+      await expectLater(
+        sfu.publishDisabled(roomSlotCamera),
+        throwsStateError,
+      );
+    });
+
+    test('a video publish with no cryptor of ours is caught like voice',
+        () async {
+      final camera = await sfu.publishDisabled(roomSlotCamera);
+      // Never gets its cryptor; LiveKit republishes it on a new sender.
+      room.republish(room.published.single);
+      await microtasks();
+      expect(sfu.poisoned, isTrue);
+      await expectLater(camera.setEnabled(true), throwsStateError);
+    });
+
+    // The camera and screen publish options are fixed by the design's
+    // fail-closed rules. Remove one and this fails.
+    test('publish options: one layer, no backup codec, VP8', () {
+      for (final options in [
+        roomCameraPublishOptions,
+        roomScreenPublishOptions,
+      ]) {
+        expect(options.simulcast, isFalse, reason: 'S1 first (one IV space)');
+        expect(
+          options.backupVideoCodec.enabled,
+          isFalse,
+          reason: 'a backup codec is a second sender with no cryptor',
+        );
+        expect(options.videoCodec, 'vp8');
+      }
+    });
   });
 }

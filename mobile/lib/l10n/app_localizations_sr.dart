@@ -4086,6 +4086,42 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String get roomCameraOn => 'Укључи камеру';
+
+  @override
+  String get roomCameraOff => 'Искључи камеру';
+
+  @override
+  String get roomPickSourceTitle => 'Изаберите шта желите да поделите';
+
+  @override
+  String get roomSourceScreen => 'Екран';
+
+  @override
+  String get roomSourceWindow => 'Прозор';
+
+  @override
+  String get roomSharingYou => 'Делите свој екран';
+
+  @override
+  String get roomNoticeCamera => 'Камера није могла да се покрене.';
+
+  @override
+  String get roomNoticeScreen => 'Екран није могао да се подели.';
+
+  @override
+  String get roomNoticeNoSource => 'Нема екрана ни прозора за дељење.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'У овом позиву има превише људи за видео. Само глас.';
+
+  @override
+  String roomTileScreen(String name) {
+    return 'Екран: $name';
+  }
+
+  @override
   String get moderationTitle => 'Модерација';
 
   @override
@@ -9535,6 +9571,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       one: '$count osoba',
     );
     return '$_temp0';
+  }
+
+  @override
+  String get roomCameraOn => 'Uključi kameru';
+
+  @override
+  String get roomCameraOff => 'Isključi kameru';
+
+  @override
+  String get roomPickSourceTitle => 'Izaberite šta želite da podelite';
+
+  @override
+  String get roomSourceScreen => 'Ekran';
+
+  @override
+  String get roomSourceWindow => 'Prozor';
+
+  @override
+  String get roomSharingYou => 'Delite svoj ekran';
+
+  @override
+  String get roomNoticeCamera => 'Kamera nije mogla da se pokrene.';
+
+  @override
+  String get roomNoticeScreen => 'Ekran nije mogao da se podeli.';
+
+  @override
+  String get roomNoticeNoSource => 'Nema ekrana ni prozora za deljenje.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'U ovom pozivu ima previše ljudi za video. Samo glas.';
+
+  @override
+  String roomTileScreen(String name) {
+    return 'Ekran: $name';
   }
 
   @override

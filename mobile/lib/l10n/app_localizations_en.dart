@@ -4068,6 +4068,42 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get roomCameraOn => 'Turn on camera';
+
+  @override
+  String get roomCameraOff => 'Turn off camera';
+
+  @override
+  String get roomPickSourceTitle => 'Choose what to share';
+
+  @override
+  String get roomSourceScreen => 'Screen';
+
+  @override
+  String get roomSourceWindow => 'Window';
+
+  @override
+  String get roomSharingYou => 'You are sharing your screen';
+
+  @override
+  String get roomNoticeCamera => 'The camera could not be started.';
+
+  @override
+  String get roomNoticeScreen => 'The screen could not be shared.';
+
+  @override
+  String get roomNoticeNoSource => 'There is no screen or window to share.';
+
+  @override
+  String get roomNoticeVideoFull =>
+      'This call has too many people for video. Voice only.';
+
+  @override
+  String roomTileScreen(String name) {
+    return '$name\'s screen';
+  }
+
+  @override
   String get moderationTitle => 'Moderation';
 
   @override

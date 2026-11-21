@@ -161,18 +161,20 @@ class LiveKitSfuConnection implements SfuConnection {
   }
 
   @override
-  Future<SfuLocalTrack> publishDisabled(int slot) async {
-    if (slot != roomSlotVoice) {
-      throw UnsupportedError(
-        'only voice is published (camera and screen '
-        'share are not built)',
-      );
+  Future<SfuLocalTrack> publishDisabled(int slot, {String? sourceId}) async {
+    if (slot != roomSlotVoice &&
+        slot != roomSlotCamera &&
+        slot != roomSlotScreen) {
+      // Screen audio has no capture path on any platform yet.
+      throw UnsupportedError('slot $slot is not published');
     }
     if (_poisoned) throw StateError('the SFU connection is not fail closed');
     final LiveKitLocalMedia media;
     _publishing++;
     try {
-      media = await _driver.publishVoiceDisabled();
+      media = slot == roomSlotVoice
+          ? await _driver.publishVoiceDisabled()
+          : await _driver.publishVideoDisabled(slot, sourceId);
       _awaitingCryptor.add(media.sid);
     } finally {
       _publishing--;
@@ -253,6 +255,12 @@ abstract interface class LiveKitMedia {
 abstract interface class LiveKitLocalMedia implements LiveKitMedia {
   String get sid;
 
+  /// Fires when the capture ends by itself.
+  Stream<void> get ended;
+
+  /// The capture's stream for a camera preview, or null.
+  Object? get preview;
+
   /// The RTP sender carrying it now (a full reconnect replaces it).
   Object? get sender;
 }
@@ -265,6 +273,8 @@ abstract interface class LiveKitRemoteMedia implements LiveKitMedia {
 
   /// Whether LiveKit has started it (its start enables it).
   bool get isActive;
+  bool get isVideo;
+  Object? get stream;
   Object? get receiver;
   Future<void> unsubscribe();
 }
@@ -316,6 +326,12 @@ abstract interface class LiveKitRoomDriver {
 
   /// Creates the voice capture, starts and disables it, then publishes it.
   Future<LiveKitLocalMedia> publishVoiceDisabled();
+
+  /// The same for the camera ([roomSlotCamera]) or a shared screen or window
+  /// ([roomSlotScreen], [sourceId] on desktop), published with
+  /// [roomCameraPublishOptions] or [roomScreenPublishOptions]. Throws
+  /// [SfuCaptureDenied] when the capture cannot be created.
+  Future<LiveKitLocalMedia> publishVideoDisabled(int slot, String? sourceId);
   Future<void> unpublish(String sid);
   Future<void> publishData(Uint8List data);
   Future<void> disconnect();
@@ -325,6 +341,27 @@ abstract interface class LiveKitRoomDriver {
     String participantId,
   );
 }
+
+/// Camera publish options, fixed and test-visible (B6 fail-closed rules):
+///  - one layer: simulcast runs up to three encoders under one frame key, and
+///    the design asks S1 to confirm the IV never repeats across them first;
+///  - no backup codec: it would add a second RTP sender that carries no
+///    frame cryptor;
+///  - VP8, the codec every platform has.
+const roomCameraPublishOptions = lk.VideoPublishOptions(
+  videoCodec: 'vp8',
+  simulcast: false,
+  backupVideoCodec: lk.BackupVideoCodec(enabled: false),
+  videoEncoding: lk.VideoEncoding(maxBitrate: 600000, maxFramerate: 24),
+);
+
+/// Screen share publish options: the same fixed rules, at 15 frames a second.
+const roomScreenPublishOptions = lk.VideoPublishOptions(
+  videoCodec: 'vp8',
+  simulcast: false,
+  backupVideoCodec: lk.BackupVideoCodec(enabled: false),
+  screenShareEncoding: lk.VideoEncoding(maxBitrate: 1500000, maxFramerate: 15),
+);
 
 class _LkRoomDriver implements LiveKitRoomDriver {
   _LkRoomDriver(this.keys);
@@ -338,6 +375,7 @@ class _LkRoomDriver implements LiveKitRoomDriver {
     ),
   );
   lk.EventsListener<lk.RoomEvent>? _listener;
+  final Map<String, StreamController<void>> _ended = {};
 
   /// Constant 32 kbit/s voice, DTX and RED off (O4). libwebrtc may still
   /// vary the Opus packet size, and the audio-level header extension cannot
@@ -373,6 +411,12 @@ class _LkRoomDriver implements LiveKitRoomDriver {
             track == null ? null : _LkLocalMedia(track, event.publication.sid),
           ),
         );
+      })
+      ..on<lk.LocalTrackUnpublishedEvent>((event) {
+        final controller = _ended.remove(event.publication.sid);
+        if (controller == null) return;
+        controller.add(null);
+        unawaited(controller.close());
       })
       ..on<lk.TrackSubscribedEvent>(
         (event) => onEvent(
@@ -419,6 +463,59 @@ class _LkRoomDriver implements LiveKitRoomDriver {
   }
 
   @override
+  Future<LiveKitLocalMedia> publishVideoDisabled(
+    int slot,
+    String? sourceId,
+  ) async {
+    final participant = _room.localParticipant;
+    if (participant == null) throw StateError('not connected');
+    final lk.LocalVideoTrack track;
+    try {
+      track = slot == roomSlotCamera
+          ? await lk.LocalVideoTrack.createCameraTrack(
+              const lk.CameraCaptureOptions(
+                params: lk.VideoParametersPresets.h540_169,
+                maxFrameRate: 24,
+              ),
+            )
+          : await lk.LocalVideoTrack.createScreenShareTrack(
+              lk.ScreenShareCaptureOptions(
+                sourceId: sourceId,
+                maxFrameRate: 15,
+                params: lk.VideoParametersPresets.screenShareH1080FPS15,
+              ),
+            );
+    } catch (_) {
+      // Permission refused, no camera, the picker cancelled. Nothing is open.
+      throw const SfuCaptureDenied();
+    }
+    // Started and disabled before it is published, as for voice: until its
+    // cryptor holds a key the encoder sees black frames only.
+    final media = _LkLocalMedia(track, '');
+    try {
+      await track.start();
+      _setEnabled(media, false);
+      final publication = await participant.publishVideoTrack(
+        track,
+        publishOptions: slot == roomSlotCamera
+            ? roomCameraPublishOptions
+            : roomScreenPublishOptions,
+      );
+      // LiveKit unpublishes a track whose capture ended by itself (the user
+      // stopped sharing, the window closed): that is the end signal.
+      final ended =
+          _ended[publication.sid] = StreamController<void>.broadcast();
+      return _LkLocalMedia(track, publication.sid, ended.stream);
+    } catch (_) {
+      // Never leave a capture (the camera light, the screen) running.
+      try {
+        await track.stop();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> unpublish(String sid) async {
     await _room.localParticipant?.removePublishedTrack(sid);
   }
@@ -460,16 +557,29 @@ class _LkRoomDriver implements LiveKitRoomDriver {
   Future<void> disconnect() async {
     await _listener?.dispose();
     _listener = null;
+    for (final controller in _ended.values) {
+      unawaited(controller.close());
+    }
+    _ended.clear();
     await _room.disconnect();
     await _room.dispose();
   }
 }
 
 class _LkLocalMedia implements LiveKitLocalMedia {
-  _LkLocalMedia(this.track, this.sid);
+  _LkLocalMedia(this.track, this.sid, [this.ended = const Stream.empty()]);
   final lk.Track track;
   @override
   final String sid;
+
+  @override
+  final Stream<void> ended;
+
+  @override
+  Object? get preview =>
+      track.kind == lk.TrackType.VIDEO && track.source == lk.TrackSource.camera
+          ? track.mediaStream
+          : null;
 
   @override
   bool get enabled => track.mediaStreamTrack.enabled;
@@ -499,6 +609,12 @@ class _LkRemoteMedia implements LiveKitRemoteMedia {
 
   @override
   bool get isActive => track.isActive;
+
+  @override
+  bool get isVideo => track.kind == lk.TrackType.VIDEO;
+
+  @override
+  Object? get stream => track.mediaStream;
 
   @override
   Object? get receiver => track.receiver;
@@ -536,6 +652,12 @@ class _LiveKitLocalTrack implements SfuLocalTrack {
   final int slot;
 
   @override
+  Stream<void> get ended => media.ended;
+
+  @override
+  Object? get preview => media.preview;
+
+  @override
   Future<void> setEnabled(bool enabled) async {
     if (enabled && _connection._poisoned) {
       _setEnabled(media, false);
@@ -557,6 +679,12 @@ class _LiveKitRemoteTrack implements SfuRemoteTrack {
 
   @override
   String get participant => media.participant;
+
+  @override
+  bool get isVideo => media.isVideo;
+
+  @override
+  Object? get stream => media.stream;
 
   @override
   Future<void> setPlaying(bool on) async {
