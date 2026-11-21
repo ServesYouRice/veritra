@@ -217,7 +217,7 @@ func TestRetentionBacklogCountsOnlyRowsTheSweepCanPrune(t *testing.T) {
 	old := stamp(now.Add(-storage.OperationalRowRetention - 2*retentionSweepPeriod)) // prunable for 12 hours
 	future := stamp(now.Add(time.Hour))
 	// One row inside its grace period and one prunable row per operational class.
-	h.exec(t, `INSERT INTO invites(id, code, created_by, created_at, expires_at, revoked_at) VALUES
+	h.exec(t, `INSERT INTO invites(id, code_hash, created_by, created_at, expires_at, revoked_at) VALUES
 		('inv_grace_expired', 'c1', ?, ?, ?, NULL), ('inv_grace_revoked', 'c2', ?, ?, ?, ?), ('inv_old', 'c3', ?, ?, ?, NULL)`,
 		retentionTestAccount, recent, recent, retentionTestAccount, recent, future, recent, retentionTestAccount, old, old)
 	h.exec(t, `INSERT INTO device_links(id, code, account_id, state, verification_code, created_at, expires_at) VALUES
