@@ -69,7 +69,10 @@ spec:
             # local-path volumes sit on the node's root disk, so the instance
             # storage limit cannot be derived from the file system. 3686 MiB
             # is 40 GiB (pvc.yaml) x 0.9 / (7 backups + 3); change it with the
-            # PVC size or PRIVATE_MESSENGER_BACKUP_KEEP.
+            # PVC size or PRIVATE_MESSENGER_BACKUP_KEEP (2 GiB gives 184). An
+            # unset PRIVATE_MESSENGER_LIMIT_ACCOUNT_STORAGE_MIB (512 by
+            # default) follows a smaller instance limit; one set above it is
+            # refused at start.
             - name: PRIVATE_MESSENGER_LIMIT_INSTANCE_STORAGE_MIB
               value: "3686"
           # Optional non-secret settings (instance name, VAPID public key and

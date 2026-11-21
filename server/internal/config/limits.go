@@ -119,7 +119,15 @@ func loadLimits() (Limits, error) {
 		}
 		setting.set(&limits, value*setting.scale)
 	}
-	if err := limits.WithDefaults().Validate(); err != nil {
+	checked := limits.WithDefaults()
+	if limits.AccountStorageBytes == 0 && checked.InstanceStorageBytes != 0 {
+		// An unset account limit follows a smaller instance limit, as the
+		// store does (storage.resolveLimits), so lowering the instance limit
+		// for a smaller volume needs no second setting. An account limit
+		// set above the instance limit is still refused below.
+		checked.AccountStorageBytes = min(checked.AccountStorageBytes, checked.InstanceStorageBytes)
+	}
+	if err := checked.Validate(); err != nil {
 		return Limits{}, err
 	}
 	return limits, nil
