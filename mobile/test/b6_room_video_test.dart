@@ -262,6 +262,52 @@ void main() {
       await end([a, b, c]);
     });
 
+    test('switched off while it starts: never enabled, released', () async {
+      final (a, b) = await pair();
+      a.sfu.holdCapture = Completer<void>();
+      final starting = a.media.setCameraOn(true);
+      await pump();
+      expect(a.media.cameraOn, isTrue);
+      await a.media.setCameraOn(false);
+      expect(a.media.cameraOn, isFalse, reason: 'the button reads "off" now');
+      a.sfu.holdCapture!.complete();
+      await starting;
+      await a.settle();
+      expect(a.media.cameraOn, isFalse);
+      expect(
+        a.sfu.log.where((l) => l == 'track TR_sfu_a_1 enabled=true'),
+        isEmpty,
+        reason: 'a camera the person switched off must never go on',
+      );
+      expect(a.sfu.log, isNot(contains('sender cryptor acct_a/dev_a:1')));
+      expect(a.sfu.log, contains('unpublish TR_sfu_a_1'));
+      expect(b.media.videoTiles, isEmpty);
+      expect(a.engine.phase, RoomPhase.active);
+      // And it can be started again.
+      a.sfu.holdCapture = null;
+      await a.media.setCameraOn(true);
+      await a.settle();
+      expect(a.media.cameraOn, isTrue);
+      await end([a, b]);
+    });
+
+    test('switched off and on again while it starts: one camera', () async {
+      final (a, b) = await pair();
+      a.sfu.holdCapture = Completer<void>();
+      final starting = a.media.setCameraOn(true);
+      await pump();
+      await a.media.setCameraOn(false);
+      await a.media.setCameraOn(true);
+      a.sfu.holdCapture!.complete();
+      await starting;
+      await a.settle();
+      expect(a.media.cameraOn, isTrue);
+      expect(
+          a.sfu.published.where((t) => t.slot == roomSlotCamera), hasLength(1));
+      expect(a.sfu.log.where((l) => l == 'publish 1'), hasLength(1));
+      await end([a, b]);
+    });
+
     test('is independent of the mute', () async {
       final (a, b) = await pair();
       await a.media.setMicMuted(true);
@@ -391,6 +437,43 @@ void main() {
       expect(capture.log.last, 'end');
       expect(a.sfu.log, isNot(contains('publish 2')));
       await end([b]);
+    });
+
+    test('stopped during the consent: nothing is captured', () async {
+      final capture = FakeCapture()..consentGate = Completer<bool>();
+      final (a, b) = await pair(captureA: capture);
+      final starting = a.media.setSharingScreen(true);
+      await pump();
+      expect(a.media.sharingScreen, isTrue);
+      await a.media.setSharingScreen(false);
+      expect(a.media.sharingScreen, isFalse);
+      capture.consentGate!.complete(true);
+      await starting;
+      await a.settle();
+      expect(a.sfu.log, isNot(contains('publish 2')));
+      expect(capture.log, ['begin', 'end']);
+      expect(a.media.sharingScreen, isFalse);
+      await end([a, b]);
+    });
+
+    test('stopped while the capture is created: released, never enabled',
+        () async {
+      final capture = FakeCapture();
+      final (a, b) = await pair(captureA: capture);
+      a.sfu.holdCapture = Completer<void>();
+      final starting = a.media.setSharingScreen(true);
+      await pump();
+      await a.media.setSharingScreen(false);
+      a.sfu.holdCapture!.complete();
+      await starting;
+      await a.settle();
+      expect(
+        a.sfu.log.where((l) => l == 'track TR_sfu_a_2 enabled=true'),
+        isEmpty,
+      );
+      expect(a.sfu.log, contains('unpublish TR_sfu_a_2'));
+      expect(capture.log, ['begin', 'end']);
+      await end([a, b]);
     });
 
     test('a platform that cannot share offers no control', () async {

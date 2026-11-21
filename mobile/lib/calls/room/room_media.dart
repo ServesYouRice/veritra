@@ -203,6 +203,10 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
 
   /// Slots whose capture is being started, before they are registered.
   final Set<int> _videoStarting = {};
+
+  /// Starting slots the person switched off again before they were
+  /// registered: the capture is released, never enabled.
+  final Set<int> _cancelStart = {};
   RoomMediaNotice? _notice;
   StreamSubscription<SfuEvent>? _events;
   final Map<String, _Receiver> _receivers = {};
@@ -553,17 +557,34 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   @override
   bool get canUseCamera => _connected && !_closed && capture.canUseCamera;
 
+  bool _isOn(int slot) =>
+      _senders.containsKey(slot) ||
+      _videoStarting.contains(slot) && !_cancelStart.contains(slot);
+
+  /// A start in flight is cancelled by switching off, and kept by switching
+  /// on again. Returns true when [slot] was starting.
+  bool _retarget(int slot, {required bool on}) {
+    if (!_videoStarting.contains(slot)) return false;
+    if (on) {
+      _cancelStart.remove(slot);
+    } else {
+      _cancelStart.add(slot);
+    }
+    notifyListeners();
+    return true;
+  }
+
   @override
-  bool get cameraOn =>
-      _senders.containsKey(roomSlotCamera) ||
-      _videoStarting.contains(roomSlotCamera);
+  bool get cameraOn => _isOn(roomSlotCamera);
 
   @override
   Future<void> setCameraOn(bool on) async {
     if (!on) {
+      _retarget(roomSlotCamera, on: false);
       await _serial(() => _stopVideo(roomSlotCamera));
       return;
     }
+    if (_retarget(roomSlotCamera, on: true)) return;
     if (!canUseCamera || cameraOn) return;
     _notice = null;
     if (!_videoRoomOk) {
@@ -577,9 +598,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   bool get canShareScreen => _connected && !_closed && capture.canShareScreen;
 
   @override
-  bool get sharingScreen =>
-      _senders.containsKey(roomSlotScreen) ||
-      _videoStarting.contains(roomSlotScreen);
+  bool get sharingScreen => _isOn(roomSlotScreen);
 
   @override
   bool get screenNeedsSource => capture.screenNeedsSource;
@@ -590,9 +609,11 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   @override
   Future<void> setSharingScreen(bool on, {String? sourceId}) async {
     if (!on) {
+      _retarget(roomSlotScreen, on: false);
       await _serial(() => _stopVideo(roomSlotScreen));
       return;
     }
+    if (_retarget(roomSlotScreen, on: true)) return;
     if (!canShareScreen || sharingScreen) return;
     _notice = null;
     if (!_videoRoomOk) {
@@ -630,18 +651,25 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
           return;
         }
       }
-      if (_closed) return;
+      if (_closed || _cancelStart.contains(slot)) return;
       track = await _capture(slot, sourceId);
       if (track == null) return;
-      if (_closed) {
-        // The call ended while the OS was asking: nothing may stay open.
+      if (_closed || _cancelStart.contains(slot)) {
+        // The call ended, or the person switched it off again, while the OS
+        // was asking: nothing may stay open, and nothing is enabled.
         await _release(track);
         track = null;
         return;
       }
       final published = track;
       track = null;
-      await _serial(() => _register(slot, published));
+      await _serial(() async {
+        if (_cancelStart.contains(slot)) {
+          await _release(published);
+          return;
+        }
+        await _register(slot, published);
+      });
       // The call ended while this step waited its turn (it was skipped).
       if (_closed) await _release(published);
     } catch (_) {
@@ -656,6 +684,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
       );
     } finally {
       _videoStarting.remove(slot);
+      _cancelStart.remove(slot);
       if (slot == roomSlotScreen && !_senders.containsKey(slot)) {
         await capture.endScreenShare();
       }

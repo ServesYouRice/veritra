@@ -561,6 +561,15 @@ Android SDK, Xcode or display session).
   share the system ends (`LocalTrackUnpublishedEvent`) unpublish and stop
   the capture, so the camera light goes out; a reconnect disables the video
   with the voice (`_local` holds every track).
+- **LiveKit cannot re-enable the track before the cryptor exists** (read in
+  `livekit_client` 2.13.2): the adapter starts the capture, disables it, then
+  publishes. `publishVideoTrack` calls `track.start()`, which returns early
+  for an active track, and `onPublish`, which only sets a flag; neither
+  touches `mediaStreamTrack.enabled`. Only `Track.enable()` does, called by
+  `unmute` and by a remote track's start, which B6 does not use for local
+  tracks. A new LiveKit version needs this read again.
+- **Switching off while it starts** cancels the start: the capture is
+  released and never enabled, and a second tap on "on" keeps it.
 - **Sealed announcements list every track** and are sent again after each
   publish and unpublish. A remote video is drawn only once bound to
   `account/device:slot` by its sender's announcement; a raw SFU video track
@@ -608,8 +617,9 @@ Android SDK, Xcode or display session).
   Extension target and its entitlements, an app group, the three Info.plist
   keys flutter_webrtc reads, and the media key handed to the extension
   through the app group (the open question the design raises).
-- **macOS** gets the camera entitlement and usage text (it had neither, so
-  camera in any call, one-to-one too, failed there). iOS's camera text now
+- **macOS** gets the camera entitlement (Debug and Release: the CI demo
+  bundle is a release build) and usage text; it had neither, so camera in
+  any call, one-to-one too, failed there. iOS's camera text now
   says calls.
 - **Known limits.** O5 stays: a phone that goes to the background leaves
   the room, so an Android share can only show Veritra itself until the owner
