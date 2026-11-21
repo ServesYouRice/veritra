@@ -34,7 +34,7 @@ flutter_prepare() {
 
 write_sums() {
   (cd "$OUT" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | sed 's/^\.\///' |
-    while IFS= read -r f; do sha256sum "$f"; done > SHA256SUMS)
+    while IFS= read -r f; do sha256_of "$f"; done > SHA256SUMS)
 }
 
 case $TARGET in
@@ -52,6 +52,7 @@ case $TARGET in
     ;;
   android)
     check_java
+    check_android_ndk
     sh scripts/build-mobile-crypto.sh android
     flutter_prepare
     (cd mobile && flutter build apk --release --flavor play --no-tree-shake-icons)
@@ -73,5 +74,6 @@ case $TARGET in
   *) echo "unknown target: $TARGET" >&2; exit 2 ;;
 esac
 write_sums
+write_toolchain_record "$OUT/TOOLCHAIN.txt"
 echo "built $TARGET into $OUT"
 cat "$OUT/SHA256SUMS" | head -n 20

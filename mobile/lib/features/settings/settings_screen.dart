@@ -383,21 +383,7 @@ class SettingsScreen extends StatelessWidget {
                           onChanged: (value) =>
                               updates.settings.setAutoCheckEnabled(value),
                         ),
-                        ListTile(
-                          key: const ValueKey<String>(
-                            'settings-check-for-updates',
-                          ),
-                          leading: const Icon(Icons.refresh_outlined),
-                          title: Text(l10n.settingsCheckForUpdates),
-                          subtitle: Text(
-                            _updateStatusText(context, updates.service.status),
-                          ),
-                          onTap: updates.service.isChecking
-                              ? null
-                              : () => updates.service.checkForUpdates(
-                                    force: true,
-                                  ),
-                        ),
+                        _updateTile(context, updates.service),
                       ],
                     ),
                   ),
@@ -517,6 +503,54 @@ class SettingsScreen extends StatelessWidget {
     Navigator.of(context).push(sharedAxisRoute<void>(builder));
   }
 
+  /// One tile that walks the update steps. Every step is a tap: check,
+  /// download, restart. Nothing downloads or installs by itself.
+  static Widget _updateTile(BuildContext context, UpdateService service) {
+    final l10n = context.l10n;
+    final status = service.status;
+    final String title;
+    final IconData icon;
+    final VoidCallback? onTap;
+    switch (status.kind) {
+      case UpdateStatusKind.updateAvailable when !service.canInstall:
+        // An all-users install only reports it (isPerUserWindowsInstall).
+        title = l10n.settingsCheckForUpdates;
+        icon = Icons.refresh_outlined;
+        onTap = () => service.checkForUpdates(force: true);
+      case UpdateStatusKind.updateAvailable:
+      case UpdateStatusKind.downloadFailed:
+        title = l10n.settingsUpdateDownload;
+        icon = Icons.download_outlined;
+        onTap = status.kind == UpdateStatusKind.updateAvailable
+            ? () => service.downloadUpdate()
+            : () => service.checkForUpdates(force: true);
+      case UpdateStatusKind.readyToInstall:
+        title = l10n.settingsUpdateRestart;
+        icon = Icons.restart_alt_outlined;
+        onTap = () => service.installUpdate();
+      case UpdateStatusKind.downloading:
+      case UpdateStatusKind.checking:
+      case UpdateStatusKind.unavailable:
+        title = l10n.settingsCheckForUpdates;
+        icon = Icons.refresh_outlined;
+        onTap = null;
+      case UpdateStatusKind.idle:
+      case UpdateStatusKind.upToDate:
+      case UpdateStatusKind.disabled:
+      case UpdateStatusKind.error:
+        title = l10n.settingsCheckForUpdates;
+        icon = Icons.refresh_outlined;
+        onTap = () => service.checkForUpdates(force: true);
+    }
+    return ListTile(
+      key: const ValueKey<String>('settings-check-for-updates'),
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(_updateStatusText(context, status)),
+      onTap: onTap,
+    );
+  }
+
   static String _updateStatusText(BuildContext context, UpdateStatus status) {
     final l10n = context.l10n;
     switch (status.kind) {
@@ -532,6 +566,14 @@ class SettingsScreen extends StatelessWidget {
         return l10n.settingsUpdateDisabled;
       case UpdateStatusKind.error:
         return l10n.settingsUpdateError;
+      case UpdateStatusKind.unavailable:
+        return l10n.settingsUpdateUnavailable;
+      case UpdateStatusKind.downloading:
+        return l10n.settingsUpdateDownloading;
+      case UpdateStatusKind.readyToInstall:
+        return l10n.settingsUpdateReady(status.update!.version);
+      case UpdateStatusKind.downloadFailed:
+        return l10n.settingsUpdateDownloadFailed;
     }
   }
 

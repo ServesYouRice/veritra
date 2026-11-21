@@ -7,14 +7,21 @@
 ; the app; the owner checks its license terms before first use.
 ; Newer code-signing certificates may need a hardware token or cloud signing
 ; instead of a PFX file: adjust the signtool line to what the CA provides.
-; Silent updates: an all-users install needs admin rights, and "skipifsilent"
-; below stops the app restarting; revisit with the update channel.
+; Updates: the app starts this installer with /SILENT /NORESTART /CLOSEAPPLICATIONS
+; (mobile/lib/desktop/update_installer.dart) after the user pressed the update
+; tile. The fixed AppId makes it replace the earlier install in place;
+; CloseApplications closes a still-running Veritra first. A per-user install
+; updates without admin rights; an all-users install needs them, so the user
+; who chose "all users" is asked by Windows. "skipifsilent" keeps the finished
+; installer from starting the app by itself during an update.
 ;
-; SIGNING PLACEHOLDER (owner): after the owner buys a code-signing certificate,
-; define a SignTool named "veritra" in Inno's IDE or pass
-;   /Sveritra="signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f"
-; and remove the comment marker on the two SignTool lines below. The
-; certificate and password never go into this repository.
+; SIGNING (owner): nothing in this file holds a certificate. After the owner
+; buys a code-signing certificate, build with
+;   scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f'
+; which passes /DSignToolName=veritra and /Sveritra=<that command> to iscc, and
+; the #ifdef SignToolName block below then signs the installer and the
+; uninstaller. The certificate and password never go into this repository.
+; Without it the installer is unsigned and SmartScreen warns on first run.
 
 #ifndef AppDir
   #error Pass /DAppDir=<folder with private_messenger.exe>
@@ -45,6 +52,13 @@ OutputDir={#OutDir}
 OutputBaseFilename=Veritra-Setup-{#AppVersion}-x64
 Compression=lzma2
 SolidCompression=yes
+WizardStyle=modern
+MinVersion=10.0
+SetupIconFile={#SourcePath}\..\..\mobile\windows\runner\resources\app_icon.ico
+CloseApplications=yes
+RestartApplications=no
+; Per-user by default but the dialog can switch to all users: that is intended.
+UsedUserAreasWarning=no
 ; Reproducibility of the installer itself is NOT measured (Inno stores file
 ; timestamps); only the app folder it packages is checked by verify.ps1.
 UninstallDisplayIcon={app}\private_messenger.exe

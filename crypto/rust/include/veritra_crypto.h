@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (26u)
+#define PM_CRYPTO_ABI_VERSION (27u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -724,6 +724,16 @@ int32_t pm_crypto_backup_open(PmByteSlice ciphertext, PmByteSlice entropy,
                               PmOwnedBuffer *out_payload,
                               PmOwnedBuffer *out_source_device_id,
                               PmOwnedBuffer *out_meta);
+
+/* ABI 27 (W12): strict Ed25519 verification of the Windows update feed,
+ * "veritra-update-feed-v1" | message, under the 32-byte update public key and
+ * a 64-byte signature. PM_CRYPTO_OK with *out_valid 1 (valid) or 0 (invalid,
+ * a malformed key included); PM_CRYPTO_INVALID_ARGUMENT for a key that is not
+ * 32 bytes, a signature that is not 64 bytes, or a message that is empty or
+ * over 64 KiB. Verify only: nothing in the library signs under this domain. */
+int32_t pm_crypto_update_feed_verify(PmByteSlice public_key,
+                                     PmByteSlice message,
+                                     PmByteSlice signature, uint8_t *out_valid);
 
 /* These operations remain unavailable and do not read their arguments. */
 int32_t pm_crypto_create_device_key_package(PmDeviceCredentialInput input,

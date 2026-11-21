@@ -8463,6 +8463,42 @@ abstract class AppLocalizations {
   /// **'Automatic update checks are turned off'**
   String get settingsUpdateDisabled;
 
+  /// No description provided for @settingsUpdateUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Update checks are not available in this build'**
+  String get settingsUpdateUnavailable;
+
+  /// No description provided for @settingsUpdateDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download update'**
+  String get settingsUpdateDownload;
+
+  /// No description provided for @settingsUpdateDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading the update…'**
+  String get settingsUpdateDownloading;
+
+  /// No description provided for @settingsUpdateDownloadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The update could not be downloaded or verified'**
+  String get settingsUpdateDownloadFailed;
+
+  /// No description provided for @settingsUpdateRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart to update'**
+  String get settingsUpdateRestart;
+
+  /// No description provided for @settingsUpdateReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is ready'**
+  String settingsUpdateReady(String version);
+
   /// No description provided for @settingsScreenGuard.
   ///
   /// In en, this message translates to:

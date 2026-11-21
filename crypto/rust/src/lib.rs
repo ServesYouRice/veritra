@@ -24,11 +24,12 @@ mod history;
 pub mod mls;
 pub mod recovery;
 pub mod report;
+pub mod update_feed;
 
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 26;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 27;
 
 #[cfg(test)]
 mod test_memory;

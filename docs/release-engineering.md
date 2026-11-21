@@ -7,29 +7,102 @@ These scripts make builds; they do not release anything. The release gates
 (G24, G25, G27, `scripts/release-readiness.sh`) stay in force; the one rule
 here that is part of them is the crypto build record check below (D134).
 
+## Release candidate procedure
+
+One command, nothing secret, nothing published:
+
+```sh
+python3 scripts/release-rc.py --dry-run          # about 2 minutes (gate fixture tests included)
+python3 scripts/release-rc.py --dry-run --quick  # seconds: skips the slow and network checks
+python3 scripts/release-rc.py                    # the real check: exit 0 only if the gate passes
+```
+
+It prints three parts:
+
+1. **Checks that need no secrets**, each `PASS`, `FAIL` or `SKIP` with its
+   reason: toolchain alignment, the G27 advisory deadline, the demo boundary,
+   pinned Gradle inputs and lock wiring, third-party notices, the Dart
+   dependency policy, the Windows installer dry run (PowerShell only), and the
+   fixture tests of the release gates (they prove the gates still refuse).
+2. **What only the owner can supply**, each `MISSING`, `DONE` or `OWNER`
+   (cannot be checked from the repository): the three signing pins, the Gradle
+   lock files, the G24 matrix, the G25 and production-crypto approvals, the
+   production crypto switch, signed release records, the update key, and the
+   Apple, Android, Windows, push and TURN accounts. It also prints the days
+   left on the G27 exceptions.
+3. **`scripts/release-readiness.sh`**, unchanged, with its own output and exit
+   status. That script stops at its first refusal, so the list in part 2 is
+   what it would still ask for after it.
+
+Exit status, the same with or without `--dry-run`: `1` when a check fails;
+`3` when the checks pass and the release is blocked (the gate refuses, an owner
+item is `MISSING`, or `--quick` skipped checks); `0` only when
+`release-readiness.sh` itself exits 0, nothing is `MISSING` and nothing was
+skipped by `--quick`. A blocked dry run therefore exits 3, never 0, so no
+caller can read it as a release. Nothing this script prints turns a refusal of
+the gate into a pass: `scripts/release-rc_test.py` fails if a refusing gate
+ever yields exit 0 or the word `PASSED`. The G24 item is `DONE` only for a
+`testing/evidence/G24-matrix.json` of this candidate commit with every row of
+`scripts/g24-matrix.py` a recorded pass and two devices per platform (the rule
+of `g24-matrix.py status`).
+
+Full candidate order, once the owner items exist: pin the signing certificates
+in a reviewed pull request; run `scripts/gradle-lock.sh write` and commit its
+output; freeze the candidate commit; run `repro.yml`; build and sign on the
+owner's machines; record the G24 matrix (`docs/g24-device-matrix.md`); write the
+approvals (`docs/security-review.md`); tag; `release.yml` runs the gate.
+
 ## Reproducible builds
 
 | Target | Build once | Build twice and compare | Runs on |
 |---|---|---|---|
-| Rust crypto library (Linux) | `scripts/repro/build.sh crypto-linux OUT` | `scripts/repro/verify.sh crypto-linux` | Linux |
-| Linux desktop | `scripts/repro/build.sh linux OUT` | `scripts/repro/verify.sh linux` | Linux |
-| Android APK (unsigned) | `scripts/repro/build.sh android OUT` | `scripts/repro/verify.sh android` | Linux, JDK 17, Android SDK + NDK |
+| Rust crypto library (Linux) | `scripts/repro/build.sh crypto-linux OUT` | `scripts/repro/verify.sh crypto-linux` | Linux (local) |
+| Linux desktop | `scripts/repro/build.sh linux OUT` | `scripts/repro/verify.sh linux` | Linux (local) |
+| Android APK (unsigned) | `scripts/repro/build.sh android OUT` | `scripts/repro/verify.sh android` | Linux, JDK 17, Android SDK + NDK 28.2.13676358 |
 | macOS app (unsigned) | `scripts/repro/build.sh macos OUT` | `scripts/repro/verify.sh macos` | a Mac |
 | Windows app (unsigned) | `scripts\repro\build.ps1 -OutDir OUT` | `scripts\repro\verify.ps1` | Windows, VS 2022 Build Tools |
+| iOS | not reproducible by design | | Apple's signing and export add data; the signed `.ipa` is attested instead (`release.yml`) |
 
 `verify` builds from two clean copies of the **committed** HEAD in two different
 directories, so build paths, leftover files and uncommitted edits cannot hide a
 difference. It exits 0 only if every file digest matches.
 
+**Other hosts (CI).** Linux runs locally (D118). Android, Windows and macOS run
+in `.github/workflows/repro.yml`, started by hand (Actions, "Reproducible
+builds", Run workflow). It needs no secret and signs nothing:
+
+- `android` builds on two runner images (Ubuntu 22.04 and 24.04); `android-compare`
+  then runs `scripts/repro/compare.sh` on their digests, which is the closest CI
+  gets to "a different host".
+- `windows` and `macos` build twice each and upload their `SHA256SUMS` and
+  `TOOLCHAIN.txt`.
+- `windows-installer` builds the app and the **unsigned** installer, which proves
+  `release/windows/veritra.iss` compiles.
+
+To compare with the owner's own machine (what F-Droid does): run
+`REPRO_KEEP=/some/dir scripts/repro/verify.sh android` there, download the CI
+artifact, then `scripts/repro/compare.sh /some/dir/SHA256SUMS ci/keep/SHA256SUMS`.
+It prints every file that differs, is missing or is extra, and exits 0 only if
+there are none. `TOOLCHAIN.txt` (versions only, no paths) beside the digests
+records the Rust, Flutter, JDK, NDK and build-tools versions that were used.
+
+The workflow has not run yet: it was written without a hosted runner, so its
+first run is the first evidence for these targets. `scripts/repro_test.py`
+tests the guards below with fake tools (a wrong toolchain, a missing or wrong
+NDK, a dirty checkout, differing digests), and that the workflow stays manual,
+secret-free and pinned to the action SHAs CI already uses.
+
 What the scripts pin (`scripts/repro/env.sh`, `build.ps1`):
 
 - **Clock:** `SOURCE_DATE_EPOCH` = the commit's time. Never "now".
 - **Toolchains:** Rust from `rust-toolchain.toml`, Flutter from `pubspec.yaml`
-  (`3.44.0`), JDK 17, Gradle from the wrapper (9.1.0). A wrong Rust, Flutter or
-  JDK version stops the build. Rust and Dart dependencies come from lockfiles
-  (`cargo --locked`, `flutter pub get --enforce-lockfile`). Gradle/Maven
-  dependencies are **not** locked and the Gradle wrapper has no checksum yet:
-  both are open for the first real Android build.
+  (`3.44.0`), JDK 17, the Android NDK `28.2.13676358` (what Flutter 3.44.0's
+  Gradle plugin uses; `ANDROID_NDK_HOME` must name it, the newest installed NDK
+  is refused), Gradle from the wrapper (9.1.0, with its `distributionSha256Sum`).
+  A wrong Rust, Flutter, JDK or NDK version stops the build. Rust and Dart
+  dependencies come from lockfiles (`cargo --locked`,
+  `flutter pub get --enforce-lockfile`). Gradle/Maven dependencies are locked
+  by the next section once the lock files are generated.
 - **Clean input:** `build.sh` refuses a dirty checkout and a non-empty output
   folder, and for Android accepts exactly one release APK.
 - **Paths:** `--remap-path-prefix` for the checkout, cargo and rustc; fixed
@@ -39,18 +112,49 @@ What the scripts pin (`scripts/repro/env.sh`, `build.ps1`):
 
 Known gaps (see the evidence file for what was measured):
 
-- A reproducible build is only as stable as the toolchain it pins. The Android
-  Gradle-side NDK is pinned by Flutter 3.44.0, but the Rust library uses
-  `ANDROID_NDK_HOME` or else the newest installed NDK, and the SDK build-tools
-  version is whatever is installed. Set all three explicitly. For the
-  first real build, record it and pin it in the owner's build image.
+- The Linux bundle is not reproducible yet (12 of 30 files differ: `libapp.so`
+  and the C++ plugin libraries). Not investigated further here; the cause is a
+  guess until one plugin is diffed.
+- The SDK build-tools version is whatever is installed. `TOOLCHAIN.txt` records
+  it; pin it in the owner's build image after the first real build.
 - Signing changes the file. The signature is added **after** `verify`, to the
   digest-checked unsigned file. F-Droid compares the unsigned content; the
   update channel (below) checks the signed installer's digest.
-- Measured so far: one host, two directories. F-Droid's check needs the same
-  result on a different host; that is not shown.
+- Measured so far: one host, two directories, Linux targets only. The cross-host
+  check above is built, not yet run.
 - The server container image is out of scope here; its determinism is not
   measured by these scripts.
+
+## Gradle dependency locking
+
+`mobile/android/build.gradle.kts` turns on Gradle's dependency locking for every
+project (`lockAllConfigurations()`), each lockfile kept in
+`mobile/android/gradle/locks/` (the Flutter plugin projects live in the pub cache,
+where Gradle's default location would never be committed). It runs in Gradle's
+default lock mode: a configuration with a lockfile must resolve exactly to it,
+and one without resolves as before, so the wiring is inert until the files exist.
+
+The files can only be written where Gradle can configure the real Android build
+(JDK 17, Android SDK, Flutter), which this repository's authoring sessions do not
+have, so they are not committed yet:
+
+```sh
+scripts/gradle-lock.sh write     # on a host with the SDK; commit mobile/android/gradle/
+scripts/gradle-lock.sh check     # validate what is committed (release candidate)
+```
+
+`write` produces two things: `gradle/locks/*.lockfile` (the version of every
+resolved dependency) and `gradle/verification-metadata.xml` (the sha256 of every
+artifact). Both are needed: lockfiles do not cover the plugins in
+`settings.gradle.kts`, the verification metadata does. Regenerate and review the
+diff whenever `pubspec.lock`, a plugin version or a Gradle dependency changes;
+until then a changed resolution fails the build, which is the point.
+
+`scripts/check-gradle-locks.py` (run by `scripts/check-mobile-dependencies.sh`
+and CI) fails when the wiring is removed or weakened (`LockMode.LENIENT`) or a
+committed file is malformed (a dynamic version, md5/sha1-only or a catch-all
+trusted artifact); `--require-files`, used by the release candidate check,
+also fails while the files are missing.
 
 ## Crypto build record (D134)
 
@@ -75,90 +179,149 @@ with `--crypto-build-info`), so it needs `python3` on the Mac, as
 record there is and never refuse; the signed `.ipa` check still catches one
 that ships.
 
-**The record is tied to the release.** `source_tree_dirty=false` says the
-library came from committed sources, not which. The release evidence check
-(`crypto_build_binding_error`, for the Android APK and the iOS `.ipa` alike)
-also requires, for each signed artifact's record:
+**The record must be the release commit's crypto.** `source_tree_dirty=false`
+says the library came from committed sources, not which. For the signed APK
+and the signed `.ipa` alike, `check-release-evidence.py`
+(`crypto_source_binding_error`) also requires, in the record:
 
-- `source_revision` and `cargo_lock_sha256` each present exactly once and
-  well formed;
-- `source_revision` is a commit this repository has (an unknown commit, for
-  example in a shallow clone, refuses) and has a `crypto/rust` tree;
-- `git rev-parse <source_revision>:crypto/rust` equals
-  `git rev-parse <release commit>:crypto/rust`: the library was built from
-  the release's crypto sources, even if other files changed since;
-- `cargo_lock_sha256` is the SHA-256 of the release commit's
-  `crypto/rust/Cargo.lock`.
+- exactly one `source_revision`, a full lowercase commit SHA, naming a
+  commit the repository the gate runs in has (an unknown commit, for
+  example in a shallow clone, a short, uppercase or option-like value, a tag
+  that peels to a commit, or two lines refuse; `release.yml` checks out full
+  history);
+- that the `crypto/rust` tree at that commit is the `crypto/rust` tree at the
+  release commit (`git rev-parse <recorded>:crypto/rust` equals
+  `<release>:crypto/rust`, replace refs and grafts ignored). The commits may
+  differ, for example a docs-only commit after the build; the crate sources,
+  `Cargo.toml` and `Cargo.lock` may not. A recorded commit with no
+  `crypto/rust` tree refuses;
+- exactly one `cargo_lock_sha256`, equal to the SHA-256 of the release
+  commit's committed `crypto/rust/Cargo.lock`.
 
-Any mismatch refuses, naming the two trees. The Xcode phase's
-`--crypto-build-info` mode cannot know the release commit, so it still checks
-only the dirty flag; the binding is enforced on the signed `.ipa` by
-`check-release-evidence.py`. Tests: `scripts/check-release-evidence_test.py`
-(`crypto_binding_cases`, run for both platforms; they fail without the guard).
+Any mismatch refuses, naming both trees. A release commit with no
+`crypto/rust` tree or no `Cargo.lock` cannot be compared and refuses, and so
+does an artifact check given no release commit to compare with (it fails
+closed). Tests: `scripts/check-release-evidence_test.py`
+(`crypto_binding_cases`, run in the iOS and Android cases, and
+`crypto_source_cases`); they fail if the guard is removed. Not covered: the
+Xcode phase (`--crypto-build-info`) checks only the dirty flag, because it
+has no release commit to compare with (the signed `.ipa` check does it); the
+Windows installer, which checks only the dirty flag
+(`build-windows-installer.ps1`); and the Rust toolchain, which is recorded
+(`rustc -Vv`) but not compared with `rust-toolchain.toml` at the repository
+root.
 
 ## Windows installer
 
 `release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
-default, fixed `AppId` so updates replace the old install, Start-menu entry,
-optional desktop shortcut, uninstaller. It packages the folder
-`build.ps1` produced.
+default (the dialog can switch to all users), fixed `AppId` so an update replaces
+the old install in place, Windows 10 or newer, Start-menu entry, optional desktop
+shortcut, uninstaller, the app icon, and `CloseApplications` so a running Veritra
+is closed first. It packages the folder `build.ps1` produced.
+`scripts/build-windows-installer.ps1` builds it, refuses a crypto library built
+from uncommitted sources (D134) and writes `SHA256SUMS`:
 
-Build with `scripts\build-windows-installer.ps1` (or `release\windows\build.ps1`):
 ```powershell
-# Build unsigned installer (default)
-.\scripts\build-windows-installer.ps1
-
-# Specify build inputs and outputs
-.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -AppVersion 0.1.0 -OutDir C:\out\dist
-
-# Dry-run check (no iscc needed)
-.\scripts\build-windows-installer.ps1 -DryRun
+.\scripts\build-windows-installer.ps1 -BuildApp                  # build the app, then an unsigned installer
+.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -OutDir C:\out\dist
+.\scripts\build-windows-installer.ps1 -DryRun                    # print the iscc command, build nothing
 ```
 
-**Owner step (signing placeholder):** signing. After the owner buys a code-signing
-certificate, pass `-SignToolCommand` to the build script:
+CI builds the unsigned installer (`repro.yml`, job `windows-installer`), which
+proves the definition compiles. Nothing in the repository holds a certificate.
+
+**Owner step 1, signing.** After buying a code-signing certificate:
 ```powershell
 .\scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f'
 ```
-The certificate and password stay outside this repository. Without signing, Windows
-SmartScreen warns on first run; that is expected for the unsigned draft.
+The certificate and password stay outside the repository; a hardware token or a
+cloud signing service needs a different `signtool` line, which is the only thing
+to change. Without it SmartScreen warns on first run. Inno Setup's license (free,
+custom terms) is for the owner to check before first use; an MSIX alternative
+needs a Microsoft account or a self-managed certificate.
 
-Open questions for the owner: Inno Setup's license (free, custom terms) is
-checked by the owner before first use; an MSIX alternative would need a
-Microsoft account or a self-managed certificate.
+## Update channel
 
-## Update channel (design note, nothing built)
+Goal: an installed Windows app learns that a newer, genuine build exists, without
+a vendor service and without telemetry. Android has no channel (F-Droid and Play
+update themselves); Linux and macOS have none yet.
 
-Goal: a user's installed desktop app learns that a newer, genuine build exists,
-without a vendor service and without telemetry.
+What is built (`mobile/lib/desktop/update_service.dart`, `update_installer.dart`,
+`update_verifier.dart`, `update_trust.dart`; tests in
+`mobile/test/update_service_test.dart`, `update_verifier_test.dart`,
+`update_feed_native_test.dart`):
 
-1. **Where:** a static `update.json` on the GitHub release (or the user's own
-   server), plus a **detached** signature file `update.json.sig` over the exact
-   bytes. Fields: `version`, `build`, `platform`, `arch`, `issued_at`,
-   `expires_at`, `url`, `sha256`, `notes`.
-2. **Trust:** signed with an **update key**, separate from the Windows
-   code-signing certificate; its public key is compiled into the app. Rejected:
-   a bad signature, a digest mismatch, a different platform or arch, a lower
-   `build` (downgrade), and a file past `expires_at` (stops a mirror serving an
-   old but validly signed file forever).
-3. **Check:** one HTTPS `GET` of the file with no identifiers or cookies. It
-   still shows the user's IP address and the app's User-Agent to the host
-   (GitHub). **Owner decision:** on by default (daily, with an off switch), or
-   off until the user opts in. Opt-in is the more private choice; default-on
-   updates more users.
-4. **Install:** the app downloads the installer, checks the digest, shows
-   "Version X is ready, restart to update", and starts the signed installer in
-   silent mode. Never silently, never without the user's click.
+1. **Feed:** `update.json` plus a detached Ed25519 signature `update.json.sig`
+   (64 raw bytes over `veritra-update-feed-v1` followed by the exact bytes), published as release assets at
+   `updateFeedUrl`. Fields: `version`, `build`, `platform`, `arch`, `issued_at`,
+   `expires_at`, `url`, `sha256`, `notes`. The owner makes both with
+   `scripts/update-feed.py sign` after the installer is signed; the tool refuses
+   a non-https URL, a feed valid for more than 90 days and a signature that does
+   not verify. `scripts/update-feed.py keygen` makes the update key.
+2. **Trust:** the **update key**, separate from the code-signing certificate;
+   its public half is `updateFeedPublicKeyHex` in `update_trust.dart`. The
+   signature is checked in the native library (`pm_crypto_update_feed_verify`,
+   crypto ABI 27, strict Ed25519 over `veritra-update-feed-v1` followed by the
+   feed bytes; `docs/crypto.md`, "Update feed signature") by
+   `Ed25519UpdateSignatureVerifier`, which is used only while the key is 64
+   lowercase hex characters; with the key empty the build keeps
+   `FailClosedUpdateSignatureVerifier` and requests nothing. The app rejects a
+   bad or missing signature, a digest mismatch, another platform or arch, a
+   lower `build` (downgrade), an expired feed, and a feed valid for more than
+   90 days or issued more than a day ahead (so a mirror cannot serve an old,
+   validly signed file for long, even one not made by `update-feed.py`).
+3. **Check:** one HTTPS `GET` of the file and one of its `.sig`, with no
+   cookies or credentials; redirects (GitHub serves assets from another host)
+   are followed by hand, at most five, only to https, so a redirect to plain
+   http is refused before it is requested. It still shows the user's IP
+   address to the host (GitHub). **Owner decision (2026-11-21):** on by
+   default, once at each launch, with an off switch in Settings; it starts
+   only once the update key is set (fail closed until then).
+4. **Install:** the Settings tile offers each step as a tap: check, then
+   "Download update" (the installer, https only with redirects checked, at most
+   512 MiB, a file name the app chooses, SHA-256 compared with the signed feed;
+   a mismatch deletes it), then "Restart to update". Before it starts, the file
+   is hashed again, so one swapped in the temporary folder before that check
+   never runs; a second tap starts nothing. The hash is Windows' `certutil` by
+   absolute path (`%SystemRoot%\System32\certutil.exe`), never one found on the
+   search path. The installer runs `/SILENT /NORESTART /CLOSEAPPLICATIONS`,
+   detached, and the app quits through the tray's Quit. Never silently, never
+   without the user's tap.
+
+   **Per-user installs only.** Between the second hash and the start there is
+   a short window in which a program running as the same user could replace
+   the file in that user's temporary folder. For a per-user install (Inno
+   Setup's default, under `%LOCALAPPDATA%`) such a program could already
+   change the installed app, so nothing is gained. An all-users install would
+   start the installer through a UAC prompt as administrator, which that
+   program could not otherwise reach, so there the app only reports the
+   update ("Version x is available") and the user installs the signed
+   installer from the release page (`isPerUserWindowsInstall`, tested).
 5. **Never:** server-pushed updates, forced updates, or an update that changes
    the crypto or the server address without showing it.
 6. **Messaging gate:** until G24/G25 pass there is no public release, so no
    channel is switched on. A channel never delivers a build that
    `scripts/release-readiness.sh` rejects.
-7. **Android and F-Droid:** F-Droid and Play update themselves; the app has no
-   update check on Android.
 
-Needs an owner decision (a key, so not mine): who holds the update signing key
-and how it is backed up (rotation would need a second key in the app).
+**What is still missing before the channel can be switched on:**
+
+1. **The update key:** `scripts/update-feed.py keygen --out update-key.pem`, kept
+   offline and backed up by the owner; its public half goes into
+   `updateFeedPublicKeyHex` in `update_trust.dart` in a reviewed pull request.
+   That one change turns the channel on (checks are on by default). Open: who
+   holds it and how it is backed up (a rotation would need a second key in the
+   app). The key file `keygen` writes is not passphrase-protected; keep it on
+   offline, encrypted storage.
+2. **The signing certificate** (above), and a first real run on Windows: none
+   of the installer, download, certutil or launch code has run on a Windows
+   machine.
+3. **The independent review (G25)** of `pm_crypto_update_feed_verify` with the
+   rest of the crypto ABI, as for every ABI change.
+
+Earlier, the app had no Ed25519 check and shipped a verifier that accepts
+nothing; it still does while the key is empty, and `update_service_test.dart`
+fails if that guard is removed. An earlier placeholder that returned true for
+any non-empty signature is gone.
 
 ## F-Droid
 

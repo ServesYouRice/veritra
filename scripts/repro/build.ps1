@@ -50,4 +50,12 @@ Get-ChildItem -Recurse -File $Out | Where-Object { $_.Name -ne "SHA256SUMS" } |
   Sort-Object -Property Rel -CaseSensitive |
   ForEach-Object { "$($_.Hash)  $($_.Rel)" } |
   Set-Content -Encoding ascii -Path (Join-Path $Out "SHA256SUMS")
+# What built this output, beside the digests (versions only, no paths).
+@(
+  "commit: $(git -C $Root rev-parse HEAD)",
+  "source_date_epoch: $Epoch",
+  "os: Windows $([Environment]::OSVersion.Version)",
+  "rustc: $(rustc --version)",
+  "flutter: $GotFlutter"
+) | Set-Content -Encoding ascii -Path (Join-Path $Out "TOOLCHAIN.txt")
 Write-Host "built windows into $Out"

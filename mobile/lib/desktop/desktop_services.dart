@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/widgets.dart';
@@ -10,6 +11,7 @@ import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 import 'message_notifications.dart';
 import 'update_service.dart';
+import 'update_verifier.dart';
 
 /// The desktop shell features (W3, W4) wired together: tray, closing to the
 /// tray, one window, notifications, and update checks (W12). Absent on Android
@@ -62,9 +64,16 @@ class DesktopServices {
         SecureUpdateSettingsStore(scope: scope),
       );
       await updateSettings.load();
-      final updateService = UpdateService(
+      // On by default (owner, 2026-11-21) once the update key exists; until
+      // then the verifier fails closed and nothing is requested.
+      final updateService = createDesktopUpdateService(
         settings: updateSettings,
+        isWindows: Platform.isWindows,
+        executable: Platform.resolvedExecutable,
+        environment: Platform.environment,
         currentBuild: veritraBuildNumber,
+        // The tray's own Quit, so the window and tray close the usual way.
+        onQuitForUpdate: () => unawaited(shell.quit()),
       );
       if (updateSettings.autoCheckEnabled) {
         unawaited(updateService.checkForUpdatesIfEnabled());

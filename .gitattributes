@@ -1,3 +1,6 @@
 * text=auto eol=lf
 
 *.ps1 text eol=crlf
+
+# Signed test vector: the signature is over these exact bytes.
+mobile/test/fixtures/update-feed/* -text
