@@ -32,3 +32,10 @@ voprf = { version = "=0.5.0", default-features = false, features = ["ristretto25
 # enables `zeroize`; `static_secrets` is an empty feature flag of the same
 # crate that exposes `StaticSecret` (no new code is pulled in).
 x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
+
+# G27 (owner decision 2026-11-21): hpke-rs 0.7 names the optional libcrux
+# backend, which locked libcrux-kem 0.0.9 (RUSTSEC-2026-0330/0331) although it
+# was never built. The empty placeholder keeps it out of Cargo.lock; see
+# stubs/hpke-rs-libcrux/Cargo.toml. Remove both on hpke-rs 0.8.
+[patch.crates-io]
+hpke-rs-libcrux = { path = "stubs/hpke-rs-libcrux" }

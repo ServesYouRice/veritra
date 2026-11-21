@@ -130,6 +130,14 @@ enabled. Preserve the generated SPDX SBOM and upstream license texts with
 releases; Android/iOS artifact review remains required before enabling the
 mobile ABI.
 
+G27 update (2026-11-21): `hpke-rs-libcrux` is replaced through
+`[patch.crates-io]` by an empty in-repository placeholder
+(`crypto/rust/stubs/hpke-rs-libcrux`, AGPL-3.0-or-later, no third-party code)
+that is never built, so the 14 libcrux crates behind it leave `Cargo.lock`.
+The locked graph now holds 195 third-party packages, all with declared
+licenses; `cargo audit` needs one exception (RUSTSEC-2026-0387, see
+`crypto/rust/audit-policy.json`).
+
 Go dependency review (2026-07-29): `go-licenses` reported MIT licenses for
 `webpush-go`, `go-humanize`, `golang-jwt/jwt`, and `modernc.org/libc`, and
 BSD-3-Clause licenses for `google/uuid`, `bigfft`, `golang.org/x/crypto`,

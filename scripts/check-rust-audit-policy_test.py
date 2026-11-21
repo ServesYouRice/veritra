@@ -38,14 +38,17 @@ def lockfile(*packages: tuple) -> str:
     return "\n".join(out)
 
 
-# The current graph's declared paths: hpke-rs 0.7 names the optional
-# hpke-rs-libcrux backend, which pins libcrux-kem; elliptic-curve brings in
-# crypto-bigint.
+# Canned graph: elliptic-curve brings in crypto-bigint (the real
+# RUSTSEC-2026-0387 path), and host-lib names an optional backend that pins
+# unbuilt-kem, which is locked but never built. The lockfile-only scope is a
+# made-up example (RUSTSEC-2000-0001) that keeps the `built: false` path
+# tested: the real policy has no such exception since RUSTSEC-2026-0330/0331
+# were retired on 2026-11-21.
 GOOD = (
-    ("app", "0.1.0", ["hpke-rs", "elliptic-curve"]),
-    ("hpke-rs", "0.7.0", ["hpke-rs-libcrux"]),
-    ("hpke-rs-libcrux", "0.7.0", ["libcrux-kem"]),
-    ("libcrux-kem", "0.0.9", []),
+    ("app", "0.1.0", ["host-lib", "elliptic-curve"]),
+    ("host-lib", "0.7.0", ["optional-backend"]),
+    ("optional-backend", "0.7.0", ["unbuilt-kem"]),
+    ("unbuilt-kem", "0.0.9", []),
     ("elliptic-curve", "0.13.8", ["crypto-bigint"]),
     ("crypto-bigint", "0.5.5", []),
 )
@@ -55,9 +58,9 @@ def scope(crate: str, versions: str, parents: list, built: bool) -> dict:
     return {"crate": crate, "versions": versions, "parents": parents, "built": built}
 
 
+UNBUILT = "RUSTSEC-2000-0001"
 SCOPES = {
-    "RUSTSEC-2026-0330": scope("libcrux-kem", "=0.0.9", ["hpke-rs-libcrux"], False),
-    "RUSTSEC-2026-0331": scope("libcrux-kem", "=0.0.9", ["hpke-rs-libcrux"], False),
+    UNBUILT: scope("unbuilt-kem", "=0.0.9", ["optional-backend"], False),
     "RUSTSEC-2026-0387": scope("crypto-bigint", "=0.5.5", ["elliptic-curve"], True),
 }
 
@@ -113,9 +116,7 @@ def policy_rejects(policy: dict, message: str) -> None:
 
 def main() -> int:
     # In scope: the current graph's declared paths.
-    assert check(GOOD) == [
-        ("libcrux-kem", "0.0.9", False), ("libcrux-kem", "0.0.9", False), ("crypto-bigint", "0.5.5", True)
-    ]
+    assert check(GOOD) == [("unbuilt-kem", "0.0.9", False), ("crypto-bigint", "0.5.5", True)]
 
     # Out of scope: a second, unlisted dependent. A Cargo.lock edge carries no
     # kind, target or feature, so the same lockfile shape covers a normal,
@@ -130,12 +131,12 @@ def main() -> int:
             f"crypto-bigint 0.5.5 is reached through {parent}",
         )
         blocked(
-            with_extra((parent, "1.0.0", ["libcrux-kem"])),
-            f"libcrux-kem 0.0.9 is reached through {parent}",
+            with_extra((parent, "1.0.0", ["unbuilt-kem"])),
+            f"unbuilt-kem 0.0.9 is reached through {parent}",
         )
     # The workspace root itself is a dependent too.
     blocked(
-        tuple(("app", "0.1.0", ["hpke-rs", "elliptic-curve", "crypto-bigint"]) if p[0] == "app" else p for p in GOOD),
+        tuple(("app", "0.1.0", ["host-lib", "elliptic-curve", "crypto-bigint"]) if p[0] == "app" else p for p in GOOD),
         "crypto-bigint 0.5.5 is reached through app",
     )
 
@@ -146,8 +147,8 @@ def main() -> int:
         "locked crypto-bigint 0.6.1 is outside the excepted versions '=0.5.5'",
     )
     blocked(
-        with_extra(("libcrux-kem", "0.1.0", []), ("hpke-rs-libcrux", "0.7.0", ["libcrux-kem 0.0.9"]), drop=("hpke-rs-libcrux",)),
-        "locked libcrux-kem 0.1.0 is outside the excepted versions '=0.0.9'",
+        with_extra(("unbuilt-kem", "0.1.0", []), ("optional-backend", "0.7.0", ["unbuilt-kem 0.0.9"]), drop=("optional-backend",)),
+        "locked unbuilt-kem 0.1.0 is outside the excepted versions '=0.0.9'",
     )
     # An advisory-crate version that is a pre-release is never in range.
     blocked(with_extra(("crypto-bigint", "0.5.6-rc.1", []), ("elliptic-curve", "0.13.8", ["crypto-bigint 0.5.5"]),
@@ -158,10 +159,10 @@ def main() -> int:
     blocked(two, "dependency 'crypto-bigint' matches 2 locked packages")
     # 'name version' and 'name version (source)' resolve to exactly one package.
     both = (
-        ("app", "0.1.0", ["hpke-rs", "elliptic-curve"]),
-        ("hpke-rs", "0.7.0", ["hpke-rs-libcrux"]),
-        ("hpke-rs-libcrux", "0.7.0", ["libcrux-kem"]),
-        ("libcrux-kem", "0.0.9", []),
+        ("app", "0.1.0", ["host-lib", "elliptic-curve"]),
+        ("host-lib", "0.7.0", ["optional-backend"]),
+        ("optional-backend", "0.7.0", ["unbuilt-kem"]),
+        ("unbuilt-kem", "0.0.9", []),
         ("elliptic-curve", "0.13.8", ["crypto-bigint 0.5.5 (" + REGISTRY + ")"]),
         ("crypto-bigint", "0.5.5", []),
         ("old-curve", "0.9.0", ["crypto-bigint 0.4.9"]),
@@ -183,28 +184,28 @@ def main() -> int:
                        drop=("elliptic-curve",)), "matches 0 locked packages")
 
     # A stale exception (the crate left the lockfile) is not silently kept.
-    blocked(with_extra(("app", "0.1.0", ["hpke-rs"]), drop=("app", "elliptic-curve", "crypto-bigint")),
+    blocked(with_extra(("app", "0.1.0", ["host-lib"]), drop=("app", "elliptic-curve", "crypto-bigint")),
             "crypto-bigint, which is not in")
 
     # Missing or malformed scope.
     for bad in (
-        "libcrux-kem 0.0.9 via hpke-rs-libcrux 0.7.0 (lockfile only)",  # the old free-text form
+        "unbuilt-kem 0.0.9 via optional-backend 0.7.0 (lockfile only)",  # the old free-text form
         None,
         {},
-        {"crate": "libcrux-kem", "versions": "=0.0.9", "parents": ["hpke-rs-libcrux"]},  # no built
-        dict(SCOPES["RUSTSEC-2026-0330"], extra=1),
-        dict(SCOPES["RUSTSEC-2026-0330"], crate=""),
-        dict(SCOPES["RUSTSEC-2026-0330"], crate="bad name"),
-        dict(SCOPES["RUSTSEC-2026-0330"], versions=""),
-        dict(SCOPES["RUSTSEC-2026-0330"], versions="*"),
-        dict(SCOPES["RUSTSEC-2026-0330"], versions="^0.0.9"),
-        dict(SCOPES["RUSTSEC-2026-0330"], versions=">=0.0"),
-        dict(SCOPES["RUSTSEC-2026-0330"], versions=9),
-        dict(SCOPES["RUSTSEC-2026-0330"], parents=[]),
-        dict(SCOPES["RUSTSEC-2026-0330"], parents="hpke-rs-libcrux"),
-        dict(SCOPES["RUSTSEC-2026-0330"], parents=["a", "a"]),
-        dict(SCOPES["RUSTSEC-2026-0330"], parents=[7]),
-        dict(SCOPES["RUSTSEC-2026-0330"], built="no"),
+        {"crate": "unbuilt-kem", "versions": "=0.0.9", "parents": ["optional-backend"]},  # no built
+        dict(SCOPES[UNBUILT], extra=1),
+        dict(SCOPES[UNBUILT], crate=""),
+        dict(SCOPES[UNBUILT], crate="bad name"),
+        dict(SCOPES[UNBUILT], versions=""),
+        dict(SCOPES[UNBUILT], versions="*"),
+        dict(SCOPES[UNBUILT], versions="^0.0.9"),
+        dict(SCOPES[UNBUILT], versions=">=0.0"),
+        dict(SCOPES[UNBUILT], versions=9),
+        dict(SCOPES[UNBUILT], parents=[]),
+        dict(SCOPES[UNBUILT], parents="optional-backend"),
+        dict(SCOPES[UNBUILT], parents=["a", "a"]),
+        dict(SCOPES[UNBUILT], parents=[7]),
+        dict(SCOPES[UNBUILT], built="no"),
     ):
         policy = real_policy()
         policy["exceptions"][0]["scope"] = bad
@@ -239,7 +240,7 @@ def main() -> int:
     assert not audit.version_in_range("0.0.10", audit.parse_versions("x", "=0.0.9"))
 
     # A lockfile-only scope is cross-checked with cargo tree (canned results).
-    scoped = [("libcrux-kem", "0.0.9", False), ("crypto-bigint", "0.5.5", True)]
+    scoped = [("unbuilt-kem", "0.0.9", False), ("crypto-bigint", "0.5.5", True)]
     seen: list = []
 
     def runner(result: tuple):
@@ -250,12 +251,12 @@ def main() -> int:
 
     # cargo 1.9x: exit 0 and "nothing to print" for a locked-but-absent package.
     audit.check_unbuilt(scoped, ROOT, runner((0, "", "warning: nothing to print.\n")))
-    audit.check_unbuilt(scoped, ROOT, runner((101, "", "error: package ID specification `libcrux-kem@0.0.9` did not match any packages")))
-    assert seen == ["libcrux-kem@0.0.9"] * 2, seen  # only the lockfile-only scope; built=true is skipped
+    audit.check_unbuilt(scoped, ROOT, runner((101, "", "error: package ID specification `unbuilt-kem@0.0.9` did not match any packages")))
+    assert seen == ["unbuilt-kem@0.0.9"] * 2, seen  # only the lockfile-only scope; built=true is skipped
     for result, message in (
-        ((0, "libcrux-kem v0.0.9\n└── hpke-rs-libcrux v0.7.0\n", ""), "entered the build graph"),
-        ((101, "", "error: failed to read Cargo.toml"), "could not check libcrux-kem@0.0.9"),
-        ((0, "", ""), "could not check libcrux-kem@0.0.9"),
+        ((0, "unbuilt-kem v0.0.9\n└── optional-backend v0.7.0\n", ""), "entered the build graph"),
+        ((101, "", "error: failed to read Cargo.toml"), "could not check unbuilt-kem@0.0.9"),
+        ((0, "", ""), "could not check unbuilt-kem@0.0.9"),
     ):
         try:
             audit.check_unbuilt(scoped, ROOT, runner(result))
@@ -279,11 +280,35 @@ def main() -> int:
     good = cli(ROOT / "crypto/rust/audit-policy.json", "--lockfile", str(lock))
     assert good.returncode == 0, good.stderr
     shrunk = real_policy()
-    shrunk["exceptions"][2]["scope"]["parents"] = ["not-elliptic-curve"]
+    [bigint] = [e for e in shrunk["exceptions"] if e["id"] == "RUSTSEC-2026-0387"]
+    bigint["scope"]["parents"] = ["not-elliptic-curve"]
     result = cli(policy_file(shrunk), "--lockfile", str(lock))
     assert result.returncode == 1 and "RUSTSEC-2026-0387: crypto-bigint 0.5.5 is reached through elliptic-curve" in result.stderr, result.stderr
     result = cli(ROOT / "crypto/rust/audit-policy.json", "--cargo-tree-dir", str(ROOT / "crypto/rust"))
     assert result.returncode == 1 and "--cargo-tree-dir needs --lockfile" in result.stderr, result.stderr
+
+    # G27 (2026-11-21): RUSTSEC-2026-0330/0331 are retired, not excepted. The
+    # policy cannot bring them back without a checker change ...
+    for retired in ("RUSTSEC-2026-0330", "RUSTSEC-2026-0331"):
+        readded = real_policy()
+        readded["exceptions"].append(
+            {"id": retired, "scope": scope("libcrux-kem", "=0.0.9", ["hpke-rs-libcrux"], False), "rationale": "x"}
+        )
+        policy_rejects(readded, "approved exception set")
+    # ... and the real lockfile holds hpke-rs-libcrux only as the empty path
+    # placeholder (no registry source), with none of the libcrux crates it
+    # used to pin, so cargo audit reports them again if the placeholder goes.
+    import tomllib
+
+    locked = tomllib.loads(lock.read_text(encoding="utf-8"))["package"]
+    backend = [package for package in locked if package["name"] == "hpke-rs-libcrux"]
+    assert backend and all("source" not in package for package in backend), backend
+    for gone in ("libcrux-kem", "libcrux-ml-kem", "libcrux-ecdh", "libcrux-p256"):
+        assert not [package for package in locked if package["name"] == gone], f"{gone} is back in Cargo.lock"
+    manifest = (ROOT / "crypto/rust/Cargo.toml").read_text(encoding="utf-8")
+    assert 'hpke-rs-libcrux = { path = "stubs/hpke-rs-libcrux" }' in manifest
+    placeholder = (ROOT / "crypto/rust/stubs/hpke-rs-libcrux/src/lib.rs").read_text(encoding="utf-8")
+    assert "compile_error!(" in placeholder, "the hpke-rs-libcrux placeholder must fail any build that enables it"
 
     # The audit script gives the scope check and cargo audit the same
     # lockfile, and checks scope before it audits.

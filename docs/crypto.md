@@ -55,7 +55,7 @@ key the list names for the device (see the L1-3 change-log entry); clients
 still validate every key package they use.
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
-exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
+exactly pinned (Rust 1.91 or newer). All 195 locked third-party packages declare
 compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Since ABI 10
 (D70) sealed state is format 4: a root plus one record per owner, described
 in "Sealed state, format 4" below. Format 2 and 3 blobs are read only by the
@@ -1337,6 +1337,24 @@ device key, the code-signing certificate or the recovery key).
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **G27 libcrux placeholder (2026-11-21, owner decision D29; no ABI, wire,
+  server, migration, local schema or build-graph change):** hpke-rs 0.7
+  declares its libcrux backend `hpke-rs-libcrux` =0.7.0 as an optional
+  dependency named only in weak features (`hpke-rs-libcrux?/std` and
+  others), so Cargo locked it and the libcrux crates behind it, among them
+  libcrux-kem 0.0.9 (RUSTSEC-2026-0330/0331), although nothing built them.
+  `crypto/rust/Cargo.toml` now patches it with the empty in-repo crate
+  `crypto/rust/stubs/hpke-rs-libcrux` (same name, version and features; its
+  `lib.rs` is a `compile_error!`, so enabling it fails the build). The
+  lockfile change only removes entries (14 libcrux crates; the placeholder
+  keeps a sourceless entry), `cargo tree --target all` with every edge kind
+  and features is identical, and the release `.so` and `.a` hash the same
+  before and after. The 0330/0331 exceptions are gone from
+  `crypto/rust/audit-policy.json`, so `cargo audit` fails if libcrux-kem
+  comes back; `scripts/audit-rust.sh` still fails if any libcrux backend
+  crate enters the build graph. The RUSTSEC-2026-0387 exception's deadline
+  moves to 2027-03-31. Remove the placeholder once `openmls_rust_crypto`
+  uses hpke-rs 0.8.
 - **C3 private channel membership (2026-11-21; no ABI, wire, server,
   migration or local schema change; new commit-acceptance rule):** who can
   read a private channel is who is in its own MLS group, and until now any

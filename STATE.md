@@ -166,7 +166,7 @@ replace `UnavailableCryptoService` before G25.
 |---|---|---|
 | **G24** signed-device evidence | Signed Android/iOS builds of one frozen commit; the two-device matrix in [`docs/security-review.md`](docs/security-review.md#signed-device-matrix-g24) | ⏳ Needs devices, signing accounts, push credentials, a TURN server |
 | **G25** independent review | A human reviewer with the brief in [`docs/security-review.md`](docs/security-review.md); fix and retest critical/high findings | ⏳ No reviewer assigned |
-| **G27** upstream advisory | RUSTSEC-2026-0330/0331 (libcrux-kem, locked but never built) and RUSTSEC-2026-0387 (crypto-bigint 0.5.5 in the NIST-curve code; Veritra's X25519/Ed25519 suite never runs it) are excepted until **2026-12-31** | ⏳ Waits for an `openmls_rust_crypto` release on hpke-rs 0.8 (0.6.0 is still the latest) |
+| **G27** upstream advisory | RUSTSEC-2026-0387 (crypto-bigint 0.5.5 in the NIST-curve code; Veritra's X25519/Ed25519 suite never runs it) is excepted until **2027-03-31**. RUSTSEC-2026-0330/0331 (libcrux-kem) are retired, not excepted, since 2026-11-21: the empty placeholder `crypto/rust/stubs/hpke-rs-libcrux` (`[patch.crates-io]`) takes libcrux-kem and 13 other never-built libcrux crates out of `Cargo.lock`; build graph and release library unchanged (same hashes) | ⏳ Waits for an `openmls_rust_crypto`/`openmls_basic_credential` release on p256 0.14 plus a stable voprf 0.6. Drop the placeholder once `openmls_rust_crypto` moves to hpke-rs 0.8 |
 
 `scripts/release-readiness.sh` stays blocked until all three pass.
 
@@ -210,7 +210,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | D22/D23/D25 | Message actions are MLS payloads; decrypted text persists at decrypt time; sender credential bound to the envelope (ABI v5) |
 | D26 | Desktop key storage: Windows DPAPI, Linux Secret Service |
 | D28 | Membership changes are staged commits accepted only on the current epoch (ABI v6) |
-| D29 | G27 exceptions for RUSTSEC-2026-0330/0331 until 2026-12-31; RUSTSEC-2026-0387 added on 2026-10-24 (owner) to the same deadline |
+| D29 | G27 exceptions for RUSTSEC-2026-0330/0331 until 2026-12-31; RUSTSEC-2026-0387 added on 2026-10-24 (owner) to the same deadline. **2026-11-21 (owner):** (a) an empty `hpke-rs-libcrux` placeholder crate through `[patch.crates-io]` retires the RUSTSEC-2026-0330/0331 exceptions; (b) the RUSTSEC-2026-0387 deadline moves to 2027-03-31, trigger unchanged (an `openmls_rust_crypto`/`openmls_basic_credential` release on p256 0.14, plus voprf 0.6 stable) |
 | D30 | `flutter_localizations` + `intl` 0.20.2 for localization |
 | **D31** (2026-10-23, owner) | Keep GitHub Actions as a free safety net for checks; deploying stays local (release command → `infra` → Flux) |
 | **D32** (2026-10-23, owner) | Board, consensus and task queue replaced by this file; review brief moved to `docs/security-review.md` |
