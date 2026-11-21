@@ -186,6 +186,12 @@ branch's Rust sources are unchanged); no Rust build was allowed here.
   with this branch's `mobile/lib` reverted (pre-existing).
   `message_expiry_test.dart` "a signed-out device still deletes what
   expired" passed when its file was rerun alone (load on a shared machine).
+- After the review fixes and the merge of `wave2-0527` (`54b53f1`):
+  every `test/l1_*_test.dart`, the l10n tests and
+  `device_link_v3_flow_test.dart`: 233 passed, native required; eight
+  chat-screen neighbour files: 84 passed. `flutter analyze` reports two
+  errors in `test/screen_photos/screen_catalog.dart`, identical on
+  `wave2-0527` itself (not L1).
 - `flutter analyze`: no issues. `dart format --set-exit-if-changed .`:
   0 changed. `scripts/l10n-sr-latn_test.py`: passed. `git diff --check`:
   clean.
