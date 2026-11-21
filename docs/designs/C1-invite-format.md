@@ -371,7 +371,9 @@ Then:
   shown only if the server's `shared_conversation_id` is the pinned group
   and every open or announcement channel is routed to it. A server that
   names another group (a replay of the invitation into another group) gets
-  the community hidden, not shown with that group.
+  the community hidden, not shown with that group. Hidden is not "left":
+  nothing that cleans up after a left community runs for it (C3 rotation
+  marks stay), and a pin the store cannot read keeps the list already shown.
 
 **What the server learns.** Nothing new: it already holds the community's
 shared conversation, and the anchor in the create body is that value. The
@@ -390,6 +392,17 @@ member; it opens nothing without membership (every route checks it).
   device that joined before v3, trusts the server's mapping as before.
 - The link must still reach the joiner out of the server's sight (see the v2
   limits); a link the server can read gets no protection.
+- A group the server substitutes can still appear as a row in the chat
+  list (its conversation is listed by the server); it is never shown as the
+  pinned community.
+- Trust on first verified link: the pin is written from a verified preview
+  before the request is filed and stays even if the server then answers
+  `already_member` or 404; a later link for the same community must name the
+  same group until a wipe or identity change. A server gains nothing new
+  from this (it already controls the listing).
+- The Welcome anchor names the inviter's leaf (D99). If the inviter leaves
+  the shared group before the joiner's Welcome, the Welcome is refused until
+  a new verified link replaces the anchor; likelier in a large community.
 - Private channels have their own groups and are not anchored (a joiner is
   not added to them on approval).
 - **Needs the independent security review**, with the rest of v2.

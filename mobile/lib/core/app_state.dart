@@ -488,6 +488,12 @@ class AppState extends ChangeNotifier
   // locally when records are created from this device.
   List<Community> communities = <Community>[];
   Map<String, List<Channel>> channelsByCommunity = <String, List<Channel>>{};
+
+  /// C1 v3: communities the server lists but [refreshCommunities] hides
+  /// because their shared group is not the one a verified invitation pinned.
+  /// Hidden is not gone: nothing that cleans up after a left community runs
+  /// for them.
+  Set<String> inviteAnchorHiddenCommunities = <String>{};
   List<Invite> invites = <Invite>[];
   Map<String, List<ReceivedMessageEnvelope>> messagesByConversation =
       <String, List<ReceivedMessageEnvelope>>{};
@@ -2710,6 +2716,8 @@ class AppState extends ChangeNotifier
     try {
       final list = await client.listCommunities(current.token);
       // C1 v3: read before the channels, so the commit below stays as it was.
+      // A pin that cannot be read keeps the locally known list (the catch
+      // below), as a list the server cannot send does.
       final pins = await _communityInviteAnchorsOf(list);
       final channels = <String, List<Channel>>{};
       final creationAccess = <String, bool>{};
@@ -2752,6 +2760,10 @@ class AppState extends ChangeNotifier
             community,
       ];
       if (!active()) return;
+      inviteAnchorHiddenCommunities = <String>{
+        for (final community in list)
+          if (!kept.contains(community)) community.id,
+      };
       communities = kept;
       channelsByCommunity = <String, List<Channel>>{
         for (final community in kept)
@@ -9954,6 +9966,7 @@ class AppState extends ChangeNotifier
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
+    inviteAnchorHiddenCommunities = <String>{};
     invitesLoaded = false;
     invitesLoadFailed = false;
     devicesLoaded = false;

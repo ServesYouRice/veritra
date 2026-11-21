@@ -152,14 +152,15 @@ from `/home/user/veritra/crypto/rust/target/release` (Rust not rebuilt):
 - Guards removed one at a time each fail a test: empty anchor allowed, a
   group anchored elsewhere allowed, no community pin check, no mapping
   check, v2 links read, no version field, no community pin saved, inviter
-  not in the group, anchor keyed by target (Dart); the server's anchor check
-  (Go).
+  not in the group, anchor keyed by target, store-error fallback, pins not
+  cleared with the invite anchors (Dart, the last on the encrypted
+  database); the server's anchor check (Go).
 - `go test -p 2 ./...`, `gofmt -l`, `go vet ./...`: pass.
 - Python policy fixture tests (`scripts/*_test.py`), demo boundary: pass.
 - `flutter analyze`: only the two pre-existing `test/screen_photos/
   screen_catalog.dart` errors from the B6 merge (untouched here);
   `dart format --set-exit-if-changed .`: clean.
-- `flutter test -j 2` with the native library required: 3,759 pass, 8
+- `flutter test -j 2` with the native library required: 3,761 pass, 8
   skipped, 2 fail to load: `test/screen_photos/screen_photos_test.dart` and
   `screen_catalog_guard_test.dart`, both from the same pre-existing
   `screen_catalog.dart` compile errors (B6 call-control API change; not

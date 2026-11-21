@@ -819,14 +819,26 @@ void main() {
             shown,
             reason: entry.key,
           );
+          // Hidden is not gone: cleanup for a left community must not run.
+          expect(
+            state.inviteAnchorHiddenCommunities,
+            shown ? isEmpty : <String>{'comm_1'},
+            reason: entry.key,
+          );
         }
-        // A store that cannot answer hides a community rather than trust
-        // the server's mapping.
+        // A store that cannot answer neither trusts the server's mapping
+        // nor drops anything: the list already shown stays.
+        final known = shared('comm_1', 'conv_s1');
         final api = _Api()
-          ..listedCommunities = <Community>[shared('comm_1', 'conv_s1')];
-        final state = _state(api, store: _FailingCommunityAnchorStore());
+          ..listedCommunities = <Community>[
+            shared('comm_1', 'conv_s2'),
+            shared('comm_2', 'conv_f'),
+          ];
+        final state = _state(api, store: _FailingCommunityAnchorStore())
+          ..communities = <Community>[known];
         await state.refreshCommunities();
-        expect(state.communities, isEmpty);
+        expect(state.communities, <Community>[known]);
+        expect(state.inviteAnchorHiddenCommunities, isEmpty);
       },
     );
 

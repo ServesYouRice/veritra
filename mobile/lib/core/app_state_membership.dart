@@ -188,24 +188,17 @@ extension MembershipActions on AppState {
   }
 
   /// C1 v3: the shared group a verified invitation pinned each of
-  /// [communities] to, or null where none was pinned. A pin this device
-  /// cannot read is '' (matches no group), so the community is hidden rather
-  /// than trusted to the server's mapping.
+  /// [communities] to, or null where none was pinned. Throws when the store
+  /// cannot answer, so the caller keeps what it already shows rather than
+  /// trust the server's mapping or drop a community.
   Future<Map<String, String?>> _communityInviteAnchorsOf(
     List<Community> communities,
-  ) async {
-    final pins = <String, String?>{};
-    for (final community in communities) {
-      try {
-        pins[community.id] = await localStore.loadCommunityInviteAnchor(
-          community.id,
-        );
-      } on Object {
-        pins[community.id] = '';
-      }
-    }
-    return pins;
-  }
+  ) async =>
+      <String, String?>{
+        for (final community in communities)
+          community.id:
+              await localStore.loadCommunityInviteAnchor(community.id),
+      };
 
   /// C1 v3: whether the server's account of [community] agrees with the
   /// shared group in [pinned] (from [_communityInviteAnchorsOf]): its shared
