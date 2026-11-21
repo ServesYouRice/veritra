@@ -158,6 +158,13 @@ class PhotoApi extends FixtureApi {
       ];
 
   @override
+  Future<List<DepartedTimeout>> departedTimeouts(
+    String token,
+    String communityId,
+  ) async =>
+      const <DepartedTimeout>[];
+
+  @override
   Future<List<JoinRequest>> listJoinRequests(
     String token,
     InviteTargetKind kind,

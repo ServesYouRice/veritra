@@ -492,6 +492,137 @@ void main() {
       expect(state.membersFor('conv_9'), hasLength(1));
     },
   );
+
+  // Owner decision 2026-11-21: "Only accept community invites from people I
+  // share a group with", off by default.
+  group('community invites from strangers', () {
+    Future<
+        ({
+          AppState state,
+          _Api api,
+          MembershipInviteLink link,
+        })> setUp({
+      required bool sharedOnly,
+      InviteTargetKind kind = InviteTargetKind.community,
+      Map<String, Set<String>> rosters = const <String, Set<String>>{},
+      List<Conversation> conversations = const <Conversation>[],
+    }) async {
+      final link = _newLink();
+      final api = _Api()
+        ..binding = honestBinding(link, kind: kind)
+        ..previewKind = kind;
+      final state = _state(api, crypto: _RosterCrypto(rosters))
+        ..conversations = conversations;
+      if (sharedOnly) {
+        expect(await state.setCommunityInvitesSharedOnly(true), isTrue);
+      }
+      return (state: state, api: api, link: link);
+    }
+
+    test('the switch is off by default and an invitation passes', () async {
+      final t = await setUp(sharedOnly: false);
+      expect(t.state.communityInvitesSharedOnly, isFalse);
+      await t.state.loadCommunityInvitesSharedOnly();
+      expect(t.state.communityInvitesSharedOnly, isFalse);
+      expect(await t.state.previewInviteLink(t.link.url), isNotNull);
+      expect(await t.state.requestToJoin(t.link), isNotNull);
+      expect(t.api.requested, <String>[t.link.locator]);
+    });
+
+    test(
+        'on, a stranger\'s community invitation is refused and nothing is '
+        'filed', () async {
+      final t = await setUp(
+        sharedOnly: true,
+        // A group without the inviter, and a message request from them: a
+        // request is how a stranger first reaches someone.
+        rosters: <String, Set<String>>{
+          'conv_g': <String>{'acct_owner', 'acct_bob'},
+          'conv_req': <String>{'acct_owner', 'acct_alice'},
+        },
+        conversations: <Conversation>[
+          Conversation(id: 'conv_g', kind: 'group'),
+          Conversation(
+            id: 'conv_req',
+            kind: 'dm',
+            peerAccountId: 'acct_alice',
+            createdBy: 'acct_alice',
+          ),
+        ],
+      );
+      expect(t.state.isMessageRequestId('conv_req'), isTrue);
+
+      expect(await t.state.previewInviteLink(t.link.url), isNull);
+      expect(
+        t.state.errorFor(Ops.membership),
+        t.state.l10n.joinInviteFromStranger,
+      );
+      expect(await t.state.requestToJoin(t.link), isNull);
+      expect(t.api.requested, isEmpty);
+      expect(
+        t.state.errorFor(Ops.membership),
+        t.state.l10n.joinInviteFromStranger,
+      );
+    });
+
+    test('on, an inviter in one of this device\'s MLS groups passes', () async {
+      final t = await setUp(
+        sharedOnly: true,
+        rosters: <String, Set<String>>{
+          'conv_g': <String>{'acct_owner', 'acct_alice'},
+        },
+        conversations: <Conversation>[
+          Conversation(id: 'conv_g', kind: 'group'),
+        ],
+      );
+      expect(await t.state.previewInviteLink(t.link.url), isNotNull);
+      expect(await t.state.requestToJoin(t.link), isNotNull);
+      expect(t.api.requested, <String>[t.link.locator]);
+    });
+
+    test('on, the other side of a direct chat passes', () async {
+      final t = await setUp(
+        sharedOnly: true,
+        conversations: <Conversation>[
+          Conversation(
+            id: 'conv_dm',
+            kind: 'dm',
+            peerAccountId: 'acct_alice',
+          ),
+        ],
+      );
+      expect(await t.state.previewInviteLink(t.link.url), isNotNull);
+    });
+
+    test('a group invitation is not affected', () async {
+      final t = await setUp(
+        sharedOnly: true,
+        kind: InviteTargetKind.group,
+      );
+      expect(await t.state.previewInviteLink(t.link.url), isNotNull);
+      expect(await t.state.requestToJoin(t.link), isNotNull);
+    });
+
+    test('the switch is stored for this account only', () async {
+      final store = MemoryLocalStore();
+      final state = _state(_Api(), store: store);
+      expect(await state.setCommunityInvitesSharedOnly(true), isTrue);
+      final again = _state(_Api(), store: store);
+      await again.loadCommunityInvitesSharedOnly();
+      expect(again.communityInvitesSharedOnly, isTrue);
+
+      final other = _state(_Api(), store: store)
+        ..session = const Session(
+          baseUrl: 'https://localhost:8080',
+          token: 'other-token',
+          accountId: 'acct_other',
+          deviceId: 'dev_other',
+          username: 'other',
+        );
+      await other.loadCommunityInvitesSharedOnly();
+      expect(other.communityInvitesSharedOnly, isFalse);
+    });
+  });
 }
 
 final List<int> _otherKey = List<int>.generate(32, (i) => 0x70 + i);
@@ -628,6 +759,17 @@ class _Api extends ApiClient {
       (conversationId: 'conv_2', eventId: 8),
     ]);
   }
+}
+
+/// An engine whose MLS groups hold the given accounts.
+class _RosterCrypto extends TestOnlyCryptoService implements MlsRosterSource {
+  _RosterCrypto(this.rosters);
+
+  final Map<String, Set<String>> rosters;
+
+  @override
+  Set<String>? groupMemberAccounts(String conversationId) =>
+      rosters[conversationId];
 }
 
 /// An engine whose roster read always fails.

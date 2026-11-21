@@ -1774,6 +1774,20 @@ class ApiClient {
     return until is String ? DateTime.tryParse(until)?.toUtc() : null;
   }
 
+  /// Running timeouts of accounts that left the community (C5). Lifting one
+  /// is [setMemberTimeout] with 0, for admins and above.
+  Future<List<DepartedTimeout>> departedTimeouts(
+    String token,
+    String communityId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      _moderationPath(communityId, 'timeouts'),
+      token: token,
+    );
+    return _rows(json, 'timeouts', DepartedTimeout.fromJson);
+  }
+
   /// Sets a channel's gap between a member's posts; 0 turns it off.
   Future<void> setChannelSlowMode(
     String token,
@@ -1915,7 +1929,13 @@ class ApiClient {
       '${_targetPath(kind, targetId)}/join-requests',
       token: token,
     );
-    return _rows(json, 'requests', JoinRequest.fromJson);
+    final rows = _rows(json, 'requests', JoinRequest.fromJson);
+    final paused = json['invites_paused_until'];
+    return JoinRequestList(
+      rows,
+      invitesPausedUntil:
+          paused is String ? DateTime.tryParse(paused)?.toUtc() : null,
+    );
   }
 
   /// The signed-in account's own recent requests.

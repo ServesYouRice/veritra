@@ -487,6 +487,10 @@ class JoinRequestsPanel extends StatefulWidget {
 class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
   List<JoinRequest> _requests = const <JoinRequest>[];
 
+  /// The end of a running pause of the community's invitations (C5): the
+  /// requests are listed and can be declined, but not approved until then.
+  DateTime? _pausedUntil;
+
   /// This panel's own copy of the last failure (see [_failureOf]).
   String? _error;
 
@@ -505,7 +509,10 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
       setState(() => _error = _failureOf(state));
       return;
     }
-    setState(() => _requests = requests);
+    setState(() {
+      _requests = requests;
+      _pausedUntil = JoinRequestList.pausedUntilOf(requests);
+    });
   }
 
   Future<void> _decide(JoinRequest request, {required bool approve}) async {
@@ -537,12 +544,19 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
       builder: (context, _) {
         final busy = state.isBusy(Ops.membership);
         final error = _error;
+        final paused = _pausedUntil != null;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             SectionHeader(l10n.joinReqSection),
             TileGroup(
               children: <Widget>[
+                if (paused && _requests.isNotEmpty)
+                  ListTile(
+                    key: const ValueKey<String>('join-requests-paused'),
+                    leading: const Icon(Icons.pause_circle_outline),
+                    title: Text(l10n.joinReqPausedNote),
+                  ),
                 if (_requests.isEmpty)
                   ListTile(
                     leading: const Icon(Icons.hourglass_empty),
@@ -582,7 +596,9 @@ class _JoinRequestsPanelState extends State<JoinRequestsPanel> {
                                 key: ValueKey<String>(
                                   'join-approve-${request.id}',
                                 ),
-                                onPressed: busy
+                                // While invitations are paused the server
+                                // refuses approval; declining still works.
+                                onPressed: busy || paused
                                     ? null
                                     : () => _decide(request, approve: true),
                                 child: Text(l10n.joinReqApproveButton),

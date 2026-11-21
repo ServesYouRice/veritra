@@ -991,6 +991,14 @@ extension AccountRecoveryActions on AppState {
       unawaited(_notePasswordLeak(event));
       return false;
     }
+    if (type == joinRequestNoticeEventType) {
+      // C1: a request waits for this owner or admin. Content-free.
+      if (!joinRequestNotice) {
+        joinRequestNotice = true;
+        notifyListeners();
+      }
+      return false;
+    }
     if (type == 'account.passkey_added' || type == 'account.passkey_removed') {
       // B7: a notice only; the K0 status is not read again for it.
       _notePasskeyEvent(event);

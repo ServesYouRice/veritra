@@ -86,6 +86,9 @@ class _ModerationScreenState extends State<ModerationScreen> {
   ModerationState? _moderation;
   List<CommunityBan>? _bans;
   List<ModerationEvent>? _events;
+
+  /// Running timeouts of people who left (admins and above only).
+  List<DepartedTimeout>? _departed;
   Map<String, String> _names = const <String, String>{};
 
   /// True until the first read finishes, so no default ("Nobody is banned",
@@ -116,6 +119,9 @@ class _ModerationScreenState extends State<ModerationScreen> {
           ? state.loadModerationEvents(_communityId)
           : Future<Object?>.value(null),
       state.loadCommunityMembers(_communityId),
+      widget.canManageInvites
+          ? state.loadDepartedTimeouts(_communityId)
+          : Future<Object?>.value(null),
     ]);
     if (!mounted) return;
     final members = results[3] as List<ConversationMember>?;
@@ -123,12 +129,13 @@ class _ModerationScreenState extends State<ModerationScreen> {
       _moderation = results[0] as ModerationState?;
       _bans = results[1] as List<CommunityBan>?;
       _events = results[2] as List<ModerationEvent>?;
+      _departed = results[4] as List<DepartedTimeout>?;
       _loading = false;
       // Any part that did not load fails the whole screen: a missing list
       // must never read as an empty one.
       _failed = _moderation == null ||
           _bans == null ||
-          (widget.canManageInvites && _events == null);
+          (widget.canManageInvites && (_events == null || _departed == null));
       _names = <String, String>{
         for (final member in members ?? const <ConversationMember>[])
           member.accountId: accountLabel(member.accountId, member.username),
@@ -141,7 +148,11 @@ class _ModerationScreenState extends State<ModerationScreen> {
     final ban = (_bans ?? const <CommunityBan>[])
         .where((b) => b.accountId == accountId)
         .firstOrNull;
-    return _names[accountId] ?? accountLabel(accountId, ban?.username);
+    final departed = (_departed ?? const <DepartedTimeout>[])
+        .where((d) => d.accountId == accountId)
+        .firstOrNull;
+    return _names[accountId] ??
+        accountLabel(accountId, ban?.username ?? departed?.username);
   }
 
   /// The channel's encrypted name, else a placeholder (C3: the server keeps
@@ -181,6 +192,18 @@ class _ModerationScreenState extends State<ModerationScreen> {
 
   Future<void> _unban(CommunityBan ban) async {
     if (await state.unbanCommunityMember(_communityId, ban.accountId)) {
+      await _load();
+    }
+  }
+
+  /// Lifts the timeout of someone who left, so a rejoin starts without it
+  /// (owner decision 2026-11-21; admins and above).
+  Future<void> _liftDeparted(DepartedTimeout timeout) async {
+    if (await state.timeoutCommunityMember(
+      _communityId,
+      timeout.accountId,
+      0,
+    )) {
       await _load();
     }
   }
@@ -233,6 +256,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
         state.channelsByCommunity[_communityId] ?? const <Channel>[];
     final bans = _bans ?? const <CommunityBan>[];
     final events = _events ?? const <ModerationEvent>[];
+    final departed = _departed ?? const <DepartedTimeout>[];
     return ListView(
       padding: const EdgeInsets.fromLTRB(
         BoneSpacing.gutter,
@@ -319,6 +343,39 @@ class _ModerationScreenState extends State<ModerationScreen> {
           ],
         ),
         if (widget.canManageInvites) ...<Widget>[
+          SectionHeader(l10n.moderationSectionDepartedTimeouts),
+          TileGroup(
+            children: <Widget>[
+              if (departed.isEmpty)
+                ListTile(title: Text(l10n.moderationNoDepartedTimeouts))
+              else ...<Widget>[
+                ListTile(
+                  dense: true,
+                  title: Text(l10n.moderationDepartedTimeoutsNote),
+                ),
+                for (final timeout in departed)
+                  ListTile(
+                    leading: const Icon(Icons.timer_off_outlined),
+                    title: Text(_name(timeout.accountId)),
+                    subtitle: Text(
+                      l10n.moderationDepartedTimeoutUntil(
+                        formatDateTime(context, timeout.timeoutUntil.toLocal()),
+                      ),
+                    ),
+                    trailing: IconButton(
+                      key: ValueKey<String>(
+                        'lift-departed-${timeout.accountId}',
+                      ),
+                      tooltip: l10n.moderationLiftTimeout(
+                        _name(timeout.accountId),
+                      ),
+                      onPressed: busy ? null : () => _liftDeparted(timeout),
+                      icon: const Icon(Icons.undo),
+                    ),
+                  ),
+              ],
+            ],
+          ),
           SectionHeader(l10n.moderationSectionLog),
           TileGroup(
             children: <Widget>[

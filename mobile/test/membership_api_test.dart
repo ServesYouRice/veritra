@@ -445,4 +445,56 @@ void main() {
     expect(_bodyOf(calls[3]), <String, Object?>{'seconds': 600});
     expect(_bodyOf(calls[5]), <String, Object?>{'seconds': 3600});
   });
+
+  // Owner decision 2026-11-21: a paused community's requests are listed with
+  // the pause, and the running timeouts of people who left are read.
+  test('a paused list carries the pause; departed timeouts are read', () async {
+    final (client, calls) = await _client((call) {
+      if (call.path.endsWith('/join-requests')) {
+        return <String, Object?>{
+          'requests': <Object?>[
+            <String, Object?>{
+              'id': 'jreq_1',
+              'target_kind': 'community',
+              'target_id': 'comm_1',
+              'account_id': 'acct_a',
+              'username': 'alice',
+              'status': 'pending',
+              'created_at': '2026-11-07T10:00:00Z',
+            },
+          ],
+          'invites_paused_until': '2026-11-08T10:00:00Z',
+        };
+      }
+      return <String, Object?>{
+        'timeouts': <Object?>[
+          <String, Object?>{
+            'account_id': 'acct_c',
+            'username': 'carol',
+            'timeout_until': '2026-11-09T10:00:00Z',
+          },
+        ],
+      };
+    });
+    final listed = await client.listJoinRequests(
+      'tok',
+      InviteTargetKind.community,
+      'comm_1',
+    );
+    expect(listed.single.username, 'alice');
+    expect(
+      JoinRequestList.pausedUntilOf(listed),
+      DateTime.utc(2026, 11, 8, 10),
+    );
+    final departed = await client.departedTimeouts('tok', 'comm_1');
+    expect(departed.single.accountId, 'acct_c');
+    expect(departed.single.username, 'carol');
+    expect(departed.single.timeoutUntil, DateTime.utc(2026, 11, 9, 10));
+    expect(calls.map((c) => '${c.method} ${c.path}').toList(), <String>[
+      'GET /api/v1/communities/comm_1/join-requests',
+      'GET /api/v1/communities/comm_1/timeouts',
+    ]);
+    // A list without a pause reads as not paused.
+    expect(JoinRequestList.pausedUntilOf(<JoinRequest>[]), isNull);
+  });
 }

@@ -6207,6 +6207,78 @@ abstract class AppLocalizations {
   /// **'No one is waiting.'**
   String get joinReqNone;
 
+  /// No description provided for @settingsInvitesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Community invitations'**
+  String get settingsInvitesSection;
+
+  /// No description provided for @settingsInvitesSharedOnlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Only accept community invites from people I share a group with'**
+  String get settingsInvitesSharedOnlyTitle;
+
+  /// No description provided for @settingsInvitesSharedOnlyNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Invites from anyone else are refused.'**
+  String get settingsInvitesSharedOnlyNote;
+
+  /// No description provided for @joinInviteFromStranger.
+  ///
+  /// In en, this message translates to:
+  /// **'You only accept community invites from people you share a group with. To join, turn this off in Settings › Privacy and safety › Blocked accounts.'**
+  String get joinInviteFromStranger;
+
+  /// No description provided for @joinRequestNoticeText.
+  ///
+  /// In en, this message translates to:
+  /// **'New join request'**
+  String get joinRequestNoticeText;
+
+  /// No description provided for @joinRequestNoticeDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get joinRequestNoticeDismiss;
+
+  /// No description provided for @joinReqPausedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitations are paused. You can decline requests now and approve them once the pause ends.'**
+  String get joinReqPausedNote;
+
+  /// No description provided for @moderationSectionDepartedTimeouts.
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out after leaving'**
+  String get moderationSectionDepartedTimeouts;
+
+  /// No description provided for @moderationDepartedTimeoutsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'These timeouts come back if the person rejoins.'**
+  String get moderationDepartedTimeoutsNote;
+
+  /// No description provided for @moderationNoDepartedTimeouts.
+  ///
+  /// In en, this message translates to:
+  /// **'No one who left is timed out.'**
+  String get moderationNoDepartedTimeouts;
+
+  /// No description provided for @moderationDepartedTimeoutUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Until {time}'**
+  String moderationDepartedTimeoutUntil(String time);
+
+  /// No description provided for @moderationLiftTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Lift timeout for {username}'**
+  String moderationLiftTimeout(String username);
+
   /// No description provided for @joinReqAskedAt.
   ///
   /// In en, this message translates to:

@@ -58,9 +58,9 @@ silent gap. Splitting account marks by conversation would need a migration.
    keys built before merge). The binding is v2 (a device signature, a key
    commitment in the link and the secret-keyed tag), built in
    `C1-invite-format.md`; it still needs an independent design review; a
-   link the server can read gets no protection. Open: should an invitation
-   from someone the joiner shares no group with be refused outright? (v2
-   anchors that case on the commitment in the link.)
+   link the server can read gets no protection. Answered 2026-11-21:
+   strangers' invitations are allowed by default, and a user switch refuses
+   community invitations from them (`C1-invite-format.md`).
 2. Allow a migration splitting account prune marks by conversation, or
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and
@@ -177,9 +177,10 @@ design.
    the shared MLS group id, and the signed invitation does not carry it, so a
    community join does not yet pin the inviter's key the way a group join
    does. This changes what an invitation signs (second-opinion area).
-2. Join-request notification: admins still see a request only when they open
-   the list. A generic push ("something needs your attention") would need
-   the L2/W8 push design and an owner decision on what it may reveal.
+2. Join-request notification: built 2026-11-21 (owner decision: it says
+   only "New join request"): a content-free `account.join_request` event per
+   owner and admin and the generic push wake. Not built: a visible phone
+   notification while the app is closed (native notice text, Kotlin/Swift).
 3. Independent security review of invite v2 (the 2026-11-09 port was done
    solo at the owner's request), and native end-to-end evidence for a
    community approval and removal on devices.
