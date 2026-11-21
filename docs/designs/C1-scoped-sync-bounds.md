@@ -1,10 +1,17 @@
 # C1: per-conversation sync bounds and the client-cursor plan
 
-**Status: proposed (2026-11-07), not built.** Decides the open point in
-STATE.md C1: "Bounds are still account-wide; decide per-conversation bounds
-before a client uses them". It applies to the scoped routes behind
-`PRIVATE_MESSENGER_SCOPED_SYNC`
-(`server/internal/httpapi/scoped_sync_handlers.go`,
+**Status: proposed (2026-11-07), not built, and not needed by the built
+hybrid (2026-11-21).** The scoped routes are on by default (D98). The app
+reads only a page's events, `scope`, `scope_id`, `scanned_through` and
+`scan_truncated` (D134 made the last two part of every page), never the
+envelope's account-wide `sync_epoch`, `oldest_event_id` or `latest_event_id`,
+and uses the conversation route only for a conversation the P1 pause froze.
+This design applies if scoped streams ever become the main path; see
+[C1-progress](C1-progress.md), "2026-11-21". It was the answer to the
+STATE.md C1 point "Bounds are still account-wide; decide per-conversation
+bounds before a client uses them". It applies to the scoped routes
+(`PRIVATE_MESSENGER_SCOPED_SYNC`,
+`server/internal/httpapi/scoped_sync_handlers.go`,
 `server/internal/storage/scoped_sync_store.go`). Read it with
 [C1-sync-isolation](C1-sync-isolation.md) and [C1-progress](C1-progress.md).
 It touches MLS ordering and sync, so it needs an independent review before

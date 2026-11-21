@@ -65,7 +65,7 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	fs := flag.NewFlagSet("veritra-load", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var opts options
-	profileName := fs.String("profile", "s", "dataset profile: smoke, s or m")
+	profileName := fs.String("profile", "s", "dataset profile: smoke, s, m or c8")
 	fs.StringVar(&opts.Target, "target", "", "server base URL, for example http://127.0.0.1:18080")
 	fs.StringVar(&opts.SetupTokenFile, "setup-token-file", "", "file holding the instance's setup token (fresh instance)")
 	fs.StringVar(&opts.MetricsURL, "metrics", "", "optional private /metrics URL scraped before and after the run")
@@ -83,6 +83,8 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	fs.DurationVar(&opts.DeliveryDeadline, "delivery-deadline", defaultDeliveryDeadline, "time after a send starts by which every online recipient client must learn of the message (the sync page its realtime frame leads to); later it counts as a missed delivery")
 	accounts := fs.Int("accounts", 0, "override the profile's account count")
 	history := fs.Int("history", -1, "override the profile's seeded message count")
+	groupSize := fs.Int("group-size", 0, "override the profile's group size; raises the account count to fit (the member limit and deliveries a minute must allow it, see docs/designs/C8-bigger-communities.md)")
+	groups := fs.Int("groups", -1, "override the profile's number of groups")
 	attachments := fs.Int("attachments", -1, "override the profile's seeded attachment count")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
@@ -95,6 +97,13 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 		p.Accounts = *accounts
 		p.DMs = min(p.DMs, *accounts/2)
 		p.Groups = min(p.Groups, *accounts)
+	}
+	if *groups >= 0 {
+		p.Groups = *groups
+	}
+	if *groupSize > 0 {
+		p.GroupSize = *groupSize
+		p.Accounts = max(p.Accounts, p.GroupSize)
 	}
 	if *history >= 0 {
 		p.History = *history
