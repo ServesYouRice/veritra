@@ -17,6 +17,12 @@ distributionUrl on https://services.gradle.org/distributions/ for a pinned
 gradle-X.Y[.Z]-(bin|all).zip. A distributionSha256Sum must be 64 lowercase hex
 characters.
 
+A gradle-wrapper.jar tracked by git is refused unless its SHA-256 is in
+PINNED_WRAPPER_JAR_SHA256 (empty: none is pinned, and the repository commits
+no jar; Flutter generates the untracked one at build time). A committed jar
+is code that runs on every build, so it must match a hash someone reviewed
+(TASK-125). If git cannot say what is tracked, the jar is not judged.
+
 Fails closed: a missing app build script (app/build.gradle.kts or
 app/build.gradle), a missing or empty wrapper properties file, an unreadable
 file, a duplicate property, or an unterminated string or block comment is an
@@ -25,7 +31,9 @@ error.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +47,10 @@ DYNAMIC_VERSIONS = (
 
 
 WRAPPER_PROPERTIES = Path("gradle/wrapper/gradle-wrapper.properties")
+WRAPPER_JAR = Path("gradle/wrapper/gradle-wrapper.jar")
+# SHA-256 of wrapper jars that were reviewed and may be committed. Add one only
+# after checking it against the official Gradle distribution.
+PINNED_WRAPPER_JAR_SHA256: frozenset[str] = frozenset()
 WRAPPER_URL = re.compile(r"https://services\.gradle\.org/distributions/gradle-[0-9]+\.[0-9]+(\.[0-9]+)?-(bin|all)\.zip")
 WRAPPER_SHA256 = re.compile(r"[0-9a-f]{64}")
 PROPERTY_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}
@@ -226,6 +238,30 @@ def check_wrapper(android: Path) -> list[str]:
     return []
 
 
+def check_wrapper_jar(android: Path) -> None:
+    """Raise GradleInputError for a git-tracked wrapper jar that is not pinned."""
+    jar = android / WRAPPER_JAR
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(android), "ls-files", "--error-unmatch", "--", WRAPPER_JAR.as_posix()],
+            capture_output=True,
+            check=False,
+        ).returncode == 0
+    except OSError:
+        return  # no git: nothing to say about what is committed
+    if not tracked:
+        return
+    try:
+        digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise GradleInputError(f"{jar} is tracked by git but cannot be read: {exc}") from exc
+    if digest not in PINNED_WRAPPER_JAR_SHA256:
+        raise GradleInputError(
+            f"{jar} is committed with SHA-256 {digest}, which is not a reviewed wrapper jar "
+            "(remove it, or pin its hash in PINNED_WRAPPER_JAR_SHA256 after checking it against the official distribution)"
+        )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("usage: check-gradle-inputs.py ANDROID_DIR", file=sys.stderr)
@@ -233,6 +269,7 @@ def main(argv: list[str]) -> int:
     android = Path(argv[0])
     try:
         warnings = check_wrapper(android)
+        check_wrapper_jar(android)
         findings = check_dynamic_versions(android)
     except GradleInputError as exc:
         print(f"Gradle input check failed: {exc}", file=sys.stderr)
