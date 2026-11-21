@@ -1304,6 +1304,68 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 private channel membership (2026-11-21; no ABI, wire, server,
+  migration or local schema change; new commit-acceptance rule):** who can
+  read a private channel is who is in its own MLS group, and until now any
+  member's device committed whatever accounts the server listed for it
+  (reconcile, and the creator's first commit). A server that listed an
+  outsider, with one honest device's reconcile, made the channel readable to
+  them (posts, the channel's info key on add delivery, its C7 handover).
+  Now, in a private channel's group (the authority says so, or this device
+  pinned it as one, below):
+  - **Receivers.** A commit whose account roster after it holds an account
+    the roster before did not (a *new account*; a new device of an account
+    that already holds a leaf is not one) is accepted only when the
+    committer is the owner or an admin under the community's verified C4
+    record (the shared group's, as the device holds it) and the committer's
+    leaf is `approved` by its account's L1 list (`checking` retries later).
+    Otherwise it is *held* (`GovernanceHeldException`,
+    `private_add_unauthorized` or `committer_unapproved`; C4 "held
+    commits"), never refused: the two groups have no common order, so a
+    promotion in the shared group may simply not have arrived yet, and a
+    retry merges once it has. Nothing merges meanwhile, so this device never
+    encrypts to the newcomer, sends no `history_sync` for that epoch and
+    answers no key request from it. No record (none held, or a server
+    topology that maps the group to none) accepts no new account.
+    Moderators do not add (the C3 design: admins pick the members; D115
+    lets moderators remove only). Code:
+    `NativeCryptoService._judgePrivateChannelCommit`, rule
+    `privateChannelAddAccepted` in
+    `mobile/lib/core/roles/private_channel_membership.dart`.
+  - **Producers.** A device stages a new account into a private channel's
+    group only while its account is the owner or an admin under that record
+    *and* its own user picked the account: `AppState.addConversationMember`
+    and an open-to-private conversion (D127) save the pick
+    (`c3.private_picks.<conversation>`, account to expiry, seven days)
+    before they ask the server, and drop it when the server refuses. The
+    pick is spent (removed) when a commit adding the account is accepted,
+    this device's own or another's. A new device of an account already in
+    the group, and this account's own devices, are always addable (L1 still
+    approves each device). The creator's first commit adds only its own
+    devices; picked readers join by the next commit. The rule runs before
+    any key package is claimed (`PrivateChannelAddGate.privateChannelAddable`
+    from AppState's add discovery), and again in `initializeConversation`
+    and `stageMembershipChange`, which leave an unpicked account out and
+    refuse a change that would add nothing else
+    (`PrivateChannelAddRefusedException`; the server keeps it pending).
+  - **Pin.** `c3.private_group.<conversation>` is set when the app's
+    community refresh lists a routed private channel, before a private
+    channel or a conversion target is set up, and by any judgment or add
+    gate that sees the authority's private label. It is never cleared, so
+    a server that later labels the group as something else cannot switch
+    the rule off.
+  - **Residuals.** The first label still comes from the server: a device
+    that never saw the group as private (pinned nothing) applies no rule
+    there, and a server that maps the group to a community the attacker
+    owns supplies that community's record (the C3 topology residual). An
+    admin's own pick is trusted; the server learns the picks, as it already
+    learns the member list. A pick written while a pruning commit is merged
+    can be lost (last writer wins); the admin adds again. The server still
+    lets moderators add members to a private channel (`CanManageMembers`);
+    such an add stays pending, since no honest device commits it (owner
+    question). Tests: `mobile/test/c3_private_membership_native_test.dart`
+    (each guard removed in turn fails it).
+
 - **D134 stuck MLS update: Retry or Discard (2026-11-14, follows I34 and
   I51, bug-hunt c6ed/Q-006; no ABI, wire, server, migration or local
   schema change):** a control message that failed for good (I34: a

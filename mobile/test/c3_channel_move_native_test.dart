@@ -17,6 +17,7 @@ import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
 import 'native_test_env.dart';
+import 'private_channel_picks.dart';
 
 // C3 channel conversion (C7 decision 11, owner answers 2026-11-12) through
 // real OpenMLS devices: the `move` record continues the channel's chain in
@@ -78,6 +79,9 @@ class _Authority
 
 int _serverIds = 0;
 
+/// Every account these tests enroll.
+const _accounts = ['alice', 'bob', 'carol', 'dave', 'erin', 'frank'];
+
 /// Accounts besides the owner (alice) that may record and commit.
 final _admins = <String>{};
 
@@ -99,6 +103,12 @@ void main() {
     addTearDown(c.service.dispose);
     c.service.conversationAuthority = _Authority(where ?? home);
     c.service.c7SealedBodies = true;
+    // C3: these tests are not about who picks a private channel's readers.
+    for (final conversation in [_private, _newPrivate]) {
+      await pickForPrivateChannel(c.store, conversation, [
+        for (final n in _accounts) 'acct_$n',
+      ]);
+    }
     return c;
   }
 

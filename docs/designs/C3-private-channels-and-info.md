@@ -1,7 +1,11 @@
 # C3: private channels and encrypted community info (design)
 
-**Status: steps 1-2 and a tested sender/fetch slice of step 3 built
-(2026-11-09); C3 remains partial.** See [local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
+**Status (2026-11-21): steps 1-4, conversion (D127, behind
+`PRIVATE_MESSENGER_C7_HISTORY`) and private channel membership under the
+verified C4 record are built; see "Private channel membership" at the end.
+Left: the "admins restrict channel info" flag in the C4 record, and an
+end-to-end run against a real server before G25.** Earlier:
+[local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
 Written 2026-11-01 against `main`
 at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 [W11](W11-profiles.md) (encrypted record mechanism).
@@ -567,3 +571,46 @@ cannot edit channel info. Rules from the first review that still bind:
   asks again.
 - Info envelopes carry no `frank_commit` while every other message does, so
   the server can tell these control messages apart (as with C7's).
+
+## Private channel membership (2026-11-21)
+
+**Gap.** Who can read a private channel is who is in its MLS group, and
+every member's app added whatever accounts the server listed for the
+channel's conversation (reconcile after a three-minute fallback, and the
+creator's first commit). A hostile server that listed an outsider (any
+account, a community member or not) and waited for one honest device to
+reconcile made the channel readable: later posts, the channel's info key
+(add delivery), its C7 handover.
+
+**Rule** (docs/crypto.md, change log "C3 private channel membership"):
+
+- A new account enters a private channel's group only by a commit from the
+  owner or an admin under the community's verified C4 record, from a leaf
+  its account's L1 list approves. Every member's app checks this on each
+  commit and holds (never refuses) one that fails: the promotion in the
+  shared group may not have arrived yet. New devices of accounts already
+  in the group need no role.
+- An owner's or admin's app commits a new account only when its own user
+  picked it (creating the channel, adding a member, or ticking readers in
+  an open-to-private conversion). An account the server proposes that
+  nobody here picked is left out before any key package is claimed.
+- A group the app has once seen as a private channel stays one for this
+  rule (a local pin), whatever the server says later.
+
+Admins pick, moderators do not add: this follows "Admins pick the members"
+above (D115 only lets moderators remove). The server still lets moderators
+add members to a private channel; no honest device commits that add, so it
+stays pending (owner question in the report).
+
+**Residuals.** The first label and the shared-group mapping come from the
+server (the topology residual above); the server learns picks as it already
+learns the member list.
+
+**Tests.** `mobile/test/c3_private_membership_native_test.dart` (real
+OpenMLS devices): a member's app refuses an unpicked account and an admin's
+adds only its picks; a member's commit that adds an outsider is held by
+every reader, and the outsider who joined that fork cannot read what the
+readers post next; a server label switched off after the pin does not
+switch the rule off; an admin's add waits for the promotion and then
+merges; a reader's new device joins by a plain member's commit. Removing
+either guard fails them.
