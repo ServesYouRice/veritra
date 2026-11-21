@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7, camera and screen share are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
+**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 are not; camera and screen share were built in round 9 (see "Camera and screen share"). The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -489,10 +489,8 @@ Media transport and demo factory (2026-11-11, branch `feat/b6-rest`):
   `added_device_ids` marks only seats with an unexpired offer; offers expire
   within 60 s; a session without a device cannot join a room.
 
-Not built: camera and screen share (`canShareScreen` is false; the generic
-receive path handles every slot); the call-group context extension binding
-`call_id` (core change); S1 spike and S7 evidence; Android foreground
-services and iOS broadcast extension; the core keeping
+Not built: the call-group context extension binding
+`call_id` (core change); S1 spike and S7 evidence; the core keeping
 `pm_crypto_group_b6_media_key` to call groups (would need an ABI change).
 Known gaps to check in S1: a published track sends clear silence until its
 cryptor is attached (no content); a remote track is muted synchronously
@@ -546,3 +544,117 @@ Review fixes (round 7, 2026-11-11):
   commit in a normal race, and refusing it means leave and rejoin; the
   send-key hold and the committer's own Remove cover the member instead.
 - **Impersonation is documented** (Info): see the threat table.
+
+## Camera and screen share (round 9)
+
+Built on the voice path, behind the same demo gate. Dart tests run against
+fakes of the SFU, the frame cryptor and the platform capture (no real
+capture ran: the brief forbids `flutter build`, and this machine has no
+Android SDK, Xcode or display session).
+
+- **Same fail-closed order as voice** (`RoomMediaSession`): a camera (slot 1)
+  or screen (slot 2) track is created and published disabled, its sender
+  cryptor `account/device:slot` is attached and enabled, the send key index
+  is set, and only then is it enabled; a cryptor that will not enable ends
+  the call. Every key switch moves every sender, not only the voice, so no
+  track is left on a key the receivers drop after 10 s. Camera off and a
+  share the system ends (`LocalTrackUnpublishedEvent`) unpublish and stop
+  the capture, so the camera light goes out; a reconnect disables the video
+  with the voice (`_local` holds every track).
+- **Publishing does not re-enable the track** (read in `livekit_client`
+  2.13.2): the adapter starts the capture, disables it, then publishes.
+  `publishVideoTrack` calls `track.start()`, which returns early for an
+  active track, and `onPublish`, which only sets a flag; neither touches
+  `mediaStreamTrack.enabled`. Only `Track.enable()` does, called by
+  `LocalTrack.unmute` and by a remote track's start. B6 never calls
+  `mute` or `unmute` on its own tracks, **but the SFU can**: LiveKit applies
+  a signalled remote mute (`SignalRemoteMuteTrackEvent`) to a local track,
+  and a remote unmute after it restarts the capture (`restartTrack`) or
+  enables it. Before the cryptor is attached that sends clear frames, and
+  later it turns on a microphone the person muted. So any local
+  `TrackMutedEvent` or `TrackUnmutedEvent` is the SFU's doing: inside the
+  event's callback every local track is cut from its RTP senders
+  (`transceiver` and backup senders dropped, each sender's track replaced by
+  none, so `restartTrack` refuses and a later `enable()` reaches no sender)
+  and the call ends (review, round 9). A new LiveKit version needs all of
+  this read again.
+- **One VP8 sender, dynacast off, or the call ends** (review, round 9). The
+  SFU can move the codec (`enabledPublishCodecs` in the join answer, or the
+  codec in its `AddTrack` answer). For an SVC codec LiveKit turns dynacast
+  on, and with dynacast on it publishes any backup codec the SFU asks for
+  (`SubscribedQualityUpdate`) on a second RTP sender with no cryptor,
+  without checking `backupVideoCodec.enabled`. The adapter checks right
+  after each video publish, while the capture is still disabled, that the
+  codec is VP8, that the track has no backup sender and that dynacast is
+  off, and checks the last two again before every enable; otherwise the
+  capture is cut, unpublished and stopped and the call ends. A deployment
+  whose SFU does not allow VP8 has no video.
+- **Captures always stop.** Unpublishing a track stops its capture, and
+  ending the connection stops every capture it published, also one whose
+  publish finished after the room was gone (the camera light goes out).
+  Taking a sender down runs disable, unpublish and cryptor removal as
+  separate steps, cryptor last, so one that fails does not leave a capture
+  running or a sender carrying a capture without its cryptor.
+- **Switching off while it starts** cancels the start: the capture is
+  released and never enabled, and a second tap on "on" keeps it.
+- **Sealed announcements list every track** and are sent again after each
+  publish and unpublish. A remote video is drawn only once bound to
+  `account/device:slot` by its sender's announcement; a raw SFU video track
+  nobody announced has no key and no tile.
+- **Publish options are fixed** (`roomCameraPublishOptions`,
+  `roomScreenPublishOptions`, pinned by a test): VP8, **simulcast off**
+  (the design asks S1 to confirm the frame cryptor's IV never repeats across
+  three encoders under one key first) and **no backup codec** (a second RTP
+  sender with no cryptor). Camera 540p, 24 fps, 600 kbit/s cap; screen up to
+  1080p, 15 fps, 1.5 Mbit/s cap. With no simulcast every subscriber receives
+  the one layer: the 25-device cap matters more until S1.
+- **Room size (O3).** Camera and screen share are refused in a room of more
+  than 25 devices, and stop (with a notice) when the room grows past 25.
+  Voice stays.
+- **Platform steps** (`room_capture.dart`, `PlatformRoomCapture`):
+  Android asks `Helper.requestCapturePermission` (asked afresh each time,
+  because Android 14 refuses a reused consent), then starts the
+  `mediaProjection` foreground service, then creates the screen track.
+  Windows, macOS and Linux pick a screen or window from
+  `desktopCapturer.getSources` in the app (names only, never logged); macOS
+  also asks for Screen Recording through the same consent call. iOS sends a
+  camera but not a screen (O6, below). Capture refused after the consent
+  (permission denied, no camera, picker cancelled) shows a notice and the
+  call goes on.
+- **Lifecycle.** Android and iOS permission and consent screens pause the
+  app. `RoomScreen` left the room on that pause (the microphone prompt at
+  first join included); `requestingPermission` now holds the leave while a
+  capture or consent is in flight and checks again when it ends.
+- **Android foreground service** (`RoomCallService.kt`, `RoomCallBridge`,
+  pure `RoomCallRules.java` with a JVM test in `android/wake-tests/`): type
+  `mediaProjection` only, a fixed notification with no names on its own low
+  importance channel, `START_NOT_STICKY`, answers true to Dart only after
+  `startForeground` succeeded. It exists only while a share does; no push or
+  wake job starts it (D52). **Demo builds only:** the BuildConfig flag
+  `VERITRA_ROOM_SERVICE` is decided at build time (demo define) and forced
+  off for release and profile, and the permissions and `<service>` entry
+  sit in the debug manifest only (a test reads every other source set's
+  manifest, the `play` flavor's included, and was mutation-tested). Moving them to the main manifest, and the
+  Play foreground-service declaration, are platform-policy items for the
+  owner and belong with the G25 release. The Kotlin was written but **not
+  compiled here** (no Android SDK); CI on the PR compiles it.
+- **iOS screen share is not built, as O6 (D106) says.** No broadcast
+  extension, no app group, no `RTCAppGroupIdentifier`: the design does not
+  call for them in the first release, and `canShareScreen` is false on iOS
+  (tests pin both). If O6 is reversed later it needs: a Broadcast Upload
+  Extension target and its entitlements, an app group, the three Info.plist
+  keys flutter_webrtc reads, and the media key handed to the extension
+  through the app group (the open question the design raises).
+- **macOS** gets the camera entitlement (Debug and Release: the CI demo
+  bundle is a release build) and usage text; it had neither, so camera in
+  any call, one-to-one too, failed there. iOS's camera text now
+  says calls.
+- **Known limits.** O5 stays: a phone that goes to the background leaves
+  the room, so an Android share can only show Veritra itself until the owner
+  decides to keep the room while sharing (that would also want a
+  `microphone` service type). Screen audio (slot 3) has no capture path:
+  the key exists and the receive path handles it. Linux captures on X11
+  through libwebrtc's desktop capturer; Wayland through the PipeWire portal
+  is not confirmed (S1). FLAG_SECURE (screen guard) makes an Android capture
+  of Veritra's own window black. The video tile layout is functional, not
+  designed (a horizontal strip).

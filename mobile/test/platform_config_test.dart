@@ -145,8 +145,10 @@ void main() {
     expect(infoPlist, contains('<key>NSCameraUsageDescription</key>'));
     expect(
       infoPlist,
-      contains('Veritra uses the camera to scan device-link QR codes.'),
+      contains('Veritra uses the camera to scan device-link QR codes'),
     );
+    // Video calls and group calls use it too, so the prompt says so.
+    expect(infoPlist, contains('video calls and group calls'));
   });
 
   // In-memory voice playback (D134) serves a decrypted note to AVPlayer over

@@ -7,6 +7,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../calls/call_controller.dart';
 import '../../calls/call_service.dart';
 import '../../calls/room/livekit_sfu.dart';
+import '../../calls/room/room_capture.dart';
 import '../../calls/room/room_api.dart';
 import '../../calls/room/room_engine.dart';
 import '../../calls/room/room_factory.dart';
@@ -105,6 +106,7 @@ class _CallHostState extends State<CallHost> {
         selfDeviceId: deviceId,
         rosterChanges: state,
         connectSfu: LiveKitSfuConnection.new,
+        makeCapture: PlatformRoomCapture.new,
       );
       state.roomSession.value = RoomSession(
         openCall: rooms.open,

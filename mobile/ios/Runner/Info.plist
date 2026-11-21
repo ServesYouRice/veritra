@@ -40,7 +40,7 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Veritra uses the camera to scan device-link QR codes.</string>
+	<string>Veritra uses the camera to scan device-link QR codes and, only when you turn it on, in video calls and group calls.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Veritra connects to a Veritra server you host on your own network.</string>
 	<key>NSMicrophoneUsageDescription</key>

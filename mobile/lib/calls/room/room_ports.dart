@@ -303,17 +303,97 @@ abstract interface class RoomTimer {
   void cancel();
 }
 
+/// Why a camera or screen share did not start. Shown as a short notice; it
+/// never ends the call (only a failed cryptor does).
+enum RoomMediaNotice {
+  /// The camera could not be opened (permission refused, no camera).
+  cameraUnavailable,
+
+  /// The screen could not be captured (permission refused, or the platform
+  /// has no capture path).
+  screenUnavailable,
+
+  /// There is no screen or window to share.
+  screenNoSource,
+
+  /// The room is too big for video (O3): camera and screen share are off.
+  videoRoomFull,
+}
+
+/// A screen or window a desktop can share. Only [name] is ever shown; it is
+/// never logged or sent (window titles are private).
+class ScreenSource {
+  const ScreenSource({
+    required this.id,
+    required this.name,
+    this.isWindow = false,
+  });
+  final String id;
+  final String name;
+  final bool isWindow;
+}
+
+/// One decrypted video the room screen may draw: a member's camera or shared
+/// screen once its track is bound through MLS, or this device's own camera
+/// preview. [stream] is an opaque handle for the tile builder (a
+/// `MediaStream` on the real transport).
+class RoomVideoTile {
+  const RoomVideoTile({
+    required this.id,
+    required this.slot,
+    required this.stream,
+    this.memberId,
+  });
+
+  /// Stable per tile: the track's SFU id, or `local-camera`.
+  final String id;
+
+  /// `account/device` of the sender, or null for this device's own preview.
+  final String? memberId;
+
+  /// [roomSlotCamera] or [roomSlotScreen].
+  final int slot;
+  final Object stream;
+
+  bool get local => memberId == null;
+}
+
 /// What the room screen may ask of the media transport (the SFU connection).
 /// Null means the build has none, and the screen hides those controls.
 abstract interface class RoomMediaControls implements Listenable {
   bool get micMuted;
   Future<void> setMicMuted(bool muted);
 
+  /// Whether this platform can send a camera (and the room is connected).
+  bool get canUseCamera;
+  bool get cameraOn;
+  Future<void> setCameraOn(bool on);
+
   /// Desktop and Android only. iOS can watch a screen share but not send one
   /// (O6).
   bool get canShareScreen;
   bool get sharingScreen;
-  Future<void> setSharingScreen(bool on);
+
+  /// Desktop picks the screen or window in the app ([screenSources]);
+  /// Android shows the system's own consent screen.
+  bool get screenNeedsSource;
+  Future<List<ScreenSource>> screenSources();
+
+  /// Starts sharing [sourceId] (desktop) or the system-chosen capture
+  /// (Android), or stops.
+  Future<void> setSharingScreen(bool on, {String? sourceId});
+
+  /// True while an OS permission or capture-consent screen is up. Those
+  /// screens pause the app, which must not count as leaving the room.
+  bool get requestingPermission;
+
+  /// The last reason a camera or screen share did not start, or null.
+  RoomMediaNotice? get notice;
+  void dismissNotice();
+
+  /// Videos to draw now: only tracks bound to a member by MLS, plus this
+  /// device's own camera preview.
+  List<RoomVideoTile> get videoTiles;
 }
 
 /// A call group's MLS state, held apart from the messaging device so that it
