@@ -804,7 +804,7 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     if (!mounted) return;
     if (done) unawaited(_loadTimeouts());
     if (!done) {
-      setState(() => _error = state.errorFor(Ops.members) ?? _failureOf(state));
+      setState(() => _error = _failureOf(state) ?? state.errorFor(Ops.members));
     } else if (!lift) {
       // A timeout is reversible, so it can say so: Undo lifts it. (A removal
       // or ban is not offered Undo: nothing here can give the person back
