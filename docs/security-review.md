@@ -74,7 +74,9 @@ the crypto surface since the freeze is in [`crypto.md`](crypto.md).
   `com.apple.security.network.server` (which is not loopback-scoped: the
   code, not the sandbox, keeps the listener on 127.0.0.1)
 - `THIRD_PARTY_NOTICES.md`, lockfiles, CI, and release scripts
-- the OpenMLS 0.9.0 → 0.9.2 upgrade and the libcrux advisory exception (G27)
+- the OpenMLS 0.9.0 → 0.9.2 upgrade, the `hpke-rs-libcrux` placeholder that
+  retired the libcrux advisory exceptions, and the RUSTSEC-2026-0387 exception
+  (G27)
 
 ## Mandatory failure cases
 

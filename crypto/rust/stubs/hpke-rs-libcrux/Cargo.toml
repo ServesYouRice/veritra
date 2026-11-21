@@ -1,0 +1,28 @@
+# Veritra placeholder for hpke-rs-libcrux 0.7.0 (G27, owner decision
+# 2026-11-21). Wired in through [patch.crates-io] in ../../Cargo.toml.
+#
+# hpke-rs 0.7 (through openmls_rust_crypto 0.6) declares the libcrux HPKE
+# backend as an optional dependency and names it in weak features
+# (`hpke-rs-libcrux?/std` and others). Cargo locks optional dependencies even
+# when nothing enables them, so the real crate put libcrux-kem 0.0.9
+# (RUSTSEC-2026-0330/0331) into Cargo.lock without ever building it. This
+# empty crate has the same name, version and features, so the lockfile keeps
+# only this path entry and none of the libcrux crates behind it.
+#
+# It must never be enabled: Veritra uses the RustCrypto HPKE backend, and
+# src/lib.rs fails the build if anything turns this on. scripts/audit-rust.sh
+# also fails if hpke-rs-libcrux enters the build graph. Remove this crate and
+# the patch once openmls_rust_crypto moves to hpke-rs 0.8.
+[package]
+name = "hpke-rs-libcrux"
+version = "0.7.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "Empty Veritra placeholder for the never-enabled libcrux HPKE backend of hpke-rs 0.7"
+
+[features]
+std = []
+deterministic-prng = []
+draft-connolly-cfrg-hpke-mlkem = []
+rustcrypto-p-curves = []
