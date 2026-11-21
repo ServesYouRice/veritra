@@ -869,7 +869,7 @@
   "@chatHoldTrustTitle": {"placeholders": {"name": {"type": "String", "example": "Ana"}}},
   "chatHoldTrustBody": "One of {name}'s devices, or their recovery key, signed two different versions of their device list. Ask {name} to check their devices and remove any they don't recognise. Matching safety numbers show that you both see the same devices in this chat, but not which version is real. Trust the list only after {name} confirms the devices in this chat are theirs.",
   "@chatHoldTrustBody": {"placeholders": {"name": {"type": "String", "example": "Ana"}}},
-  "chatHoldTrustNewDevices": "Devices of {name} that this device doesn't approve now: {count}. Trusting the list approves them, and they can be added to your chats.",
+  "chatHoldTrustNewDevices": "Devices that weren't on {name}'s list before it changed: {count}. Trusting the list approves them, and they can be added to your chats.",
   "@chatHoldTrustNewDevices": {"placeholders": {"name": {"type": "String", "example": "Ana"}, "count": {"type": "int", "format": "decimalPattern"}}},
   "chatHoldTrustConfirm": "Trust list",
   "chatHoldTrustRefused": "The list the server shows now isn't one of the two signed versions, so nothing changed. Try again later.",

@@ -3990,7 +3990,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatHoldTrustNewDevices.
   ///
   /// In en, this message translates to:
-  /// **'Devices of {name} that this device doesn\'t approve now: {count}. Trusting the list approves them, and they can be added to your chats.'**
+  /// **'Devices that weren\'t on {name}\'s list before it changed: {count}. Trusting the list approves them, and they can be added to your chats.'**
   String chatHoldTrustNewDevices(String name, int count);
 
   /// No description provided for @chatHoldTrustConfirm.

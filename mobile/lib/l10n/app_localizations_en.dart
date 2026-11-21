@@ -2416,7 +2416,7 @@ class AppLocalizationsEn extends AppLocalizations {
         intl.NumberFormat.decimalPattern(localeName);
     final String countString = countNumberFormat.format(count);
 
-    return 'Devices of $name that this device doesn\'t approve now: $countString. Trusting the list approves them, and they can be added to your chats.';
+    return 'Devices that weren\'t on $name\'s list before it changed: $countString. Trusting the list approves them, and they can be added to your chats.';
   }
 
   @override

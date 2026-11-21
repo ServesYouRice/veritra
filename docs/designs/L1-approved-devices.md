@@ -252,8 +252,11 @@ what is pinned:
 
 - `prepareServedBranch` reads and verifies the branch the server shows,
   applies the rules below and writes nothing. It counts the devices the
-  branch lists that the conflicted pin does not list now (a device the
-  pinned branch removed counts as new). The warning is shown only after
+  branch lists that were not on the list as pinned before the conflict (a
+  device the pinned branch removed counts as new). While the conflict
+  lasts every device of the account is held, so trusting even the pinned
+  branch releases devices; the count is the change from the list before
+  the conflict, which is what the person last had confirmed. The warning is shown only after
   this, and states that count: trusting the list approves them, and they
   can be added to chats. A refused branch shows "nothing changed" without
   a warning.

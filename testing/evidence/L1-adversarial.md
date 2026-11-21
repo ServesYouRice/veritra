@@ -116,10 +116,10 @@ AppState and UI mutations (`l1_app_state_lists_test.dart`):
 | U3 Check again not spaced | hold banner reasons test |
 | U4 trust without the warning dialog | banner widget test |
 
-M1, M9, U2 and U4 were rerun after the reset was split into prepare and
-commit (U2 now on `prepareContactDeviceListTrust`); all caught. M3, M3m,
-M4, M7, M8, M10, U1 and U3 were run before the split, on code it did not
-change.
+After the reset was split into prepare and commit, M1, M3, M3m, M4, M9,
+U2 (now on `prepareContactDeviceListTrust`) and U4 were rerun against the
+new code, with the new compare-and-swap for M3, M3m and M4; all caught. M7,
+M8, M10, U1 and U3 were run before the split, on code it did not change.
 
 Rule checks inside Rust (no-return, one key one device, signatures) were
 not mutated here: no Rust build was allowed on this machine. They are
@@ -150,8 +150,10 @@ branch's Rust sources are unchanged); no Rust build was allowed here.
 - Focused: every `test/l1_*_test.dart`, `device_link_v3_flow_test.dart`,
   `l10n_locales_test.dart`, `l10n_hardcoded_strings_test.dart`,
   `l2_schema43_test.dart`: 236 passed, native required.
-- Full `flutter test` with native required: 3,633 passed, 7 skipped, 2
-  failed. `desktop_shell_test.dart` "settings screen offers the hide
+- Full `flutter test` with native required, at `14d0973` (the two-step
+  reset; only strings changed after it): 3,640 passed, 7 skipped, 1
+  failed, the `desktop_shell_test.dart` case below. Before the split:
+  3,633 passed, 7 skipped, 2 failed. `desktop_shell_test.dart` "settings screen offers the hide
   preview switch on desktop" fails the same way at the base `42626ff`
   with this branch's `mobile/lib` reverted (pre-existing).
   `message_expiry_test.dart` "a signed-out device still deletes what

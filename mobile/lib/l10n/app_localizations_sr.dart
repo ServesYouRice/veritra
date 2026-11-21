@@ -2425,7 +2425,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String chatHoldTrustBody(String name) {
-    return 'Један од уређаја корисника $name или његов кључ за опоравак потписао је две различите верзије листе уређаја. Замолите корисника $name да провери своје уређаје и уклони оне које не препознаје. Исти безбедносни бројеви показују да обоје видите исте уређаје у овом ћаскању, али не и која је верзија права. Верујте листи тек када $name потврди уређаје у овом ћаскању.';
+    return 'Уређај или кључ за опоравак корисника $name потписао је две различите верзије листе уређаја. Замолите корисника $name да провери своје уређаје и уклони оне које не препознаје. Исти безбедносни бројеви показују да обоје видите исте уређаје у овом ћаскању, али не и која је верзија права. Верујте листи тек када $name потврди уређаје у овом ћаскању.';
   }
 
   @override
@@ -2434,7 +2434,7 @@ class AppLocalizationsSr extends AppLocalizations {
         intl.NumberFormat.decimalPattern(localeName);
     final String countString = countNumberFormat.format(count);
 
-    return 'Уређаји корисника $name које овај уређај сада не одобрава: $countString. Ако верујете листи, они ће бити одобрени и могу бити додати у Ваша ћаскања.';
+    return 'Уређаји који нису били на листи корисника $name пре ове промене: $countString. Ако верујете листи, они ће бити одобрени и могу бити додати у Ваша ћаскања.';
   }
 
   @override
@@ -7950,7 +7950,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String chatHoldTrustBody(String name) {
-    return 'Jedan od uređaja korisnika $name ili njegov ključ za oporavak potpisao je dve različite verzije liste uređaja. Zamolite korisnika $name da proveri svoje uređaje i ukloni one koje ne prepoznaje. Isti bezbednosni brojevi pokazuju da oboje vidite iste uređaje u ovom ćaskanju, ali ne i koja je verzija prava. Verujte listi tek kada $name potvrdi uređaje u ovom ćaskanju.';
+    return 'Uređaj ili ključ za oporavak korisnika $name potpisao je dve različite verzije liste uređaja. Zamolite korisnika $name da proveri svoje uređaje i ukloni one koje ne prepoznaje. Isti bezbednosni brojevi pokazuju da oboje vidite iste uređaje u ovom ćaskanju, ali ne i koja je verzija prava. Verujte listi tek kada $name potvrdi uređaje u ovom ćaskanju.';
   }
 
   @override
@@ -7959,7 +7959,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
         intl.NumberFormat.decimalPattern(localeName);
     final String countString = countNumberFormat.format(count);
 
-    return 'Uređaji korisnika $name koje ovaj uređaj sada ne odobrava: $countString. Ako verujete listi, oni će biti odobreni i mogu biti dodati u Vaša ćaskanja.';
+    return 'Uređaji koji nisu bili na listi korisnika $name pre ove promene: $countString. Ako verujete listi, oni će biti odobreni i mogu biti dodati u Vaša ćaskanja.';
   }
 
   @override
