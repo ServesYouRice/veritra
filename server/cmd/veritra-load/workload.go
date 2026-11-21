@@ -876,6 +876,13 @@ type syncEvent struct {
 // its page arrives, and its attachments are queued for download. A cold
 // sync re-reads events the client already has; they count for nothing,
 // as an app does not fetch them again.
+//
+// The first catch-up has no cursor and reads the stream to its end. Load
+// starts before every client has done that (its socket and pages can take
+// seconds under load or -race), so that read can hold messages sent this
+// run that client is expected to see: those count as deliveries, timed
+// when their page arrives, and their attachments are queued. The seeded
+// history before them is no send of this run and counts for nothing.
 func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, wake, cold <-chan struct{}, downloads chan<- download) {
 	var cursor int64 = -1
 	// seen is the newest event already counted.
@@ -894,8 +901,9 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 		}
 		if cursor < 0 {
 			// A device with no cursor reads the stream to its end, as an app
-			// does, and counts none of it. Each request is a measured sync
-			// too, so a client that cannot start shows up as failed syncs.
+			// does, and counts only the sends of this run it still awaits.
+			// Each request is a measured sync too, so a client that cannot
+			// start shows up as failed syncs.
 			var at int64
 			failed := false
 			for ctx.Err() == nil {
@@ -907,6 +915,18 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, 
 				if err != nil {
 					failed = true
 					break
+				}
+				now := time.Now()
+				for _, event := range page.Events {
+					if event.ID <= seen {
+						continue
+					}
+					seen = event.ID
+					envelope := event.Payload.Envelope
+					if event.Type == "message.envelope.created" && envelope.SenderDeviceID != dev.deviceID &&
+						w.deliveries.observe(envelope.IdempotencyKey, client, now) {
+						w.queueDownloads(downloads, dev, envelope.AttachmentRefs, now)
+					}
 				}
 				next := page.next(at)
 				if page.Truncated && next <= at {
