@@ -824,6 +824,16 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 	if !member {
 		return nil, ErrNotMember
 	}
+	// C5 (docs/designs/C5-moderation.md): a ban refuses key-package claims
+	// by or for the banned account in every conversation of the community.
+	// The ban also drops its memberships, so the member checks refuse it
+	// too; this keeps the ban row decisive on its own, whatever path wrote
+	// a membership.
+	if banned, err := conversationCommunityBannedTx(ctx, tx, conversationID, requesterAccountID); err != nil {
+		return nil, err
+	} else if banned {
+		return nil, ErrForbidden
+	}
 	if !active {
 		// Explicit claims also support first-group creation. Once any MLS state
 		// exists, only an active leaf can claim; never reopen legacy groups.
@@ -856,6 +866,11 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 		}
 		if err != nil {
 			return nil, err
+		}
+		if banned, err := conversationCommunityBannedTx(ctx, tx, conversationID, accountID); err != nil {
+			return nil, err
+		} else if banned {
+			return nil, ErrForbidden
 		}
 		// A device over its claim limit is skipped like one with no package
 		// left: the caller adds it to the group later.

@@ -357,3 +357,158 @@ func TestMigration0087StartsEveryMembershipActiveToday(t *testing.T) {
 		t.Fatalf("backfilled last_active_at = %q, want %q", last, want)
 	}
 }
+
+// C4, an owner's account deleted (docs/designs/C4-custom-roles.md, "Server
+// differences to close"): the deletion is never refused for owning a group,
+// the scope keeps no owner row, and the server's row then follows the
+// record's win at once, because a deleted owner can never be active again.
+func TestDeletedOwnerLeavesTheGroupToTheAdminsMajority(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	t.Cleanup(func() { store.Close() })
+	instance := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, instance.Account.ID, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator := registerTestMember(t, ctx, store, invite.Code, "creator")
+	a := registerTestMember(t, ctx, store, invite.Code, "admina")
+	b := registerTestMember(t, ctx, store, invite.Code, "adminb")
+	c := registerTestMember(t, ctx, store, invite.Code, "adminc")
+	conv, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: creator.Account.ID, MemberAccountIDs: []string{a.Account.ID, b.Account.ID, c.Account.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, admin := range []AccountDevice{a, b, c} {
+		if _, err := store.ManageConversationMember(ctx, conv.ID, creator.Account.ID, admin.Account.ID, domain.RoleAdmin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask := func(caller, candidate AccountDevice) (SuccessionStatus, error) {
+		status, _, err := store.RequestConversationSuccession(ctx, conv.ID, caller.Account.ID, candidate.Account.ID)
+		return status, err
+	}
+	asks := func(where string, args ...interface{}) int {
+		t.Helper()
+		var n int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM owner_succession_requests WHERE `+where, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// While the owner is active, every ask is only recorded.
+	for _, pair := range [][2]AccountDevice{{a, a}, {b, c}, {c, c}} {
+		if status, err := ask(pair[0], pair[1]); err != nil || status != SuccessionRecorded {
+			t.Fatalf("ask while owner active: status=%q err=%v", status, err)
+		}
+	}
+	if _, err := store.DeleteAccountData(ctx, creator.Account.ID); err != nil {
+		t.Fatalf("delete the group's owner: %v", err)
+	}
+	var owners int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memberships WHERE conversation_id = ? AND role = ?`, conv.ID, domain.RoleOwner).Scan(&owners); err != nil || owners != 0 {
+		t.Fatalf("owner rows after the owner's deletion = %d err=%v", owners, err)
+	}
+	// A deleted admin's own asks and the asks naming it go with it.
+	if _, err := store.DeleteAccountData(ctx, c.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := asks(`account_id = ? OR candidate_account_id = ?`, c.Account.ID, c.Account.ID); n != 0 {
+		t.Fatalf("asks by or for a deleted account = %d", n)
+	}
+	if n := asks(`account_id = ?`, a.Account.ID); n != 1 {
+		t.Fatalf("a remaining admin's ask = %d, want 1", n)
+	}
+	// One ask of two admins is no majority, even with no owner.
+	if status, err := ask(b, b); err != nil || status != SuccessionRecorded {
+		t.Fatalf("split asks: status=%q err=%v", status, err)
+	}
+	// Both remaining admins for a: it moves with no quiet wait.
+	if status, err := ask(b, a); err != nil || status != SuccessionMoved {
+		t.Fatalf("majority after the owner's deletion: status=%q err=%v", status, err)
+	}
+	if role, err := store.ConversationMemberRole(ctx, conv.ID, a.Account.ID); err != nil || role != domain.RoleOwner {
+		t.Fatalf("new owner role = %q err=%v", role, err)
+	}
+	if role, err := store.ConversationMemberRole(ctx, conv.ID, b.Account.ID); err != nil || role != domain.RoleAdmin {
+		t.Fatalf("other admin role = %q err=%v", role, err)
+	}
+	if n := asks(`1 = 1`); n != 0 {
+		t.Fatalf("asks after the move = %d", n)
+	}
+}
+
+func TestDeletedOwnerWithNoAdminLeavesTheLongestServingMembersClaim(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	t.Cleanup(func() { store.Close() })
+	instance := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, instance.Account.ID, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator := registerTestMember(t, ctx, store, invite.Code, "creator")
+	first := registerTestMember(t, ctx, store, invite.Code, "first")
+	second := registerTestMember(t, ctx, store, invite.Code, "second")
+	conv, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: creator.Account.ID, MemberAccountIDs: []string{first.Account.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := store.ManageConversationMember(ctx, conv.ID, creator.Account.ID, second.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeleteAccountData(ctx, creator.Account.ID); err != nil {
+		t.Fatalf("delete the group's owner: %v", err)
+	}
+	if _, _, err := store.RequestConversationSuccession(ctx, conv.ID, second.Account.ID, second.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("younger member claim err = %v", err)
+	}
+	status, _, err := store.RequestConversationSuccession(ctx, conv.ID, first.Account.ID, first.Account.ID)
+	if err != nil || status != SuccessionMoved {
+		t.Fatalf("claim after the owner's deletion: status=%q err=%v", status, err)
+	}
+	if role, err := store.ConversationMemberRole(ctx, conv.ID, first.Account.ID); err != nil || role != domain.RoleOwner {
+		t.Fatalf("claimant role = %q err=%v", role, err)
+	}
+}
+
+func TestDeletedCommunityOwnerLeavesTheCommunityToItsAdmins(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	t.Cleanup(func() { store.Close() })
+	instance := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, instance.Account.ID, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creator := registerTestMember(t, ctx, store, invite.Code, "creator")
+	admin := registerTestMember(t, ctx, store, invite.Code, "admin")
+	community, err := store.CreateCommunity(ctx, creator.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, creator.Account.ID, admin.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, creator.Account.ID, admin.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := store.RequestCommunitySuccession(ctx, community.ID, admin.Account.ID, admin.Account.ID)
+	if err != nil || status != SuccessionRecorded {
+		t.Fatalf("ask while owner active: status=%q err=%v", status, err)
+	}
+	if _, err := store.DeleteAccountData(ctx, creator.Account.ID); err != nil {
+		t.Fatalf("delete the community's owner: %v", err)
+	}
+	if _, err := store.CommunityMemberRole(ctx, community.ID, creator.Account.ID); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("deleted owner's community row err = %v", err)
+	}
+	status, _, err = store.RequestCommunitySuccession(ctx, community.ID, admin.Account.ID, admin.Account.ID)
+	if err != nil || status != SuccessionMoved {
+		t.Fatalf("ask after the owner's deletion: status=%q err=%v", status, err)
+	}
+	if role, err := store.CommunityMemberRole(ctx, community.ID, admin.Account.ID); err != nil || role != domain.RoleOwner {
+		t.Fatalf("community role = %q err=%v", role, err)
+	}
+}

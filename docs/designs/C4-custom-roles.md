@@ -426,8 +426,19 @@ creator is kept when fixing up old data). Review finding: option (a) taken
 because the community's role copies into channel conversations. Server
 succession is built (migration 0087: 37 quiet days by the server's clock and
 a majority of the current admins; see `docs/crypto.md`, "C4 app wiring").
-Still open: account deletion of an owner (a follow-up). Apps never read these rows for
-roles, so the server and the signed record may still disagree safely.
+Account deletion of an owner (closed 2026-11-21): deleting an account is
+never refused for owning a group or community. Its memberships go, so the
+scope keeps no owner row; its succession asks and the asks naming it go
+too. In the record the deleted owner stays owner (it is never pruned) and
+the D81 vote or claim runs as for any absent owner. The server's row then
+follows that win through server succession, which treats a scope with no
+owner row as already quiet, because a deleted account can never be active
+again: a majority of the current admins (or, with none, the longest-serving
+member for itself) moves it at once. Residual: a colluding admin majority
+can move the server's row without the 37 days once the owner is deleted;
+the record does not follow, and apps never read the row. Apps never read
+these rows for roles, so the server and the signed record may still
+disagree safely.
 
 ## Owner questions
 

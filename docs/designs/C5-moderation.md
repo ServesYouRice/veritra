@@ -22,8 +22,7 @@ Not built: app-side checks (local schema 23 stays unused: no local table is
 needed until the apps read bans or timeouts)
 (wait for C4's record); admins deleting others' messages (needs C4's
 authority check on receipt, and for communities C7's `history-hide`, which
-is not built); key-package claim refusal for banned accounts (adds already
-refuse them, and a claim needs a member to ask); escalation and instance ban
+is not built); escalation and instance ban
 (not part of this package). A ban removes via the same path as C1's removal
 (`removeCommunityMemberTx`; it covers an active layout's shared and private
 conversations). Admins and above lift bans; moderators ban members they
@@ -47,7 +46,9 @@ the server restored but the C4 record lacks shows on the member screen,
 with Lift and "Apply to the record" (built 2026-11-21, "Timeouts after a
 rejoin" below);
 a banned account's devices cannot be claimed (a claim needs membership,
-which the ban removes; tested, no separate check). The C1 community remove
+which the ban removes) and, since 2026-11-21, the claim also refuses a
+banned requester or target on the ban row alone (403), in every
+conversation of the community (`TestKeyPackageClaimsRefuseABannedAccountOnTheBanAlone`). The C1 community remove
 route writes a `kick` audit row. Known gaps: the instance owner's
 escalation action kinds need a table rebuild when added; MLS commits of
 legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
@@ -301,8 +302,8 @@ approved moderator who outranks the target). The chat's action sheet offers
 wiring", "C5 moderator delete". No schema, migration or ABI change.
 
 Still not built: app-side checks of bans and timeouts (they need record
-fields, a C4 record change), key-package claim refusal for banned accounts
-(adds already refuse them), escalation and the instance ban. Server slow
+fields, a C4 record change), escalation and the instance ban. (Key-package
+claim refusal for banned accounts is built, 2026-11-21.) Server slow
 mode stays the only slow-mode check (owner decision, round 2).
 
 ## Timeouts after a rejoin (built 2026-11-21, owner decision 2026-11-21)

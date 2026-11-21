@@ -5204,7 +5204,10 @@ record are record changes, so the same rule covers them.
   ask from the owner is a transfer. Residuals: a colluding admin majority
   can move the row after 37 days of silence (the record, which apps use,
   does not follow); a large or inactive admin set may never reach quorum;
-  apps never read that row for roles.
+  apps never read that row for roles. An owner whose account is deleted
+  leaves no owner row, and a scope with none counts as quiet at once (a
+  deleted account is never active again), so the majority's asks move the
+  row without the 37 days; the record's own vote still waits (2026-11-21).
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A
