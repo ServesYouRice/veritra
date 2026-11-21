@@ -74,6 +74,14 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# tray_manager 0.5.3 calls app_indicator_new(), which newer
+# libayatana-appindicator releases mark deprecated, and APPLY_STANDARD_SETTINGS
+# makes every warning an error. Keep the warning visible but not fatal, for
+# that third-party plugin only; Veritra's own targets keep -Werror unchanged.
+if(TARGET tray_manager_plugin)
+  target_compile_options(tray_manager_plugin PRIVATE -Wno-error=deprecated-declarations)
+endif()
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
