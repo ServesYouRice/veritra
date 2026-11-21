@@ -256,7 +256,7 @@ func (s *Store) SetMemberTimeout(ctx context.Context, communityID, actorAccountI
 		return nil, err
 	}
 	// Remembered apart from the membership row, so leaving and joining again
-	// does not end it (migration 0094 copies it onto a new row).
+	// does not end it (migration 0095 copies it onto a new row).
 	if until != nil {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO member_timeouts(community_id, account_id, timeout_until) VALUES(?, ?, ?) ON CONFLICT(community_id, account_id) DO UPDATE SET timeout_until = excluded.timeout_until`, communityID, targetAccountID, arg); err != nil {
 			return nil, err
