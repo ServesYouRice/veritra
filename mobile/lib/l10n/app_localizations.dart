@@ -972,14 +972,26 @@ abstract class AppLocalizations {
   /// No description provided for @inviteRevokeTitle.
   ///
   /// In en, this message translates to:
-  /// **'Revoke invite?'**
+  /// **'Turn off this invite?'**
   String get inviteRevokeTitle;
 
   /// No description provided for @inviteRevokeMessage.
   ///
   /// In en, this message translates to:
-  /// **'Code {code} stops working immediately. People who already joined with it keep their accounts.'**
-  String inviteRevokeMessage(String code);
+  /// **'It stops working immediately. People who already joined with it keep their accounts.'**
+  String get inviteRevokeMessage;
+
+  /// No description provided for @inviteTurnOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off'**
+  String get inviteTurnOff;
+
+  /// No description provided for @inviteCannotReshare.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t be shared again'**
+  String get inviteCannotReshare;
 
   /// No description provided for @connectFreshInstanceTitle.
   ///
@@ -1844,6 +1856,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Expires {time}'**
   String inviteExpiresAt(String time);
+
+  /// No description provided for @inviteExpiresIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires in {time}'**
+  String inviteExpiresIn(String time);
+
+  /// No description provided for @inviteExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'Expired'**
+  String get inviteExpired;
 
   /// No description provided for @inviteActions.
   ///

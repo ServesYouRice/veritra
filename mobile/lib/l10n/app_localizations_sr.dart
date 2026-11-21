@@ -506,12 +506,17 @@ class AppLocalizationsSr extends AppLocalizations {
   String get backupReplaceConfirm => 'Замени резервну копију';
 
   @override
-  String get inviteRevokeTitle => 'Опозвати позивницу?';
+  String get inviteRevokeTitle => 'Искључити ову позивницу?';
 
   @override
-  String inviteRevokeMessage(String code) {
-    return 'Код $code одмах престаје да ради. Особе које су се већ придружиле помоћу њега задржавају своје налоге.';
-  }
+  String get inviteRevokeMessage =>
+      'Одмах престаје да ради. Особе које су се већ придружиле помоћу ње задржавају своје налоге.';
+
+  @override
+  String get inviteTurnOff => 'Искључи';
+
+  @override
+  String get inviteCannotReshare => 'Не може поново да се дели';
 
   @override
   String get connectFreshInstanceTitle => 'Овај сервер је нов';
@@ -1050,6 +1055,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String inviteExpiresAt(String time) {
     return 'Истиче $time';
   }
+
+  @override
+  String inviteExpiresIn(String time) {
+    return 'Истиче за $time';
+  }
+
+  @override
+  String get inviteExpired => 'Истекла';
 
   @override
   String get inviteActions => 'Радње за позивницу';
@@ -5922,12 +5935,17 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get backupReplaceConfirm => 'Zameni rezervnu kopiju';
 
   @override
-  String get inviteRevokeTitle => 'Opozvati pozivnicu?';
+  String get inviteRevokeTitle => 'Isključiti ovu pozivnicu?';
 
   @override
-  String inviteRevokeMessage(String code) {
-    return 'Kod $code odmah prestaje da radi. Osobe koje su se već pridružile pomoću njega zadržavaju svoje naloge.';
-  }
+  String get inviteRevokeMessage =>
+      'Odmah prestaje da radi. Osobe koje su se već pridružile pomoću nje zadržavaju svoje naloge.';
+
+  @override
+  String get inviteTurnOff => 'Isključi';
+
+  @override
+  String get inviteCannotReshare => 'Ne može ponovo da se deli';
 
   @override
   String get connectFreshInstanceTitle => 'Ovaj server je nov';
@@ -6466,6 +6484,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String inviteExpiresAt(String time) {
     return 'Ističe $time';
   }
+
+  @override
+  String inviteExpiresIn(String time) {
+    return 'Ističe za $time';
+  }
+
+  @override
+  String get inviteExpired => 'Istekla';
 
   @override
   String get inviteActions => 'Radnje za pozivnicu';

@@ -482,24 +482,5 @@ const Duration recoveryCountdownInterval = Duration(seconds: 30);
 
 /// U23: the time left in the recovery wait, in at most two units and
 /// rounded up, so it never reads zero while the wait is still on.
-String recoveryTimeLeftText(AppLocalizations l10n, Duration left) {
-  var minutes = (left.inSeconds + 59) ~/ 60;
-  if (minutes < 1) minutes = 1;
-  if (minutes < 60) return l10n.durationMinutes(minutes);
-  if (minutes < 24 * 60) {
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    return rest == 0
-        ? l10n.durationHours(hours)
-        : '${l10n.durationHours(hours)} ${l10n.durationMinutes(rest)}';
-  }
-  var days = minutes ~/ (24 * 60);
-  var hours = ((minutes % (24 * 60)) + 59) ~/ 60;
-  if (hours == 24) {
-    days += 1;
-    hours = 0;
-  }
-  return hours == 0
-      ? l10n.durationDays(days)
-      : '${l10n.durationDays(days)} ${l10n.durationHours(hours)}';
-}
+String recoveryTimeLeftText(AppLocalizations l10n, Duration left) =>
+    timeLeftInWords(l10n, left);

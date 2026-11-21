@@ -233,11 +233,10 @@
   "backupReplaceMessage": "The previous backup and its recovery code will stop working. Keep the new code somewhere safe.",
   "backupReplaceConfirm": "Replace backup",
 
-  "inviteRevokeTitle": "Revoke invite?",
-  "inviteRevokeMessage": "Code {code} stops working immediately. People who already joined with it keep their accounts.",
-  "@inviteRevokeMessage": {
-    "placeholders": {"code": {"type": "String", "example": "ABCD-1234"}}
-  },
+  "inviteRevokeTitle": "Turn off this invite?",
+  "inviteRevokeMessage": "It stops working immediately. People who already joined with it keep their accounts.",
+  "inviteTurnOff": "Turn off",
+  "inviteCannotReshare": "Can't be shared again",
 
   "connectFreshInstanceTitle": "This server is new",
   "connectFreshInstanceMessage": "No owner account exists yet — create it below.",
@@ -428,6 +427,9 @@
   "inviteNeverExpires": "Never expires",
   "inviteExpiresAt": "Expires {time}",
   "@inviteExpiresAt": {"placeholders": {"time": {"type": "String"}}},
+  "inviteExpiresIn": "Expires in {time}",
+  "@inviteExpiresIn": {"placeholders": {"time": {"type": "String", "example": "6 days 4 hours"}}},
+  "inviteExpired": "Expired",
   "inviteActions": "Invite actions",
   "inviteCodeCopied": "Invite code copied.",
   "inviteCopyCode": "Copy code",

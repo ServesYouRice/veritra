@@ -90,10 +90,10 @@ Future<(AppState, _InviteApi)> _open(
 Future<void> _revokeFirst(WidgetTester tester) async {
   await tester.tap(find.byTooltip(englishL10n.inviteActions).first);
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Revoke').last);
+  await tester.tap(find.text('Turn off').last);
   await tester.pumpAndSettle();
   // The confirmation dialog.
-  await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
   await tester.pumpAndSettle();
 }
 
@@ -144,9 +144,9 @@ void main() {
     api.failRevoke = true;
     await tester.tap(find.byTooltip(englishL10n.inviteActions).first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Revoke').last);
+    await tester.tap(find.text('Turn off').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Turn off'));
     // Gone before the answer is handled.
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     await tester.pumpAndSettle();

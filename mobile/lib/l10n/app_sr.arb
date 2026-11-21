@@ -160,8 +160,10 @@
   "backupReplaceMessage": "Претходна резервна копија и њен код за опоравак престаће да раде. Нови код чувајте на безбедном месту.",
   "backupReplaceConfirm": "Замени резервну копију",
 
-  "inviteRevokeTitle": "Опозвати позивницу?",
-  "inviteRevokeMessage": "Код {code} одмах престаје да ради. Особе које су се већ придружиле помоћу њега задржавају своје налоге.",
+  "inviteRevokeTitle": "Искључити ову позивницу?",
+  "inviteRevokeMessage": "Одмах престаје да ради. Особе које су се већ придружиле помоћу ње задржавају своје налоге.",
+  "inviteTurnOff": "Искључи",
+  "inviteCannotReshare": "Не може поново да се дели",
 
   "connectFreshInstanceTitle": "Овај сервер је нов",
   "connectFreshInstanceMessage": "Налог власника још не постоји — направите га испод.",
@@ -314,6 +316,8 @@
   "inviteUsedUnlimited": "{uses} искоришћено",
   "inviteNeverExpires": "Никада не истиче",
   "inviteExpiresAt": "Истиче {time}",
+  "inviteExpiresIn": "Истиче за {time}",
+  "inviteExpired": "Истекла",
   "inviteActions": "Радње за позивницу",
   "inviteCodeCopied": "Код позивнице је копиран.",
   "inviteCopyCode": "Копирај код",
