@@ -80,7 +80,7 @@ Future<_PeopleState> _openSearch(WidgetTester tester) async {
   );
   await tester.tap(find.text('People'));
   await tester.pumpAndSettle();
-  await tester.enterText(find.byType(TextField), 'peer');
+  await tester.enterText(find.byType(TextField), '@peer');
   // The account lookup runs on submit only.
   await tester.testTextInput.receiveAction(TextInputAction.search);
   await tester.pumpAndSettle();

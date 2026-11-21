@@ -4,13 +4,20 @@
 //
 // Who can read a private channel is exactly who is in its MLS group, and
 // the server's member list only proposes. A new account enters the group
-// only by a commit from an owner or admin under the community's verified
-// C4 record (the shared group's), and an honest device commits such an add
-// only for an account its own user picked. A new device of an account that
-// already holds a leaf needs neither (L1 still approves each device).
+// only by a commit from an owner, admin or moderator under the community's
+// verified C4 record (the shared group's), and an honest device commits
+// such an add only for an account its own user picked. A new device of an
+// account that already holds a leaf needs neither (L1 still approves each
+// device). Moderators may add (owner, 2026-11-21, as the server's
+// `CanManageMembers`); plain members never do.
 import 'dart:convert';
 
 import 'governance.dart';
+
+/// The lowest role under the verified record that may bring a new account
+/// into a private channel's group. The receiver and the producer below
+/// share it, so the two can never disagree.
+const BuiltInRole privateChannelAddMinRole = BuiltInRole.moderator;
 
 /// Set (to `1`) once this device has seen [conversationId] as a private
 /// channel's own group. Never cleared: a server that later labels the group
@@ -53,10 +60,11 @@ String encodePrivateChannelPicks(Map<String, int> picks) =>
     picks.isEmpty ? '' : jsonEncode(picks);
 
 /// Receiver: whether [committer] may bring the accounts of [after] that are
-/// not in [before] into a private channel's group. [record] is the
-/// community's verified role record as this device holds it (null when it
-/// holds none: then no new account is accepted). The committer's leaf must
-/// also be approved by its account's list; the caller checks that.
+/// not in [before] into a private channel's group: only an owner, admin or
+/// moderator ([privateChannelAddMinRole]) may. [record] is the community's
+/// verified role record as this device holds it (null when it holds none:
+/// then no new account is accepted). The committer's leaf must also be
+/// approved by its account's list; the caller checks that.
 bool privateChannelAddAccepted({
   required GovernanceState? record,
   required String committer,
@@ -64,13 +72,16 @@ bool privateChannelAddAccepted({
   required Set<String> after,
 }) {
   if (after.difference(before).isEmpty) return true;
-  return record != null && record.rankOf(committer) >= BuiltInRole.admin.rank;
+  return record != null &&
+      record.rankOf(committer) >= privateChannelAddMinRole.rank;
 }
 
 /// Producer: the accounts of [candidates] this device may add to a private
 /// channel's group: accounts already in it ([inGroup]) and this account
-/// (new devices), and, only while [self] is an owner or admin under
-/// [record], the accounts its user picked ([picked]).
+/// (new devices), and, only while [self] is an owner, admin or moderator
+/// under [record] ([privateChannelAddMinRole]), the accounts its user
+/// picked ([picked]). The role is checked now, when the add is staged, not
+/// when the user picked: a moderator demoted since then adds nothing.
 Set<String> privateChannelAddableAccounts({
   required GovernanceState? record,
   required String self,
@@ -79,7 +90,7 @@ Set<String> privateChannelAddableAccounts({
   required Iterable<String> candidates,
 }) {
   final mayPick =
-      record != null && record.rankOf(self) >= BuiltInRole.admin.rank;
+      record != null && record.rankOf(self) >= privateChannelAddMinRole.rank;
   return <String>{
     for (final account in candidates)
       if (account == self ||

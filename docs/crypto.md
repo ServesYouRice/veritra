@@ -1316,8 +1316,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Receivers.** A commit whose account roster after it holds an account
     the roster before did not (a *new account*; a new device of an account
     that already holds a leaf is not one) is accepted only when the
-    committer is the owner or an admin under the community's verified C4
-    record (the shared group's, as the device holds it) and the committer's
+    committer is the owner, an admin or a moderator under the community's
+    verified C4 record (the shared group's, as the device holds it; see the
+    2026-11-21 amendment below) and the committer's
     leaf is `approved` by its account's L1 list (`checking` retries later).
     Otherwise it is *held* (`GovernanceHeldException`,
     `private_add_unauthorized` or `committer_unapproved`; C4 "held
@@ -1327,13 +1328,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     encrypts to the newcomer, sends no `history_sync` for that epoch and
     answers no key request from it. No record (none held, or a server
     topology that maps the group to none) accepts no new account.
-    Moderators do not add (the C3 design: admins pick the members; D115
-    lets moderators remove only). Code:
+    Plain members never add a new account. Code:
     `NativeCryptoService._judgePrivateChannelCommit`, rule
     `privateChannelAddAccepted` in
     `mobile/lib/core/roles/private_channel_membership.dart`.
   - **Producers.** A device stages a new account into a private channel's
-    group only while its account is the owner or an admin under that record
+    group only while its account is the owner, an admin or a moderator under
+    that record (judged when the add is staged, not when the user picked)
     *and* its own user picked the account: `AppState.addConversationMember`
     and an open-to-private conversion (D127) save the pick
     (`c3.private_picks.<conversation>`, account to expiry, seven days)
@@ -1360,11 +1361,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     owns supplies that community's record (the C3 topology residual). An
     admin's own pick is trusted; the server learns the picks, as it already
     learns the member list. A pick written while a pruning commit is merged
-    can be lost (last writer wins); the admin adds again. The server still
-    lets moderators add members to a private channel (`CanManageMembers`);
-    such an add stays pending, since no honest device commits it (owner
-    question). Tests: `mobile/test/c3_private_membership_native_test.dart`
-    (each guard removed in turn fails it).
+    can be lost (last writer wins); the admin adds again. A commit racing
+    the committer's demotion is judged by the record each reader holds when
+    it arrives: one that already holds the demotion holds the add for good
+    (C4's "record held on arrival" residual), so the add is made again by
+    someone who still may. Tests:
+    `mobile/test/c3_private_membership_native_test.dart` (each guard
+    removed in turn fails it, and so does the threshold set to admin or to
+    member in either the receiver or the producer).
+  - **Amendment (2026-11-21, owner): moderators add.** The first version
+    of this rule let only owners and admins add, so a moderator's add,
+    which the server allows (`CanManageMembers`), stayed pending for good.
+    Moderators may now add a new account on the same terms as admins
+    (verified record, L1-approved leaf, held until the promotion arrives,
+    their own user's pick, the pin). The one threshold,
+    `privateChannelAddMinRole` = moderator, serves both
+    `privateChannelAddAccepted` and `privateChannelAddableAccounts`. D115
+    is otherwise unchanged: only owners and admins rotate the info key
+    (moderators only under D122). A moderator demoted to member adds
+    nobody, whatever it picked before.
 
 - **D134 stuck MLS update: Retry or Discard (2026-11-14, follows I34 and
   I51, bug-hunt c6ed/Q-006; no ABI, wire, server, migration or local

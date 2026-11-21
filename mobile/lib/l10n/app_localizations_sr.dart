@@ -885,27 +885,27 @@ class AppLocalizationsSr extends AppLocalizations {
       'Није пронађен налог са тачно тим корисничким именом.';
 
   @override
-  String get searchHint => 'Претражите особе, заједнице, канале…';
+  String get searchHint => 'Претражите заједнице, канале или @корисничко име…';
 
   @override
   String get searchClear => 'Обриши претрагу';
 
   @override
-  String get searchLookUpAccount => 'Потражи ово корисничко име';
+  String get searchLookUpAccount => 'Потражите @корисничко име';
 
   @override
   String get searchIntroTitle => 'Претражите људе и заједнице';
 
   @override
   String get searchIntroMessage =>
-      'Заједнице и канали се проналазе на овом уређају док куцате. Притисните Enter да потражите тачно корисничко име на серверу. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
+      'Заједнице и канали се проналазе на овом уређају док куцате. Да бисте пронашли особу, унесите @ и њено тачно корисничко име, па притисните Enter: на сервер се шаље само то. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
 
   @override
   String get searchNoResultsTitle => 'Нема резултата';
 
   @override
   String get searchNoResultsMessage =>
-      'Ништа се не подудара. Корисничка имена морају се тачно подударати, а могу се пронаћи само заједнице и канали чије називе овај уређај има.';
+      'Ништа се не подудара. Да бисте пронашли особу, унесите @ и њено тачно корисничко име. Могу се пронаћи само заједнице и канали чије називе овај уређај има.';
 
   @override
   String get searchNoOpenChannel => 'Још нема канала који можете да отворите';
@@ -6463,27 +6463,27 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nije pronađen nalog sa tačno tim korisničkim imenom.';
 
   @override
-  String get searchHint => 'Pretražite osobe, zajednice, kanale…';
+  String get searchHint => 'Pretražite zajednice, kanale ili @korisničko ime…';
 
   @override
   String get searchClear => 'Obriši pretragu';
 
   @override
-  String get searchLookUpAccount => 'Potraži ovo korisničko ime';
+  String get searchLookUpAccount => 'Potražite @korisničko ime';
 
   @override
   String get searchIntroTitle => 'Pretražite ljude i zajednice';
 
   @override
   String get searchIntroMessage =>
-      'Zajednice i kanali se pronalaze na ovom uređaju dok kucate. Pritisnite Enter da potražite tačno korisničko ime na serveru. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
+      'Zajednice i kanali se pronalaze na ovom uređaju dok kucate. Da biste pronašli osobu, unesite @ i njeno tačno korisničko ime, pa pritisnite Enter: na server se šalje samo to. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
 
   @override
   String get searchNoResultsTitle => 'Nema rezultata';
 
   @override
   String get searchNoResultsMessage =>
-      'Ništa se ne podudara. Korisnička imena moraju se tačno podudarati, a mogu se pronaći samo zajednice i kanali čije nazive ovaj uređaj ima.';
+      'Ništa se ne podudara. Da biste pronašli osobu, unesite @ i njeno tačno korisničko ime. Mogu se pronaći samo zajednice i kanali čije nazive ovaj uređaj ima.';
 
   @override
   String get searchNoOpenChannel => 'Još nema kanala koji možete da otvorite';

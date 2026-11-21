@@ -611,7 +611,9 @@ void main() {
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         isEmpty,
       );
-      await tester.enterText(find.byType(TextField), 'alice');
+      // A person is looked up as '@' and a username (a bare word may be a
+      // community name and stays on the device).
+      await tester.enterText(find.byType(TextField), '@alice');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
       expect(

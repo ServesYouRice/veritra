@@ -878,27 +878,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'No account found with that exact username.';
 
   @override
-  String get searchHint => 'Search people, communities, channels…';
+  String get searchHint => 'Search communities, channels or @username…';
 
   @override
   String get searchClear => 'Clear search';
 
   @override
-  String get searchLookUpAccount => 'Look up this username';
+  String get searchLookUpAccount => 'Look up an @username';
 
   @override
   String get searchIntroTitle => 'Search people and communities';
 
   @override
   String get searchIntroMessage =>
-      'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.';
+      'Communities and channels are found on this device as you type. To find a person, type @ and their exact username, then press Enter: only that is sent to the server. Message contents are end-to-end encrypted and never searchable on the server.';
 
   @override
   String get searchNoResultsTitle => 'No results';
 
   @override
   String get searchNoResultsMessage =>
-      'Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.';
+      'Nothing matched. To find a person, type @ and their exact username. Only communities and channels whose names this device holds can be found.';
 
   @override
   String get searchNoOpenChannel => 'No channel you can open yet';

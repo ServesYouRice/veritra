@@ -655,9 +655,9 @@ class NativeCryptoService
 
   /// Phase one's verdict on a remote commit in a group without a record of
   /// its own. Only a private channel's group is judged: a new account needs
-  /// a committer that is an owner or admin under the community's verified
-  /// record, on a leaf its account's list approves. Held, never refused:
-  /// the shared group's commit that made the committer an admin may not
+  /// a committer that is an owner, admin or moderator under the community's
+  /// verified record, on a leaf its account's list approves. Held, never
+  /// refused: the shared group's commit that promoted the committer may not
   /// have reached this device yet (the two groups have no common order),
   /// and the list may still approve the leaf. Nothing merges meanwhile, so
   /// this device never encrypts to the new account.

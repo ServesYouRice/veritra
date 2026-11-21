@@ -55,8 +55,8 @@ extension PrivateChannelMembership on AppState {
 
   /// Records that this device's user picked [accountId] for the private
   /// channel [conversationId]: only then may this device add a new account
-  /// there (and only while its account is an owner or admin under the
-  /// verified record).
+  /// there (and only while its account is an owner, admin or moderator
+  /// under the verified record, judged when the add is staged).
   Future<void> _pickPrivateChannelMember(
     String conversationId,
     String accountId,

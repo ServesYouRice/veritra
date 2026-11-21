@@ -1644,7 +1644,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchHint.
   ///
   /// In en, this message translates to:
-  /// **'Search people, communities, channels…'**
+  /// **'Search communities, channels or @username…'**
   String get searchHint;
 
   /// No description provided for @searchClear.
@@ -1656,7 +1656,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchLookUpAccount.
   ///
   /// In en, this message translates to:
-  /// **'Look up this username'**
+  /// **'Look up an @username'**
   String get searchLookUpAccount;
 
   /// No description provided for @searchIntroTitle.
@@ -1668,7 +1668,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchIntroMessage.
   ///
   /// In en, this message translates to:
-  /// **'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.'**
+  /// **'Communities and channels are found on this device as you type. To find a person, type @ and their exact username, then press Enter: only that is sent to the server. Message contents are end-to-end encrypted and never searchable on the server.'**
   String get searchIntroMessage;
 
   /// No description provided for @searchNoResultsTitle.
@@ -1680,7 +1680,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchNoResultsMessage.
   ///
   /// In en, this message translates to:
-  /// **'Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.'**
+  /// **'Nothing matched. To find a person, type @ and their exact username. Only communities and channels whose names this device holds can be found.'**
   String get searchNoResultsMessage;
 
   /// No description provided for @searchNoOpenChannel.
