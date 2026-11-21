@@ -537,7 +537,8 @@ void main() {
       expect(t.api.requested, <String>[t.link.locator]);
     });
 
-    test('on, a stranger\'s community invitation is refused and nothing is '
+    test(
+        'on, a stranger\'s community invitation is refused and nothing is '
         'filed', () async {
       final t = await setUp(
         sharedOnly: true,
@@ -570,6 +571,42 @@ void main() {
         t.state.errorFor(Ops.membership),
         t.state.l10n.joinInviteFromStranger,
       );
+    });
+
+    // Review 2026-11-21: the refusal comes before anything is kept, so a
+    // stranger's link leaves no Welcome anchor and no community pin behind.
+    test('on, a stranger\'s refused invitation pins nothing', () async {
+      final t = await setUp(sharedOnly: true);
+      final anchor = t.api.binding!.anchorGroupId;
+      final target = t.api.binding!.targetId;
+
+      expect(await t.state.requestToJoin(t.link), isNull);
+
+      expect(
+        t.state.errorFor(Ops.membership),
+        t.state.l10n.joinInviteFromStranger,
+      );
+      expect(t.api.requested, isEmpty);
+      expect(await t.state.localStore.loadInviteAnchor(anchor), isNull);
+      expect(
+        await t.state.localStore.loadCommunityInviteAnchor(target),
+        isNull,
+      );
+    });
+
+    // The stranger check reads the inviter's account, which only the
+    // verified binding vouches for: a forged binding reads as unusable,
+    // never as "from a stranger".
+    test('on, a forged binding is unusable before it is a stranger\'s',
+        () async {
+      final t = await setUp(sharedOnly: true);
+      t.api.binding = tampered(t.api.binding!, accountId: 'acct_mallory');
+
+      expect(await t.state.previewInviteLink(t.link.url), isNull);
+      expect(t.state.errorFor(Ops.membership), t.state.l10n.joinLinkUnusable);
+      expect(await t.state.requestToJoin(t.link), isNull);
+      expect(t.state.errorFor(Ops.membership), t.state.l10n.joinLinkUnusable);
+      expect(t.api.requested, isEmpty);
     });
 
     test('on, an inviter in one of this device\'s MLS groups passes', () async {
@@ -813,7 +850,8 @@ void main() {
       );
     });
 
-    test('a request answered with another anchor is withdrawn (replay into '
+    test(
+        'a request answered with another anchor is withdrawn (replay into '
         'another group)', () async {
       final link = _newLink();
       final honest = honestBinding(
@@ -980,10 +1018,10 @@ void main() {
       // What the same inviter signed under v2 for the same link: no version
       // field and no anchor.
       List<int> lp(List<int> field) => <int>[
-        field.length >> 8,
-        field.length & 0xff,
-        ...field,
-      ];
+            field.length >> 8,
+            field.length & 0xff,
+            ...field,
+          ];
       final v2 = <int>[
         for (final field in <List<int>>[
           utf8.encode(link.origin),
@@ -1014,11 +1052,11 @@ MembershipInviteLink _newLink() => newInviteLink();
 
 AppState _state(ApiClient api, {CryptoService? crypto, LocalStore? store}) {
   return AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: crypto ?? TestOnlyCryptoService(),
-      localStore: store ?? MemoryLocalStore(),
-      syncServiceFactory: (_, __) => _SyncService(),
-    )
+    apiClientFactory: (_) => api,
+    cryptoService: crypto ?? TestOnlyCryptoService(),
+    localStore: store ?? MemoryLocalStore(),
+    syncServiceFactory: (_, __) => _SyncService(),
+  )
     ..api = api
     ..session = const Session(
       baseUrl: 'https://localhost:8080',
@@ -1121,7 +1159,8 @@ class _Api extends ApiClient {
   Future<List<ConversationMember>> communityMembers(
     String token,
     String communityId,
-  ) async => const <ConversationMember>[];
+  ) async =>
+      const <ConversationMember>[];
 
   @override
   Future<void> cancelJoinRequest(String token, String requestId) async {
@@ -1181,7 +1220,8 @@ class _ThrowingRosterCrypto extends TestOnlyCryptoService {
     required String conversationId,
     required String accountId,
     required String deviceId,
-  }) async => throw StateError('no readable group');
+  }) async =>
+      throw StateError('no readable group');
 }
 
 class _SyncService implements SyncService {

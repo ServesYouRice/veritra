@@ -173,6 +173,19 @@ class _RosterApi extends _Api {
           [];
 }
 
+/// [_RosterApi] that also lists communities and channels, for a pass
+/// through `refreshCommunities`.
+class _ListingApi extends _RosterApi {
+  List<Community> listed = const <Community>[];
+
+  @override
+  Future<List<Community>> listCommunities(String token) async => listed;
+
+  @override
+  Future<List<Channel>> listChannels(String token, String communityId) async =>
+      const <Channel>[];
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -606,6 +619,70 @@ void main() {
       await state
           .createChannel('comm_${'1' * 32}', 'second')
           .timeout(const Duration(seconds: 10));
+    },
+    skip: nativeCryptoSkip(),
+  );
+  // C1 v3 review 2026-11-21: a community hidden because the server names
+  // another shared group than a verified invitation pinned is not gone, so
+  // its due C3 rotation marks stay (and nothing rotates for it); a community
+  // the server no longer lists at all drops them as before.
+  test(
+    'a community hidden for its invitation anchor keeps its rotation marks',
+    () async {
+      final id = 'comm_${'1' * 32}';
+      final channelId = 'chan_${'3' * 32}';
+      final marks = '{"community|$id":{"c":"$id","t":"pending"},'
+          '"channel|$channelId":{"c":"$id","t":"pending"}}';
+      Future<(AppState, MemoryLocalStore)> app(List<Community> listed) async {
+        final bindings = NativeCryptoBindings.open(
+          requireNativeCryptoLibrary(),
+        );
+        final api = _ListingApi()
+          ..role = 'owner'
+          ..listed = listed;
+        final store = MemoryLocalStore();
+        final state = AppState(
+          apiClientFactory: (_) => api,
+          syncServiceFactory: (_, __) => _QuietSync(),
+          localStore: store,
+          cryptoService: _InfoCrypto(bindings),
+        );
+        addTearDown(state.dispose);
+        state.session = _session;
+        state.api = api;
+        await store.saveCommunityInviteAnchor(id, 'conv_shared');
+        await store.saveSetting('c3.rotation_due.alice', marks);
+        await state.refreshCommunities();
+        // refreshCommunities starts an info pass without waiting for it.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await state.refreshCommunityInfo();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        return (state, store);
+      }
+
+      final (hidden, hiddenStore) = await app(<Community>[
+        Community(id: id, name: 'Club', sharedConversationId: 'conv_other'),
+      ]);
+      expect(hidden.communitiesLoaded, isTrue);
+      expect(hidden.communities, isEmpty);
+      expect(hidden.inviteAnchorHiddenCommunities, <String>{id});
+      final kept = await hiddenStore.loadSetting('c3.rotation_due.alice');
+      expect(kept, contains('community|$id'));
+      expect(kept, contains('channel|$channelId'));
+      expect(
+        await hiddenStore.loadCommunityInfoEvents(
+          CommunityInfoEventKind.key,
+          'community',
+          id,
+        ),
+        isEmpty,
+      );
+
+      // The control: the same marks for a community the server does not
+      // list are dropped, so the pass above did run.
+      final (_, goneStore) = await app(const <Community>[]);
+      final dropped = await goneStore.loadSetting('c3.rotation_due.alice');
+      expect(dropped ?? '', isNot(contains(id)));
     },
     skip: nativeCryptoSkip(),
   );

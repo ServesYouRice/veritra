@@ -332,9 +332,17 @@ be welcomed into: the group's own id for a group, and the community's C0
 shared conversation for a community. It is never empty. `binding_key`, the
 locator and the key commitment are v2's, unchanged. The signing domain stays
 `veritra-invite-binding-v2` (the ABI allowlist entry, so no Rust change); the
-version lives in the message instead. A v2 message starts with `lp(origin)`
-and an origin always has a scheme, so no v2 message equals a v3 message and
-a signature made for one layout never verifies as the other. Vector:
+version lives in the message instead. Why the two layouts cannot be
+confused (review 2026-11-21): both messages are nothing but `lp` fields
+(16-bit big-endian length, then the bytes; a field over 65535 bytes is
+refused, never truncated), so a message reads as fields in exactly one way.
+A v2 message is exactly 7 fields and a v3 message exactly 9, so no byte
+string is both, whatever the field values; their first fields differ as
+well (an origin has a scheme, the version field has none). The signing
+domains are prefix-free (a Rust test pins it), so `domain || message` also
+reads one way, and the app's only signing call for this domain is
+`createInviteLink`, over a message it builds itself. No Rust change is
+needed. Vector:
 `testing/vectors/invite-binding-v3.json` (Go builds it with the standard
 library; Dart checks the message, the tag and the fragment, and the native
 engine verifies the signature).
@@ -379,9 +387,15 @@ before showing the target or keeping a request:
 
 Before filing the request the app pins, for both kinds,
 `InviteAnchor(anchor_group_id, inviter account, device, key)` (the D99 table,
-schema 32), and for a community also `community -> anchor_group_id` (an
-encrypted local setting `c1.community_anchor.<id>`, cleared with the invite
-anchors on identity replacement, backup restore and wipe, never exported).
+schema 32), and for a community also `community -> anchor_group_id` (a row
+of the encrypted `local_metadata` table named `c1.community-anchor:<id>`;
+deliberately not a `setting:` row, so no settings path reads or exports it;
+cleared with the invite anchors on identity replacement, which a backup
+restore is, and on wipe; never exported). The stranger check (owner
+decision 2026-11-21, "only accept community invites from people I share a
+group with") runs after the binding check, because it reads the inviter's
+account, which only a verified binding vouches for, and before either pin
+is written, so a refused link leaves nothing behind.
 Then:
 
 - **Welcome.** The D99 check now covers communities: a Welcome to the anchor
