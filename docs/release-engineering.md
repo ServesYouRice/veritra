@@ -172,7 +172,29 @@ Both the iOS phase and the evidence check use one function,
 with `--crypto-build-info`), so it needs `python3` on the Mac, as
 `build-mobile-crypto.sh` already does. Debug and Profile builds copy whatever
 record there is and never refuse; the signed `.ipa` check still catches one
-that ships. Not checked anywhere: that `source_revision` is the release commit.
+that ships.
+
+**The record must be the release commit's crypto.** For the signed APK and the
+signed `.ipa`, `check-release-evidence.py` also requires, in the record:
+
+- exactly one `source_revision` (a full commit SHA) that is in the repository
+  the gate runs in (an unknown commit, a short or malformed one, or two lines
+  refuse);
+- that the `crypto/rust` tree at that commit is the `crypto/rust` tree at the
+  release commit (`git rev-parse <recorded>:crypto/rust` equals
+  `<release>:crypto/rust`, replace refs and grafts ignored). The commits may
+  differ, for example a docs-only commit after the build; the crate sources,
+  `Cargo.toml` and `Cargo.lock` may not;
+- exactly one `cargo_lock_sha256`, equal to the SHA-256 of the release
+  commit's committed `crypto/rust/Cargo.lock`.
+
+`scripts/check-release-evidence_test.py` (`crypto_source_cases`) fails if this
+guard is removed. Not covered: the Xcode phase (`--crypto-build-info`) checks
+only the dirty flag, because it has no release commit to compare with (the
+signed `.ipa` check does it); the Windows installer, which checks only the
+dirty flag (`build-windows-installer.ps1`); and the Rust toolchain, which is
+recorded (`rustc -Vv`) but not compared with `rust-toolchain.toml` at the
+repository root.
 
 ## Windows installer
 

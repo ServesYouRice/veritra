@@ -182,12 +182,27 @@ def build_app_zip(
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-CLEAN_BUILD_INFO = b"source_revision=" + b"0" * 40 + b"\ncargo_lock_sha256=" + b"0" * 64 + b"\nsource_tree_dirty=false\nrustc 1\n"
+# The crypto crate of the fixture candidate: the build record's commit must
+# have exactly this crypto/rust tree, and its lock hash this Cargo.lock's.
+CRYPTO_LOCK = b"# synthetic Cargo.lock\nversion = 4\n"
+CRYPTO_FILES = {"crypto/rust/Cargo.lock": CRYPTO_LOCK, "crypto/rust/src/lib.rs": b"// synthetic crate\n"}
+
+
+def build_info_bytes(revision: str | None = None, lock: bytes = CRYPTO_LOCK, dirty: str = "false") -> bytes:
+    """A crypto build record as scripts/build-mobile-crypto.sh writes it,
+    built at ``revision`` (the fixture candidate by default)."""
+    return (
+        f"source_revision={revision or COMMIT}\ncargo_lock_sha256={hashlib.sha256(lock).hexdigest()}\n"
+        f"source_tree_dirty={dirty}\nrustc 1\n"
+    ).encode()
+
+
+CLEAN = object()  # build_info default: a clean record of the fixture candidate
 
 
 def build_signed_ipa(path: Path, **overrides: object) -> str:
     # The Runner's Crypto Build Record phase copies the record into the bundle.
-    options: dict[str, object] = {"provisioning": profile(False), "build_info": CLEAN_BUILD_INFO}
+    options: dict[str, object] = {"provisioning": profile(False), "build_info": build_info_bytes()}
     options.update(overrides)
     return build_app_zip(path, **options)  # type: ignore[arg-type]
 
@@ -547,7 +562,7 @@ def build_apk(
     manifest: bytes | None = None,
     dex: bool = True,
     crypto: bool = True,
-    build_info: bytes | None = b"source_revision=" + b"0" * 40 + b"\ncargo_lock_sha256=" + b"0" * 64 + b"\nsource_tree_dirty=false\nrustc 1\n",
+    build_info: bytes | None | object = CLEAN,
     signers: dict[int, list[bytes]] | None = None,
     signer_options: dict[str, object] | None = None,
     options_schemes: tuple[int, ...] | None = None,
@@ -565,6 +580,8 @@ def build_apk(
     ``before`` entries are written first (duplicate names allowed), and
     ``comment`` becomes the zip comment.
     """
+    if build_info is CLEAN:
+        build_info = build_info_bytes()
     buffer = io.BytesIO()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # zipfile warns on the duplicate names under test
@@ -577,7 +594,7 @@ def build_apk(
             if crypto:
                 archive.writestr("lib/arm64-v8a/libprivate_messenger_crypto.so", b"\x7fELF synthetic")
             if build_info is not None:
-                archive.writestr("assets/veritra-crypto/build-info.txt", build_info)
+                archive.writestr("assets/veritra-crypto/build-info.txt", build_info)  # type: ignore[arg-type]
             archive.writestr("resources.arsc", b"synthetic")
             if v1_only:
                 archive.writestr("META-INF/CERT.RSA", RELEASE_CERT)
@@ -917,6 +934,7 @@ def fixture() -> tuple[Path, dict[str, object]]:
         "src.txt": b"frozen candidate\n",
         ".go-version": b"1.25.12\n",
         "release/release-policy.json": policy_bytes(FIXTURE_POLICY),
+        **CRYPTO_FILES,
     }, "candidate")
     TREE = git(temp, "rev-parse", f"{COMMIT}^{{tree}}")
     approved = commit_on(temp, COMMIT, approval_files(), "approve the candidate")
@@ -1390,7 +1408,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
         expect_blocked(root, with_record(signed_bytes(f"bad-info-{name}.ipa", build_info=text)),
                        "signed ios artifact crypto library has no single, valid source_tree_dirty record", no_signed)
     # Only the app's own record counts, not one elsewhere in the archive.
-    expect_blocked(root, with_record(signed_bytes("misplaced-info.ipa", build_info=None, before=(("Frameworks/veritra-crypto/build-info.txt", CLEAN_BUILD_INFO),))),
+    expect_blocked(root, with_record(signed_bytes("misplaced-info.ipa", build_info=None, before=(("Frameworks/veritra-crypto/build-info.txt", build_info_bytes()),))),
                    "signed ios artifact has no crypto build record", no_signed)
     # A bad record is reported even when the bundle is missing its executable.
     build_signed_ipa(dist / "no-exe.ipa", build_info=dirty)
@@ -1786,7 +1804,7 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     mixed_path = dist / "good-v2-bad-v3.apk"
     build_apk(mixed_path, signers={APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}, signer_options={"tamper": "signature"},
               options_schemes=(APK_V3,))
-    both = checker.apk_errors(mixed_path, fingerprint(RELEASE_CERT))
+    both = checker.apk_errors(mixed_path, fingerprint(RELEASE_CERT), lambda text: None)
     assert len(both) == 1 and "Scheme v3 signature does not verify: signature 0x0103" in both[0], both
     # Edited after signing: the digests no longer cover the file. Flip a byte
     # of an entry the checker never reads, so only the digest check can see it.
@@ -1811,7 +1829,7 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # Sections over 2 MiB are chunked: the digests of a large APK verify too.
     big = dist / "big.apk"
     build_apk(big, before=(("assets/big.bin", random.Random(7).randbytes(2_600_000)),))
-    assert checker.apk_errors(big, fingerprint(RELEASE_CERT)) == []
+    assert checker.apk_errors(big, fingerprint(RELEASE_CERT), lambda text: None) == []
     # Valid fixtures: SHA-512 PKCS#1 signatures verify as well.
     expect_valid(root, with_android(apk("sha512.apk", signer_options={"algorithm": 0x0104})))
     for bad in (fingerprint(RELEASE_CERT).upper(), fingerprint(RELEASE_CERT)[:63], "sha256:" + fingerprint(RELEASE_CERT), "", None, 7):
@@ -2050,6 +2068,59 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_valid(root, valid)
 
 
+def crypto_source_cases(root: Path, valid: dict[str, object]) -> None:
+    """The crypto build record must name a commit whose crypto/rust tree is
+    the release commit's, and the release commit's Cargo.lock hash."""
+    dist = root / "dist"
+    ios, android = valid["mobile_artifacts"]
+    # A later commit that changes nothing under crypto/rust, one that changes a
+    # crate source, and the base commit, which has no crate at all.
+    same_crypto = commit_on(root, COMMIT, {"docs.txt": b"a docs-only change\n"}, "docs after the candidate")
+    other_crypto = commit_on(root, COMMIT, {"crypto/rust/src/lib.rs": b"// a different crate\n"}, "crypto change")
+    no_crypto = git(root, "rev-parse", f"{COMMIT}^")
+    git(root, "checkout", "-q", "--detach", COMMIT)
+
+    def ios_case(name: str, info: bytes) -> dict[str, object]:
+        manifest = copy.deepcopy(valid)
+        manifest["mobile_artifacts"] = [signed_record(name, build_signed_ipa(dist / name, build_info=info)), android]
+        return manifest
+
+    def android_case(name: str, info: bytes) -> dict[str, object]:
+        manifest = copy.deepcopy(valid)
+        manifest["mobile_artifacts"] = [ios, android_signed_record(name, build_apk(dist / name, build_info=info))]
+        return manifest
+
+    for platform, case, suffix in (("ios", ios_case, ".ipa"), ("android", android_case, ".apk")):
+        prefix = f"signed {platform} artifact crypto library "
+        no_valid = f"release evidence has no valid {platform} signed-release artifact"
+        # Built at another commit with the same crypto tree: it is the release's crypto.
+        expect_valid(root, case("same-crypto" + suffix, build_info_bytes(same_crypto)))
+        expect_blocked(root, case("unknown-commit" + suffix, build_info_bytes(OTHER_COMMIT)),
+                       prefix + f"was built at commit {OTHER_COMMIT}, which is not in this repository", no_valid)
+        expect_blocked(root, case("other-crypto" + suffix, build_info_bytes(other_crypto)),
+                       prefix + f"was built from crypto/rust sources (commit {other_crypto}) that differ from the release commit's", no_valid)
+        expect_blocked(root, case("no-crypto" + suffix, build_info_bytes(no_crypto)),
+                       prefix + "cannot be compared: crypto/rust is missing at the build or the release commit", no_valid)
+        expect_blocked(root, case("other-lock" + suffix, build_info_bytes(lock=b"another lock\n")),
+                       prefix + "Cargo.lock hash is not the release commit's crypto/rust/Cargo.lock", no_valid)
+        clean = build_info_bytes().decode()
+        revision_line = f"source_revision={COMMIT}\n"
+        lock_line = next(line for line in clean.splitlines(keepends=True) if line.startswith("cargo_lock_sha256="))
+        for name, text, why in (
+            ("two-revisions", revision_line + clean, "has no single, valid source_revision record"),
+            ("no-revision", clean.replace(revision_line, ""), "has no single, valid source_revision record"),
+            ("short-revision", clean.replace(revision_line, f"source_revision={COMMIT[:12]}\n"), "has no single, valid source_revision record"),
+            ("upper-revision", clean.replace(revision_line, f"source_revision={COMMIT.upper()}\n"), "has no single, valid source_revision record"),
+            ("option-revision", clean.replace(revision_line, "source_revision=--all\n"), "has no single, valid source_revision record"),
+            ("two-locks", lock_line + clean, "has no single, valid cargo_lock_sha256 record"),
+            ("no-lock", clean.replace(lock_line, ""), "has no single, valid cargo_lock_sha256 record"),
+        ):
+            expect_blocked(root, case(name + suffix, text.encode()), prefix + why, no_valid)
+        # The dirty flag is still checked on a record that is otherwise bound.
+        expect_blocked(root, case("bound-but-dirty" + suffix, build_info_bytes(dirty="true")),
+                       prefix + "was built from uncommitted crypto sources", no_valid)
+
+
 def variant_ci(valid: dict[str, object], job: str, conclusion: str | None) -> dict[str, object]:
     manifest = copy.deepcopy(valid)
     if conclusion is None:
@@ -2231,6 +2302,7 @@ def main() -> int:
         qa01_cases(root, manifest)
         approval_cases(root, manifest)
         binding_cases(root, manifest)
+        crypto_source_cases(root, manifest)
         qa02_cases(root, manifest)
         android_cases(root, manifest)
         # The repository policy must equal the protected rules the fixtures use.
