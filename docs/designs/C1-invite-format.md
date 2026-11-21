@@ -168,10 +168,16 @@ with the inviter, so the target group's roster does not exist on their device.
 Requiring a roster hit would refuse nearly every invitation. The roster is used
 where it exists (it also anchors a link that reached the joiner through a path
 the server could rewrite, for an inviter the joiner already knows through a
-shared group), and the commitment carries every other case. **Open owner
-question:** whether to also refuse an invitation from a stranger (no shared
-group) outright; the owner's brief said "fail closed" and this build reads it as
-"refuse on any failed or missing check", not "refuse when no roster exists".
+shared group), and the commitment carries every other case. **Owner decision
+2026-11-21:** invitations from strangers are allowed by default. A user switch,
+"Only accept community invites from people I share a group with" (off by
+default, stored per server and account, under Settings › Privacy and safety ›
+Blocked accounts), makes the app refuse a community invitation whose inviter
+is in none of this device's MLS rosters (`MlsRosterSource`, the group's own
+tree) and is not the other side of a direct chat; a message request does not
+count. The check runs at preview and again before the request is filed, after
+the binding check, so a forged link still reads as unusable. Group
+invitations are not affected.
 
 Limits, stated plainly:
 
@@ -251,7 +257,16 @@ strictly higher rank. Groups keep their existing routes.
 - Rename is built through encrypted metadata, not a rename route: the group
   profile editor (W11) and the community and channel info editor (C3). No
   plaintext rename route was added (2026-11-21).
-- Join-request notifications: admins read the list when they open it.
+- Join-request notifications are built (owner decision 2026-11-21): a new
+  request records one `account.join_request` event for each active owner and
+  admin of the target (payload `{}`: no requester, username, target or name),
+  published to their connected devices, plus the provider's fixed generic
+  push wake (legacy-mode APNs skipped, as for recovery wakes). The app shows
+  "New join request" in the notice stack. A repeated ask tells no one. The
+  phone's own notification while the app is closed is not built: the native
+  notice is the fixed "New encrypted message" text fed by the message
+  outbox, so a background admin's device syncs silently and shows the notice
+  when opened.
 - C0 shared groups, per-conversation sync bounds, client cursors.
 
 ## 2026-11-09 port: group Welcome anchor (partial C1)

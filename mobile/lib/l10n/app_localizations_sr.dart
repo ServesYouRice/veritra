@@ -3895,6 +3895,51 @@ class AppLocalizationsSr extends AppLocalizations {
   String get joinReqNone => 'Нико не чека.';
 
   @override
+  String get settingsInvitesSection => 'Позивнице у заједнице';
+
+  @override
+  String get settingsInvitesSharedOnlyTitle =>
+      'Позивнице у заједнице само од људи са којима сте у групи';
+
+  @override
+  String get settingsInvitesSharedOnlyNote =>
+      'Позивнице од свих осталих биће одбијене.';
+
+  @override
+  String get joinInviteFromStranger =>
+      'Прихватате позивнице у заједнице само од људи са којима сте у групи. Да бисте се придружили, искључите то у Подешавања › Приватност и безбедност › Блокирани налози.';
+
+  @override
+  String get joinRequestNoticeText => 'Нови захтев за придруживање';
+
+  @override
+  String get joinRequestNoticeDismiss => 'Одбаци';
+
+  @override
+  String get joinReqPausedNote =>
+      'Позивнице су паузиране. Захтеве сада можете одбити, а одобрити их када пауза истекне.';
+
+  @override
+  String get moderationSectionDepartedTimeouts => 'Утишани након одласка';
+
+  @override
+  String get moderationDepartedTimeoutsNote =>
+      'Ово утишавање се враћа ако се особа поново придружи.';
+
+  @override
+  String get moderationNoDepartedTimeouts => 'Нико ко је отишао није утишан.';
+
+  @override
+  String moderationDepartedTimeoutUntil(String time) {
+    return 'До $time';
+  }
+
+  @override
+  String moderationLiftTimeout(String username) {
+    return 'Укини утишавање за $username';
+  }
+
+  @override
   String joinReqAskedAt(String date) {
     return 'Затражено $date';
   }
@@ -9475,6 +9520,51 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get joinReqNone => 'Niko ne čeka.';
+
+  @override
+  String get settingsInvitesSection => 'Pozivnice u zajednice';
+
+  @override
+  String get settingsInvitesSharedOnlyTitle =>
+      'Pozivnice u zajednice samo od ljudi sa kojima ste u grupi';
+
+  @override
+  String get settingsInvitesSharedOnlyNote =>
+      'Pozivnice od svih ostalih biće odbijene.';
+
+  @override
+  String get joinInviteFromStranger =>
+      'Prihvatate pozivnice u zajednice samo od ljudi sa kojima ste u grupi. Da biste se pridružili, isključite to u Podešavanja › Privatnost i bezbednost › Blokirani nalozi.';
+
+  @override
+  String get joinRequestNoticeText => 'Novi zahtev za pridruživanje';
+
+  @override
+  String get joinRequestNoticeDismiss => 'Odbaci';
+
+  @override
+  String get joinReqPausedNote =>
+      'Pozivnice su pauzirane. Zahteve sada možete odbiti, a odobriti ih kada pauza istekne.';
+
+  @override
+  String get moderationSectionDepartedTimeouts => 'Utišani nakon odlaska';
+
+  @override
+  String get moderationDepartedTimeoutsNote =>
+      'Ovo utišavanje se vraća ako se osoba ponovo pridruži.';
+
+  @override
+  String get moderationNoDepartedTimeouts => 'Niko ko je otišao nije utišan.';
+
+  @override
+  String moderationDepartedTimeoutUntil(String time) {
+    return 'Do $time';
+  }
+
+  @override
+  String moderationLiftTimeout(String username) {
+    return 'Ukini utišavanje za $username';
+  }
 
   @override
   String joinReqAskedAt(String date) {

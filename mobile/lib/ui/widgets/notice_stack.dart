@@ -6,6 +6,7 @@ import '../tokens.dart';
 import 'account_recovery_banner.dart';
 import 'connection_banner.dart';
 import 'history_copy_banner.dart';
+import 'join_request_notice_banner.dart';
 import 'listenable_selector.dart';
 import 'recovery_key_prompt_banner.dart';
 
@@ -15,18 +16,21 @@ import 'recovery_key_prompt_banner.dart';
 enum ShellNotice {
   connection,
   historyCopy,
-  recoveryKeyPrompt;
+  recoveryKeyPrompt,
+  joinRequest;
 
   bool isActive(AppState state) => switch (this) {
         connection => ConnectionBanner.active(state),
         historyCopy => HistoryCopyBanner.active(state),
         recoveryKeyPrompt => RecoveryKeyPromptBanner.active(state),
+        joinRequest => JoinRequestNoticeBanner.active(state),
       };
 
   Widget build(AppState state) => switch (this) {
         connection => ConnectionBanner(state: state),
         historyCopy => HistoryCopyBanner(state: state),
         recoveryKeyPrompt => RecoveryKeyPromptBanner(state: state),
+        joinRequest => JoinRequestNoticeBanner(state: state),
       };
 }
 

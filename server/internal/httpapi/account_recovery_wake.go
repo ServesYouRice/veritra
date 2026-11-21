@@ -73,6 +73,13 @@ func (w *accountWakes) stop() {
 // and web push wakes are data-only, so they are still sent. Targets and errors are never
 // logged (they hold tokens and endpoints).
 func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
+	a.wakeAccount(accountID, excludeDeviceID, "recovery_wake")
+}
+
+// wakeAccount is wakeAccountDevices with the log key's prefix: the same
+// fixed generic wake serves the C1 join-request notice ("join_request_wake"),
+// whose payload is just as content-free.
+func (a *API) wakeAccount(accountID, excludeDeviceID, logKey string) {
 	if a.Push == nil || a.Store == nil {
 		return
 	}
@@ -87,7 +94,7 @@ func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
 		targets, err := a.Store.PushTargetsForAccount(ctx, accountID, excludeDeviceID)
 		if err != nil {
 			if ctx.Err() == nil {
-				a.warn("recovery_wake_targets_failed")
+				a.warn(logKey + "_targets_failed")
 			}
 			return
 		}
@@ -115,7 +122,7 @@ func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
 			}
 		}
 		if failed > 0 {
-			a.warn("recovery_wake_send_failed", "count", failed)
+			a.warn(logKey+"_send_failed", "count", failed)
 		}
 	}()
 }

@@ -235,7 +235,13 @@ func (s *Store) SetMemberTimeout(ctx context.Context, communityID, actorAccountI
 	}
 	targetRole, err := communityRoleTx(ctx, tx, communityID, targetAccountID)
 	if errors.Is(err, ErrNotMember) {
-		return nil, ErrNotFound
+		// Someone who left (or was kicked) keeps a remembered timeout
+		// (migration 0095). Admins and above may lift it, as they lift bans
+		// (owner decision 2026-11-21); nothing else is done to a non-member.
+		if d != 0 {
+			return nil, ErrNotFound
+		}
+		return nil, clearDepartedTimeoutTx(ctx, tx, communityID, actorRole, actorAccountID, targetAccountID)
 	}
 	if err != nil {
 		return nil, err
@@ -268,6 +274,71 @@ func (s *Store) SetMemberTimeout(ctx context.Context, communityID, actorAccountI
 		return nil, err
 	}
 	return until, tx.Commit()
+}
+
+// clearDepartedTimeoutTx lifts the remembered timeout of an account that is
+// no longer a member, so a later rejoin starts without it. Admins and above
+// only; an account with no running timeout is ErrNotFound. It commits tx.
+func clearDepartedTimeoutTx(ctx context.Context, tx *sql.Tx, communityID, actorRole, actorAccountID, targetAccountID string) error {
+	if !domain.CanManageInvites(actorRole) || actorAccountID == targetAccountID {
+		return ErrForbidden
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM member_timeouts WHERE community_id = ? AND account_id = ? AND timeout_until > ?`, communityID, targetAccountID, nowString())
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if err := appendModerationEventTx(ctx, tx, communityID, actorAccountID, targetAccountID, "", ModerationTimeoutCleared); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DepartedTimeout is a running timeout remembered for an account that is not
+// a member now (it left or was kicked).
+type DepartedTimeout struct {
+	AccountID    string    `json:"account_id"`
+	Username     string    `json:"username,omitempty"`
+	TimeoutUntil time.Time `json:"timeout_until"`
+}
+
+// ListDepartedTimeouts lists the running timeouts of accounts that are no
+// longer members, for the same roles that see the bans list.
+func (s *Store) ListDepartedTimeouts(ctx context.Context, communityID, actorAccountID string) ([]DepartedTimeout, error) {
+	role, err := communityRoleTx(ctx, s.db, communityID, actorAccountID)
+	if err != nil {
+		return nil, err
+	}
+	if !domain.CanManageMembers(role) {
+		return nil, ErrForbidden
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.account_id, COALESCE(a.username, ''), t.timeout_until
+		FROM member_timeouts t
+		JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
+		WHERE t.community_id = ? AND t.timeout_until > ?
+		  AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.community_id = t.community_id AND m.account_id = t.account_id)
+		ORDER BY t.timeout_until, t.account_id
+		LIMIT 200`, communityID, nowString())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]DepartedTimeout, 0)
+	for rows.Next() {
+		var item DepartedTimeout
+		var until string
+		if err := rows.Scan(&item.AccountID, &item.Username, &until); err != nil {
+			return nil, err
+		}
+		item.TimeoutUntil = parseTime(until)
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 // SetChannelSlowMode sets the gap between a non-moderator's posts in a channel

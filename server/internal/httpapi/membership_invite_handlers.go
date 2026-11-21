@@ -67,7 +67,14 @@ func (a *API) membershipTargetRoute(w http.ResponseWriter, r *http.Request, prin
 			handleStorageError(w, err)
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"requests": requests})
+		// C5: while invitations are paused the requests are listed but none
+		// can be approved; the app disables Approve and keeps Decline.
+		paused, err := a.Store.CommunityInvitesPausedUntil(r.Context(), target)
+		if err != nil {
+			handleStorageError(w, err)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"requests": requests, "invites_paused_until": paused})
 	default:
 		return false
 	}
@@ -146,17 +153,32 @@ func (a *API) requestToJoin(w http.ResponseWriter, r *http.Request, principal do
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	request, created, err := a.Store.RequestToJoin(r.Context(), principal.AccountID, req.Locator)
+	filed, err := a.Store.FileJoinRequest(r.Context(), principal.AccountID, req.Locator)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
+	request := filed.Request
 	status := http.StatusOK
-	if created {
+	if filed.Created {
 		status = http.StatusCreated
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "membership.join_request.created", map[string]string{"request_id": request.ID})
+		a.noticeJoinRequest(r, filed.Notices)
 	}
 	writeJSON(w, status, request)
+}
+
+// noticeJoinRequest tells each owner and admin of the target that a request
+// is waiting (owner decision 2026-11-21): the stored account event, published
+// to their connected devices, and the provider's fixed generic push wake for
+// the rest. Neither carries the requester, a username, the target or its name;
+// the app shows only "New join request". Nothing here is logged.
+func (a *API) noticeJoinRequest(r *http.Request, notices []storage.JoinRequestNotice) {
+	now := time.Now().UTC()
+	for _, notice := range notices {
+		a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.JoinRequestNoticeEventType, ID: notice.EventID, Payload: struct{}{}, CreatedAt: now})
+		a.wakeAccount(notice.AccountID, "", "join_request_wake")
+	}
 }
 
 func (a *API) listOwnJoinRequests(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

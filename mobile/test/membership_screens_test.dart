@@ -300,7 +300,98 @@ void main() {
     });
   });
 
+  // Owner decision 2026-11-21: while invitations are paused the requests are
+  // listed; Approve is off and Decline still works.
+  testWidgets('paused invitations: requests listed, Decline only',
+      (tester) async {
+    final api = _Api()
+      ..pausedUntil = DateTime.utc(2030)
+      ..pending = <JoinRequest>[
+        JoinRequest(
+          id: 'jreq_1',
+          kind: InviteTargetKind.community,
+          status: JoinRequestStatus.pending,
+          createdAt: DateTime.utc(2026, 11, 7),
+          targetId: 'comm_1',
+          accountId: 'acct_alice',
+          username: 'alice',
+        ),
+      ];
+    final state = _state(api);
+    await tester.pumpWidget(_app(Scaffold(
+      body: SingleChildScrollView(
+        child: JoinRequestsPanel(
+          state: state,
+          kind: InviteTargetKind.community,
+          targetId: 'comm_1',
+        ),
+      ),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('@alice'), findsOneWidget);
+    expect(
+      find.text('Invitations are paused. You can decline requests now and '
+          'approve them once the pause ends.'),
+      findsOneWidget,
+    );
+    final approve = tester.widget<FilledButton>(
+        find.byKey(const ValueKey<String>('join-approve-jreq_1')));
+    expect(approve.onPressed, isNull);
+    await tester.tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
+    await tester.pumpAndSettle();
+    expect(api.decisions, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
+    await tester.pumpAndSettle();
+    expect(api.decisions, <String>['jreq_1:reject']);
+    expect(find.text('No one is waiting.'), findsOneWidget);
+  });
+
   group('moderation (C5)', () {
+    // Owner decision 2026-11-21: admins lift the timeout of someone who left.
+    testWidgets('an admin lifts the timeout of someone who left',
+        (tester) async {
+      final api = _Api()
+        ..departed = <DepartedTimeout>[
+          DepartedTimeout(
+            accountId: 'acct_carol',
+            username: 'carol',
+            timeoutUntil: DateTime.utc(2030),
+          ),
+        ];
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Timed out after leaving'.toUpperCase()),
+        200,
+      );
+      expect(find.text('@carol'), findsOneWidget);
+      await tester.tap(find.byTooltip('Lift timeout for @carol'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>['timeout:comm_1:acct_carol:0']);
+      expect(find.text('@carol'), findsNothing);
+      expect(find.text('No one who left is timed out.'), findsOneWidget);
+    });
+
+    testWidgets('a failed read of departed timeouts fails the screen',
+        (tester) async {
+      final api = _Api()..failDeparted = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('No one who left is timed out.'), findsNothing);
+    });
+
     // U5: a failed read never shows as an empty or default state.
     testWidgets(
         'when moderation fails to load it says so with Retry and guesses nothing',
@@ -844,13 +935,29 @@ class _Api extends ApiClient {
   Future<List<JoinRequest>> listOwnJoinRequests(String token) async =>
       List<JoinRequest>.of(own);
 
+  DateTime? pausedUntil;
+  List<DepartedTimeout> departed = <DepartedTimeout>[];
+  bool failDeparted = false;
+
   @override
   Future<List<JoinRequest>> listJoinRequests(
     String token,
     InviteTargetKind kind,
     String targetId,
   ) async =>
-      List<JoinRequest>.of(pending);
+      JoinRequestList(
+        List<JoinRequest>.of(pending),
+        invitesPausedUntil: pausedUntil,
+      );
+
+  @override
+  Future<List<DepartedTimeout>> departedTimeouts(
+    String token,
+    String communityId,
+  ) async {
+    if (failDeparted) throw ApiException(500, '{"error":"internal"}');
+    return List<DepartedTimeout>.of(departed);
+  }
 
   @override
   Future<void> revokeMembershipInvite(String token, String inviteId) async {
@@ -917,6 +1024,9 @@ class _Api extends ApiClient {
   Future<DateTime?> setMemberTimeout(
       String token, String communityId, String accountId, int seconds) async {
     moderation.add('timeout:$communityId:$accountId:$seconds');
+    if (seconds == 0) {
+      departed = departed.where((d) => d.accountId != accountId).toList();
+    }
     return null;
   }
 

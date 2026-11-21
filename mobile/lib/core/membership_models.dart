@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -276,6 +277,45 @@ class CommunityBan {
       username: username is String && username.isNotEmpty ? username : null,
       bannedBy: json['banned_by']! as String,
       createdAt: DateTime.parse(json['created_at']! as String),
+    );
+  }
+}
+
+/// The pending join requests of a target as the server lists them, with the
+/// end of a running pause of the community's invitations (C5). While paused
+/// the requests are listed so admins can decline them, but approving is
+/// refused until the pause ends (owner decision 2026-11-21). A plain list
+/// (an older server) reads as not paused.
+class JoinRequestList extends UnmodifiableListView<JoinRequest> {
+  JoinRequestList(super.source, {this.invitesPausedUntil});
+
+  final DateTime? invitesPausedUntil;
+
+  /// The pause of [requests], or null for a list that carries none.
+  static DateTime? pausedUntilOf(List<JoinRequest> requests) =>
+      requests is JoinRequestList ? requests.invitesPausedUntil : null;
+}
+
+/// A running timeout of someone who is no longer a member of the community
+/// (they left or were kicked). It comes back if they rejoin, so admins can
+/// lift it (owner decision 2026-11-21).
+class DepartedTimeout {
+  const DepartedTimeout({
+    required this.accountId,
+    required this.username,
+    required this.timeoutUntil,
+  });
+
+  final String accountId;
+  final String? username;
+  final DateTime timeoutUntil;
+
+  factory DepartedTimeout.fromJson(Map<String, Object?> json) {
+    final username = json['username'];
+    return DepartedTimeout(
+      accountId: json['account_id']! as String,
+      username: username is String && username.isNotEmpty ? username : null,
+      timeoutUntil: DateTime.parse(json['timeout_until']! as String),
     );
   }
 }

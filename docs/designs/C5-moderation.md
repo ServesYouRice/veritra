@@ -27,11 +27,21 @@ refuse them, and a claim needs a member to ask); escalation and instance ban
 (not part of this package). A ban removes via the same path as C1's removal
 (`removeCommunityMemberTx`; it covers an active layout's shared and private
 conversations). Admins and above lift bans; moderators ban members they
-outrank. Closed 2026-11-21: the pending-request list is empty while a pause
-makes every request unapprovable (the requests stay pending and come back
-when it ends); a timeout survives leaving or a kick and a later rejoin
+outrank. Closed 2026-11-21: while a pause makes every request unapprovable, the
+pending-request list still shows them (owner decision 2026-11-21) with
+`invites_paused_until` in the answer; the app disables Approve and keeps
+Decline (rejecting never needed a usable invitation); a timeout survives
+leaving or a kick and a later rejoin
 (migration 0095: `member_timeouts` remembers its end and a trigger copies
 it onto a new community membership row; lifting it deletes the memory);
+admins and above lift the remembered timeout of someone who left
+(owner decision 2026-11-21): `PUT .../members/{account}/timeout` with 0
+for a non-member deletes the running `member_timeouts` row and writes a
+`timeout_cleared` audit row (moderators are refused, a new timeout on a
+non-member is 404), and `GET .../timeouts` lists the running timeouts of
+accounts that left, with usernames, for moderators and above; the
+Moderation screen shows them to admins under "Timed out after leaving"
+with a lift button;
 a banned account's devices cannot be claimed (a claim needs membership,
 which the ban removes; tested, no separate check). The C1 community remove
 route writes a `kick` audit row. Known gaps: the instance owner's

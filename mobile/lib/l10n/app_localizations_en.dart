@@ -3878,6 +3878,51 @@ class AppLocalizationsEn extends AppLocalizations {
   String get joinReqNone => 'No one is waiting.';
 
   @override
+  String get settingsInvitesSection => 'Community invitations';
+
+  @override
+  String get settingsInvitesSharedOnlyTitle =>
+      'Only accept community invites from people I share a group with';
+
+  @override
+  String get settingsInvitesSharedOnlyNote =>
+      'Invites from anyone else are refused.';
+
+  @override
+  String get joinInviteFromStranger =>
+      'You only accept community invites from people you share a group with. To join, turn this off in Settings › Privacy and safety › Blocked accounts.';
+
+  @override
+  String get joinRequestNoticeText => 'New join request';
+
+  @override
+  String get joinRequestNoticeDismiss => 'Dismiss';
+
+  @override
+  String get joinReqPausedNote =>
+      'Invitations are paused. You can decline requests now and approve them once the pause ends.';
+
+  @override
+  String get moderationSectionDepartedTimeouts => 'Timed out after leaving';
+
+  @override
+  String get moderationDepartedTimeoutsNote =>
+      'These timeouts come back if the person rejoins.';
+
+  @override
+  String get moderationNoDepartedTimeouts => 'No one who left is timed out.';
+
+  @override
+  String moderationDepartedTimeoutUntil(String time) {
+    return 'Until $time';
+  }
+
+  @override
+  String moderationLiftTimeout(String username) {
+    return 'Lift timeout for $username';
+  }
+
+  @override
   String joinReqAskedAt(String date) {
     return 'Asked $date';
   }

@@ -1,5 +1,16 @@
 part of 'app_state.dart';
 
+/// Where the "only accept community invites from people I share a group with"
+/// switch is stored (owner decision 2026-11-21). The value is scoped to the
+/// server and account, so another account signed in on this device never
+/// inherits it; only that exact scope followed by `true` turns it on.
+const String _sharedOnlyInvitesSetting = 'c1.invites_shared_only';
+
+/// The account event an owner or admin gets when a join request is filed for
+/// a group or community it runs. It carries nothing (owner decision
+/// 2026-11-21); the app shows "New join request" and the list says the rest.
+const String joinRequestNoticeEventType = 'account.join_request';
+
 /// C1: joining groups and communities through invitation links, deciding join
 /// requests, and leaving or removing members of a community.
 ///
@@ -149,6 +160,83 @@ extension MembershipActions on AppState {
     return true;
   }
 
+  /// Hides the "New join request" notice.
+  void dismissJoinRequestNotice() {
+    if (!joinRequestNotice) return;
+    joinRequestNotice = false;
+    notifyListeners();
+  }
+
+  static String _sharedOnlyScope(Session owner) =>
+      '${owner.baseUrl}\u0000${owner.accountId}\u0000';
+
+  /// Reads the stored "only from people I share a group with" switch into
+  /// [communityInvitesSharedOnly]. Off when nothing (or another account's
+  /// value) is stored.
+  Future<void> loadCommunityInvitesSharedOnly() async {
+    final owner = session;
+    if (owner == null) return;
+    final String? raw;
+    try {
+      raw = await localStore.loadSetting(_sharedOnlyInvitesSetting);
+    } on Object {
+      return;
+    }
+    if (!identical(session, owner)) return;
+    final value = raw == '${_sharedOnlyScope(owner)}true';
+    if (value == communityInvitesSharedOnly) return;
+    communityInvitesSharedOnly = value;
+    notifyListeners();
+  }
+
+  /// Turns the switch on or off for this account. False when it could not be
+  /// stored (the choice still applies until the app restarts).
+  Future<bool> setCommunityInvitesSharedOnly(bool value) async {
+    final owner = session;
+    communityInvitesSharedOnly = value;
+    notifyListeners();
+    if (owner == null) return false;
+    try {
+      await localStore.saveSetting(
+        _sharedOnlyInvitesSetting,
+        '${_sharedOnlyScope(owner)}$value',
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Whether this device shares a group or conversation with [accountId]:
+  /// the account is in the MLS roster of one of its groups (read from the
+  /// group's own tree, never the server's member list), or is the other side
+  /// of a direct conversation. A message request does not count: it is how a
+  /// stranger first reaches someone.
+  bool sharesConversationWith(String accountId) {
+    if (accountId == session?.accountId) return true;
+    final engine = cryptoService;
+    final roster = engine is MlsRosterSource ? engine as MlsRosterSource : null;
+    for (final conversation in conversations.toList(growable: false)) {
+      if (isMessageRequest(conversation)) continue;
+      if (conversation.peerAccountId == accountId) return true;
+      final members = roster?.groupMemberAccounts(conversation.id);
+      if (members != null && members.contains(accountId)) return true;
+    }
+    return false;
+  }
+
+  /// Refuses a community invitation from someone this account shares no group
+  /// or conversation with, when the switch is on (owner decision 2026-11-21).
+  /// Runs after the binding check, so a forged link still reads as unusable.
+  void _refuseStrangerInvite(InviteTargetKind kind, InviteBinding binding) {
+    if (kind != InviteTargetKind.community || !communityInvitesSharedOnly) {
+      return;
+    }
+    if (!sharesConversationWith(binding.inviterAccountId)) {
+      throw UserFacingException(l10n.joinInviteFromStranger);
+    }
+  }
+
   static bool _sameBytes(List<int> a, List<int> b) {
     if (a.length != b.length) return false;
     var difference = 0;
@@ -203,6 +291,8 @@ extension MembershipActions on AppState {
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
+        await loadCommunityInvitesSharedOnly();
+        _refuseStrangerInvite(preview.kind, preview.binding);
         return (link: link, preview: preview);
       } on ApiException catch (err) {
         if (err.statusCode == 404) {
@@ -227,6 +317,8 @@ extension MembershipActions on AppState {
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
+        await loadCommunityInvitesSharedOnly();
+        _refuseStrangerInvite(preview.kind, preview.binding);
         if (preview.kind == InviteTargetKind.group) {
           final binding = preview.binding;
           await localStore.saveInviteAnchor(
@@ -540,6 +632,14 @@ extension MembershipActions on AppState {
   Future<List<CommunityBan>?> loadCommunityBans(String communityId) =>
       _membershipCall<List<CommunityBan>>(
         (current, client) => client.communityBans(current.token, communityId),
+      );
+
+  /// Running timeouts of accounts that left the community (C5). Admins lift
+  /// one with [timeoutCommunityMember] and 0 (owner decision 2026-11-21).
+  Future<List<DepartedTimeout>?> loadDepartedTimeouts(String communityId) =>
+      _membershipCall<List<DepartedTimeout>>(
+        (current, client) =>
+            client.departedTimeouts(current.token, communityId),
       );
 
   Future<ModerationState?> loadModerationState(String communityId) =>

@@ -615,6 +615,17 @@ class AppState extends ChangeNotifier
   /// address. Stored under `d134.direct_calls`.
   bool allowDirectCalls = false;
 
+  /// Whether a community invitation from someone this account shares no
+  /// group or conversation with is refused (owner decision 2026-11-21). Off
+  /// by default. Stored per server and account
+  /// (`loadCommunityInvitesSharedOnly`).
+  bool communityInvitesSharedOnly = false;
+
+  /// A new join request is waiting for this account as an owner or admin
+  /// (`account.join_request`, owner decision 2026-11-21). The event names no
+  /// one: the notice says only "New join request".
+  bool joinRequestNotice = false;
+
   /// The message each chat row quotes, by conversation. `source` is the
   /// history it was taken from (null: read straight from the local store), so
   /// a newer history is noticed by identity.
@@ -2259,6 +2270,7 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
       allowDirectCalls =
           await localStore.loadSetting(directCallsSetting) == 'true';
+      await loadCommunityInvitesSharedOnly();
       _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
@@ -7080,6 +7092,7 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting(_chatPreviewsSetting) != 'false';
       allowDirectCalls =
           await localStore.loadSetting(directCallsSetting) == 'true';
+      await loadCommunityInvitesSharedOnly();
       _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
@@ -9997,6 +10010,8 @@ class AppState extends ChangeNotifier
     passkeyList = const <PasskeyRecord>[];
     passkeysLoaded = false;
     passkeyNotice = null;
+    joinRequestNotice = false;
+    communityInvitesSharedOnly = false;
     _ownPasskeyChanges.clear();
     _passwordLeakDay = null;
     _recoveredDevice = false;
