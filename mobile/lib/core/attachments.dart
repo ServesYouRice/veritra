@@ -26,7 +26,7 @@ const Set<String> playableAudioTypes = <String>{
 
 /// The largest attachment, in plaintext bytes, that opens from memory. At or
 /// below it the image viewer (`Image.memory`) and the voice player
-/// (`BytesSource`) take the decrypted bytes and no file is written; above it
+/// (`BytesSource` or the loopback server) take the decrypted bytes and no file is written; above it
 /// the attachment is decrypted to a short-lived temp copy that is deleted
 /// when its viewer closes, and the hourly sweep removes any that remain
 /// (D134).
@@ -44,9 +44,10 @@ const Set<String> playableAudioTypes = <String>{
 /// photo, or any file for another app: `OpenFilex.open` takes only a path,
 /// so external openers always get a temp copy whatever the size.
 ///
-/// Bytes playback exists only on Android and Windows (`audioplayers` has
-/// none on iOS, macOS or Linux); elsewhere a voice note plays from a temp
-/// copy whatever its size.
+/// `audioplayers` plays bytes natively on Android and Windows; on iOS, macOS
+/// and Linux the voice player serves them from memory over a loopback-only
+/// HTTP server (`LoopbackClipServer`), so a small voice note plays without a
+/// file everywhere. If that fails to start, the note plays from a temp copy.
 const int attachmentMemoryLimit = 8 * 1024 * 1024;
 
 /// Metadata the server accepts with an uploaded attachment blob. It names

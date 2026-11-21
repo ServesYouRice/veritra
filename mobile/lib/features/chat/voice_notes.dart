@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
@@ -12,6 +14,7 @@ import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import 'attachment_views.dart'
     show deleteOpenedCopy, newOpenedCopy, openedFilesDirectory;
+import 'loopback_clip_server.dart';
 import 'voice_recorder.dart';
 
 /// "1:05" for a voice note position or length.
@@ -92,11 +95,11 @@ abstract class VoicePlayback {
   Stream<Duration> get durations;
   Future<void> play(String path);
 
-  /// Whether [playBytes] works on this platform. `audioplayers` has no bytes
-  /// source on iOS, macOS or Linux, so a note there plays from a temp file.
+  /// Whether [playBytes] works on this platform (D134).
   bool get supportsBytes;
 
-  /// Plays a note held in memory, with no file (D134).
+  /// Plays a note held in memory, with no file (D134). It throws if it
+  /// cannot, and the caller then plays from a temp file instead.
   Future<void> playBytes(Uint8List bytes, {String? mimeType});
   Future<void> pause();
   Future<void> resume();
@@ -104,9 +107,35 @@ abstract class VoicePlayback {
   Future<void> dispose();
 }
 
-/// [VoicePlayback] on the `audioplayers` plugin, playing a local file only.
+/// Starts the loopback server that feeds a clip to a player that cannot play
+/// bytes. A seam so tests need no socket.
+typedef ClipServerStarter = Future<LoopbackClipServer> Function(
+  Uint8List bytes, {
+  String? mimeType,
+});
+
+/// [VoicePlayback] on the `audioplayers` plugin.
+///
+/// A note in memory plays through `BytesSource` on Android and Windows. The
+/// plugin has no bytes source on iOS, macOS or Linux, so there the bytes are
+/// served to it by a [LoopbackClipServer] (127.0.0.1, one unguessable path,
+/// closed when playback stops). Nothing is written to disk either way.
 class AudioPlayersPlayback implements VoicePlayback {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayersPlayback({
+    AudioPlayer? player,
+    TargetPlatform? platform,
+    ClipServerStarter startServer = LoopbackClipServer.start,
+  })  : _player = player ?? AudioPlayer(),
+        _nativeBytes = _hasNativeBytes(platform ?? defaultTargetPlatform),
+        _startServer = startServer;
+
+  final AudioPlayer _player;
+  final bool _nativeBytes;
+  final ClipServerStarter _startServer;
+  LoopbackClipServer? _server;
+
+  static bool _hasNativeBytes(TargetPlatform platform) =>
+      platform == TargetPlatform.android || platform == TargetPlatform.windows;
 
   @override
   Stream<VoicePlaybackState> get states =>
@@ -128,11 +157,25 @@ class AudioPlayersPlayback implements VoicePlayback {
   Future<void> play(String path) => _player.play(DeviceFileSource(path));
 
   @override
-  bool get supportsBytes => Platform.isAndroid || Platform.isWindows;
+  bool get supportsBytes => true;
 
   @override
-  Future<void> playBytes(Uint8List bytes, {String? mimeType}) =>
-      _player.play(BytesSource(bytes, mimeType: mimeType));
+  Future<void> playBytes(Uint8List bytes, {String? mimeType}) async {
+    if (_nativeBytes) {
+      await _player.play(BytesSource(bytes, mimeType: mimeType));
+      return;
+    }
+    await _closeServer();
+    final server = await _startServer(bytes, mimeType: mimeType);
+    _server = server;
+    await _player.play(UrlSource(server.url.toString(), mimeType: mimeType));
+  }
+
+  Future<void> _closeServer() async {
+    final server = _server;
+    _server = null;
+    if (server != null) await server.close();
+  }
 
   @override
   Future<void> pause() => _player.pause();
@@ -141,10 +184,22 @@ class AudioPlayersPlayback implements VoicePlayback {
   Future<void> resume() => _player.resume();
 
   @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() async {
+    try {
+      await _player.stop();
+    } finally {
+      await _closeServer();
+    }
+  }
 
   @override
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    try {
+      await _closeServer();
+    } finally {
+      await _player.dispose();
+    }
+  }
 }
 
 /// A decrypted voice note: the bytes of one that plays from memory, or a
@@ -300,30 +355,43 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
     try {
       await _stopOthers();
       await _release();
-      final playback = widget.playbackFactory();
-      _playback = playback;
-      final voice = await widget.load(
-        playback.supportsBytes && widget.entry.opensFromMemory,
-      );
-      if (!mounted) {
-        await voice.discard();
-        return;
-      }
-      _voice = voice;
-      _subs.add(playback.states.listen(_onState));
-      _subs.add(playback.positions.listen(_onPosition));
-      _subs.add(playback.durations.listen(_onLength));
-      final bytes = voice.bytes;
-      if (bytes != null) {
-        await playback.playBytes(bytes, mimeType: widget.entry.mediaType);
-      } else {
-        await playback.play(voice.file!.path);
+      try {
+        await _open(allowMemory: true);
+      } catch (_) {
+        // Playing from memory can fail where the platform refuses a loopback
+        // server. Then the note plays from a private temp copy, as before.
+        final wasMemory = _voice?.bytes != null;
+        await _release();
+        if (!wasMemory) rethrow;
+        await _open(allowMemory: false);
       }
     } catch (_) {
       await _release();
       _set(() => _failed = true);
     } finally {
       _set(() => _loading = false);
+    }
+  }
+
+  Future<void> _open({required bool allowMemory}) async {
+    final playback = widget.playbackFactory();
+    _playback = playback;
+    final voice = await widget.load(
+      allowMemory && playback.supportsBytes && widget.entry.opensFromMemory,
+    );
+    if (!mounted) {
+      await voice.discard();
+      return;
+    }
+    _voice = voice;
+    _subs.add(playback.states.listen(_onState));
+    _subs.add(playback.positions.listen(_onPosition));
+    _subs.add(playback.durations.listen(_onLength));
+    final bytes = voice.bytes;
+    if (bytes != null) {
+      await playback.playBytes(bytes, mimeType: widget.entry.mediaType);
+    } else {
+      await playback.play(voice.file!.path);
     }
   }
 
