@@ -3993,6 +3993,12 @@ abstract class AppLocalizations {
   /// **'Devices that weren\'t on {name}\'s list before it changed: {count}. Trusting the list approves them, and they can be added to your chats.'**
   String chatHoldTrustNewDevices(String name, int count);
 
+  /// No description provided for @chatHoldTrustRecoveryKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This version also changes {name}\'s recovery key. Whoever holds that key can replace all of {name}\'s devices.'**
+  String chatHoldTrustRecoveryKey(String name);
+
   /// No description provided for @chatHoldTrustConfirm.
   ///
   /// In en, this message translates to:

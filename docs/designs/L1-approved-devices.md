@@ -286,6 +286,21 @@ The rules:
   person may then accept the thief's branch. That is the human decision
   the design leaves them, which is why the warning asks the contact to
   check their devices first.
+- At the conflicted head's own version the chain must carry that head, or
+  a statement a proof recorded at exactly that version names (review,
+  2026-11-21). A proof can lag the head: a refresh that found the fork at
+  version v writes the conflict state on whatever head is stored, and a
+  forced refresh racing it can have moved the pin to v + n meanwhile. The
+  proof at v alone would accept the pinned branch cut back to v (a
+  rollback that approves again what v + 1 .. v + n removed) or a branch
+  forked between v and the head. With the rule a lagging proof allows only
+  the pinned head and what grows from it, and no reset ever pins below the
+  conflicted version. Rows the earlier code wrote are covered the same way.
+- The warning also says when the branch names another recovery key than
+  the conflicted pin. A change 5 by a listed key can set one without
+  listing any new device, and the recovery key can later sign a recovery
+  version that replaces every device; a count of 0 alone would understate
+  that.
 - The proofs are kept. The first-pin time restarts (review M2: a re-pin is
   a new first sight for report verdicts). Stored L2-5 alerts stay and are
   judged against the new pin as usual. Held chats are judged again.

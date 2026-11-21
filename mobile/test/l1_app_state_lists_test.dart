@@ -1408,6 +1408,17 @@ void main() {
       (await state.localStore.loadDeviceListPin(_account))!.conflict,
       isTrue,
     );
+    // Nor at the commit: a plan for the own account (made past the app,
+    // straight on the pins) is refused, and the conflict stays.
+    final ownPlan = await DeviceListPins(
+      store: state.localStore,
+      source: _ApiLists(api),
+      verifier: state.cryptoService as NativeCryptoService,
+    ).prepareServedBranch(_account);
+    expect(await state.trustContactDeviceList(ownPlan), isFalse);
+    final ownAfter = (await state.localStore.loadDeviceListPin(_account))!;
+    expect(ownAfter.conflict, isTrue);
+    expect(ownAfter.headStatement, own.headStatement);
     api.others['acct_bob'] = [fork.madeUp];
     expect(await state.prepareContactDeviceListTrust('acct_bob'), isNull);
     expect(
@@ -1439,6 +1450,53 @@ void main() {
         ApprovalHoldReason.unapproved,
       );
     }
+  }, skip: skip);
+
+  test(
+      'a send the approval hold refuses shows the hold banner at once, '
+      'without a sync pass', () async {
+    final api = _DiscoveryApi(bindings);
+    final crypto = NativeCryptoService(
+      bindings: bindings,
+      localStore: MemoryLocalStore(),
+    );
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    await _addSignedPhone(bindings, api, crypto);
+    final created = await state.startConversation(kind: 'group');
+    expect(created?.id, 'conv_discovery');
+    // The own list forks (a sticky conflict): every own leaf is held.
+    final own = (await crypto.localStore.loadDeviceListPin(_account))!;
+    await crypto.localStore.saveDeviceListConflict(
+      accountId: _account,
+      version: own.version,
+      pinnedStatement: own.headStatement,
+      otherStatement: const [1, 2, 3],
+      recordedAt: 1,
+    );
+    // Let any background pass settle: the banner must not come from one.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(state.approvalHoldAccounts('conv_discovery'), isEmpty);
+    final bundles = api.bundles.length;
+
+    expect(await state.sendMessageTo('conv_discovery', 'hello'), isFalse);
+    expect(state.pendingOutbox, isEmpty);
+    expect(api.bundles, hasLength(bundles));
+    expect(
+      state.errorFor(Ops.send),
+      englishL10n.errorConversationApprovalHeld,
+    );
+    await _until(
+      () => state.approvalHoldAccounts('conv_discovery').isNotEmpty,
+    );
+    expect(state.approvalHoldAccounts('conv_discovery'), const [
+      ApprovalHoldAccount(
+        accountId: _account,
+        reason: ApprovalHoldReason.conflict,
+        own: true,
+      ),
+    ]);
   }, skip: skip);
 
   testWidgets('hold banners: wording, Check again, and trusting a list',

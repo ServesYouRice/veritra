@@ -2420,6 +2420,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String chatHoldTrustRecoveryKey(String name) {
+    return 'This version also changes $name\'s recovery key. Whoever holds that key can replace all of $name\'s devices.';
+  }
+
+  @override
   String get chatHoldTrustConfirm => 'Trust list';
 
   @override

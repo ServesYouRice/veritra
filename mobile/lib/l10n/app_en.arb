@@ -871,6 +871,8 @@
   "@chatHoldTrustBody": {"placeholders": {"name": {"type": "String", "example": "Ana"}}},
   "chatHoldTrustNewDevices": "Devices that weren't on {name}'s list before it changed: {count}. Trusting the list approves them, and they can be added to your chats.",
   "@chatHoldTrustNewDevices": {"placeholders": {"name": {"type": "String", "example": "Ana"}, "count": {"type": "int", "format": "decimalPattern"}}},
+  "chatHoldTrustRecoveryKey": "This version also changes {name}'s recovery key. Whoever holds that key can replace all of {name}'s devices.",
+  "@chatHoldTrustRecoveryKey": {"placeholders": {"name": {"type": "String", "example": "Ana"}}},
   "chatHoldTrustConfirm": "Trust list",
   "chatHoldTrustRefused": "The list the server shows now isn't one of the two signed versions, so nothing changed. Try again later.",
   "chatHoldTrusted": "{name}'s current device list is trusted now.",

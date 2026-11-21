@@ -650,6 +650,7 @@
   "chatHoldTrustTitle": "Želite li da verujete trenutnoj listi uređaja korisnika {name}?",
   "chatHoldTrustBody": "Uređaj ili ključ za oporavak korisnika {name} potpisao je dve različite verzije liste uređaja. Zamolite korisnika {name} da proveri svoje uređaje i ukloni one koje ne prepoznaje. Isti bezbednosni brojevi pokazuju da oboje vidite iste uređaje u ovom ćaskanju, ali ne i koja je verzija prava. Verujte listi tek kada {name} potvrdi uređaje u ovom ćaskanju.",
   "chatHoldTrustNewDevices": "Uređaji koji nisu bili na listi korisnika {name} pre ove promene: {count}. Ako verujete listi, oni će biti odobreni i mogu biti dodati u Vaša ćaskanja.",
+  "chatHoldTrustRecoveryKey": "Ova verzija menja i ključ za oporavak korisnika {name}. Ko god ima taj ključ može da zameni sve uređaje korisnika {name}.",
   "chatHoldTrustConfirm": "Veruj listi",
   "chatHoldTrustRefused": "Lista koju server sada prikazuje nije nijedna od dve potpisane verzije, pa ništa nije promenjeno. Pokušajte ponovo kasnije.",
   "chatHoldTrusted": "Trenutnoj listi uređaja korisnika {name} sada se veruje.",

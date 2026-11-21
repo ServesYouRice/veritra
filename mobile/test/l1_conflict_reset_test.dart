@@ -106,8 +106,22 @@ void main() {
       ),
       idBytes('dev_alice'),
     );
+    // Another version 2 by alice: the same devices, and a recovery key.
+    final recoveryKey = alice.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_fork'),
+        version: 2,
+        prevHash: head.listHash,
+        createdAtMs: 2,
+        change: DeviceListChange.recoveryKey,
+        entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
+        recoveryKey: server.signingPublicKey(),
+      ),
+      idBytes('dev_alice'),
+    );
     return _Fork(
       genesis: genesis,
+      recoveryKey: recoveryKey,
       left: add('dev_bob', bob.signingPublicKey()),
       right: right,
       rightNext: rightNext,
@@ -129,15 +143,16 @@ void main() {
 
       void later() => now = now.add(const Duration(minutes: 2));
 
+      LocalStore freshStore() {
+        if (kind == 'memory') return MemoryLocalStore();
+        final db = EncryptedLocalDatabase(NativeDatabase.memory());
+        addTearDown(db.close);
+        return _DatabaseStore(db);
+      }
+
       setUp(() async {
         now = DateTime.utc(2026, 11, 21, 12);
-        if (kind == 'memory') {
-          store = MemoryLocalStore();
-        } else {
-          final db = EncryptedLocalDatabase(NativeDatabase.memory());
-          addTearDown(db.close);
-          store = _DatabaseStore(db);
-        }
+        store = freshStore();
         server = _Server();
         pins = DeviceListPins(
           store: store,
@@ -399,6 +414,107 @@ void main() {
       );
 
       test(
+        'a proof that lags the conflicted head allows only the head and '
+        'what grows from it: no rollback, no branch forked after the proof',
+        () async {
+          // The race: a refresh finds the fork at version 2 while a forced
+          // refresh moves the pin on along the right branch to version 3
+          // (carol removes itself). The first then marks the moved head
+          // conflicted with its proof at version 2 only.
+          final lagged = freshStore();
+          final laggedPins = DeviceListPins(
+            store: lagged,
+            source: server,
+            verifier: _Verifier(bindings),
+            clock: () => now,
+          );
+          server.chain = [fork.genesis, fork.right, fork.rightNext];
+          expect(
+            (await laggedPins.refresh('acct_fork')).state,
+            DeviceListState.ok,
+          );
+          await lagged.saveDeviceListConflict(
+            accountId: 'acct_fork',
+            version: 2,
+            pinnedStatement: fork.right,
+            otherStatement: fork.left,
+            recordedAt: 2,
+          );
+          final head = (await lagged.loadDeviceListPin('acct_fork'))!;
+          expect(head.conflict, isTrue);
+          expect(head.version, 3);
+          Future<void> refused(List<Uint8List> chain) async {
+            server.chain = chain;
+            await expectLater(
+              laggedPins.prepareServedBranch('acct_fork'),
+              throwsA(isA<DeviceListResetRefused>()),
+            );
+            final still = (await lagged.loadDeviceListPin('acct_fork'))!;
+            expect(still.conflict, isTrue);
+            expect(still.headStatement, fork.rightNext);
+          }
+
+          // The pinned branch cut back to the proof: carol approved again.
+          await refused([fork.genesis, fork.right]);
+          // A version 3 that keeps carol and adds dave: no proof names it.
+          await refused([fork.genesis, fork.right, fork.rightKeep]);
+          // The proof's other branch, below the conflicted head.
+          await refused([fork.genesis, fork.left]);
+
+          server.chain = [fork.genesis, fork.right, fork.rightNext];
+          final plan = await laggedPins.prepareServedBranch('acct_fork');
+          expect(plan.newDevices, 0);
+          final pin = await laggedPins.commitServedBranch(plan);
+          expect(pin.conflict, isFalse);
+          expect(pin.headStatement, fork.rightNext);
+          expect(
+            await laggedPins.judge(
+              idBytes('acct_fork'),
+              idBytes('dev_carol'),
+              fork.carolKey,
+              refreshFirst: false,
+            ),
+            LeafVerdict.removed,
+          );
+        },
+        skip: skip,
+      );
+
+      test(
+        'the plan says when the branch changes the recovery key, even with '
+        'no new device',
+        () async {
+          final rkStore = freshStore();
+          final rkPins = DeviceListPins(
+            store: rkStore,
+            source: server,
+            verifier: _Verifier(bindings),
+            clock: () => now,
+          );
+          server.chain = [fork.genesis];
+          expect((await rkPins.refresh('acct_fork')).state, DeviceListState.ok);
+          later();
+          server.chain = [fork.genesis, fork.left];
+          expect((await rkPins.refresh('acct_fork')).state, DeviceListState.ok);
+          later();
+          // A listed key signs another version 2 that only sets a recovery
+          // key: a validly signed fork.
+          server.chain = [fork.genesis, fork.recoveryKey];
+          expect(
+            (await rkPins.refresh('acct_fork')).state,
+            DeviceListState.conflict,
+          );
+          final handover = await rkPins.prepareServedBranch('acct_fork');
+          expect(handover.newDevices, 0);
+          expect(handover.recoveryKeyChanges, isTrue);
+          server.chain = [fork.genesis, fork.left];
+          final pinned = await rkPins.prepareServedBranch('acct_fork');
+          expect(pinned.recoveryKeyChanges, isFalse);
+        },
+        skip: skip,
+      );
+
+      test(
         'a fork proof kept after the plan was made must hold for it too',
         () async {
           later();
@@ -506,6 +622,7 @@ void main() {
 class _Fork {
   _Fork({
     required this.genesis,
+    required this.recoveryKey,
     required this.left,
     required this.right,
     required this.rightNext,
@@ -517,6 +634,7 @@ class _Fork {
   });
 
   final Uint8List genesis;
+  final Uint8List recoveryKey;
   final Uint8List left;
   final Uint8List right;
   final Uint8List rightNext;

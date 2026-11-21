@@ -132,6 +132,15 @@ class ApprovalHoldBanners extends StatelessWidget {
                 l10n.chatHoldTrustNewDevices(name, plan.newDevices),
                 key: const ValueKey<String>('l1-hold-trust-new-devices'),
               ),
+              // The recovery key can replace every device later, so a
+              // branch that changes it is said so even with no new device.
+              if (plan.recoveryKeyChanges) ...[
+                const SizedBox(height: 12),
+                Text(
+                  l10n.chatHoldTrustRecoveryKey(name),
+                  key: const ValueKey<String>('l1-hold-trust-recovery-key'),
+                ),
+              ],
             ],
           ),
         ),

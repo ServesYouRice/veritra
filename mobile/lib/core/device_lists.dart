@@ -107,6 +107,7 @@ class DeviceListResetPlan {
     required this.chain,
     required this.conflictedHead,
     required this.newDevices,
+    required this.recoveryKeyChanges,
     required List<Uint8List> statements,
   }) : _statements = statements;
 
@@ -122,6 +123,12 @@ class DeviceListResetPlan {
   /// list now: what trusting it newly approves. A device the pinned branch
   /// removed and the other lists again counts as new.
   final int newDevices;
+
+  /// Whether the branch names another recovery key than the conflicted pin
+  /// (set, replaced or removed). The recovery key signs a recovery version
+  /// that replaces every device, so a branch can hand over the account
+  /// without listing a single new device yet.
+  final bool recoveryKeyChanges;
 
   /// The verified chain, version 1 first, to check the fork proofs against
   /// again at commit.
@@ -630,7 +637,7 @@ class DeviceListPins {
     if (!_same(chain.listId, stored.listId)) {
       throw const DeviceListResetRefused('another list identity');
     }
-    _checkProvenBranch(statements, proofs);
+    _checkProvenBranch(statements, proofs, stored);
     final newDevices = chain.listed
         .where(
           (key) => !stored.listed.any(
@@ -645,19 +652,43 @@ class DeviceListPins {
       chain: chain,
       conflictedHead: stored.headStatement,
       newDevices: newDevices,
+      recoveryKeyChanges: !_sameOptional(chain.recoveryKey, stored.recoveryKey),
       statements: List.unmodifiable(statements),
     );
   }
 
+  /// [statements] must carry one statement of every proof at its version,
+  /// and, at the conflicted head's own version, that head or a statement a
+  /// proof recorded at exactly that version names.
+  ///
+  /// The second rule matters when the proof lags the head: a refresh that
+  /// found the fork at version v can mark the head conflicted after a
+  /// concurrent refresh moved it to v + n (`_maybeConflict` writes the
+  /// state on whatever head is stored). The proof at v alone would then
+  /// accept the pinned branch cut back to v (a rollback that approves again
+  /// what v + 1 .. v + n removed) or a branch that forks between v and the
+  /// head, which no proof covers. With the rule, a lagging proof allows
+  /// only the pinned head and what grows from it.
   static void _checkProvenBranch(
     List<Uint8List> statements,
     List<DeviceListConflictProof> proofs,
+    DeviceListPin conflicted,
   ) {
     for (final proof in proofs) {
       if (statements.length < proof.version ||
           !proof.names(statements[proof.version - 1])) {
         throw const DeviceListResetRefused('not one of the proven branches');
       }
+    }
+    final version = conflicted.version;
+    if (version < 1 || statements.length < version) {
+      throw const DeviceListResetRefused('older than the pinned list');
+    }
+    final atHead = statements[version - 1];
+    if (!_same(atHead, conflicted.headStatement) &&
+        !proofs
+            .any((proof) => proof.version == version && proof.names(atHead))) {
+      throw const DeviceListResetRefused('not one of the proven branches');
     }
   }
 
@@ -679,7 +710,7 @@ class DeviceListPins {
     if (proofs.isEmpty) {
       throw const DeviceListResetRefused('no fork proof is kept');
     }
-    _checkProvenBranch(plan._statements, proofs);
+    _checkProvenBranch(plan._statements, proofs, stored);
     final now = _nowMs;
     final chain = plan.chain.copyWith(checkedAt: now, pinnedAt: now);
     if (!await store.replaceConflictedDeviceListPin(
@@ -861,3 +892,6 @@ bool _same(List<int> a, List<int> b) {
   }
   return true;
 }
+
+bool _sameOptional(List<int>? a, List<int>? b) =>
+    a == null || b == null ? a == b : _same(a, b);

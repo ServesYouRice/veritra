@@ -105,6 +105,8 @@ Each guard was removed in turn and the named tests run
 | M13 SQL replace ignores the conflicted head | store compare-and-swap (sqlite) |
 | M13m memory replace ignores the conflicted head | store compare-and-swap (memory) |
 | M10 another genesis becomes a sticky conflict | forged statements test |
+| M14 reset ignores the conflicted head when the proof lags it (no head rule) | lagging proof test (both stores): the pinned branch cut back to the proof, and a branch forked after it |
+| M15 the plan never reports a recovery key change | recovery key test (both stores) |
 | M2 reset skips the list-identity check | **not caught, by design**: a proof statement fixes its prefix through `prev_hash`, so the proof check already refuses another genesis. Kept as defence in depth |
 
 AppState and UI mutations (`l1_app_state_lists_test.dart`):
@@ -115,6 +117,8 @@ AppState and UI mutations (`l1_app_state_lists_test.dart`):
 | U2 the own account may be reset | conflict reset through AppState (own pin put in conflict) |
 | U3 Check again not spaced | hold banner reasons test |
 | U4 trust without the warning dialog | banner widget test |
+| U5 the commit accepts a plan for the own account | conflict reset through AppState (a plan made straight on the pins) |
+| U6 a send refused by the hold does not refresh the banner | send refused by the hold shows the banner without a sync pass |
 
 After the reset was split into prepare and commit, M1, M3, M3m, M4, M9,
 U2 (now on `prepareContactDeviceListTrust`) and U4 were rerun against the
@@ -124,6 +128,29 @@ M8, M10, U1 and U3 were run before the split, on code it did not change.
 Rule checks inside Rust (no-return, one key one device, signatures) were
 not mutated here: no Rust build was allowed on this machine. They are
 covered by the existing Rust vector tests (`testing/vectors/l1-device-list-v1.json`).
+
+## Independent review (2026-11-21)
+
+A second-opinion review of the reset and the banners found one hole and
+one gap, both fixed with tests that fail when the guard is removed (M14,
+M15, U5, U6 above):
+
+- A fork proof can lag the conflicted head (a forced refresh racing the
+  one that records the fork), and the proof check alone then let the reset
+  pin the pinned branch cut back below the head (approving a device a
+  later version removed) or a branch forked after the proof. The reset now
+  also requires the head itself, or a proof at the head's version, at
+  that version.
+- The warning counted new devices only; a branch that only changes the
+  recovery key showed 0. The plan now says so and the warning adds a
+  sentence.
+- Also covered now: the commit refuses a plan for the own account, and a
+  send the hold refuses refreshes the banner at once.
+
+Left as is: "Check again" is spaced per chat, so several chats held by one
+account can each force a fetch every 5 seconds (user-driven, no privacy or
+correctness effect). The sentence on the recovery key is checked in the
+pin tests; the widget test does not show it.
 
 ## Not covered
 
@@ -139,7 +166,8 @@ covered by the existing Rust vector tests (`testing/vectors/l1-device-list-v1.js
   the evidence for the client rules; the server's own gates are in
   `server/internal/httpapi/device_list_test.go` and
   `server/internal/storage/device_list_gates_test.go`.
-- Independent review of the reset and the banners.
+- The external independent security review of the reset and the banners
+  (the agent review above does not count as it).
 
 ## Checks (Linux, shared prebuilt native library)
 

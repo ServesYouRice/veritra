@@ -2438,6 +2438,11 @@ class AppLocalizationsSr extends AppLocalizations {
   }
 
   @override
+  String chatHoldTrustRecoveryKey(String name) {
+    return 'Ова верзија мења и кључ за опоравак корисника $name. Ко год има тај кључ може да замени све уређаје корисника $name.';
+  }
+
+  @override
   String get chatHoldTrustConfirm => 'Веруј листи';
 
   @override
@@ -7960,6 +7965,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
     final String countString = countNumberFormat.format(count);
 
     return 'Uređaji koji nisu bili na listi korisnika $name pre ove promene: $countString. Ako verujete listi, oni će biti odobreni i mogu biti dodati u Vaša ćaskanja.';
+  }
+
+  @override
+  String chatHoldTrustRecoveryKey(String name) {
+    return 'Ova verzija menja i ključ za oporavak korisnika $name. Ko god ima taj ključ može da zameni sve uređaje korisnika $name.';
   }
 
   @override
