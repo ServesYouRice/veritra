@@ -52,13 +52,9 @@ void main() {
           .first,
     );
     final position = scrollable.position;
-    // Two viewports, plus one two-line row: the direct-calls switch (U36,
-    // D56/D134) was added after this budget was set and measures 683 dp over
-    // one viewport against 658 before it was dropped.
-    const directCallsRow = 48.0;
     expect(
       position.maxScrollExtent,
-      lessThanOrEqualTo(position.viewportDimension + directCallsRow),
+      lessThanOrEqualTo(position.viewportDimension),
       reason:
           'content is ${position.maxScrollExtent + position.viewportDimension} '
           'dp tall; two viewports are ${2 * position.viewportDimension} dp',

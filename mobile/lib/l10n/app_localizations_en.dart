@@ -323,7 +323,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDirectCallsNote =>
-      'Faster, but the other person sees your network address.';
+      'Faster; the other person sees your IP.';
 
   @override
   String get settingsDeleteAccount => 'Delete account';
@@ -3301,7 +3301,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notify when a member mentions you, even in a muted chat.';
 
   @override
-  String get chatPreviewsSetting => 'Last message on chats';
+  String get chatPreviewsSetting => 'Show last message';
 
   @override
   String get chatPreviewsSettingDetail => 'Read from this device only.';
@@ -3317,7 +3317,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get b2LinkPreviewsOff => 'Off';
 
   @override
-  String get b2LinkPreviewsKnown => 'Known sites only';
+  String get b2LinkPreviewsKnown => 'Known sites';
 
   @override
   String get b2LinkPreviewsAll => 'All sites';

@@ -660,7 +660,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDirectCallsNote.
   ///
   /// In en, this message translates to:
-  /// **'Faster, but the other person sees your network address.'**
+  /// **'Faster; the other person sees your IP.'**
   String get settingsDirectCallsNote;
 
   /// No description provided for @settingsDeleteAccount.
@@ -5364,7 +5364,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatPreviewsSetting.
   ///
   /// In en, this message translates to:
-  /// **'Last message on chats'**
+  /// **'Show last message'**
   String get chatPreviewsSetting;
 
   /// No description provided for @chatPreviewsSettingDetail.
@@ -5394,7 +5394,7 @@ abstract class AppLocalizations {
   /// No description provided for @b2LinkPreviewsKnown.
   ///
   /// In en, this message translates to:
-  /// **'Known sites only'**
+  /// **'Known sites'**
   String get b2LinkPreviewsKnown;
 
   /// No description provided for @b2LinkPreviewsAll.

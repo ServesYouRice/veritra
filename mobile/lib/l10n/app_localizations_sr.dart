@@ -323,8 +323,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get settingsDirectCallsTitle => 'Директни позиви';
 
   @override
-  String get settingsDirectCallsNote =>
-      'Брже, али друга особа види вашу мрежну адресу.';
+  String get settingsDirectCallsNote => 'Брже; саговорник види вашу IP адресу.';
 
   @override
   String get settingsDeleteAccount => 'Избриши налог';
@@ -3323,7 +3322,7 @@ class AppLocalizationsSr extends AppLocalizations {
       'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
 
   @override
-  String get chatPreviewsSetting => 'Последња порука у ћаскањима';
+  String get chatPreviewsSetting => 'Прикажи последњу поруку';
 
   @override
   String get chatPreviewsSettingDetail => 'Чита се само са овог уређаја.';
@@ -3339,7 +3338,7 @@ class AppLocalizationsSr extends AppLocalizations {
   String get b2LinkPreviewsOff => 'Искључено';
 
   @override
-  String get b2LinkPreviewsKnown => 'Само познати сајтови';
+  String get b2LinkPreviewsKnown => 'Познати сајтови';
 
   @override
   String get b2LinkPreviewsAll => 'Сви сајтови';
@@ -5740,8 +5739,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get settingsDirectCallsTitle => 'Direktni pozivi';
 
   @override
-  String get settingsDirectCallsNote =>
-      'Brže, ali druga osoba vidi vašu mrežnu adresu.';
+  String get settingsDirectCallsNote => 'Brže; sagovornik vidi vašu IP adresu.';
 
   @override
   String get settingsDeleteAccount => 'Izbriši nalog';
@@ -8743,7 +8741,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
 
   @override
-  String get chatPreviewsSetting => 'Poslednja poruka u ćaskanjima';
+  String get chatPreviewsSetting => 'Prikaži poslednju poruku';
 
   @override
   String get chatPreviewsSettingDetail => 'Čita se samo sa ovog uređaja.';
@@ -8759,7 +8757,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get b2LinkPreviewsOff => 'Isključeno';
 
   @override
-  String get b2LinkPreviewsKnown => 'Samo poznati sajtovi';
+  String get b2LinkPreviewsKnown => 'Poznati sajtovi';
 
   @override
   String get b2LinkPreviewsAll => 'Svi sajtovi';
