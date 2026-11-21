@@ -674,7 +674,7 @@ The app accepts only HTTPS and has no "skip certificate check". For a second PC 
 - **CA security:** Install the internal CA only on workstations you own and control. Anyone holding `root.key` can impersonate any host on machines that trust that CA. Keep `root.key` restricted to the server host.
 - **Mobile caveats:** Android 7+ does not trust user-added root CAs for user applications; use Path A for Android mobile clients.
 - **Firewall:** Open inbound ports 80 and 443 on the server PC's firewall for the LAN subnet only.
-- **No cleartext:** Plain `http://` is strictly prohibited outside loopback demo builds (`mobile/lib/main_demo.dart`).
+- **No cleartext:** Plain `http://` is strictly prohibited outside loopback demo builds (`mobile/lib/main_demo.dart`) for any server connection. (The app's own in-process `http://127.0.0.1` voice player feed is not a server connection; see `docs/security-review.md`.)
 
 
 ## Post-quantum TLS
