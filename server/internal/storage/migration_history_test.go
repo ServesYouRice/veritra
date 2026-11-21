@@ -230,3 +230,20 @@ func TestBlobUsageBackfillOnUpgrade(t *testing.T) {
 	}
 	checkBlobUsageMatches(t, store, "after upgrade")
 }
+
+// Two migration files with one number apply in name order, which hides a
+// merge that brought both (0094 did, from two branches). Every number is
+// used once.
+func TestMigrationNumbersAreUnique(t *testing.T) {
+	_, names := migrationsUpTo(t, "")
+	seen := map[string]string{}
+	for _, name := range names {
+		if len(name) < 5 || name[4] != '_' {
+			t.Fatalf("migration %s does not start with a four-digit number", name)
+		}
+		if other, ok := seen[name[:4]]; ok {
+			t.Fatalf("migrations %s and %s share a number", other, name)
+		}
+		seen[name[:4]] = name
+	}
+}

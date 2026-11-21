@@ -255,6 +255,15 @@ func (s *Store) SetMemberTimeout(ctx context.Context, communityID, actorAccountI
 	if _, err := tx.ExecContext(ctx, `UPDATE memberships SET timeout_until = ? WHERE community_id = ? AND account_id = ?`, arg, communityID, targetAccountID); err != nil {
 		return nil, err
 	}
+	// Remembered apart from the membership row, so leaving and joining again
+	// does not end it (migration 0095 copies it onto a new row).
+	if until != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO member_timeouts(community_id, account_id, timeout_until) VALUES(?, ?, ?) ON CONFLICT(community_id, account_id) DO UPDATE SET timeout_until = excluded.timeout_until`, communityID, targetAccountID, arg); err != nil {
+			return nil, err
+		}
+	} else if _, err := tx.ExecContext(ctx, `DELETE FROM member_timeouts WHERE community_id = ? AND account_id = ?`, communityID, targetAccountID); err != nil {
+		return nil, err
+	}
 	if err := appendModerationEventTx(ctx, tx, communityID, actorAccountID, targetAccountID, "", action); err != nil {
 		return nil, err
 	}

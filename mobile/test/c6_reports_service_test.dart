@@ -387,6 +387,117 @@ void main() {
     skip: nativeSkip,
   );
 
+  test(
+    'replacing the seed from one inbox moves every inbox that listed the old '
+    'key, and leaves a key another device holds alone',
+    () async {
+      const otherCommunity = 'comm_other';
+      const thirdCommunity = 'comm_third';
+      final deviceSeeds = MemoryReportSeedStore();
+      ReportsService inbox([String? community]) {
+        final base = ReportsService(
+          api: server,
+          token: _ownerAccount,
+          accountId: _ownerAccount,
+          crypto: crypto,
+          store: store,
+          seeds: deviceSeeds,
+          otherInboxes: () => <String?>[
+            null,
+            _community,
+            otherCommunity,
+            thirdCommunity,
+          ],
+        );
+        return community == null ? base : base.forCommunity(community);
+      }
+
+      // One seed on this device, published as the owner inbox and as the
+      // moderator inbox of two communities.
+      final (oldKey, _) = await inbox().createKey();
+      await inbox(_community).publishKey();
+      await inbox(otherCommunity).publishKey();
+      // A third community lists a key another device of this account holds.
+      final elsewhere = await crypto.reportPublicKey(
+        await crypto.generateReportKeySeed(),
+      );
+      await server.putModeratorReportKey(
+        _ownerAccount,
+        thirdCommunity,
+        elsewhere,
+      );
+
+      final (newKey, _) = await inbox(_community).createKey(replace: true);
+      expect(newKey, isNot(oldKey));
+      for (final community in <String?>[null, _community, otherCommunity]) {
+        final status = await inbox(community).keyStatus();
+        expect(status.state, OwnerReportKeyState.active, reason: community);
+        expect(status.listedKey, newKey, reason: community);
+      }
+      expect(
+        (await server.getOwnModeratorReportKey(_ownerAccount, thirdCommunity))!
+            .publicKey,
+        elsewhere,
+      );
+    },
+    skip: nativeSkip,
+  );
+
+  test(
+    'once the new key is published, a failure listing the other inboxes '
+    'does not put the old seed back',
+    () async {
+      final deviceSeeds = MemoryReportSeedStore();
+      ReportsService inbox({bool failListing = false}) => ReportsService(
+            api: server,
+            token: _ownerAccount,
+            accountId: _ownerAccount,
+            crypto: crypto,
+            store: store,
+            seeds: deviceSeeds,
+            otherInboxes: () => failListing
+                ? throw StateError('communities not loaded')
+                : const <String?>[],
+          ).forCommunity(_community);
+
+      await inbox().createKey();
+      final (newKey, _) = await inbox(failListing: true).createKey(
+        replace: true,
+      );
+      final status = await inbox().keyStatus();
+      expect(status.state, OwnerReportKeyState.active);
+      expect(status.listedKey, newKey);
+      expect(status.localKey, newKey);
+    },
+    skip: nativeSkip,
+  );
+
+  test(
+    'a seed that no longer yields a key can still be replaced',
+    () async {
+      final deviceSeeds = MemoryReportSeedStore();
+      final inbox = ReportsService(
+        api: server,
+        token: _ownerAccount,
+        accountId: _ownerAccount,
+        crypto: crypto,
+        store: store,
+        seeds: deviceSeeds,
+        otherInboxes: () => const <String?>[null],
+      ).forCommunity(_community);
+      await deviceSeeds.save(
+        server.baseUrl,
+        _ownerAccount,
+        Uint8List.fromList(<int>[1, 2, 3]),
+      );
+      final (key, _) = await inbox.createKey(replace: true);
+      final status = await inbox.keyStatus();
+      expect(status.state, OwnerReportKeyState.active);
+      expect(status.listedKey, key);
+    },
+    skip: nativeSkip,
+  );
+
   test('report round trip: pin, file, open, verify, dismiss', () async {
     await ownerSetsUpKey();
     final reporter = serviceFor(_reporterAccount);

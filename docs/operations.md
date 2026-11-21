@@ -453,6 +453,20 @@ an older binary looks invites up by a `code` column that no longer exists, so
 registration and the invite list fail. Restore the pre-upgrade backup with its
 binary instead; invites created after the upgrade are lost with it.
 
+Rolling back past migration 0095 (C5 timeouts that survive a rejoin) starts
+the older binary, which ignores the table and trigger the migration added.
+The trigger keeps copying the remembered timeout onto a member who joins
+again, but the older binary does not update or clear what it remembers: a
+timeout lifted or changed while it runs comes back as it was when that member
+leaves and rejoins. To undo the migration cleanly, stop the server and run,
+in one transaction, `DROP TRIGGER IF EXISTS memberships_keep_timeout; DROP
+TABLE IF EXISTS member_timeouts; DELETE FROM schema_migrations WHERE version
+= '0095_c5_timeouts_survive_rejoin.sql';`. Rolling forward later applies it
+again from the timeouts current members hold then. Do not drop the trigger or
+the table without deleting that `schema_migrations` row: the newer binary
+would not recreate them, so setting a timeout fails without the table and a
+rejoin ends one again without the trigger.
+
 Shutdown fits a 25-second budget, below the 30-second stop grace of the
 supported Compose service (`stop_grace_period`) and systemd unit
 (`TimeoutStopSec`); keep both above 25 seconds if you change them. It marks

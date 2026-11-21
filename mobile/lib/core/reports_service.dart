@@ -250,6 +250,7 @@ class ReportsService {
     this.communityId,
     this.onSeedChanged,
     this.senderFrankKey,
+    this.otherInboxes,
     Random? random,
     DateTime Function()? clock,
   })  : pins = ReportKeyPins(store, api.baseUrl),
@@ -288,6 +289,13 @@ class ReportsService {
   /// instance owner's.
   final String? communityId;
 
+  /// Every inbox this account may have published this device's key to on
+  /// this server: null names the instance owners' inbox, any other value a
+  /// community's moderator inbox. When a key is replaced, each of them that
+  /// still lists the old seed's key moves to the new one, so one seed serves
+  /// every inbox again (C6, "Community moderator inbox", left item).
+  final Iterable<String?> Function()? otherInboxes;
+
   /// The same service for this account's moderator inbox in [id].
   ReportsService forCommunity(String id) => ReportsService(
         api: api,
@@ -300,6 +308,7 @@ class ReportsService {
         communityId: id,
         onSeedChanged: onSeedChanged,
         senderFrankKey: senderFrankKey,
+        otherInboxes: otherInboxes,
         random: _random,
         clock: _clock,
       );
@@ -525,14 +534,23 @@ class ReportsService {
       throw StateError('a report key already exists on this device');
     }
     final previous = await seeds.load(api.baseUrl, accountId);
+    // A seed that no longer yields a key must not block its replacement:
+    // then nothing is moved and each inbox's screen offers the publish.
+    List<int>? previousKey;
+    if (previous != null) {
+      try {
+        previousKey = await crypto.reportPublicKey(previous);
+      } catch (_) {
+        previousKey = null;
+      }
+    }
     final seed = await crypto.generateReportKeySeed();
     try {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
+      final int rev;
       try {
-        final rev = await _putKey(key);
-        _seedChanged();
-        return (key, rev);
+        rev = await _putKey(key);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
         // opens stay readable.
@@ -543,6 +561,11 @@ class ReportsService {
         }
         rethrow;
       }
+      // Published: from here on the new seed is the one the server lists,
+      // so nothing below may put the old seed back.
+      if (previousKey != null) await _moveOtherInboxes(previousKey, key);
+      _seedChanged();
+      return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
       previous?.fillRange(0, previous.length, 0);
@@ -560,6 +583,41 @@ class ReportsService {
       return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
+    }
+  }
+
+  /// After this device replaced its seed: publishes [key] to every other
+  /// inbox (see [otherInboxes]) that still lists [previousKey], the key of
+  /// the seed this device just dropped. An inbox listing any other key (one
+  /// another device holds) is left alone. Best effort per inbox: one that
+  /// fails reads as replaced elsewhere on its screen, which offers to
+  /// publish this device's key.
+  /// Never throws: it runs after the publish, when the old seed is gone.
+  Future<void> _moveOtherInboxes(List<int> previousKey, List<int> key) async {
+    final Set<String?> others;
+    try {
+      others = otherInboxes?.call().toSet() ?? const <String?>{};
+    } catch (_) {
+      return; // Each inbox's own screen offers the move instead.
+    }
+    final own = communityId;
+    for (final inbox in others) {
+      if (inbox == own) continue;
+      try {
+        final listed = inbox == null
+            ? await api.getOwnReportKey(token)
+            : await api.getOwnModeratorReportKey(token, inbox);
+        if (listed == null || !_sameBytes(listed.publicKey, previousKey)) {
+          continue;
+        }
+        if (inbox == null) {
+          await api.putInstanceReportKey(token, key);
+        } else {
+          await api.putModeratorReportKey(token, inbox, key);
+        }
+      } catch (_) {
+        // Left for that inbox's own screen (replaced elsewhere).
+      }
     }
   }
 
