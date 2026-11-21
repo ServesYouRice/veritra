@@ -51,6 +51,10 @@ var (
 	// ErrReportInboxChanged: the copies do not match the inbox's current
 	// recipients and keys (a key rotated, an owner published or left).
 	ErrReportInboxChanged = errors.New("report inbox key changed")
+	// ErrReportKeyChanged: a publish named a current key (or none) that is
+	// not the inbox's current key: another device of the account published
+	// or replaced it since this device looked (compare-and-swap).
+	ErrReportKeyChanged = errors.New("report key changed since it was read")
 	// ErrReportDuplicate: this reporter already filed a report with this id.
 	ErrReportDuplicate = errors.New("report already filed by this account")
 	// ErrReportLimit: the reporter or the inbox holds too many reports.
@@ -92,8 +96,11 @@ type Report struct {
 // an active owner may, and each owner publishes their own (D95: one sealed
 // copy per owner). Publishing the same key again changes nothing; a
 // different key raises key_rev, which reports sealed to the old key refuse.
-func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publicKey []byte) (ReportRecipient, error) {
-	if len(publicKey) != franking.PublicKeySize {
+// expected is the key the caller saw listed when it decided (nil: none
+// listed); a different current key is refused with ErrReportKeyChanged, so
+// one device never overwrites a key another device published meanwhile.
+func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publicKey, expected []byte) (ReportRecipient, error) {
+	if len(publicKey) != franking.PublicKeySize || !validExpectedReportKey(expected) {
 		return ReportRecipient{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -125,6 +132,9 @@ func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publ
 	default:
 		rev++
 	}
+	if !reportKeyMatches(current, expected) {
+		return ReportRecipient{}, ErrReportKeyChanged
+	}
 	now := nowString()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO report_inbox_keys(inbox_kind, inbox_id, public_key, key_rev, set_by_account_id, updated_at)
@@ -144,8 +154,10 @@ func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publ
 // active member may publish one: whether reports are sealed to it is the
 // reporter's app's decision from the verified role record (C4). The same key
 // may serve several communities and the owner inbox; the aad binds each.
-func (s *Store) SetCommunityReportKey(ctx context.Context, communityID, accountID string, publicKey []byte) (ReportRecipient, error) {
-	if len(publicKey) != franking.PublicKeySize || communityID == "" || accountID == "" {
+//
+// expected works as for SetInstanceReportKey.
+func (s *Store) SetCommunityReportKey(ctx context.Context, communityID, accountID string, publicKey, expected []byte) (ReportRecipient, error) {
+	if len(publicKey) != franking.PublicKeySize || !validExpectedReportKey(expected) || communityID == "" || accountID == "" {
 		return ReportRecipient{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -180,6 +192,9 @@ func (s *Store) SetCommunityReportKey(ctx context.Context, communityID, accountI
 	default:
 		rev++
 	}
+	if !reportKeyMatches(current, expected) {
+		return ReportRecipient{}, ErrReportKeyChanged
+	}
 	now := nowString()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO report_inbox_keys(inbox_kind, inbox_id, public_key, key_rev, set_by_account_id, updated_at)
@@ -192,6 +207,24 @@ func (s *Store) SetCommunityReportKey(ctx context.Context, communityID, accountI
 		return ReportRecipient{}, err
 	}
 	return ReportRecipient{InboxID: inboxID, PublicKey: publicKey, KeyRev: rev, UpdatedAt: parseTime(now)}, nil
+}
+
+// validExpectedReportKey: an expected key is a full public key, or absent
+// (none listed).
+func validExpectedReportKey(expected []byte) bool {
+	return len(expected) == 0 || len(expected) == franking.PublicKeySize
+}
+
+// reportKeyMatches is the compare-and-swap check of a key publish: the
+// inbox's current key (nil when none is published) is the one the caller
+// expected (empty when it saw none). A publisher that sends no expectation
+// (an app from before the check) is taken to expect none, so it can still
+// publish a first key, or the same key again, but never replace one.
+func reportKeyMatches(current, expected []byte) bool {
+	if len(expected) == 0 {
+		return current == nil
+	}
+	return current != nil && bytes.Equal(current, expected)
 }
 
 // CommunityReportKey returns accountID's own moderator key for communityID

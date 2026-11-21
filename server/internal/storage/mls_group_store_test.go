@@ -303,12 +303,10 @@ func TestMLSCommitBundleRejectsOutsidersAndLegacyGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+	seedLegacyMLSMessage(t, store, CreateMLSMessageInput{
 		ConversationID: legacy.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
 		RecipientDeviceID: bob.Device.ID, Kind: "welcome", Payload: []byte("w"), IdempotencyKey: "legacy-welcome",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
 		ConversationID: legacy.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
 		Epoch: 0, IdempotencyKey: "late-genesis",

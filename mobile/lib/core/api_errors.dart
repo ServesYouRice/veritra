@@ -201,6 +201,9 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
   'report_inbox_unavailable': ApiErrorKind.conflict,
   'report_inbox_changed': ApiErrorKind.conflict,
+  // Another device of the account published or replaced the report key
+  // since this device read it (compare-and-swap on the key PUT).
+  'report_key_changed': ApiErrorKind.conflict,
   'already_reported': ApiErrorKind.conflict,
   'report_limit_reached': ApiErrorKind.rateLimited,
   'invalid_public_key': ApiErrorKind.invalidRequest,

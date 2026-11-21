@@ -1158,12 +1158,22 @@ class ApiClient {
 
   /// Publishes the calling instance owner's report public key. Needs a recent
   /// reauthentication. Returns the stored key revision.
-  Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
+  ///
+  /// [expected] is the key this device saw listed when the decision to
+  /// publish was made, or null when it saw none. The server publishes only
+  /// while that is still the listed key, and answers 409
+  /// `report_key_changed` when another device published or replaced it
+  /// since (compare-and-swap).
+  Future<int> putInstanceReportKey(
+    String token,
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async {
     final json = await _jsonRequest(
       'PUT',
       '/api/v1/reports/inbox-keys/instance',
       token: token,
-      body: <String, Object?>{'public_key': base64Encode(publicKey)},
+      body: _reportKeyBody(publicKey, expected),
     );
     return _decode(() {
       final rev = json['key_rev'];
@@ -1174,16 +1184,18 @@ class ApiClient {
 
   /// C6: publishes the caller's report public key as a moderator inbox of
   /// [communityId] (one sealed copy per moderator). Needs a recent sign-in.
+  /// [expected] as for [putInstanceReportKey].
   Future<int> putModeratorReportKey(
     String token,
     String communityId,
-    List<int> publicKey,
-  ) async {
+    List<int> publicKey, {
+    required List<int>? expected,
+  }) async {
     final json = await _jsonRequest(
       'PUT',
       '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
       token: token,
-      body: <String, Object?>{'public_key': base64Encode(publicKey)},
+      body: _reportKeyBody(publicKey, expected),
     );
     return _decode(() {
       final rev = json['key_rev'];
@@ -1191,6 +1203,16 @@ class ApiClient {
       return rev;
     });
   }
+
+  static Map<String, Object?> _reportKeyBody(
+    List<int> publicKey,
+    List<int>? expected,
+  ) =>
+      <String, Object?>{
+        'public_key': base64Encode(publicKey),
+        // Null says "none listed": the server then refuses to replace a key.
+        'expected_public_key': expected == null ? null : base64Encode(expected),
+      };
 
   /// The caller's own moderator report key for [communityId], or null.
   Future<ReportInboxRecipient?> getOwnModeratorReportKey(

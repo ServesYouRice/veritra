@@ -16,7 +16,8 @@ its own moderator members ("Private channels"). The report screens (step
 (`GET /reports/{id}/envelope`, which tells the server the envelope id at
 review time only, to that recipient). The report form offers reasons, sealed
 in body v3 ("Report reasons"). Replacing the seed from one inbox moves every
-inbox that listed the old key (2026-11-21, "Seed replacement"). Left: the
+inbox that listed the old key, and key publishes are compare-and-swap
+(2026-11-21, "Seed replacement"). Left: the
 independent review of the whole C6 wiring (G25).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
 
@@ -422,9 +423,48 @@ one inbox moves every inbox ..."), which fails with the move removed. The
 move runs only after the new key is published and never throws, so a
 failure there cannot put the old seed back while the server lists the new
 key; a seed that no longer yields a key can still be replaced (nothing is
-moved then). The server's PUT has no compare-and-swap: another device of
-the account publishing to an inbox between this device's check and its PUT
-is overwritten, as a later replace on this device would.
+moved then).
+
+**Compare-and-swap on key publishes (owner decision, 2026-11-21).** A
+device of the account no longer overwrites a key another device published
+or replaced since this device read it.
+
+- **Wire.** Both key PUTs (instance and community) take
+  `expected_public_key` beside `public_key`: the 32-byte key the device saw
+  listed when the person decided, or null when it saw none. A different
+  current key (or a key where none was expected, or none where one was) is
+  refused with 409 `report_key_changed` in the existing error envelope; any
+  other length is 400 `invalid_public_key`. Publishing the key already
+  listed changes nothing and succeeds whatever was expected, so a retry
+  after a lost response is safe. The check and the write share one
+  transaction on the server's single writer connection. The comparison is
+  on key bytes, not `key_rev`: a revision restarts at 1 when an inbox row
+  is dropped and published again, a key does not repeat.
+- **Old clients.** An app from before the field sends none, which reads as
+  "expects none" (the conservative reading): its first publish and a
+  republish of its own key still work; its replace, and its move of other
+  inboxes, are refused until it is updated. A new app against a server
+  from before the field gets 400 `invalid_json` on key publishes (the
+  server refuses unknown fields), so server and app upgrade together.
+- **App.** The owner screen passes the listed key from the `keyStatus` it
+  showed (`OwnerReportKeyStatus.listedKey`) to `createKey` and
+  `publishKey`; the service never re-reads it, so the check covers the
+  whole time the person was deciding. On `report_key_changed`
+  (`ReportsService.isKeyConflict`) nothing was published: `createKey` puts
+  the previous seed back as for any failed publish, the screen says that
+  another device changed the key meanwhile, reloads, and the person decides
+  again from what is listed now. The seed move after a replace
+  (`_moveOtherInboxes`) sends the old key it just checked as the
+  expectation, so an inbox another device changed between that check and
+  the PUT is refused and left alone.
+- **Tests.** `server/internal/httpapi/report_key_cas_test.go` (both
+  inboxes: a stale replace, a replace without expectation, and one
+  expecting none are refused and leave the other device's key; a first
+  publish without expectation and a same-key retry succeed; fails with the
+  check removed); `mobile/test/c6_reports_service_test.dart` ("a replace
+  that lost the race ...", and every seed move names the old key);
+  `mobile/test/c6_report_screens_test.dart` ("a key another device
+  published meanwhile is not overwritten ...").
 
 ## Moderator keys over MLS (2026-11-11)
 

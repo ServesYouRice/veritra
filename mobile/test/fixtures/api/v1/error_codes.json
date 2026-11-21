@@ -166,6 +166,7 @@
     "register_failed": "server",
     "report_inbox_changed": "conflict",
     "report_inbox_unavailable": "conflict",
+    "report_key_changed": "conflict",
     "report_limit_reached": "rateLimited",
     "reveal_required": "conflict",
     "room_ended": "notFound",

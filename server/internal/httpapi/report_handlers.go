@@ -15,20 +15,37 @@ import (
 // envelope id is sealed inside the report, never sent in clear. It never opens
 // a report, never logs one, and its audit entries hold ids and kinds only.
 
+// reportKeyRequest is the body of both report-key PUTs. ExpectedPublicKey is
+// the key this device saw listed for the inbox when it decided to publish:
+// omitted or null when it saw none. The server publishes only while that is
+// still the current key (compare-and-swap) and answers 409
+// `report_key_changed` otherwise, so a device never overwrites a key another
+// device of the account published meanwhile; the app then reloads and the
+// person decides again. An app from before the field sends none, which reads
+// as "expects none": it can publish a first key or the same key again, never
+// replace one (docs/designs/C6-reports-franking.md, "Seed replacement").
+type reportKeyRequest struct {
+	PublicKey         []byte `json:"public_key"`
+	ExpectedPublicKey []byte `json:"expected_public_key"`
+}
+
+func (req reportKeyRequest) valid() bool {
+	return len(req.PublicKey) == franking.PublicKeySize &&
+		(len(req.ExpectedPublicKey) == 0 || len(req.ExpectedPublicKey) == franking.PublicKeySize)
+}
+
 // PUT /api/v1/reports/inbox-keys/instance: an instance owner publishes their
 // own report public key (one sealed copy per owner, D95).
 func (a *API) putInstanceReportKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
-	var req struct {
-		PublicKey []byte `json:"public_key"`
-	}
+	var req reportKeyRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.PublicKey) != franking.PublicKeySize {
+	if !req.valid() {
 		writeError(w, http.StatusBadRequest, "invalid_public_key")
 		return
 	}
-	recipient, err := a.Store.SetInstanceReportKey(r.Context(), principal.AccountID, req.PublicKey)
+	recipient, err := a.Store.SetInstanceReportKey(r.Context(), principal.AccountID, req.PublicKey, req.ExpectedPublicKey)
 	if err != nil {
 		handleStorageError(w, err)
 		return
@@ -54,18 +71,16 @@ func (a *API) getInstanceReportKey(w http.ResponseWriter, r *http.Request, princ
 // one sealed copy per moderator). Reporters' apps seal to it only when their
 // verified role record ranks this account moderator or above.
 func (a *API) putCommunityReportKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
-	var req struct {
-		PublicKey []byte `json:"public_key"`
-	}
+	var req reportKeyRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.PublicKey) != franking.PublicKeySize {
+	if !req.valid() {
 		writeError(w, http.StatusBadRequest, "invalid_public_key")
 		return
 	}
 	communityID := strings.TrimSpace(r.PathValue("community_id"))
-	recipient, err := a.Store.SetCommunityReportKey(r.Context(), communityID, principal.AccountID, req.PublicKey)
+	recipient, err := a.Store.SetCommunityReportKey(r.Context(), communityID, principal.AccountID, req.PublicKey, req.ExpectedPublicKey)
 	if err != nil {
 		handleStorageError(w, err)
 		return

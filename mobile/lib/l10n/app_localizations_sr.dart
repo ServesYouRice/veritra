@@ -4507,6 +4507,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get c6ReportsKeyReady => 'Кључ за пријаве је објављен.';
 
   @override
+  String get c6ReportsKeyChangedMeanwhile =>
+      'Други уређај је променио ваш кључ за пријаве док сте одлучивали. Овде ништа није промењено. Проверите кључ испод и изаберите поново.';
+
+  @override
   String get c6ReportsEmpty => 'Нема пријава';
 
   @override
@@ -10083,6 +10087,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsKeyReady => 'Ključ za prijave je objavljen.';
+
+  @override
+  String get c6ReportsKeyChangedMeanwhile =>
+      'Drugi uređaj je promenio vaš ključ za prijave dok ste odlučivali. Ovde ništa nije promenjeno. Proverite ključ ispod i izaberite ponovo.';
 
   @override
   String get c6ReportsEmpty => 'Nema prijava';

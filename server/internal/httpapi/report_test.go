@@ -214,6 +214,18 @@ func putReportKey(t *testing.T, handler http.Handler, token string, key []byte) 
 	return status, string(response)
 }
 
+// replaceReportKey publishes key at path while expecting expected to be
+// listed now (nil: none), as the app does (compare-and-swap).
+func replaceReportKey(t *testing.T, handler http.Handler, path, token string, key, expected []byte) (int, string) {
+	t.Helper()
+	body := map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(key), "expected_public_key": nil}
+	if expected != nil {
+		body["expected_public_key"] = base64.StdEncoding.EncodeToString(expected)
+	}
+	status, response := doJSON(t, handler, http.MethodPut, path, token, body)
+	return status, string(response)
+}
+
 func TestReportToEveryInstanceOwnerFromGroup(t *testing.T) {
 	handler, ownerToken, dbPath := newTestHandlerWithOwner(t)
 	ownerID := accountIDFromExport(t, handler, ownerToken)
@@ -378,7 +390,7 @@ func TestReportToEveryInstanceOwnerFromGroup(t *testing.T) {
 
 	// Rotating one owner's key makes the old revision refuse.
 	rotated := bytes.Repeat([]byte{6}, 32)
-	if status, body := putReportKey(t, handler, ownerToken, rotated); status != http.StatusOK || !strings.Contains(body, `"key_rev":2`) {
+	if status, body := replaceReportKey(t, handler, "/api/v1/reports/inbox-keys/instance", ownerToken, rotated, first.Key); status != http.StatusOK || !strings.Contains(body, `"key_rev":2`) {
 		t.Fatalf("rotate status=%d body=%s", status, body)
 	}
 	if status, body := fileReport(t, handler, reporterToken, conversationID, "rpt-0000000000000002", first, second); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
@@ -638,7 +650,7 @@ func TestOwnerReadsOnlyTheirOwnCurrentReportKey(t *testing.T) {
 		t.Fatalf("own key status=%d body=%s", status, response)
 	}
 	// A replaced key is what is returned next, at its new revision.
-	if status, body := putReportKey(t, handler, ownerToken, key2); status != http.StatusOK {
+	if status, body := replaceReportKey(t, handler, path, ownerToken, key2, key1); status != http.StatusOK {
 		t.Fatalf("replace status=%d body=%s", status, body)
 	}
 	status, response = doJSON(t, handler, http.MethodGet, path, ownerToken, nil)

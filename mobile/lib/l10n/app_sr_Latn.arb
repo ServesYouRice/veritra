@@ -1255,6 +1255,7 @@
   "c6ReportsKeyReplace": "Zameni ključ",
   "c6ReportsKeyPublish": "Objavi ključ ponovo",
   "c6ReportsKeyReady": "Ključ za prijave je objavljen.",
+  "c6ReportsKeyChangedMeanwhile": "Drugi uređaj je promenio vaš ključ za prijave dok ste odlučivali. Ovde ništa nije promenjeno. Proverite ključ ispod i izaberite ponovo.",
   "c6ReportsEmpty": "Nema prijava",
   "c6ReportsEmptyDetail": "Prijave se čuvaju dok ih ne odbacite, a najduže 90 dana.",
   "c6ReportsCommunity": "Prijave zajednice",

@@ -74,6 +74,16 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 	if !errors.Is(err, sql.ErrNoRows) {
 		return domain.MLSMessage{}, false, err
 	}
+	// This route only drains messages an older app queued for a group that
+	// is already legacy (docs/crypto.md, "K0 R2 review"). It must not write a
+	// conversation's first MLS message: that would make a group that does
+	// not exist yet legacy and refuse its creator's first bundle
+	// (ErrMLSGroupLegacy) for as long as the junk message is retained.
+	if legacy, err := mlsHasLegacyHistory(ctx, tx, input.ConversationID); err != nil {
+		return domain.MLSMessage{}, false, err
+	} else if !legacy {
+		return domain.MLSMessage{}, false, ErrMLSBundleRequired
+	}
 	if input.RevocationDeviceID != "" {
 		allowed, err := mlsRevocationCommitAllowed(ctx, tx, input.ConversationID, input.RevocationDeviceID, input.SenderDeviceID)
 		if err != nil {
@@ -84,44 +94,8 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 		}
 	}
 
-	var recipientAccountID *string
-	if input.RecipientDeviceID != "" {
-		var accountID string
-		err := tx.QueryRowContext(ctx, `
-			SELECT d.account_id FROM devices d
-			JOIN memberships m ON m.account_id = d.account_id
-			WHERE d.id = ? AND d.revoked_at IS NULL AND m.conversation_id = ?`,
-			input.RecipientDeviceID, input.ConversationID).Scan(&accountID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.MLSMessage{}, false, ErrForbidden
-		}
-		if err != nil {
-			return domain.MLSMessage{}, false, err
-		}
-		recipientAccountID = &accountID
-	}
-
-	id, err := domain.NewID("mls")
+	id, eventID, createdAt, err := insertLegacyMLSMessage(ctx, tx, input)
 	if err != nil {
-		return domain.MLSMessage{}, false, err
-	}
-	createdAt := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO conversation_mls_messages(
-			id, conversation_id, sender_account_id, sender_device_id, recipient_device_id,
-			kind, payload, idempotency_key, created_at, revocation_device_id
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, input.ConversationID, input.SenderAccountID, input.SenderDeviceID,
-		nullableEmptyString(input.RecipientDeviceID), input.Kind, input.Payload,
-		input.IdempotencyKey, formatTime(createdAt), nullableEmptyString(input.RevocationDeviceID)); err != nil {
-		return domain.MLSMessage{}, false, err
-	}
-	eventID, err := insertSyncEvent(ctx, tx, "mls.message.created", recipientAccountID,
-		input.ConversationID, map[string]string{"mls_message_id": id, "kind": input.Kind}, formatTime(createdAt))
-	if err != nil {
-		return domain.MLSMessage{}, false, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_messages SET sync_event_id = ? WHERE id = ?`, eventID, id); err != nil {
 		return domain.MLSMessage{}, false, err
 	}
 	var completedEventID int64
@@ -152,6 +126,55 @@ func (s *Store) CreateMLSMessage(ctx context.Context, input CreateMLSMessageInpu
 		Kind:               input.Kind, Payload: input.Payload, IdempotencyKey: input.IdempotencyKey,
 		SyncEventID: eventID, CreatedAt: createdAt, RevocationCompletedEventID: completedEventID,
 	}, false, nil
+}
+
+// insertLegacyMLSMessage writes one checked single-message-route message and its
+// sync event. CreateMLSMessage calls it after every guard; tests call it
+// directly to seed the first message of a legacy group, as a server from
+// before the legacy-only rule stored it (the evidence triggers of migration
+// 0096 run the same way).
+func insertLegacyMLSMessage(ctx context.Context, tx *sql.Tx, input CreateMLSMessageInput) (string, int64, time.Time, error) {
+	var recipientAccountID *string
+	if input.RecipientDeviceID != "" {
+		var accountID string
+		err := tx.QueryRowContext(ctx, `
+			SELECT d.account_id FROM devices d
+			JOIN memberships m ON m.account_id = d.account_id
+			WHERE d.id = ? AND d.revoked_at IS NULL AND m.conversation_id = ?`,
+			input.RecipientDeviceID, input.ConversationID).Scan(&accountID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, time.Time{}, ErrForbidden
+		}
+		if err != nil {
+			return "", 0, time.Time{}, err
+		}
+		recipientAccountID = &accountID
+	}
+
+	id, err := domain.NewID("mls")
+	if err != nil {
+		return "", 0, time.Time{}, err
+	}
+	createdAt := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO conversation_mls_messages(
+			id, conversation_id, sender_account_id, sender_device_id, recipient_device_id,
+			kind, payload, idempotency_key, created_at, revocation_device_id
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, input.ConversationID, input.SenderAccountID, input.SenderDeviceID,
+		nullableEmptyString(input.RecipientDeviceID), input.Kind, input.Payload,
+		input.IdempotencyKey, formatTime(createdAt), nullableEmptyString(input.RevocationDeviceID)); err != nil {
+		return "", 0, time.Time{}, err
+	}
+	eventID, err := insertSyncEvent(ctx, tx, "mls.message.created", recipientAccountID,
+		input.ConversationID, map[string]string{"mls_message_id": id, "kind": input.Kind}, formatTime(createdAt))
+	if err != nil {
+		return "", 0, time.Time{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_messages SET sync_event_id = ? WHERE id = ?`, eventID, id); err != nil {
+		return "", 0, time.Time{}, err
+	}
+	return id, eventID, createdAt, nil
 }
 
 func (s *Store) MLSMessage(ctx context.Context, id, accountID, deviceID string) (domain.MLSMessage, error) {

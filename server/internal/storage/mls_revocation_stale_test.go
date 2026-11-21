@@ -117,11 +117,13 @@ func TestStaleRevocationHasNoCoordinatorAndGroupCreationDropsIt(t *testing.T) {
 			t.Fatalf("%s revocations = %#v, err = %v, want one with no coordinator", device.Account.Username, items, err)
 		}
 	}
+	// The conversation has no MLS history, so the legacy route refuses any
+	// message there before it looks at the revocation.
 	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
 		ConversationID: conversation.ID, SenderAccountID: bob.Account.ID, SenderDeviceID: bob.Device.ID,
 		Kind: "commit", Payload: []byte("commit"), IdempotencyKey: "stale-revoke", RevocationDeviceID: tablet,
-	}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("commit for a revocation with no leaf to remove: err = %v, want %v", err, ErrForbidden)
+	}); !errors.Is(err, ErrMLSBundleRequired) {
+		t.Fatalf("commit for a revocation with no leaf to remove: err = %v, want %v", err, ErrMLSBundleRequired)
 	}
 
 	// Bob creates the group (a member, not the recorded coordinator's peer).

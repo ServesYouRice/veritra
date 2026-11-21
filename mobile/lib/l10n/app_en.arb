@@ -1680,6 +1680,8 @@
   "@c6ReportsKeyPublish": {"description": "C6 reports."},
   "c6ReportsKeyReady": "Report key published.",
   "@c6ReportsKeyReady": {"description": "C6 reports."},
+  "c6ReportsKeyChangedMeanwhile": "Another device changed your report key while you were deciding. Nothing was changed here. Check the key below and choose again.",
+  "@c6ReportsKeyChangedMeanwhile": {"description": "C6 reports: the server refused a key publish because another device of the account published or replaced the key since this screen loaded."},
   "c6ReportsEmpty": "No reports",
   "@c6ReportsEmpty": {"description": "C6 reports."},
   "c6ReportsEmptyDetail": "Reports are kept until you dismiss them, or for 90 days.",
