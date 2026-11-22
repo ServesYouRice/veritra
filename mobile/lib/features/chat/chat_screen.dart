@@ -16,6 +16,7 @@ import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
+import '../../core/profile_service.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../crypto/poll.dart' show PollView, parsePollBody;
 import '../../crypto/c7_import.dart' show c7HiddenAttachmentBody;
@@ -118,6 +119,13 @@ class _ChatScreenState extends State<ChatScreen> {
   /// appears.
   static const double _awayThreshold = 480;
 
+  /// Active pinned message index in the compact 1-row pinned bar.
+  int _pinIndex = 0;
+
+  /// Unread count captured when opening this conversation, used to place the
+  /// subtle "New messages" divider before mark-read clears the server counter.
+  int _initialUnreadCount = 0;
+
   // Jump to a search result (W10).
   final GlobalKey _jumpTarget = GlobalKey();
   late String? _jumpKey = widget.initialMessageKey;
@@ -125,9 +133,17 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _jumping = false;
   Timer? _highlightTimer;
 
+  int _unreadCountFor(String conversationId) =>
+      widget.state.conversations
+          .where((item) => item.id == conversationId)
+          .firstOrNull
+          ?.unreadCount ??
+      0;
+
   @override
   void initState() {
     super.initState();
+    _initialUnreadCount = _unreadCountFor(widget.conversationId);
     widget.state.enterChatView();
     composer.addListener(_saveDraft);
     _lastTypedText = composer.text;
@@ -239,6 +255,8 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.addListener(_saveDraft);
     composer.addListener(_noticeTyping);
     _replyingTo = _drafts.replyTargetFor(widget.conversationId);
+    _pinIndex = 0;
+    _initialUnreadCount = _unreadCountFor(widget.conversationId);
     unawaited(_attachments.clear());
     unawaited(widget.state.refreshApprovalHoldSummary(widget.conversationId));
   }
@@ -510,37 +528,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       PasskeyNoticeBanner(state: widget.state),
                     ],
                     if (widget.state.pinsFor(widget.conversationId).isNotEmpty)
-                      Material(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        // Up to 50 pins per chat: about three rows show,
-                        // the rest scroll, so the timeline keeps its room.
-                        child: ConstrainedBox(
-                            key: const ValueKey('pin-bar'),
-                            constraints: const BoxConstraints(maxHeight: 144),
-                            child: ListView(shrinkWrap: true, children: [
-                              for (final pin in widget.state
-                                  .pinsFor(widget.conversationId))
-                                ListTile(
-                                  dense: true,
-                                  leading: const Icon(Icons.push_pin_outlined,
-                                      size: 18),
-                                  title: Text(
-                                      quotedPreview(
-                                          context.l10n,
-                                          widget.state
-                                              .historyFor(widget.conversationId)
-                                              .forKey(pin.targetKey)),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                  onTap: () {
-                                    setState(() => _jumpKey = pin.targetKey);
-                                    _scheduleJump();
-                                  },
-                                )
-                            ])),
-                      ),
+                      _buildPinnedBar(context),
                     Expanded(
                       child: conversation == null
                           ? EmptyState(
@@ -567,64 +555,96 @@ class _ChatScreenState extends State<ChatScreen> {
                     else if (conversation != null &&
                         widget.state.sendHeldForRemoval(conversation.id))
                       const _RemovalHoldNotice(),
-                    TypingLine(
-                      state: widget.state,
-                      conversationId: widget.conversationId,
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: BoneSpacing.maxChatWidth,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            TypingLine(
+                              state: widget.state,
+                              conversationId: widget.conversationId,
+                            ),
+                            if (!readOnly &&
+                                !restricted &&
+                                conversation != null &&
+                                !conversation.isDm)
+                              _MentionSuggestions(
+                                controller: composer,
+                                members:
+                                    widget.state.membersFor(conversation.id),
+                                ownAccountId: widget.state.session?.accountId,
+                                profiles: widget.state.profiles,
+                              ),
+                            if (replyTarget != null)
+                              _ReplyBar(
+                                preview:
+                                    quotedPreview(context.l10n, replyTarget),
+                                onCancel: () => _setReplyTarget(null),
+                              ),
+                            if (!readOnly &&
+                                !restricted &&
+                                widget.state.attachmentsAvailable)
+                              AttachmentTray(tray: _attachments),
+                            if (!readOnly &&
+                                !restricted &&
+                                widget.state.attachmentsAvailable)
+                              VoiceRecorderBar(
+                                controller: _voice,
+                                onStop: _stopVoiceNote,
+                              ),
+                            if (!readOnly)
+                              _Composer(
+                                enabled: conversation != null && !restricted,
+                                restricted: restricted,
+                                controller: composer,
+                                // Scoped to the send operation: an unrelated background task
+                                // no longer disables the composer.
+                                // A send held for a member's removal (D68) is still
+                                // pending: no second send of the same text meanwhile.
+                                busy: widget.state.isBusy(Ops.send) ||
+                                    widget.state.sendHeldForRemoval(
+                                      widget.conversationId,
+                                    ),
+                                onSend: _send,
+                                onEmoji: conversation != null && !restricted
+                                    ? _insertEmoji
+                                    : null,
+                                attaching: widget.state.isBusy(Ops.attachment),
+                                onAttach: !restricted &&
+                                        widget.state.attachmentsAvailable
+                                    ? () => pickAttachmentFiles(
+                                          context,
+                                          widget.state,
+                                          _attachments,
+                                        )
+                                    : null,
+                                onPasteFiles: !restricted &&
+                                        widget.state.attachmentsAvailable
+                                    ? _pasteFiles
+                                    : null,
+                                onVoice: !restricted &&
+                                        widget.state.attachmentsAvailable
+                                    ? _startVoiceNote
+                                    : null,
+                                voiceListenable: _voice,
+                                onEditLast: !restricted &&
+                                        widget.state.messageActionsAvailable
+                                    ? _editLast
+                                    : null,
+                                onPoll: !restricted &&
+                                        widget.state.messageActionsAvailable
+                                    ? _createPoll
+                                    : null,
+                                tray: _attachments,
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                    if (replyTarget != null)
-                      _ReplyBar(
-                        preview: quotedPreview(context.l10n, replyTarget),
-                        onCancel: () => _setReplyTarget(null),
-                      ),
-                    if (!readOnly &&
-                        !restricted &&
-                        widget.state.attachmentsAvailable)
-                      AttachmentTray(tray: _attachments),
-                    if (!readOnly &&
-                        !restricted &&
-                        widget.state.attachmentsAvailable)
-                      VoiceRecorderBar(
-                        controller: _voice,
-                        onStop: _stopVoiceNote,
-                      ),
-                    if (!readOnly)
-                      _Composer(
-                        enabled: conversation != null && !restricted,
-                        restricted: restricted,
-                        controller: composer,
-                        // Scoped to the send operation: an unrelated background task
-                        // no longer disables the composer.
-                        // A send held for a member's removal (D68) is still
-                        // pending: no second send of the same text meanwhile.
-                        busy: widget.state.isBusy(Ops.send) ||
-                            widget.state
-                                .sendHeldForRemoval(widget.conversationId),
-                        onSend: _send,
-                        attaching: widget.state.isBusy(Ops.attachment),
-                        onAttach:
-                            !restricted && widget.state.attachmentsAvailable
-                                ? () => pickAttachmentFiles(
-                                    context, widget.state, _attachments)
-                                : null,
-                        onPasteFiles:
-                            !restricted && widget.state.attachmentsAvailable
-                                ? _pasteFiles
-                                : null,
-                        onVoice:
-                            !restricted && widget.state.attachmentsAvailable
-                                ? _startVoiceNote
-                                : null,
-                        voiceListenable: _voice,
-                        onEditLast:
-                            !restricted && widget.state.messageActionsAvailable
-                                ? _editLast
-                                : null,
-                        onPoll:
-                            !restricted && widget.state.messageActionsAvailable
-                                ? _createPoll
-                                : null,
-                        tray: _attachments,
-                      ),
                   ],
                 ),
               ),
@@ -656,11 +676,169 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Ctrl+F: the search screen, as the chat list's search button opens it.
+  /// Ctrl+F: the search screen, scoped to this chat by default.
   void _openSearch() {
     Navigator.of(context).push(
-      sharedAxisRoute<void>((_) => SearchScreen(state: widget.state)),
+      sharedAxisRoute<void>(
+        (_) => SearchScreen(
+          state: widget.state,
+          conversationId: widget.conversationId,
+        ),
+      ),
     );
+  }
+
+  void _jumpToMessage(String messageKey) {
+    setState(() => _jumpKey = messageKey);
+    _scheduleJump();
+  }
+
+  Widget _buildPinnedBar(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final pins = widget.state.pinsFor(widget.conversationId);
+    final activeIndex = _pinIndex % pins.length;
+    final activePin = pins[activeIndex];
+    final history = widget.state.historyFor(widget.conversationId);
+    final preview =
+        quotedPreview(context.l10n, history.forKey(activePin.targetKey));
+
+    return Material(
+      key: const ValueKey('pin-bar'),
+      color: scheme.surfaceContainerLow,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: BoneColors.hairline(theme.brightness)),
+          ),
+        ),
+        child: InkWell(
+          onTap: () {
+            _jumpToMessage(activePin.targetKey);
+            if (pins.length > 1) {
+              setState(() => _pinIndex = (activeIndex + 1) % pins.length);
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: BoneSpacing.gutter,
+              vertical: BoneSpacing.sm,
+            ),
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.push_pin_outlined, size: 18, color: scheme.primary),
+                const SizedBox(width: BoneSpacing.sm),
+                Expanded(
+                  child: Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                if (pins.length > 1) ...<Widget>[
+                  const SizedBox(width: BoneSpacing.sm),
+                  TextButton(
+                    key: const Key('pin-bar-all'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: BoneSpacing.sm,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: _showAllPinnedMessages,
+                    child: Text(
+                      context.l10n
+                          .chatPinnedCount(activeIndex + 1, pins.length),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAllPinnedMessages() async {
+    final pins = widget.state.pinsFor(widget.conversationId);
+    final history = widget.state.historyFor(widget.conversationId);
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: <Widget>[
+            ListTile(
+              title: Text(
+                context.l10n.chatPinnedMessagesTitle,
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+            ),
+            for (final pin in pins)
+              ListTile(
+                leading: const Icon(Icons.push_pin_outlined, size: 18),
+                title: Text(
+                  quotedPreview(context.l10n, history.forKey(pin.targetKey)),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => Navigator.of(sheetContext).pop(pin.targetKey),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      _jumpToMessage(selected);
+    }
+  }
+
+  Future<void> _insertEmoji() async {
+    final picked = await showEmojiPicker(context);
+    if (picked == null || !mounted) return;
+    final value = composer.value;
+    final selection = value.selection;
+    final text = value.text;
+    final start = selection.isValid && selection.start >= 0
+        ? selection.start
+        : text.length;
+    final end =
+        selection.isValid && selection.end >= 0 ? selection.end : text.length;
+    final updated = text.replaceRange(start, end, picked);
+    composer.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: start + picked.length),
+    );
+  }
+
+  Future<void> _toggleReaction(LocalMessage message, String reaction) async {
+    final state = widget.state;
+    final conversationId = widget.conversationId;
+    if (state.readOnlyWithoutPeer(conversationId)) return;
+    final ownAccountId = state.session?.accountId;
+    final alreadyMine = state
+        .historyFor(conversationId)
+        .reactionsFor(message.key, ownAccountId: ownAccountId)
+        .any((item) => item.reaction == reaction && item.mine);
+    final sent = await state.react(
+      conversationId,
+      message.key,
+      alreadyMine ? '' : reaction,
+    );
+    if (!sent && mounted) {
+      final error = state.errorFor(Ops.send);
+      if (error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error)),
+        );
+      }
+    }
   }
 
   Future<void> _addFiles(List<XFile> files, {Set<String>? temporary}) =>
@@ -837,6 +1015,21 @@ class _ChatScreenState extends State<ChatScreen> {
                   jumpTarget: _jumpTarget,
                   jumpKey: _jumpKey ?? _highlightKey,
                   highlighted: _highlightKey != null,
+                  unreadDividerCount: _initialUnreadCount,
+                  onJumpToMessage: _jumpToMessage,
+                  onReplyToMessage: widget.state.messageActionsAvailable &&
+                          !widget.state.readOnlyWithoutPeer(conversationId) &&
+                          widget.state.mayPost(
+                            conversationId,
+                            channelId:
+                                widget.state.selectedChannelFor(conversationId),
+                          )
+                      ? (message) => _setReplyTarget(message.key)
+                      : null,
+                  onToggleReaction: widget.state.messageActionsAvailable &&
+                          !widget.state.readOnlyWithoutPeer(conversationId)
+                      ? _toggleReaction
+                      : null,
                   onMessageActions: widget.state.messageActionsAvailable
                       ? _showMessageActions
                       : null,
@@ -884,8 +1077,8 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final engine = call.engine;
-    final route = MaterialPageRoute<void>(
-      builder: (_) => RoomScreen(
+    final route = sharedAxisRoute<void>(
+      (_) => RoomScreen(
         engine: engine,
         nameFor: session.nameFor,
         controls: call.controls,
@@ -921,9 +1114,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Long-press on mobile, right-click on desktop.
-  Future<void> _showMessageActions(LocalMessage message, bool mine) async {
+  Future<void> _showMessageActions(
+    LocalMessage message,
+    bool mine, {
+    Offset? anchor,
+  }) async {
     final state = widget.state;
     final conversationId = widget.conversationId;
+    final l10n = context.l10n;
     final actionable = message.deletedAt == null &&
         const [LocalMessageKind.text, LocalMessageKind.attachment]
             .contains(message.kind);
@@ -932,142 +1130,246 @@ class _ChatScreenState extends State<ChatScreen> {
     final sendable = !state.readOnlyWithoutPeer(conversationId);
     final mayPost = state.mayPost(conversationId,
         channelId: state.selectedChannelFor(conversationId));
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-            child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (actionable && sendable)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
-                child: Wrap(
-                  spacing: BoneSpacing.xs,
+    final starred = state.starredMessages.contains(message.key);
+    final canDeleteKind = const [
+      LocalMessageKind.text,
+      LocalMessageKind.attachment,
+      LocalMessageKind.unsupported,
+      LocalMessageKind.poll,
+    ].contains(message.kind);
+    final canModDelete = !mine &&
+        sendable &&
+        state.mayModerateMessage(conversationId, message.senderAccountId) &&
+        canDeleteKind &&
+        message.deletedAt == null;
+
+    final String? action;
+    if (anchor != null && isDesktopPlatform) {
+      final overlay =
+          Overlay.of(context).context.findRenderObject() as RenderBox?;
+      final rect = overlay == null
+          ? RelativeRect.fromLTRB(anchor.dx, anchor.dy, anchor.dx, anchor.dy)
+          : RelativeRect.fromRect(
+              Rect.fromLTWH(anchor.dx, anchor.dy, 1, 1),
+              Offset.zero & overlay.size,
+            );
+      PopupMenuItem<String> item(
+        String value,
+        IconData icon,
+        String label, {
+        Key? key,
+      }) =>
+          PopupMenuItem<String>(
+            key: key,
+            value: value,
+            child: Row(
+              children: <Widget>[
+                Icon(icon, size: 18),
+                const SizedBox(width: BoneSpacing.md),
+                Text(label),
+              ],
+            ),
+          );
+      action = await showMenu<String>(
+        context: context,
+        position: rect,
+        items: <PopupMenuEntry<String>>[
+          if (actionable && sendable)
+            PopupMenuItem<String>(
+              enabled: false,
+              padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.sm),
+              child: Builder(
+                builder: (menuContext) => Wrap(
+                  spacing: 2,
                   children: <Widget>[
                     for (final reaction in quickReactions)
                       IconButton(
-                        tooltip: context.l10n.chatReact(reaction),
+                        visualDensity: VisualDensity.compact,
+                        tooltip: l10n.chatReact(reaction),
                         onPressed: () =>
-                            Navigator.of(sheetContext).pop('react:$reaction'),
-                        icon: Text(reaction,
-                            style: const TextStyle(fontSize: 24)),
+                            Navigator.of(menuContext).pop('react:$reaction'),
+                        icon: Text(
+                          reaction,
+                          style: const TextStyle(fontSize: 18),
+                        ),
                       ),
                     IconButton(
-                      tooltip: context.l10n.chatMoreReactions,
-                      onPressed: () => Navigator.of(sheetContext).pop('react:'),
-                      icon: const Icon(Icons.add_reaction_outlined),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: l10n.chatMoreReactions,
+                      onPressed: () => Navigator.of(menuContext).pop('react:'),
+                      icon: const Icon(Icons.add_reaction_outlined, size: 18),
                     ),
                   ],
                 ),
               ),
-            if (actionable && sendable && mayPost)
-              ListTile(
-                leading: const Icon(Icons.reply),
-                title: Text(context.l10n.chatReply),
-                onTap: () => Navigator.of(sheetContext).pop('reply'),
-              ),
-            if (actionable && message.kind == LocalMessageKind.text)
-              ListTile(
-                leading: const Icon(Icons.copy),
-                title: Text(context.l10n.chatCopyText),
-                onTap: () => Navigator.of(sheetContext).pop('copy'),
-              ),
-            if (actionable && message.kind == LocalMessageKind.text)
-              ListTile(
-                leading: const Icon(Icons.text_fields),
-                title: Text(context.l10n.chatSelectText),
-                onTap: () => Navigator.of(sheetContext).pop('select'),
-              ),
-            if (actionable)
-              ListTile(
-                  leading: const Icon(Icons.forward_outlined),
-                  title: Text(context.l10n.w8Forward),
-                  onTap: () => Navigator.of(sheetContext).pop('forward')),
-            ListTile(
-                leading: Icon(state.starredMessages.contains(message.key)
-                    ? Icons.star
-                    : Icons.star_outline),
-                title: Text(state.starredMessages.contains(message.key)
-                    ? context.l10n.w8Unstar
-                    : context.l10n.w8Star),
-                onTap: () => Navigator.of(sheetContext).pop('star')),
-            ListTile(
-                leading: const Icon(Icons.hide_source),
-                title: Text(context.l10n.w8DeleteForMe),
-                onTap: () => Navigator.of(sheetContext).pop('hide')),
-            // C6: report a message someone else sent. Offered only where the
-            // build can report; the screen explains what is sent first.
-            if (actionable && !mine && state.reportsAvailable)
-              ListTile(
-                  leading: const Icon(Icons.flag_outlined),
-                  title: Text(context.l10n.c6ReportMessage),
-                  onTap: () => Navigator.of(sheetContext).pop('report')),
-            if (actionable && sendable && state.canPinMessages(conversationId))
-              ListTile(
-                  leading: const Icon(Icons.push_pin_outlined),
-                  title: Text(context.l10n.w8Pin),
-                  onTap: () => Navigator.of(sheetContext).pop('pin')),
-            if (mine && sendable) ...<Widget>[
-              if (message.kind == LocalMessageKind.text &&
-                  message.deletedAt == null)
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: Text(context.l10n.chatEdit),
-                  onTap: () => Navigator.of(sheetContext).pop('edit'),
+            ),
+          if (actionable && sendable) const PopupMenuDivider(),
+          if (actionable && sendable && mayPost)
+            item('reply', Icons.reply, l10n.chatReply),
+          if (actionable && message.kind == LocalMessageKind.text)
+            item('copy', Icons.copy, l10n.chatCopyText),
+          if (actionable && message.kind == LocalMessageKind.text)
+            item('select', Icons.text_fields, l10n.chatSelectText),
+          if (actionable)
+            item('forward', Icons.forward_outlined, l10n.w8Forward),
+          item(
+            'star',
+            starred ? Icons.star : Icons.star_outline,
+            starred ? l10n.w8Unstar : l10n.w8Star,
+          ),
+          item('hide', Icons.hide_source, l10n.w8DeleteForMe),
+          if (actionable && !mine && state.reportsAvailable)
+            item('report', Icons.flag_outlined, l10n.c6ReportMessage),
+          if (actionable && sendable && state.canPinMessages(conversationId))
+            item('pin', Icons.push_pin_outlined, l10n.w8Pin),
+          if (mine && sendable) ...<PopupMenuEntry<String>>[
+            if (message.kind == LocalMessageKind.text &&
+                message.deletedAt == null)
+              item('edit', Icons.edit_outlined, l10n.chatEdit),
+            if (canDeleteKind && message.deletedAt == null)
+              item('delete', Icons.delete_outline, l10n.chatDeleteForEveryone),
+          ],
+          if (canModDelete)
+            item(
+              'delete',
+              Icons.delete_outline,
+              l10n.chatDeleteForEveryone,
+              key: const Key('moderator-delete'),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+              l10n.w8MessageActionsLocalNote,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
+      );
+    } else {
+      action = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: SingleChildScrollView(
+              child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (actionable && sendable)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+                  child: Wrap(
+                    spacing: BoneSpacing.xs,
+                    children: <Widget>[
+                      for (final reaction in quickReactions)
+                        IconButton(
+                          tooltip: l10n.chatReact(reaction),
+                          onPressed: () =>
+                              Navigator.of(sheetContext).pop('react:$reaction'),
+                          icon: Text(reaction,
+                              style: const TextStyle(fontSize: 24)),
+                        ),
+                      IconButton(
+                        tooltip: l10n.chatMoreReactions,
+                        onPressed: () =>
+                            Navigator.of(sheetContext).pop('react:'),
+                        icon: const Icon(Icons.add_reaction_outlined),
+                      ),
+                    ],
+                  ),
                 ),
-              if (const [
-                    LocalMessageKind.text,
-                    LocalMessageKind.attachment,
-                    LocalMessageKind.unsupported,
-                    LocalMessageKind.poll
-                  ].contains(message.kind) &&
-                  message.deletedAt == null)
+              if (actionable && sendable && mayPost)
                 ListTile(
+                  leading: const Icon(Icons.reply),
+                  title: Text(l10n.chatReply),
+                  onTap: () => Navigator.of(sheetContext).pop('reply'),
+                ),
+              if (actionable && message.kind == LocalMessageKind.text)
+                ListTile(
+                  leading: const Icon(Icons.copy),
+                  title: Text(l10n.chatCopyText),
+                  onTap: () => Navigator.of(sheetContext).pop('copy'),
+                ),
+              if (actionable && message.kind == LocalMessageKind.text)
+                ListTile(
+                  leading: const Icon(Icons.text_fields),
+                  title: Text(l10n.chatSelectText),
+                  onTap: () => Navigator.of(sheetContext).pop('select'),
+                ),
+              if (actionable)
+                ListTile(
+                    leading: const Icon(Icons.forward_outlined),
+                    title: Text(l10n.w8Forward),
+                    onTap: () => Navigator.of(sheetContext).pop('forward')),
+              ListTile(
+                  leading: Icon(starred ? Icons.star : Icons.star_outline),
+                  title: Text(starred ? l10n.w8Unstar : l10n.w8Star),
+                  onTap: () => Navigator.of(sheetContext).pop('star')),
+              ListTile(
+                  leading: const Icon(Icons.hide_source),
+                  title: Text(l10n.w8DeleteForMe),
+                  onTap: () => Navigator.of(sheetContext).pop('hide')),
+              // C6: report a message someone else sent. Offered only where the
+              // build can report; the screen explains what is sent first.
+              if (actionable && !mine && state.reportsAvailable)
+                ListTile(
+                    leading: const Icon(Icons.flag_outlined),
+                    title: Text(l10n.c6ReportMessage),
+                    onTap: () => Navigator.of(sheetContext).pop('report')),
+              if (actionable &&
+                  sendable &&
+                  state.canPinMessages(conversationId))
+                ListTile(
+                    leading: const Icon(Icons.push_pin_outlined),
+                    title: Text(l10n.w8Pin),
+                    onTap: () => Navigator.of(sheetContext).pop('pin')),
+              if (mine && sendable) ...<Widget>[
+                if (message.kind == LocalMessageKind.text &&
+                    message.deletedAt == null)
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: Text(l10n.chatEdit),
+                    onTap: () => Navigator.of(sheetContext).pop('edit'),
+                  ),
+                if (canDeleteKind && message.deletedAt == null)
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: Text(l10n.chatDeleteForEveryone),
+                    onTap: () => Navigator.of(sheetContext).pop('delete'),
+                  ),
+              ],
+              // C5: a moderator or above deletes a message of someone it
+              // outranks under the verified role record; every app checks.
+              if (canModDelete)
+                ListTile(
+                  key: const Key('moderator-delete'),
                   leading: const Icon(Icons.delete_outline),
-                  title: Text(context.l10n.chatDeleteForEveryone),
+                  title: Text(l10n.chatDeleteForEveryone),
                   onTap: () => Navigator.of(sheetContext).pop('delete'),
                 ),
+              // U19: said once here, not on each action.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  BoneSpacing.gutter,
+                  BoneSpacing.xs,
+                  BoneSpacing.gutter,
+                  BoneSpacing.md,
+                ),
+                child: Text(
+                  l10n.w8MessageActionsLocalNote,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
             ],
-            // C5: a moderator or above deletes a message of someone it
-            // outranks under the verified role record; every app checks.
-            if (!mine &&
-                sendable &&
-                state.mayModerateMessage(
-                    conversationId, message.senderAccountId) &&
-                const [
-                  LocalMessageKind.text,
-                  LocalMessageKind.attachment,
-                  LocalMessageKind.unsupported,
-                  LocalMessageKind.poll
-                ].contains(message.kind) &&
-                message.deletedAt == null)
-              ListTile(
-                key: const Key('moderator-delete'),
-                leading: const Icon(Icons.delete_outline),
-                title: Text(context.l10n.chatDeleteForEveryone),
-                onTap: () => Navigator.of(sheetContext).pop('delete'),
-              ),
-            // U19: said once here, not on each action.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                BoneSpacing.gutter,
-                BoneSpacing.xs,
-                BoneSpacing.gutter,
-                BoneSpacing.md,
-              ),
-              child: Text(
-                context.l10n.w8MessageActionsLocalNote,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-            ),
-          ],
-        )),
-      ),
-    );
+          )),
+        ),
+      );
+    }
     if (!mounted || action == null) return;
     var sent = true;
     if (action.startsWith('react:')) {
@@ -1116,8 +1418,8 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (action == 'hide') {
       await _deleteForMe(message);
     } else if (action == 'report') {
-      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-        builder: (_) => ReportMessageScreen(
+      await Navigator.of(context).push<void>(sharedAxisRoute<void>(
+        (_) => ReportMessageScreen(
           state: state,
           conversationId: conversationId,
           messageKey: message.key,
@@ -1468,6 +1770,10 @@ class _MessageList extends StatelessWidget {
     required this.jumpTarget,
     this.jumpKey,
     this.highlighted = false,
+    this.unreadDividerCount = 0,
+    this.onJumpToMessage,
+    this.onReplyToMessage,
+    this.onToggleReaction,
     this.onMessageActions,
   });
 
@@ -1476,13 +1782,18 @@ class _MessageList extends StatelessWidget {
   final GlobalKey jumpTarget;
   final String? jumpKey;
   final bool highlighted;
+  final int unreadDividerCount;
 
   final AppState state;
   final String conversationId;
   final ScrollController controller;
   final List<ReceivedMessageEnvelope> messages;
   final List<MessageEnvelope> pending;
-  final void Function(LocalMessage message, bool mine)? onMessageActions;
+  final ValueChanged<String>? onJumpToMessage;
+  final ValueChanged<LocalMessage>? onReplyToMessage;
+  final void Function(LocalMessage message, String reaction)? onToggleReaction;
+  final void Function(LocalMessage message, bool mine, {Offset? anchor})?
+      onMessageActions;
 
   bool get _isDm =>
       state.conversations
@@ -1504,6 +1815,49 @@ class _MessageList extends StatelessWidget {
     return state.profiles?.account(accountId)?.name ??
         accountLabel(accountId, member?.username);
   }
+
+  static bool _isClusterable(
+    ReceivedMessageEnvelope message,
+    LocalMessage? local,
+    bool? historyLine,
+  ) {
+    if (historyLine != null) return false;
+    if (message.deletedAt != null || local?.deletedAt != null) return false;
+    if (local?.c7Former != null || local?.senderRemoved == true) return false;
+    final kind = local?.kind;
+    if (kind == LocalMessageKind.invalid ||
+        kind == LocalMessageKind.unsupported ||
+        kind == LocalMessageKind.unverifiable) {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _canCluster(
+    ReceivedMessageEnvelope newer,
+    LocalMessage? newerLocal,
+    bool? newerHistoryLine,
+    ReceivedMessageEnvelope older,
+    LocalMessage? olderLocal,
+    bool? olderHistoryLine,
+  ) {
+    if (!_isClusterable(newer, newerLocal, newerHistoryLine) ||
+        !_isClusterable(older, olderLocal, olderHistoryLine)) {
+      return false;
+    }
+    final newerSender = newerLocal?.senderAccountId ?? newer.senderAccountId;
+    final olderSender = olderLocal?.senderAccountId ?? older.senderAccountId;
+    if (newerSender != olderSender) return false;
+    return newer.createdAt.difference(older.createdAt).abs() <=
+        const Duration(minutes: 2);
+  }
+
+  Widget _centered(Widget child) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: BoneSpacing.maxChatWidth),
+          child: child,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -1537,6 +1891,8 @@ class _MessageList extends StatelessWidget {
     // once there is none, the one notice that the chat is encrypted (U13).
     final showHistoryFooter = hasMore || loadingOlder || earlier;
     const footerCount = 1;
+    final showUnreadBar =
+        unreadDividerCount > 0 && unreadDividerCount < messages.length;
     return ListView.builder(
       controller: controller,
       reverse: true,
@@ -1550,14 +1906,16 @@ class _MessageList extends StatelessWidget {
       itemCount: pending.length + messages.length + footerCount,
       itemBuilder: (context, index) {
         if (index == pending.length + messages.length) {
-          if (!showHistoryFooter) return _EncryptionNotice(isDm: _isDm);
-          return _HistoryFooter(
+          if (!showHistoryFooter) {
+            return _centered(_EncryptionNotice(isDm: _isDm));
+          }
+          return _centered(_HistoryFooter(
             loading: loadingOlder,
             label: hasMore ? null : context.l10n.channelHistoryEarlier,
             onLoad: hasMore
                 ? () => state.loadOlderMessages(conversationId)
                 : () => state.loadEarlierChannelPosts(conversationId),
-          );
+          ));
         }
         if (index < pending.length) {
           final envelope = pending[pending.length - 1 - index];
@@ -1571,7 +1929,7 @@ class _MessageList extends StatelessWidget {
           if (local?.kind == LocalMessageKind.action) {
             return const SizedBox.shrink();
           }
-          return _PendingMessageBubble(
+          return _centered(_PendingMessageBubble(
             text: local?.kind == LocalMessageKind.attachment
                 ? _attachmentSummary(context.l10n, local!, conversationId)
                 : local?.kind == LocalMessageKind.poll
@@ -1591,16 +1949,16 @@ class _MessageList extends StatelessWidget {
             onSendNormally: terminal && state.outboxNeedsSealedChoice(key)
                 ? () => state.sendSealedNormally(key)
                 : null,
-          );
+          ));
         }
         final messageIndex = index - pending.length;
         final message = messages[messageIndex];
         final line = historyLine(message);
         if (line != null) {
-          return _HistoryLine(
+          return _centered(_HistoryLine(
               text: line
                   ? context.l10n.channelHistoryLineFull
-                  : context.l10n.channelHistoryLineFromJoin);
+                  : context.l10n.channelHistoryLineFromJoin));
         }
         final local = history.forEnvelope(message);
         // A decrypted record names its authenticated sender; the envelope's
@@ -1610,17 +1968,64 @@ class _MessageList extends StatelessWidget {
         final mine = senderAccountId == state.session?.accountId;
         final replyTarget =
             local?.replyTo == null ? null : history.forKey(local!.replyTo!);
+        final replySender = replyTarget == null
+            ? null
+            : replyTarget.senderAccountId == state.session?.accountId
+                ? context.l10n.chatSenderYou
+                : _senderLabel(replyTarget.senderAccountId);
         final older = messageIndex + 1 < messages.length
             ? messages[messageIndex + 1]
             : null;
+        final newer = messageIndex > 0 ? messages[messageIndex - 1] : null;
         final showDay = older == null ||
             formatDate(context, older.createdAt) !=
                 formatDate(context, message.createdAt);
+        final showNewDivider =
+            showUnreadBar && messageIndex == unreadDividerCount - 1;
+        final olderLocal = older == null ? null : history.forEnvelope(older);
+        final olderLine = older == null ? null : historyLine(older);
+        final newerLocal = newer == null ? null : history.forEnvelope(newer);
+        final newerLine = newer == null ? null : historyLine(newer);
+        final newerShowDay = newer != null &&
+            formatDate(context, message.createdAt) !=
+                formatDate(context, newer.createdAt);
+        final newerShowNewDivider =
+            showUnreadBar && messageIndex - 1 == unreadDividerCount - 1;
+        final groupedWithOlder = older != null &&
+            !showDay &&
+            !showNewDivider &&
+            _canCluster(
+              message,
+              local,
+              line,
+              older,
+              olderLocal,
+              olderLine,
+            );
+        final groupedWithNewer = newer != null &&
+            !newerShowDay &&
+            !newerShowNewDivider &&
+            _canCluster(
+              newer,
+              newerLocal,
+              newerLine,
+              message,
+              local,
+              line,
+            );
+        final actionable = local != null &&
+            local.deletedAt == null &&
+            local.hiddenAt == null &&
+            const <String>[
+              LocalMessageKind.text,
+              LocalMessageKind.attachment,
+            ].contains(local.kind);
         final isJumpTarget = jumpKey != null && local?.key == jumpKey;
-        final row = Column(
+        final row = _centered(Column(
           children: <Widget>[
             if (showDay)
               _DaySeparator(label: formatDate(context, message.createdAt)),
+            if (showNewDivider) const _NewMessagesDivider(),
             MessageTickBuilder(
               state: state,
               conversationId: conversationId,
@@ -1636,13 +2041,23 @@ class _MessageList extends StatelessWidget {
                 copiedHistory: local?.state == LocalMessageState.restored ||
                     (local != null && history.copiedKeys.contains(local.key)),
                 formerMember: local?.c7Former != null,
+                replySender: replySender,
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),
+                onTapReply: local?.replyTo == null || onJumpToMessage == null
+                    ? null
+                    : () => onJumpToMessage!(local!.replyTo!),
                 reactions: local == null
                     ? const <({String reaction, int count, bool mine})>[]
                     : history.reactionsFor(local.key,
                         ownAccountId: state.session?.accountId),
+                onToggleReaction: actionable && onToggleReaction != null
+                    ? (reaction) => onToggleReaction!(local, reaction)
+                    : null,
+                onReply: actionable && onReplyToMessage != null
+                    ? () => onReplyToMessage!(local)
+                    : null,
                 starred:
                     local != null && state.starredMessages.contains(local.key),
                 onMention: (accountId) {
@@ -1659,6 +2074,8 @@ class _MessageList extends StatelessWidget {
                               subtitle: Text(accountId))));
                 },
                 mine: mine,
+                groupedWithOlder: groupedWithOlder,
+                groupedWithNewer: groupedWithNewer,
                 tick: tick,
                 ownAccountId: state.session?.accountId,
                 pollMembers: state.membersFor(conversationId).isEmpty
@@ -1683,7 +2100,8 @@ class _MessageList extends StatelessWidget {
                         local.kind == LocalMessageKind.action ||
                         local.hiddenAt != null
                     ? null
-                    : () => onMessageActions!(local, mine),
+                    : ({Offset? anchor}) =>
+                        onMessageActions!(local, mine, anchor: anchor),
                 // Review M2: a former member's name only when this device
                 // proved the device was that account's.
                 // A former member whose device was not proven keeps no colour
@@ -1698,6 +2116,12 @@ class _MessageList extends StatelessWidget {
                     ? (entry, inMemory) => decryptVoiceNote(state, entry,
                         conversationId: conversationId, inMemory: inMemory)
                     : null,
+                onLoadImagePreview: state.attachmentsAvailable
+                    ? (entry) => state.loadAttachment(
+                          entry,
+                          conversationId: conversationId,
+                        )
+                    : null,
                 onOpenAttachment: state.attachmentsAvailable
                     ? (entry) => openAttachment(
                           context,
@@ -1707,12 +2131,13 @@ class _MessageList extends StatelessWidget {
                         )
                     : null,
                 // In a DM the app bar already says who the other person is;
-                // only group and channel bubbles need a per-message sender.
-                showSender: !mine && !_isDm,
+                // only group and channel bubbles need a per-message sender,
+                // and only on the first bubble of a consecutive burst.
+                showSender: !mine && !_isDm && !groupedWithOlder,
               ),
             ),
           ],
-        );
+        ));
         if (!isJumpTarget) return row;
         return KeyedSubtree(
           key: jumpTarget,
@@ -1886,7 +2311,7 @@ class _PendingMessageBubble extends StatelessWidget {
             color: BoneColors.ownBubble(theme.brightness),
             borderRadius: _bubbleRadius(mine: true),
             border: Border.all(
-              color: sending ? scheme.outlineVariant : warning,
+              color: sending ? BoneColors.hairline(theme.brightness) : warning,
             ),
           ),
           child: Column(
@@ -1995,14 +2420,53 @@ class _DaySeparator extends StatelessWidget {
   }
 }
 
-/// Corner radii for a bubble: square-ish on the tail corner, [BoneRadii.bubble]
-/// everywhere else.
-BorderRadius _bubbleRadius({required bool mine}) => BorderRadius.only(
-      topLeft: const Radius.circular(BoneRadii.bubble),
-      topRight: const Radius.circular(BoneRadii.bubble),
-      bottomLeft: Radius.circular(mine ? BoneRadii.bubble : 5),
-      bottomRight: Radius.circular(mine ? 5 : BoneRadii.bubble),
+class _NewMessagesDivider extends StatelessWidget {
+  const _NewMessagesDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final lineColor = scheme.primary.withValues(alpha: 0.4);
+    return Padding(
+      key: const Key('chat-new-messages-divider'),
+      padding: const EdgeInsets.symmetric(vertical: BoneSpacing.sm),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Divider(color: lineColor, height: 1)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
+            child: Text(
+              context.l10n.chatNewMessagesDivider,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.primary,
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: lineColor, height: 1)),
+        ],
+      ),
     );
+  }
+}
+
+/// Corner radii for a bubble: square-ish on the tail corner, tighter inner
+/// corners when clustered with adjacent bubbles from the same sender, and
+/// [BoneRadii.bubble] everywhere else.
+BorderRadius _bubbleRadius({
+  required bool mine,
+  bool groupedWithOlder = false,
+  bool groupedWithNewer = false,
+}) {
+  final topInner = groupedWithOlder ? 6.0 : BoneRadii.bubble;
+  final bottomInner = groupedWithNewer ? 6.0 : 5.0;
+  return BorderRadius.only(
+    topLeft: Radius.circular(mine ? BoneRadii.bubble : topInner),
+    topRight: Radius.circular(mine ? topInner : BoneRadii.bubble),
+    bottomLeft: Radius.circular(mine ? BoneRadii.bubble : bottomInner),
+    bottomRight: Radius.circular(mine ? bottomInner : BoneRadii.bubble),
+  );
+}
 
 /// Widths of the redacted bars that stand in for an undecryptable message,
 /// as fractions of the bubble's content width.
@@ -2037,19 +2501,26 @@ List<double> redactedBarFractions(int byteLength) {
   return shapes[bucket];
 }
 
-/// A swipe to the left across a message opens its actions, as a long-press
-/// does (U36). It only watches the pointer and joins no gesture, so it never
-/// competes with scrolling or the system's swipe back: a short, quick,
-/// mostly horizontal move toward the start of the line counts, anything else
-/// does not.
+/// A swipe toward the start (left in LTR) opens a message's actions (U36),
+/// while a swipe toward the end (right in LTR) translates the bubble with a
+/// reply cue and triggers quick reply. Uses a raw [Listener] so it never
+/// competes with vertical scrolling or edge navigation gestures.
 class _SwipeForActions extends StatefulWidget {
-  const _SwipeForActions({required this.onSwipe, required this.child});
+  const _SwipeForActions({
+    required this.onSwipe,
+    this.onSwipeReply,
+    required this.child,
+  });
 
   final VoidCallback? onSwipe;
+  final VoidCallback? onSwipeReply;
   final Widget child;
 
-  /// How far the finger must travel, in logical pixels.
+  /// How far the finger must travel for actions, in logical pixels.
   static const double distance = 72;
+
+  /// How far the finger must travel to trigger quick reply.
+  static const double replyDistance = 64;
 
   /// How far it may drift up or down on the way.
   static const double drift = 32;
@@ -2065,15 +2536,20 @@ class _SwipeForActionsState extends State<_SwipeForActions> {
   int? _pointer;
   Offset _start = Offset.zero;
   Duration _startedAt = Duration.zero;
+  double _replyOffset = 0;
 
   @override
   Widget build(BuildContext context) {
-    final towardStart =
-        Directionality.of(context) == TextDirection.ltr ? -1.0 : 1.0;
+    final isLtr = Directionality.of(context) == TextDirection.ltr;
+    final towardStart = isLtr ? -1.0 : 1.0;
+    final towardEnd = -towardStart;
+    final scheme = Theme.of(context).colorScheme;
+    final progress =
+        (_replyOffset.abs() / _SwipeForActions.replyDistance).clamp(0.0, 1.0);
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (event) {
-        // A second finger, or a mouse button, is not a swipe.
+        // A second finger, or a non-primary button, is not a swipe.
         if (_pointer != null || event.buttons != kPrimaryButton) {
           _pointer = null;
           return;
@@ -2082,20 +2558,77 @@ class _SwipeForActionsState extends State<_SwipeForActions> {
         _start = event.position;
         _startedAt = event.timeStamp;
       },
+      onPointerMove: (event) {
+        if (event.pointer != _pointer || widget.onSwipeReply == null) return;
+        final moved = event.position - _start;
+        final alongEnd = moved.dx * towardEnd;
+        if (alongEnd > 8 && moved.dy.abs() <= _SwipeForActions.drift) {
+          final clamped = math.min(alongEnd * 0.65, 52.0) * towardEnd;
+          if ((clamped - _replyOffset).abs() >= 1) {
+            setState(() => _replyOffset = clamped);
+          }
+        } else if (_replyOffset != 0) {
+          setState(() => _replyOffset = 0);
+        }
+      },
       onPointerUp: (event) {
         if (event.pointer != _pointer) return;
         _pointer = null;
+        if (_replyOffset != 0) setState(() => _replyOffset = 0);
         final moved = event.position - _start;
+        final verticalOk = moved.dy.abs() <= _SwipeForActions.drift;
+        final quickEnough =
+            event.timeStamp - _startedAt <= _SwipeForActions.within;
         if (moved.dx * towardStart >= _SwipeForActions.distance &&
-            moved.dy.abs() <= _SwipeForActions.drift &&
-            event.timeStamp - _startedAt <= _SwipeForActions.within) {
+            verticalOk &&
+            quickEnough) {
           widget.onSwipe?.call();
+        } else if (widget.onSwipeReply != null &&
+            moved.dx * towardEnd >= _SwipeForActions.replyDistance &&
+            verticalOk &&
+            quickEnough) {
+          HapticFeedback.selectionClick();
+          widget.onSwipeReply!();
         }
       },
       onPointerCancel: (event) {
-        if (event.pointer == _pointer) _pointer = null;
+        if (event.pointer == _pointer) {
+          _pointer = null;
+          if (_replyOffset != 0) setState(() => _replyOffset = 0);
+        }
       },
-      child: widget.child,
+      child: Stack(
+        alignment: isLtr ? Alignment.centerLeft : Alignment.centerRight,
+        children: <Widget>[
+          if (_replyOffset != 0)
+            Positioned(
+              left: isLtr ? BoneSpacing.xs : null,
+              right: isLtr ? null : BoneSpacing.xs,
+              child: Opacity(
+                opacity: progress,
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHigh,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.reply,
+                    size: 16,
+                    color: progress >= 0.85
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          Transform.translate(
+            offset: Offset(_replyOffset, 0),
+            child: widget.child,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2107,12 +2640,19 @@ class _MessageBubble extends StatelessWidget {
     required this.senderLabel,
     this.senderColorSeed,
     required this.showSender,
+    this.groupedWithOlder = false,
+    this.groupedWithNewer = false,
     this.local,
+    this.replySender,
     this.replyPreview,
+    this.onTapReply,
     this.reactions = const <({String reaction, int count, bool mine})>[],
+    this.onToggleReaction,
+    this.onReply,
     this.tick,
     this.onActions,
     this.onOpenAttachment,
+    this.onLoadImagePreview,
     this.onLoadVoiceNote,
     this.onMention,
     this.starred = false,
@@ -2137,10 +2677,22 @@ class _MessageBubble extends StatelessWidget {
   final MessageTick? tick;
 
   /// Opens the reply/edit/delete/react menu; null when none apply.
-  final VoidCallback? onActions;
+  final void Function({Offset? anchor})? onActions;
+
+  /// Starts a quick reply to this message (swipe-right or desktop hover).
+  final VoidCallback? onReply;
+
+  /// Toggles an existing reaction pill or sends a desktop quick reaction.
+  final ValueChanged<String>? onToggleReaction;
+
+  /// Scrolls to the quoted message when the reply box is tapped.
+  final VoidCallback? onTapReply;
 
   /// Opens one attachment of an attachment message.
   final void Function(AttachmentEntry entry)? onOpenAttachment;
+
+  /// Loads decrypted image bytes for inline thumbnails on accepted chats.
+  final Future<Uint8List> Function(AttachmentEntry entry)? onLoadImagePreview;
 
   /// Decrypts a voice note for inline playback, in memory when the player
   /// can take bytes and the note is small, else to a temporary file.
@@ -2158,9 +2710,12 @@ class _MessageBubble extends StatelessWidget {
 
   /// The decrypted record, when this device could decrypt the envelope.
   final LocalMessage? local;
+  final String? replySender;
   final String? replyPreview;
   final List<({String reaction, int count, bool mine})> reactions;
   final bool mine;
+  final bool groupedWithOlder;
+  final bool groupedWithNewer;
   final String senderLabel;
 
   /// Picks the colour of the sender's name in a group; null: the muted
@@ -2191,23 +2746,38 @@ class _MessageBubble extends StatelessWidget {
         ? null
         : local?.body;
     // Your own bubbles take the soft plum token (U14, D131); theirs stay on
-    // the surface tone. Both keep the hairline.
+    // the surface tone. Both keep a soft hairline.
     final background = mine
         ? BoneColors.ownBubble(theme.brightness)
         : scheme.surfaceContainerLow;
     final foreground = scheme.onSurface;
     final sender = mine ? context.l10n.chatSenderYou : senderLabel;
-    return _SwipeForActions(
-      onSwipe: onActions,
+    final body = _SwipeForActions(
+      onSwipe: onActions == null ? null : () => onActions!(),
+      onSwipeReply: onReply,
       child: Listener(
-          onPointerDown: (event) {
-            if (event.buttons & kSecondaryMouseButton != 0) onActions?.call();
-          },
-          child: GestureDetector(
-            onLongPress: onActions,
-            child: _bubble(context, theme, scheme, background, foreground,
-                sender, deleted, unverifiable, text),
-          )),
+        onPointerDown: (event) {
+          if (event.buttons & kSecondaryMouseButton != 0) {
+            onActions?.call(anchor: event.position);
+          }
+        },
+        child: GestureDetector(
+          onLongPress: onActions == null ? null : () => onActions!(),
+          child: _bubble(context, theme, scheme, background, foreground, sender,
+              deleted, unverifiable, text),
+        ),
+      ),
+    );
+    if (!isDesktopPlatform ||
+        (onToggleReaction == null && onReply == null && onActions == null)) {
+      return body;
+    }
+    return _DesktopHoverActions(
+      mine: mine,
+      onReact: onToggleReaction,
+      onReply: onReply,
+      onMore: onActions == null ? null : (anchor) => onActions!(anchor: anchor),
+      child: body,
     );
   }
 
@@ -2313,6 +2883,11 @@ class _MessageBubble extends StatelessWidget {
         else
           AttachmentTile(
             entry: entry,
+            loadPreview: onLoadImagePreview != null &&
+                    entry.isImage &&
+                    entry.opensFromMemory
+                ? () => onLoadImagePreview!(entry)
+                : null,
             onOpen: onOpenAttachment == null
                 ? null
                 : () => onOpenAttachment!(entry),
@@ -2332,8 +2907,15 @@ class _MessageBubble extends StatelessWidget {
     String? text,
   ) {
     final l10n = context.l10n;
+    final hairline = BoneColors.hairline(theme.brightness);
     final placeholder = _isPlaceholder;
     final time = formatTimeOfDay(context, message.createdAt);
+    final showMeta = !groupedWithNewer ||
+        message.editedAt != null ||
+        local?.editedAt != null ||
+        reactions.isNotEmpty ||
+        starred ||
+        copiedHistory;
     // An attachment bubble keeps its attachment tiles as nodes of their own
     // (file name, size and a tap action); excluding descendants would leave
     // the merged bubble with no way to open them. Everything else in such a
@@ -2353,7 +2935,7 @@ class _MessageBubble extends StatelessWidget {
     return Semantics(
       container: tileNodes,
       excludeSemantics: !tileNodes,
-      onLongPress: onActions,
+      onLongPress: onActions == null ? null : () => onActions!(),
       onLongPressHint: onActions == null ? null : l10n.chatMessageActions,
       label: (deleted
               ? l10n.chatDeletedSemantics(sender)
@@ -2377,18 +2959,25 @@ class _MessageBubble extends StatelessWidget {
         builder: (context, constraints) {
           // Taken from the layout rather than the window so the bubble is
           // sized to its pane in the wide master-detail layout too.
-          final maxWidth = math.min(420.0, constraints.maxWidth * 0.82);
+          final maxWidth = math.min(440.0, constraints.maxWidth * 0.82);
           return Align(
             alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxWidth),
               child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 3),
+                margin: EdgeInsets.only(
+                  top: groupedWithOlder ? 1.5 : 4.5,
+                  bottom: groupedWithNewer ? 1.5 : 4.5,
+                ),
                 padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
                 decoration: BoxDecoration(
                   color: background,
-                  borderRadius: _bubbleRadius(mine: mine),
-                  border: Border.all(color: scheme.outlineVariant),
+                  borderRadius: _bubbleRadius(
+                    mine: mine,
+                    groupedWithOlder: groupedWithOlder,
+                    groupedWithNewer: groupedWithNewer,
+                  ),
+                  border: Border.all(color: hairline),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2444,21 +3033,52 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       )),
                     if (replyPreview != null && !deleted)
-                      quiet(Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.only(left: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            left: BorderSide(
-                                color: scheme.outlineVariant, width: 3),
-                          ),
-                        ),
-                        child: Text(
-                          replyPreview!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                      quiet(Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Material(
+                          color: scheme.surfaceContainerHighest
+                              .withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(BoneRadii.sm),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            key: const Key('bubble-reply-quote'),
+                            onTap: onTapReply,
+                            child: Container(
+                              padding: const EdgeInsets.fromLTRB(9, 5, 10, 5),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    color: scheme.primary,
+                                    width: 3,
+                                  ),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  if (replySender != null)
+                                    Text(
+                                      replySender!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style:
+                                          theme.textTheme.bodySmall?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: scheme.onSurface,
+                                      ),
+                                    ),
+                                  Text(
+                                    replyPreview!,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       )),
@@ -2548,30 +3168,47 @@ class _MessageBubble extends StatelessWidget {
                           runSpacing: 4,
                           children: <Widget>[
                             for (final item in reactions)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: item.mine
-                                      ? scheme.secondaryContainer
-                                      : scheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  item.count > 1
-                                      ? l10n.chatReactionCount(
-                                          item.reaction,
-                                          item.count,
-                                        )
-                                      : item.reaction,
-                                  style: theme.textTheme.labelSmall,
+                              Material(
+                                color: item.mine
+                                    ? scheme.secondaryContainer
+                                    : scheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  onTap: onToggleReaction == null
+                                      ? null
+                                      : () => onToggleReaction!(item.reaction),
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: item.mine
+                                            ? scheme.primary
+                                                .withValues(alpha: 0.45)
+                                            : hairline,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      item.count > 1
+                                          ? l10n.chatReactionCount(
+                                              item.reaction,
+                                              item.count,
+                                            )
+                                          : item.reaction,
+                                      style: theme.textTheme.labelSmall,
+                                    ),
+                                  ),
                                 ),
                               ),
                           ],
                         ),
                       )),
-                    const SizedBox(height: 6),
-                    quiet(_metaLine(context, scheme)),
+                    if (showMeta) ...<Widget>[
+                      const SizedBox(height: 6),
+                      quiet(_metaLine(context, scheme)),
+                    ],
                   ],
                 ),
               ),
@@ -2614,6 +3251,234 @@ const List<String> quickReactions = <String>[
   '😮',
   '😢'
 ];
+
+/// Floating quick-action pill revealed on pointer hover over a message on
+/// desktop platforms. Keeps reactions, reply, and more actions one click away
+/// without cluttering the thread at rest.
+class _DesktopHoverActions extends StatefulWidget {
+  const _DesktopHoverActions({
+    required this.mine,
+    required this.child,
+    this.onReact,
+    this.onReply,
+    this.onMore,
+  });
+
+  final bool mine;
+  final Widget child;
+  final ValueChanged<String>? onReact;
+  final VoidCallback? onReply;
+  final ValueChanged<Offset?>? onMore;
+
+  @override
+  State<_DesktopHoverActions> createState() => _DesktopHoverActionsState();
+}
+
+class _DesktopHoverActionsState extends State<_DesktopHoverActions> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final l10n = context.l10n;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[
+          widget.child,
+          if (_hovering)
+            Positioned(
+              top: -12,
+              right: widget.mine ? BoneSpacing.xs : null,
+              left: widget.mine ? null : BoneSpacing.xs,
+              child: Material(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(BoneRadii.pill),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(BoneRadii.pill),
+                    border: Border.all(
+                      color: BoneColors.hairline(theme.brightness),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (widget.onReact != null)
+                        for (final emoji in quickReactions.take(3))
+                          InkWell(
+                            borderRadius: BorderRadius.circular(BoneRadii.pill),
+                            onTap: () => widget.onReact!(emoji),
+                            child: Tooltip(
+                              message: l10n.chatReact(emoji),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  emoji,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                            ),
+                          ),
+                      if (widget.onReply != null)
+                        Tooltip(
+                          message: l10n.chatReply,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(BoneRadii.pill),
+                            onTap: widget.onReply,
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.reply,
+                                size: 16,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (widget.onMore != null)
+                        Builder(
+                          builder: (buttonContext) => Tooltip(
+                            message: l10n.chatMoreActions,
+                            child: InkWell(
+                              borderRadius:
+                                  BorderRadius.circular(BoneRadii.pill),
+                              onTap: () {
+                                final box = buttonContext.findRenderObject()
+                                    as RenderBox?;
+                                final anchor = box?.localToGlobal(
+                                  Offset(box.size.width / 2, box.size.height),
+                                );
+                                widget.onMore!(anchor);
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.more_horiz,
+                                  size: 16,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Local-only @mention autocomplete bar above the composer in groups and
+/// channels. Matches against the already-loaded conversation member roster;
+/// nothing ever leaves the device.
+class _MentionSuggestions extends StatelessWidget {
+  const _MentionSuggestions({
+    required this.controller,
+    required this.members,
+    required this.ownAccountId,
+    required this.profiles,
+  });
+
+  final TextEditingController controller;
+  final List<ConversationMember> members;
+  final String? ownAccountId;
+  final ProfileService? profiles;
+
+  static final RegExp _trigger = RegExp(r'(?:^|\s)@([a-zA-Z0-9._-]{0,32})$');
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) return const SizedBox.shrink();
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        final cursor = value.selection.baseOffset;
+        if (cursor < 0 || cursor > value.text.length) {
+          return const SizedBox.shrink();
+        }
+        final before = value.text.substring(0, cursor);
+        final match = _trigger.firstMatch(before);
+        if (match == null) return const SizedBox.shrink();
+        final needle = match.group(1)!.toLowerCase();
+        final matches = <ConversationMember>[];
+        for (final member in members) {
+          if (member.accountId == ownAccountId) continue;
+          final handle = member.username;
+          if (handle == null || handle.isEmpty) continue;
+          final displayName =
+              profiles?.account(member.accountId)?.name?.toLowerCase() ?? '';
+          if (needle.isEmpty ||
+              handle.toLowerCase().contains(needle) ||
+              displayName.contains(needle)) {
+            matches.add(member);
+            if (matches.length == 5) break;
+          }
+        }
+        if (matches.isEmpty) return const SizedBox.shrink();
+        final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        return Padding(
+          key: const Key('composer-mention-suggestions'),
+          padding: const EdgeInsets.fromLTRB(
+            BoneSpacing.md,
+            BoneSpacing.xs,
+            BoneSpacing.md,
+            0,
+          ),
+          child: SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: matches.length,
+              separatorBuilder: (_, __) =>
+                  const SizedBox(width: BoneSpacing.xs),
+              itemBuilder: (context, index) {
+                final member = matches[index];
+                final handle = member.username!;
+                final display = profiles?.account(member.accountId)?.name;
+                return ActionChip(
+                  label: Text(
+                    display == null ? '@$handle' : '$display (@$handle)',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                  onPressed: () {
+                    final atStart = before.lastIndexOf('@');
+                    final insertion = '@$handle ';
+                    final nextText =
+                        value.text.replaceRange(atStart, cursor, insertion);
+                    controller.value = TextEditingValue(
+                      text: nextText,
+                      selection: TextSelection.collapsed(
+                        offset: atStart + insertion.length,
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 /// Shown above the composer while a reply is being written.
 class _ReplyBar extends StatelessWidget {
@@ -2714,6 +3579,7 @@ class _Composer extends StatelessWidget {
     required this.busy,
     required this.onSend,
     this.restricted = false,
+    this.onEmoji,
     this.onAttach,
     this.attaching = false,
     this.onPasteFiles,
@@ -2731,6 +3597,9 @@ class _Composer extends StatelessWidget {
   final bool enabled;
   final bool restricted;
   final TextEditingController controller;
+
+  /// Opens the emoji picker to insert at the cursor.
+  final VoidCallback? onEmoji;
 
   /// Opens the new-poll dialog; null where polls are unavailable.
   final VoidCallback? onPoll;
@@ -2972,6 +3841,13 @@ class _Composer extends StatelessWidget {
                       ),
                     )),
               ),
+              if (onEmoji != null)
+                IconButton(
+                  key: const Key('composer-emoji'),
+                  onPressed: enabled && !restricted ? onEmoji : null,
+                  icon: const Icon(Icons.sentiment_satisfied_outlined),
+                  tooltip: context.l10n.chatInsertEmoji,
+                ),
               const SizedBox(width: BoneSpacing.xs),
               if (showMic)
                 ListenableBuilder(

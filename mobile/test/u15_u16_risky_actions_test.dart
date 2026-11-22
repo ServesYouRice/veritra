@@ -83,6 +83,9 @@ Future<void> _show(
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 200));
+  await tester
+      .tap(find.byKey(const ValueKey<String>('settings-linked-devices')));
+  await tester.pumpAndSettle();
 }
 
 void main() {

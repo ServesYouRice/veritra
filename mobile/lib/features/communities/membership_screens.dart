@@ -8,8 +8,10 @@ import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../settings/stacked_trailing_tile.dart';
+import '../../ui/widgets/constrained_body.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
@@ -1021,73 +1023,75 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     final canInvite =
         myRole != null && const <String>{'owner', 'admin'}.contains(myRole);
     return _KeepAlive(
-      child: ListView(
-        padding: _pagePadding,
-        children: <Widget>[
-          SectionHeader(l10n.detailsSectionMembers),
-          TileGroup(
-            children: <Widget>[
-              if (members == null && !_failed)
-                ListTile(
-                  leading: const SizedBox.square(
-                    dimension: 24,
-                    child: Center(
-                      child: SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+      child: ConstrainedBody(
+        child: ListView(
+          padding: _pagePadding,
+          children: <Widget>[
+            SectionHeader(l10n.detailsSectionMembers),
+            TileGroup(
+              children: <Widget>[
+                if (members == null && !_failed)
+                  ListTile(
+                    leading: const SizedBox.square(
+                      dimension: 24,
+                      child: Center(
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                    title: Text(l10n.detailsLoadingMembers),
+                  )
+                else if (members == null || members.isEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: Text(l10n.detailsMembersUnavailable),
+                    subtitle: Text(l10n.detailsMembersUnavailableDetail),
+                  )
+                else
+                  for (final member in members)
+                    _memberRow(member, me, myRole, canManageMembers, busy),
+              ],
+            ),
+            if (error != null) _InlineError(error),
+            const SizedBox(height: BoneSpacing.sm),
+            Text(l10n.detailsMembershipNote, style: muted),
+            if (canManageMembers) ...<Widget>[
+              const SizedBox(height: BoneSpacing.lg),
+              TileGroup(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.shield_outlined),
+                    title: Text(l10n.moderationTitle),
+                    subtitle: Text(l10n.moderationDetail),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      sharedAxisRoute<void>(
+                        (_) => ModerationScreen(
+                          state: state,
+                          community: widget.community,
+                          canManageInvites: canInvite,
+                        ),
                       ),
                     ),
                   ),
-                  title: Text(l10n.detailsLoadingMembers),
-                )
-              else if (members == null || members.isEmpty)
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: Text(l10n.detailsMembersUnavailable),
-                  subtitle: Text(l10n.detailsMembersUnavailableDetail),
-                )
-              else
-                for (final member in members)
-                  _memberRow(member, me, myRole, canManageMembers, busy),
+                ],
+              ),
             ],
-          ),
-          if (error != null) _InlineError(error),
-          const SizedBox(height: BoneSpacing.sm),
-          Text(l10n.detailsMembershipNote, style: muted),
-          if (canManageMembers) ...<Widget>[
             const SizedBox(height: BoneSpacing.lg),
             TileGroup(
               children: <Widget>[
                 ListTile(
-                  leading: const Icon(Icons.shield_outlined),
-                  title: Text(l10n.moderationTitle),
-                  subtitle: Text(l10n.moderationDetail),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ModerationScreen(
-                        state: state,
-                        community: widget.community,
-                        canManageInvites: canInvite,
-                      ),
-                    ),
-                  ),
+                  leading: const Icon(Icons.logout),
+                  title: Text(l10n.communityLeave),
+                  subtitle: Text(l10n.communityLeaveDetail),
+                  onTap: busy ? null : _leave,
                 ),
               ],
             ),
           ],
-          const SizedBox(height: BoneSpacing.lg),
-          TileGroup(
-            children: <Widget>[
-              ListTile(
-                leading: const Icon(Icons.logout),
-                title: Text(l10n.communityLeave),
-                subtitle: Text(l10n.communityLeaveDetail),
-                onTap: busy ? null : _leave,
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }

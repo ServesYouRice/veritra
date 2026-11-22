@@ -56,10 +56,17 @@ agree.
 | Accent | `#EDE4DA` | `#3A2E42` |
 | Own bubble | `#3A2B52` | `#ECE3F2` |
 | On accent | `#1E1620` | `#FFFFFF` |
-| Border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
+| Control border | `rgb(168 158 166 / 60%)` | `rgb(26 22 32 / 50%)` |
+| Decorative hairline | `rgb(243 239 250 / 13%)` | `rgb(26 22 32 / 11%)` |
+| Active nav fill | `rgb(237 228 218 / 16%)` | `rgb(58 46 66 / 12%)` |
 
-Surfaces separate by **tone, not shadow**, over 1px hairlines. Structural radii
-are 12 and 20; controls use 10, bubbles 18, pills 999. Rows are 62dp.
+Surfaces separate by **tone, not shadow**, over 1px decorative hairlines
+(`BoneColors.hairline`), while interactive controls (text inputs, outlined
+buttons, and focus/error strokes) retain `outlineVariant` / `outline` at >= 3:1
+contrast (WCAG 1.4.11). Structural radii are 12 and 20; controls use 10,
+bubbles 18 (with 6px inner corners when clustered), pills 999. Rows are 62dp.
+Single-column desktop pages cap reading width at 680dp (`ConstrainedBody`) and
+chat threads at 780dp (`BoneSpacing.maxChatWidth`).
 
 ### Non-text boundary contrast
 
@@ -328,10 +335,27 @@ because the probe cannot tell a new phone from a returning one.
 ### §6 Settings, communities, search, details
 
 Was six `Card`s of `ListTile` + `Divider` + trailing chevron — generic by
-construction. Now an identity header (avatar, `@username`, instance host),
-grouped rows on a tinted canvas, `micro` section headers, and **no chevrons**.
-State facts moved out of `' · '`-joined subtitles and onto pills. Also covers
-profile, device link, invites, blocked accounts and the search field.
+construction. Now an identity header (photo or initials avatar, display name /
+`@username`, instance host), grouped rows on a tinted canvas, `micro` section
+headers, and arrows only on rows that open another page (U18). State facts
+moved out of `' · '`-joined subtitles and onto pills.
+
+- **Devices** open into a dedicated `LinkedDevicesScreen` rather than expanding
+  inline in Settings; **Delete account** and **Sign out** sit together in a
+  bottom `Danger zone` group (Sign out last).
+- **Communities** on wide desktop viewports (`>= 840dp`) open a 3-pane
+  `CommunityWorkspace` (community icon rail, elevated collapsible channel
+  sidebar, and live channel thread), paired with a local-only `Ctrl+K` / `Cmd+K`
+  quick switcher (`showQuickSwitcher`).
+- **Chat ergonomics**: consecutive same-sender messages within 2 minutes cluster
+  with stacked inner corners, tappable reaction pills toggle reactions in place,
+  quoted replies jump to the target message, swiping right triggers quick reply,
+  pins fold into a 1-row bar with a full-list sheet, accepted chats decrypt
+  in-memory image thumbnails inline, and desktop hover reveals a compact
+  quick-action pill while right-click opens a cursor-anchored context menu.
+- **Search** opened from inside a chat (`Ctrl+F` or Conversation details) scopes
+  local message search to `This chat` by default with a 1-tap toggle to
+  `All chats`.
 
 The `errorContainer` treatment stays on the danger zone; it is doing real work.
 

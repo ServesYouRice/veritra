@@ -5676,4 +5676,75 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get l2OwnerKeyStale => 'The list changed meanwhile. Look at it again.';
+
+  @override
+  String chatPinnedCount(int current, int total) {
+    return '$current of $total';
+  }
+
+  @override
+  String get chatPinnedMessagesTitle => 'Pinned messages';
+
+  @override
+  String get chatNewMessagesDivider => 'New messages';
+
+  @override
+  String chatListDraftPrefix(String text) {
+    return 'Draft: $text';
+  }
+
+  @override
+  String get chatListPinned => 'Pinned';
+
+  @override
+  String get chatInsertEmoji => 'Insert emoji';
+
+  @override
+  String get chatQuickReact => 'Quick reaction';
+
+  @override
+  String get chatMoreActions => 'More actions';
+
+  @override
+  String get chatSearchThisChat => 'This chat';
+
+  @override
+  String get chatSearchAllChats => 'All chats';
+
+  @override
+  String get quickSwitcherTitle => 'Jump to…';
+
+  @override
+  String get quickSwitcherHint => 'Jump to a chat or channel…';
+
+  @override
+  String get quickSwitcherEmpty => 'No matching chats or channels.';
+
+  @override
+  String get settingsLinkedDevices => 'Linked devices';
+
+  @override
+  String settingsLinkedDevicesCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count active devices',
+      one: '1 active device',
+      zero: 'No active devices',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get communitySelectPromptTitle => 'Select a channel';
+
+  @override
+  String get communitySelectPromptMessage =>
+      'Pick a community and channel on the left to read and post.';
+
+  @override
+  String get communityToggleDetails => 'Community details';
+
+  @override
+  String get communityToggleCategory => 'Toggle category';
 }

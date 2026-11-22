@@ -13,6 +13,7 @@ import '../../ui/motion.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/account_picker.dart';
+import '../../ui/widgets/constrained_body.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
@@ -102,350 +103,363 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
         final memberError = state.errorFor(Ops.members);
         return Scaffold(
           appBar: LargeTitleBar(title: l10n.chatListDetails),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(
-              BoneSpacing.gutter,
-              BoneSpacing.sm,
-              BoneSpacing.gutter,
-              BoneSpacing.xl,
-            ),
-            children: <Widget>[
-              _DetailsHeader(
-                avatar: conversationAvatar(
-                  context,
-                  conversation,
-                  radius: 44,
-                  profiles: state.profiles,
-                ),
-                title: conversationTitle(
-                  l10n,
-                  conversation,
-                  profiles: state.profiles,
-                ),
-                subtitle: _headerSubtitle(l10n, conversation),
+          body: ConstrainedBody(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.sm,
+                BoneSpacing.gutter,
+                BoneSpacing.xl,
               ),
-              const SizedBox(height: BoneSpacing.lg),
-              _ActionRow(
-                actions: <Widget>[
-                  _DetailAction(
-                    key: const Key('details-mute'),
-                    icon: state.isMuted(conversationId)
-                        ? Icons.notifications_off_outlined
-                        : Icons.notifications_outlined,
-                    label: state.isMuted(conversationId)
-                        ? l10n.detailsActionUnmute
-                        : l10n.detailsActionMute,
-                    onTap: state.isBusy(Ops.mute)
-                        ? null
-                        : () => _chooseMute(context),
+              children: <Widget>[
+                _DetailsHeader(
+                  avatar: conversationAvatar(
+                    context,
+                    conversation,
+                    radius: 44,
+                    profiles: state.profiles,
                   ),
-                  // The same message search the chat's Ctrl+F opens: the app
-                  // has no search inside one chat.
-                  _DetailAction(
-                    key: const Key('details-search'),
-                    icon: Icons.search,
-                    label: l10n.chatListSearch,
-                    onTap: () => Navigator.of(context).push(
-                      sharedAxisRoute<void>((_) => SearchScreen(state: state)),
-                    ),
+                  title: conversationTitle(
+                    l10n,
+                    conversation,
+                    profiles: state.profiles,
                   ),
-                  if (isDm && !state.readOnlyWithoutPeer(conversationId))
-                    ValueListenableBuilder<CallController?>(
-                      valueListenable: state.callController,
-                      builder: (context, calls, _) => calls == null
-                          ? const SizedBox.shrink()
-                          : ListenableBuilder(
-                              listenable: calls,
-                              builder: (context, _) => _DetailAction(
-                                key: const Key('details-call'),
-                                icon: Icons.call_outlined,
-                                label: l10n.detailsActionCall,
-                                onTap: calls.busy
-                                    ? null
-                                    : () => unawaited(
-                                          calls.start(conversation.id),
-                                        ),
-                              ),
-                            ),
-                    ),
-                ],
-              ),
-              if (state.isMuted(conversationId))
-                Padding(
-                  padding: const EdgeInsets.only(top: BoneSpacing.sm),
-                  child: Text(
-                    _muteStatus(context, l10n),
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                  subtitle: _headerSubtitle(l10n, conversation),
                 ),
-              if (state.errorFor(Ops.mute) != null)
-                _InlineError(message: state.errorFor(Ops.mute)!),
-              const SizedBox(height: BoneSpacing.lg),
-              if (conversation.isGroup && state.profilesAvailable) ...<Widget>[
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      key: const Key('group-profile-tile'),
-                      leading: const Icon(Icons.edit_outlined),
-                      title: Text(l10n.groupProfileTitle),
+                const SizedBox(height: BoneSpacing.lg),
+                _ActionRow(
+                  actions: <Widget>[
+                    _DetailAction(
+                      key: const Key('details-mute'),
+                      icon: state.isMuted(conversationId)
+                          ? Icons.notifications_off_outlined
+                          : Icons.notifications_outlined,
+                      label: state.isMuted(conversationId)
+                          ? l10n.detailsActionUnmute
+                          : l10n.detailsActionMute,
+                      onTap: state.isBusy(Ops.mute)
+                          ? null
+                          : () => _chooseMute(context),
+                    ),
+                    // Message search scoped to this chat by default, with a
+                    // 1-tap toggle to search all local chats.
+                    _DetailAction(
+                      key: const Key('details-search'),
+                      icon: Icons.search,
+                      label: l10n.chatListSearch,
                       onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ProfileEditScreen.group(
-                            state: state,
-                            conversationId: conversation.id,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: BoneSpacing.sm),
-              ],
-              // One row, one sheet: the five options and the reason they are
-              // locked live there instead of down the page (U30).
-              TileGroup(
-                children: <Widget>[
-                  ListTile(
-                    key: const Key('details-retention'),
-                    leading: const Icon(Icons.timer_outlined),
-                    title: Text(l10n.detailsSectionDisappearing),
-                    subtitle: Text(
-                      retention == null || retention == 0
-                          ? l10n.detailsRetentionOff
-                          : retentionLabel(l10n, retention),
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _openRetentionSheet(
-                      context,
-                      conversation,
-                      canManage: canManage,
-                    ),
-                  ),
-                ],
-              ),
-              if (!isDm) ...<Widget>[
-                SectionHeader(l10n.detailsSectionMembers),
-                if (memberError != null) _InlineError(message: memberError),
-                TileGroup(
-                  children: <Widget>[
-                    if (members.isEmpty && state.isBusy(Ops.members))
-                      ListTile(
-                        leading: const SizedBox.square(
-                          dimension: 24,
-                          child: Center(
-                            child: SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          ),
-                        ),
-                        title: Text(l10n.detailsLoadingMembers),
-                      )
-                    else if (members.isEmpty)
-                      ListTile(
-                        leading: const Icon(Icons.person_outline),
-                        title: Text(l10n.detailsMembersUnavailable),
-                        subtitle: Text(l10n.detailsMembersUnavailableDetail),
-                      )
-                    else
-                      for (final member in members)
-                        _MemberTile(
-                          member: member,
-                          profileName: state.profileNameOf(member.accountId),
-                          isSelf: member.accountId == state.session?.accountId,
-                          // Only a manager can remove someone, never
-                          // themselves through this control, and never anyone
-                          // ranked at or above their own role.
-                          canRemove: canManage &&
-                              !isDm &&
-                              member.accountId != state.session?.accountId &&
-                              _outranks(
-                                myRole,
-                                state.roleOf(
-                                      conversationId,
-                                      member.accountId,
-                                    ) ??
-                                    member.role,
-                              ),
-                          busy: state.isBusy(Ops.members),
-                          onRemove: () => _confirmRemove(context, member),
-                        ),
-                    // K0 step 8: no group device here could add them.
-                    if (!isDm &&
-                        state.membershipChangesAvailable &&
-                        !state.readOnlyWithoutPeer(conversationId))
-                      ListTile(
-                        leading: const Icon(Icons.person_add_outlined),
-                        title: Text(l10n.detailsAddMember),
-                        subtitle: Text(
-                          canManage
-                              ? l10n.detailsAddMemberDetail
-                              : l10n.detailsAddMemberNoPermission,
-                        ),
-                        onTap: state.isBusy(Ops.members) || !canManage
-                            ? null
-                            : () => _addMember(context, myRole),
-                      ),
-                  ],
-                ),
-              ],
-              if (conversation.isGroup ||
-                  conversation.isCommunityShared) ...<Widget>[
-                const SizedBox(height: BoneSpacing.sm),
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      key: const Key('roles-tile'),
-                      leading: const Icon(Icons.admin_panel_settings_outlined),
-                      title: Text(l10n.rolesTitle),
-                      subtitle: Text(l10n.rolesDetail),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => RolesScreen(
+                        sharedAxisRoute<void>(
+                          (_) => SearchScreen(
                             state: state,
                             conversationId: conversationId,
                           ),
                         ),
                       ),
                     ),
+                    if (isDm && !state.readOnlyWithoutPeer(conversationId))
+                      ValueListenableBuilder<CallController?>(
+                        valueListenable: state.callController,
+                        builder: (context, calls, _) => calls == null
+                            ? const SizedBox.shrink()
+                            : ListenableBuilder(
+                                listenable: calls,
+                                builder: (context, _) => _DetailAction(
+                                  key: const Key('details-call'),
+                                  icon: Icons.call_outlined,
+                                  label: l10n.detailsActionCall,
+                                  onTap: calls.busy
+                                      ? null
+                                      : () => unawaited(
+                                            calls.start(conversation.id),
+                                          ),
+                                ),
+                              ),
+                      ),
                   ],
                 ),
-              ],
-              // C1: invitation links and join requests of a group, for its
-              // owners and admins. A DM or a community channel has none.
-              if (conversation.isGroup &&
-                  const <String>{
-                    'owner',
-                    'admin',
-                  }.contains(myRole)) ...<Widget>[
-                const SizedBox(height: BoneSpacing.sm),
+                if (state.isMuted(conversationId))
+                  Padding(
+                    padding: const EdgeInsets.only(top: BoneSpacing.sm),
+                    child: Text(
+                      _muteStatus(context, l10n),
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                if (state.errorFor(Ops.mute) != null)
+                  _InlineError(message: state.errorFor(Ops.mute)!),
+                const SizedBox(height: BoneSpacing.lg),
+                if (conversation.isGroup &&
+                    state.profilesAvailable) ...<Widget>[
+                  TileGroup(
+                    children: <Widget>[
+                      ListTile(
+                        key: const Key('group-profile-tile'),
+                        leading: const Icon(Icons.edit_outlined),
+                        title: Text(l10n.groupProfileTitle),
+                        onTap: () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => ProfileEditScreen.group(
+                              state: state,
+                              conversationId: conversation.id,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: BoneSpacing.sm),
+                ],
+                // One row, one sheet: the five options and the reason they are
+                // locked live there instead of down the page (U30).
                 TileGroup(
                   children: <Widget>[
                     ListTile(
-                      leading: const Icon(Icons.link),
-                      title: Text(l10n.membInviteManage),
+                      key: const Key('details-retention'),
+                      leading: const Icon(Icons.timer_outlined),
+                      title: Text(l10n.detailsSectionDisappearing),
+                      subtitle: Text(
+                        retention == null || retention == 0
+                            ? l10n.detailsRetentionOff
+                            : retentionLabel(l10n, retention),
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => MembershipManageScreen(
-                            state: state,
-                            kind: InviteTargetKind.group,
-                            targetId: conversationId,
-                          ),
-                        ),
+                      onTap: () => _openRetentionSheet(
+                        context,
+                        conversation,
+                        canManage: canManage,
                       ),
                     ),
                   ],
                 ),
-              ],
-              SectionHeader(l10n.settingsSectionSafety),
-              TileGroup(
-                children: <Widget>[
-                  if (state.safetyNumbersAvailable)
-                    ListTile(
-                      leading: const Icon(Icons.verified_user_outlined),
-                      title: Text(l10n.safetyTitle),
-                      subtitle: Text(l10n.detailsSafetyDetail),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => SafetyNumberScreen(
-                            state: state,
-                            conversation: conversation,
+                if (!isDm) ...<Widget>[
+                  SectionHeader(l10n.detailsSectionMembers),
+                  if (memberError != null) _InlineError(message: memberError),
+                  TileGroup(
+                    children: <Widget>[
+                      if (members.isEmpty && state.isBusy(Ops.members))
+                        ListTile(
+                          leading: const SizedBox.square(
+                            dimension: 24,
+                            child: Center(
+                              child: SizedBox.square(
+                                dimension: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ),
                           ),
+                          title: Text(l10n.detailsLoadingMembers),
+                        )
+                      else if (members.isEmpty)
+                        ListTile(
+                          leading: const Icon(Icons.person_outline),
+                          title: Text(l10n.detailsMembersUnavailable),
+                          subtitle: Text(l10n.detailsMembersUnavailableDetail),
+                        )
+                      else
+                        for (final member in members)
+                          _MemberTile(
+                            member: member,
+                            profileName: state.profileNameOf(member.accountId),
+                            isSelf:
+                                member.accountId == state.session?.accountId,
+                            // Only a manager can remove someone, never
+                            // themselves through this control, and never anyone
+                            // ranked at or above their own role.
+                            canRemove: canManage &&
+                                !isDm &&
+                                member.accountId != state.session?.accountId &&
+                                _outranks(
+                                  myRole,
+                                  state.roleOf(
+                                        conversationId,
+                                        member.accountId,
+                                      ) ??
+                                      member.role,
+                                ),
+                            busy: state.isBusy(Ops.members),
+                            onRemove: () => _confirmRemove(context, member),
+                          ),
+                      // K0 step 8: no group device here could add them.
+                      if (!isDm &&
+                          state.membershipChangesAvailable &&
+                          !state.readOnlyWithoutPeer(conversationId))
+                        ListTile(
+                          leading: const Icon(Icons.person_add_outlined),
+                          title: Text(l10n.detailsAddMember),
+                          subtitle: Text(
+                            canManage
+                                ? l10n.detailsAddMemberDetail
+                                : l10n.detailsAddMemberNoPermission,
+                          ),
+                          onTap: state.isBusy(Ops.members) || !canManage
+                              ? null
+                              : () => _addMember(context, myRole),
                         ),
-                      ),
-                    ),
-                  if (isDm && conversation.peerAccountId != null)
-                    _BlockTile(
-                      state: state,
-                      accountId: conversation.peerAccountId!,
-                      label: accountLabel(
-                        conversation.peerAccountId!,
-                        conversation.peerUsername,
-                      ),
-                    ),
-                  ListTile(
-                    leading: const Icon(Icons.logout),
-                    title: Text(isDm ? l10n.detailsLeaveDm : l10n.detailsLeave),
-                    subtitle: Text(l10n.detailsLeaveDetail),
-                    onTap: state.isBusy(Ops.members)
-                        ? null
-                        : () => _confirmLeave(context),
+                    ],
                   ),
                 ],
-              ),
-              const SizedBox(height: BoneSpacing.lg),
-              // The identifiers and the membership caveat are for the few who
-              // look for them (U30).
-              TileGroup(
-                children: <Widget>[
-                  Theme(
-                    data: theme.copyWith(dividerColor: Colors.transparent),
-                    child: ExpansionTile(
-                      key: const Key('details-advanced'),
-                      leading: const Icon(Icons.tune_outlined),
-                      title: Text(l10n.detailsSectionAdvanced),
-                      childrenPadding: const EdgeInsets.only(
-                        bottom: BoneSpacing.md,
-                      ),
-                      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        ListTile(
-                          leading: const Icon(Icons.tag_outlined),
-                          title: Text(
-                            l10n.detailsConversationIdLabel,
-                            style: theme.textTheme.labelSmall,
-                          ),
-                          subtitle: Text(
-                            shortId(conversation.id),
-                            style: BoneType.mono.copyWith(
-                              color: theme.colorScheme.onSurface,
-                            ),
-                          ),
-                          trailing: IconButton(
-                            tooltip: l10n.detailsCopyId,
-                            icon: const Icon(Icons.copy_outlined),
-                            onPressed: () => _copy(
-                              context,
-                              conversation.id,
-                              l10n.detailsConversationId,
+                if (conversation.isGroup ||
+                    conversation.isCommunityShared) ...<Widget>[
+                  const SizedBox(height: BoneSpacing.sm),
+                  TileGroup(
+                    children: <Widget>[
+                      ListTile(
+                        key: const Key('roles-tile'),
+                        leading:
+                            const Icon(Icons.admin_panel_settings_outlined),
+                        title: Text(l10n.rolesTitle),
+                        subtitle: Text(l10n.rolesDetail),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => RolesScreen(
+                              state: state,
+                              conversationId: conversationId,
                             ),
                           ),
                         ),
-                        if (conversation.createdAt != null)
+                      ),
+                    ],
+                  ),
+                ],
+                // C1: invitation links and join requests of a group, for its
+                // owners and admins. A DM or a community channel has none.
+                if (conversation.isGroup &&
+                    const <String>{
+                      'owner',
+                      'admin',
+                    }.contains(myRole)) ...<Widget>[
+                  const SizedBox(height: BoneSpacing.sm),
+                  TileGroup(
+                    children: <Widget>[
+                      ListTile(
+                        leading: const Icon(Icons.link),
+                        title: Text(l10n.membInviteManage),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => MembershipManageScreen(
+                              state: state,
+                              kind: InviteTargetKind.group,
+                              targetId: conversationId,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                SectionHeader(l10n.settingsSectionSafety),
+                TileGroup(
+                  children: <Widget>[
+                    if (state.safetyNumbersAvailable)
+                      ListTile(
+                        leading: const Icon(Icons.verified_user_outlined),
+                        title: Text(l10n.safetyTitle),
+                        subtitle: Text(l10n.detailsSafetyDetail),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => SafetyNumberScreen(
+                              state: state,
+                              conversation: conversation,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (isDm && conversation.peerAccountId != null)
+                      _BlockTile(
+                        state: state,
+                        accountId: conversation.peerAccountId!,
+                        label: accountLabel(
+                          conversation.peerAccountId!,
+                          conversation.peerUsername,
+                        ),
+                      ),
+                    ListTile(
+                      leading: const Icon(Icons.logout),
+                      title:
+                          Text(isDm ? l10n.detailsLeaveDm : l10n.detailsLeave),
+                      subtitle: Text(l10n.detailsLeaveDetail),
+                      onTap: state.isBusy(Ops.members)
+                          ? null
+                          : () => _confirmLeave(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: BoneSpacing.lg),
+                // The identifiers and the membership caveat are for the few who
+                // look for them (U30).
+                TileGroup(
+                  children: <Widget>[
+                    Theme(
+                      data: theme.copyWith(dividerColor: Colors.transparent),
+                      child: ExpansionTile(
+                        key: const Key('details-advanced'),
+                        leading: const Icon(Icons.tune_outlined),
+                        title: Text(l10n.detailsSectionAdvanced),
+                        childrenPadding: const EdgeInsets.only(
+                          bottom: BoneSpacing.md,
+                        ),
+                        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
                           ListTile(
-                            leading: const Icon(Icons.schedule_outlined),
+                            leading: const Icon(Icons.tag_outlined),
                             title: Text(
-                              l10n.detailsCreatedLabel,
+                              l10n.detailsConversationIdLabel,
                               style: theme.textTheme.labelSmall,
                             ),
                             subtitle: Text(
-                              formatDateTime(context, conversation.createdAt!),
+                              shortId(conversation.id),
+                              style: BoneType.mono.copyWith(
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            trailing: IconButton(
+                              tooltip: l10n.detailsCopyId,
+                              icon: const Icon(Icons.copy_outlined),
+                              onPressed: () => _copy(
+                                context,
+                                conversation.id,
+                                l10n.detailsConversationId,
+                              ),
                             ),
                           ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: BoneSpacing.lg,
-                          ),
-                          child: Text(
-                            l10n.detailsMembershipNote,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
+                          if (conversation.createdAt != null)
+                            ListTile(
+                              leading: const Icon(Icons.schedule_outlined),
+                              title: Text(
+                                l10n.detailsCreatedLabel,
+                                style: theme.textTheme.labelSmall,
+                              ),
+                              subtitle: Text(
+                                formatDateTime(
+                                    context, conversation.createdAt!),
+                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: BoneSpacing.lg,
+                            ),
+                            child: Text(
+                              l10n.detailsMembershipNote,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-            ],
+                  ],
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         );
       },

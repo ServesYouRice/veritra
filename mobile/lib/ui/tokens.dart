@@ -31,8 +31,16 @@ class BoneColors {
   /// ground's hue from [darkRaised]. Text on it: 11.3:1, muted text 4.9:1.
   static const Color darkOwnBubble = Color(0xff3a2b52);
 
-  /// Strong enough after compositing against canvas, surface and raised roles.
+  /// Strong enough after compositing against canvas, surface and raised roles
+  /// for interactive control boundaries (WCAG 1.4.11 >= 3:1).
   static const Color darkBorder = Color(0x99a89ea6);
+
+  /// Subtle decorative hairline for containers, dividers and aligned bubbles
+  /// that already separate by surface tone or layout (~13% bone-white).
+  static const Color darkHairline = Color(0x21f3effa);
+
+  /// Calm tonal fill for the active navigation item on dark surfaces.
+  static const Color darkNavActiveFill = Color(0x29ede4da);
 
   // --- Light: warm paper, deep plum accent --------------------------------
   static const Color lightCanvas = Color(0xfff8f6f1);
@@ -48,12 +56,29 @@ class BoneColors {
   /// on it: 14.3:1, muted text 4.8:1.
   static const Color lightOwnBubble = Color(0xffece3f2);
 
-  /// Strong enough after compositing against the light surface roles.
+  /// Strong enough after compositing against the light surface roles for
+  /// interactive control boundaries (WCAG 1.4.11 >= 3:1).
   static const Color lightBorder = Color(0x801a1620);
+
+  /// Subtle decorative hairline for light containers, dividers and bubbles
+  /// (~11% ink).
+  static const Color lightHairline = Color(0x1c1a1620);
+
+  /// Calm tonal fill for the active navigation item on light surfaces.
+  static const Color lightNavActiveFill = Color(0x1f3a2e42);
 
   /// The fill of a bubble you sent, for the theme's [brightness].
   static Color ownBubble(Brightness brightness) =>
       brightness == Brightness.dark ? darkOwnBubble : lightOwnBubble;
+
+  /// Subtle decorative boundary colour for [brightness]. Use [ColorScheme.outline]
+  /// or [ColorScheme.outlineVariant] for interactive control boundaries instead.
+  static Color hairline(Brightness brightness) =>
+      brightness == Brightness.dark ? darkHairline : lightHairline;
+
+  /// Calm tonal active fill for navigation items in [brightness].
+  static Color navActiveFill(Brightness brightness) =>
+      brightness == Brightness.dark ? darkNavActiveFill : lightNavActiveFill;
 
   // --- Error, as a Material role ------------------------------------------
   static const Color darkError = Color(0xfffb7185);
@@ -95,6 +120,11 @@ class BoneSpacing {
   /// 48dp on its own, which it does comfortably at this height.
   static const double rowHeight = 62;
   static const double minTapTarget = 48;
+
+  /// Readable column caps on desktop/tablet windows so toggles and chat
+  /// threads never stretch across wide monitors.
+  static const double maxReadingWidth = 680;
+  static const double maxChatWidth = 780;
 }
 
 /// Motion. The direction is restrained, so there is one standard duration and

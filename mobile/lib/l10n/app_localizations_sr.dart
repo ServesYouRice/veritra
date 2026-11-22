@@ -5697,6 +5697,78 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get l2OwnerKeyStale =>
       'Списак се у међувремену променио. Погледајте га поново.';
+
+  @override
+  String chatPinnedCount(int current, int total) {
+    return '$current од $total';
+  }
+
+  @override
+  String get chatPinnedMessagesTitle => 'Закачене поруке';
+
+  @override
+  String get chatNewMessagesDivider => 'Нове поруке';
+
+  @override
+  String chatListDraftPrefix(String text) {
+    return 'Нацрт: $text';
+  }
+
+  @override
+  String get chatListPinned => 'Закачено';
+
+  @override
+  String get chatInsertEmoji => 'Уметни емоџи';
+
+  @override
+  String get chatQuickReact => 'Брза реакција';
+
+  @override
+  String get chatMoreActions => 'Још радњи';
+
+  @override
+  String get chatSearchThisChat => 'Овај разговор';
+
+  @override
+  String get chatSearchAllChats => 'Сви разговори';
+
+  @override
+  String get quickSwitcherTitle => 'Пређи на…';
+
+  @override
+  String get quickSwitcherHint => 'Пређи на разговор или канал…';
+
+  @override
+  String get quickSwitcherEmpty => 'Нема одговарајућих разговора или канала.';
+
+  @override
+  String get settingsLinkedDevices => 'Повезани уређаји';
+
+  @override
+  String settingsLinkedDevicesCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count активних уређаја',
+      few: '$count активна уређаја',
+      one: '$count активан уређај',
+      zero: 'Нема активних уређаја',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get communitySelectPromptTitle => 'Изаберите канал';
+
+  @override
+  String get communitySelectPromptMessage =>
+      'Изаберите заједницу и канал са леве стране за читање и објављивање.';
+
+  @override
+  String get communityToggleDetails => 'Детаљи заједнице';
+
+  @override
+  String get communityToggleCategory => 'Прикажи или сакриј категорију';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -11398,4 +11470,76 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get l2OwnerKeyStale =>
       'Spisak se u međuvremenu promenio. Pogledajte ga ponovo.';
+
+  @override
+  String chatPinnedCount(int current, int total) {
+    return '$current od $total';
+  }
+
+  @override
+  String get chatPinnedMessagesTitle => 'Zakačene poruke';
+
+  @override
+  String get chatNewMessagesDivider => 'Nove poruke';
+
+  @override
+  String chatListDraftPrefix(String text) {
+    return 'Nacrt: $text';
+  }
+
+  @override
+  String get chatListPinned => 'Zakačeno';
+
+  @override
+  String get chatInsertEmoji => 'Umetni emodži';
+
+  @override
+  String get chatQuickReact => 'Brza reakcija';
+
+  @override
+  String get chatMoreActions => 'Još radnji';
+
+  @override
+  String get chatSearchThisChat => 'Ovaj razgovor';
+
+  @override
+  String get chatSearchAllChats => 'Svi razgovori';
+
+  @override
+  String get quickSwitcherTitle => 'Pređi na…';
+
+  @override
+  String get quickSwitcherHint => 'Pređi na razgovor ili kanal…';
+
+  @override
+  String get quickSwitcherEmpty => 'Nema odgovarajućih razgovora ili kanala.';
+
+  @override
+  String get settingsLinkedDevices => 'Povezani uređaji';
+
+  @override
+  String settingsLinkedDevicesCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count aktivnih uređaja',
+      few: '$count aktivna uređaja',
+      one: '$count aktivan uređaj',
+      zero: 'Nema aktivnih uređaja',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get communitySelectPromptTitle => 'Izaberite kanal';
+
+  @override
+  String get communitySelectPromptMessage =>
+      'Izaberite zajednicu i kanal sa leve strane za čitanje i objavljivanje.';
+
+  @override
+  String get communityToggleDetails => 'Detalji zajednice';
+
+  @override
+  String get communityToggleCategory => 'Prikaži ili sakrij kategoriju';
 }

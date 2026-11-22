@@ -67,6 +67,7 @@ import 'package:private_messenger/features/settings/blocked_accounts_screen.dart
 import 'package:private_messenger/features/settings/device_link_screen.dart';
 import 'package:private_messenger/features/settings/invite_screen.dart';
 import 'package:private_messenger/features/settings/k1_restore_screen.dart';
+import 'package:private_messenger/features/settings/linked_devices_screen.dart';
 import 'package:private_messenger/features/settings/passkeys_screen.dart';
 import 'package:private_messenger/features/settings/profile_edit_screen.dart';
 import 'package:private_messenger/features/settings/profile_screen.dart';
@@ -148,6 +149,11 @@ final List<PhotoScreen> _shellScreens = <PhotoScreen>[
         connected: true, open: (tester, _) async {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text(row),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.tap(find.text(row));
     }),
   const PhotoScreen.shell('connect', 'ConnectScreen', connected: false),
@@ -891,6 +897,9 @@ final List<PhotoScreen> _settingsScreens = <PhotoScreen>[
   PhotoScreen.direct('settings_member', 'SettingsScreen', (env) async {
     final state = await _rich(env, role: 'member');
     return SettingsScreen(state: state);
+  }),
+  PhotoScreen.direct('linked_devices', 'LinkedDevicesScreen', (env) async {
+    return LinkedDevicesScreen(state: await _rich(env));
   }),
   PhotoScreen.direct('profile', 'ProfileScreen', (env) async {
     return ProfileScreen(state: await _rich(env));

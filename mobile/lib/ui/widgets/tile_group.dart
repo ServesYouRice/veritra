@@ -29,7 +29,9 @@ class TileGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final hairline = BoneColors.hairline(theme.brightness);
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i++) {
       if (i > 0) {
@@ -38,7 +40,7 @@ class TileGroup extends StatelessWidget {
             height: 1,
             thickness: 1,
             indent: dividerIndent,
-            color: scheme.outlineVariant,
+            color: hairline,
           ),
         );
       }
@@ -48,7 +50,7 @@ class TileGroup extends StatelessWidget {
       color: scheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(BoneRadii.lg),
-        side: BorderSide(color: scheme.outlineVariant),
+        side: BorderSide(color: hairline),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(children: rows),

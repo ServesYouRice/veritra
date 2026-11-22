@@ -9,9 +9,11 @@ import '../../ui/photo_avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/validation.dart';
+import '../../ui/widgets/constrained_body.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
+import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import '../chat/roles_screen.dart';
@@ -20,7 +22,21 @@ import 'membership_screens.dart';
 import 'community_info_screen.dart';
 import 'create_channel_screen.dart';
 import 'edit_info_dialog.dart';
-import '../../ui/widgets/refresh_action.dart';
+
+/// Shared community/channel name prompt dialog used by both compact
+/// [CommunityScreen] and desktop `CommunityWorkspace`.
+Future<String?> createCommunityDialog(
+  BuildContext context, {
+  String? title,
+  String? label,
+}) =>
+    showDialog<String>(
+      context: context,
+      builder: (_) => _NamePrompt(
+        title: title ?? context.l10n.communityNew,
+        label: label ?? context.l10n.communityName,
+      ),
+    );
 
 /// Communities: create a community, add channels, and open channel
 /// conversations. Communities and channels are listed from the server
@@ -64,7 +80,6 @@ class CommunityScreen extends StatelessWidget {
             tooltip: context.l10n.communityNew,
             onPressed: state.busy ? null : () => _createCommunity(context),
           ),
-          RefreshAction(onRefresh: state.refreshCommunities),
         ],
       ),
       body: RefreshIndicator(
@@ -106,50 +121,54 @@ class CommunityScreen extends StatelessWidget {
                     ),
                 ],
               )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-                children: <Widget>[
-                  // Channels are navigable inside their community card, which
-                  // is the only place they appear; the old duplicate
-                  // "Channels you are in" section listed the same rows again
-                  // with different behaviour.
-                  for (final community in state.communities)
-                    _CommunityCard(
-                      state: state,
-                      community: community,
-                      onCreateChannel: () => _createChannel(context, community),
-                      onOpenDetails: () => Navigator.of(context).push(
-                        sharedAxisRoute<void>(
-                          (_) => CommunityDetailsScreen(
-                            state: state,
-                            community: community,
+            : ConstrainedBody(
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                  children: <Widget>[
+                    // Channels are navigable inside their community card, which
+                    // is the only place they appear; the old duplicate
+                    // "Channels you are in" section listed the same rows again
+                    // with different behaviour.
+                    for (final community in state.communities)
+                      _CommunityCard(
+                        state: state,
+                        community: community,
+                        onCreateChannel: () =>
+                            _createChannel(context, community),
+                        onOpenDetails: () => Navigator.of(context).push(
+                          sharedAxisRoute<void>(
+                            (_) => CommunityDetailsScreen(
+                              state: state,
+                              community: community,
+                            ),
                           ),
                         ),
+                        onOpenChannel: (conversationId, channelId) =>
+                            _openChannel(context, conversationId,
+                                channelId: channelId),
                       ),
-                      onOpenChannel: (conversationId, channelId) =>
-                          _openChannel(context, conversationId,
-                              channelId: channelId),
-                    ),
-                  if (_orphanChannels(state).isNotEmpty) ...<Widget>[
-                    SectionHeader(context.l10n.communityOtherChannels),
-                    TileGroup(
-                      children: <Widget>[
-                        for (final conversation in _orphanChannels(state))
-                          ListTile(
-                            leading: const Icon(Icons.tag),
-                            title: Text(
-                              conversation.title ??
-                                  context.l10n.searchTypeChannel,
+                    if (_orphanChannels(state).isNotEmpty) ...<Widget>[
+                      SectionHeader(context.l10n.communityOtherChannels),
+                      TileGroup(
+                        children: <Widget>[
+                          for (final conversation in _orphanChannels(state))
+                            ListTile(
+                              leading: const Icon(Icons.tag),
+                              title: Text(
+                                conversation.title ??
+                                    context.l10n.searchTypeChannel,
+                              ),
+                              subtitle:
+                                  Text(context.l10n.communityChannelSubtitle),
+                              onTap: () =>
+                                  _openChannel(context, conversation.id),
                             ),
-                            subtitle:
-                                Text(context.l10n.communityChannelSubtitle),
-                            onTap: () => _openChannel(context, conversation.id),
-                          ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
       ),
     );
@@ -323,7 +342,7 @@ class _NamePromptState extends State<_NamePrompt> {
       );
 }
 
-class _CommunityCard extends StatelessWidget {
+class _CommunityCard extends StatefulWidget {
   const _CommunityCard({
     required this.state,
     required this.community,
@@ -337,6 +356,16 @@ class _CommunityCard extends StatelessWidget {
   final VoidCallback onCreateChannel;
   final VoidCallback onOpenDetails;
   final void Function(String conversationId, String? channelId) onOpenChannel;
+
+  @override
+  State<_CommunityCard> createState() => _CommunityCardState();
+}
+
+class _CommunityCardState extends State<_CommunityCard> {
+  final Set<String> _collapsed = <String>{};
+
+  AppState get state => widget.state;
+  Community get community => widget.community;
 
   @override
   Widget build(BuildContext context) {
@@ -390,7 +419,7 @@ class _CommunityCard extends StatelessWidget {
                   ? context.l10n.communityNoChannels
                   : context.l10n.communityChannelCount(channels.length),
             ),
-            onTap: onOpenDetails,
+            onTap: widget.onOpenDetails,
             // The five actions sit behind one menu: five icon buttons left
             // the name 0 dp wide at 360 dp (UI audit U1).
             trailing: _actionsMenu(context, categories),
@@ -406,32 +435,47 @@ class _CommunityCard extends StatelessWidget {
             if (category != null)
               ListTile(
                 dense: true,
-                leading: const SizedBox(
-                    width: 40, child: Icon(Icons.folder_outlined, size: 18)),
+                leading: SizedBox(
+                  width: 40,
+                  child: Icon(
+                    _collapsed.contains(category)
+                        ? Icons.chevron_right
+                        : Icons.expand_more,
+                    size: 18,
+                  ),
+                ),
                 title: Text(
                   state.categoryDisplayName(category) ??
                       context.l10n.communityCategoryPlaceholder,
-                  style: Theme.of(context).textTheme.labelLarge,
+                  style: Theme.of(context).textTheme.labelSmall,
                 ),
+                onTap: () => setState(() {
+                  if (!_collapsed.add(category)) {
+                    _collapsed.remove(category);
+                  }
+                }),
               ),
-            for (final channel in members)
-              _ChannelTile(
-                channel: channel,
-                title: state.channelDisplayName(channel) ??
-                    (channel.kind == 'private'
-                        ? context.l10n.channelPrivatePlaceholderName
-                        : context.l10n.channelPlaceholderName),
-                topic: state.channelTopic(channel),
-                conversationId: _conversationIdFor(channel),
-                onOpen: onOpenChannel,
-                // C3: editing shows only where every other device will accept
-                // the edit (the verified role state, D80).
-                onEdit: channel.isRouted &&
-                        _conversationIdFor(channel) != null &&
-                        state.mayEditCommunityInfo(community.id, 'channel')
-                    ? () => _editInfo(context, channel: channel)
-                    : null,
-              ),
+            if (category == null || !_collapsed.contains(category))
+              for (final channel in members)
+                _ChannelTile(
+                  channel: channel,
+                  title: state.channelDisplayName(channel) ??
+                      (channel.kind == 'private'
+                          ? context.l10n.channelPrivatePlaceholderName
+                          : context.l10n.channelPlaceholderName),
+                  topic: state.channelTopic(channel),
+                  conversationId: _conversationIdFor(channel),
+                  unreadCount: _unreadFor(channel),
+                  onOpen: widget.onOpenChannel,
+                  // C3: editing shows only where every other device will accept
+                  // the edit (the verified role state, D80). Accessed on long
+                  // press so every channel row stays uncluttered.
+                  onEdit: channel.isRouted &&
+                          _conversationIdFor(channel) != null &&
+                          state.mayEditCommunityInfo(community.id, 'channel')
+                      ? () => _editInfo(context, channel: channel)
+                      : null,
+                ),
           ],
         ],
       ),
@@ -495,23 +539,22 @@ class _CommunityCard extends StatelessWidget {
             _editInfo(context);
           case 'info':
             Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    CommunityInfoScreen(state: state, community: community),
+              sharedAxisRoute<void>(
+                (_) => CommunityInfoScreen(state: state, community: community),
               ),
             );
           case 'roles':
             Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => RolesScreen(
+              sharedAxisRoute<void>(
+                (_) => RolesScreen(
                     state: state,
                     conversationId: community.sharedConversationId!),
               ),
             );
           case 'reports':
             Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => OwnerReportsScreen(
+              sharedAxisRoute<void>(
+                (_) => OwnerReportsScreen(
                   state: state,
                   communityId: community.id,
                   reauthenticate: (context) =>
@@ -520,7 +563,7 @@ class _CommunityCard extends StatelessWidget {
               ),
             );
           case 'channel':
-            onCreateChannel();
+            widget.onCreateChannel();
         }
       },
       itemBuilder: (_) => <PopupMenuEntry<String>>[
@@ -564,6 +607,15 @@ class _CommunityCard extends StatelessWidget {
           : conversation.channelId == channel.id)
       .firstOrNull
       ?.id;
+
+  int _unreadFor(Channel channel) =>
+      state.conversations
+          .where((conversation) => channel.isRouted
+              ? conversation.id == channel.conversationId
+              : conversation.channelId == channel.id)
+          .firstOrNull
+          ?.unreadCount ??
+      0;
 }
 
 /// A channel row inside its community card. Rows without a backing
@@ -576,6 +628,7 @@ class _ChannelTile extends StatelessWidget {
     required this.topic,
     required this.onEdit,
     required this.conversationId,
+    required this.unreadCount,
     required this.onOpen,
   });
 
@@ -584,11 +637,13 @@ class _ChannelTile extends StatelessWidget {
   final String? topic;
   final VoidCallback? onEdit;
   final String? conversationId;
+  final int unreadCount;
   final void Function(String conversationId, String? channelId) onOpen;
 
   @override
   Widget build(BuildContext context) {
     final id = conversationId;
+    final hasUnread = unreadCount > 0;
     return ListTile(
       dense: true,
       enabled: id != null,
@@ -601,19 +656,21 @@ class _ChannelTile extends StatelessWidget {
                 semanticLabel: context.l10n.channelPrivate)
             : const Icon(Icons.tag),
       ),
-      title: Text(title),
+      title: Text(
+        title,
+        style: hasUnread ? const TextStyle(fontWeight: FontWeight.w700) : null,
+      ),
       subtitle: id == null
           ? Text(context.l10n.communityNotMember)
           : topic == null
               ? null
               : Text(topic!, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: onEdit == null
-          ? null
-          : IconButton(
-              tooltip: context.l10n.channelEditInfo,
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined),
-            ),
+      trailing: hasUnread
+          ? StatusDot(
+              semanticsLabel: context.l10n.chatListUnreadSpoken(unreadCount),
+            )
+          : null,
+      onLongPress: onEdit,
       onTap: id == null
           ? null
           : () => onOpen(

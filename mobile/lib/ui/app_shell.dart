@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/app_state.dart';
 import '../features/auth/account_recovery_screen.dart';
@@ -7,13 +10,16 @@ import '../features/auth/recovery_follow_up_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/communities/community_screen.dart';
+import '../features/communities/community_workspace.dart';
 import '../features/settings/accounts_screen.dart' show AccountsShortcut;
 import '../features/settings/settings_screen.dart';
+import 'motion.dart';
 import 'tokens.dart';
 import 'widgets/notice_stack.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
 import 'widgets/listenable_selector.dart';
+import 'widgets/quick_switcher.dart';
 import '../l10n/l10n.dart';
 
 /// Tabs keep their word from 320dp up to text scale 1.3 (U11). Above that the
@@ -63,6 +69,9 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int index = 0;
+  String? _communityId;
+  String? _communityConversationId;
+  String? _communityChannelId;
 
   static const _destinations = <_Destination>[
     _Destination(
@@ -85,6 +94,61 @@ class _AppShellState extends State<AppShell> {
   static String _chatsLabel(AppLocalizations l10n) => l10n.navChats;
   static String _communitiesLabel(AppLocalizations l10n) => l10n.navCommunities;
   static String _settingsLabel(AppLocalizations l10n) => l10n.settingsTitle;
+
+  void _refreshCurrentTab() {
+    if (index == 0) {
+      unawaited(widget.state.refreshConversations());
+    } else if (index == 1) {
+      unawaited(widget.state.refreshCommunities());
+    } else {
+      unawaited(widget.state.refreshDevices());
+    }
+  }
+
+  Future<void> _openQuickSwitcher(BuildContext context) async {
+    final target = await showQuickSwitcher(context, widget.state);
+    if (target == null || !context.mounted) return;
+    _handleQuickSwitch(context, target);
+  }
+
+  void _handleQuickSwitch(BuildContext context, QuickSwitchTarget target) {
+    final layout = shellLayoutFor(MediaQuery.sizeOf(context).width);
+    if (target.isChannel) {
+      widget.state.selectChannel(target.conversationId, target.channelId);
+      widget.state.selectAndPrepare(target.conversationId);
+      if (layout == ShellLayout.workspace) {
+        setState(() {
+          index = 1;
+          _communityId = target.communityId;
+          _communityConversationId = target.conversationId;
+          _communityChannelId = target.channelId;
+        });
+        return;
+      }
+      Navigator.of(context).push(
+        sharedAxisRoute<void>(
+          (_) => ChatScreen(
+            state: widget.state,
+            conversationId: target.conversationId,
+          ),
+        ),
+      );
+      return;
+    }
+    widget.state.selectAndPrepare(target.conversationId);
+    if (layout == ShellLayout.workspace) {
+      setState(() => index = 0);
+      return;
+    }
+    Navigator.of(context).push(
+      sharedAxisRoute<void>(
+        (_) => ChatScreen(
+          state: widget.state,
+          conversationId: target.conversationId,
+        ),
+      ),
+    );
+  }
 
   @override
   void didChangeDependencies() {
@@ -155,63 +219,175 @@ class _AppShellState extends State<AppShell> {
     }
     final layout = shellLayoutFor(MediaQuery.sizeOf(context).width);
     final wide = layout != ShellLayout.compact;
+    final hairline = BoneColors.hairline(Theme.of(context).brightness);
     // At workspace width the chat list keeps its own pane and opening a
     // conversation fills the detail pane, so selection survives navigating
-    // between destinations. Narrower layouts keep pushing a full-screen route.
+    // between destinations. Communities likewise opens its 3-pane workspace.
+    // Narrower layouts keep pushing a full-screen route.
     final pages = <Widget>[
       layout == ShellLayout.workspace
-          ? _ChatWorkspace(state: widget.state)
+          ? _ChatWorkspace(
+              state: widget.state,
+              onQuickSwitch: () => _openQuickSwitcher(context),
+            )
           : ChatListScreen(state: widget.state),
-      CommunityScreen(state: widget.state),
+      layout == ShellLayout.workspace
+          ? CommunityWorkspace(
+              state: widget.state,
+              initialCommunityId: _communityId,
+              initialConversationId: _communityConversationId,
+              initialChannelId: _communityChannelId,
+              onQuickSwitch: (target) => _handleQuickSwitch(context, target),
+            )
+          : CommunityScreen(state: widget.state),
       SettingsScreen(state: widget.state),
     ];
-    if (wide) {
-      return Scaffold(
-        body: SafeArea(
-          child: Column(
-            children: <Widget>[
-              NoticeStack(state: widget.state),
-              Expanded(
-                child: Row(
-                  children: <Widget>[
-                    NavigationRail(
-                      selectedIndex: index,
-                      onDestinationSelected: (value) =>
-                          setState(() => index = value),
-                      labelType: NavigationRailLabelType.all,
-                      destinations: <NavigationRailDestination>[
-                        for (final destination in _destinations)
-                          NavigationRailDestination(
-                            icon: Icon(destination.icon),
-                            selectedIcon: Icon(destination.selectedIcon),
-                            label: Text(destination.label(context.l10n)),
-                          ),
+    final Widget scaffold = wide
+        ? Scaffold(
+            body: SafeArea(
+              child: Column(
+                children: <Widget>[
+                  NoticeStack(state: widget.state),
+                  Expanded(
+                    child: Row(
+                      children: <Widget>[
+                        NavigationRail(
+                          selectedIndex: index,
+                          onDestinationSelected: (value) =>
+                              setState(() => index = value),
+                          labelType: NavigationRailLabelType.all,
+                          destinations: <NavigationRailDestination>[
+                            for (var i = 0; i < _destinations.length; i++)
+                              NavigationRailDestination(
+                                icon: _NavBadgeIcon(
+                                  state: widget.state,
+                                  destinationIndex: i,
+                                  selected: false,
+                                  icon: _destinations[i].icon,
+                                ),
+                                selectedIcon: Icon(
+                                  _destinations[i].selectedIcon,
+                                ),
+                                label: Text(
+                                  _destinations[i].label(context.l10n),
+                                ),
+                              ),
+                          ],
+                        ),
+                        VerticalDivider(width: 1, color: hairline),
+                        Expanded(child: pages[index]),
                       ],
                     ),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: pages[index]),
-                  ],
+                  ),
+                ],
+              ),
+            ),
+          )
+        : Scaffold(
+            body: SafeArea(
+              child: Column(
+                children: <Widget>[
+                  NoticeStack(state: widget.state),
+                  Expanded(child: pages[index]),
+                ],
+              ),
+            ),
+            bottomNavigationBar: _FloatingNav(
+              state: widget.state,
+              selectedIndex: index,
+              destinations: _destinations,
+              onSelected: (value) => setState(() => index = value),
+            ),
+          );
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
+            _openQuickSwitcher(context),
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
+            _openQuickSwitcher(context),
+        const SingleActivator(LogicalKeyboardKey.f5): _refreshCurrentTab,
+        const SingleActivator(LogicalKeyboardKey.keyR, control: true):
+            _refreshCurrentTab,
+        const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
+            _refreshCurrentTab,
+      },
+      child: scaffold,
+    );
+  }
+}
+
+bool _destinationHasUnread(AppState state, int destinationIndex) {
+  if (destinationIndex == 0) {
+    return state.conversations.any(
+      (c) =>
+          !c.isCommunityShared &&
+          !c.isChannel &&
+          !state.isArchived(c.id) &&
+          !state.isMuted(c.id) &&
+          state.requestBucket(c) == RequestBucket.chat &&
+          c.unreadCount > 0,
+    );
+  }
+  if (destinationIndex == 1) {
+    return state.conversations.any(
+      (c) =>
+          (c.isCommunityShared || c.isChannel) &&
+          !state.isMuted(c.id) &&
+          c.unreadCount > 0,
+    );
+  }
+  return false;
+}
+
+/// Renders a destination icon with a localized unread dot so unread changes in
+/// another conversation never rebuild the surrounding shell or open thread.
+class _NavBadgeIcon extends StatelessWidget {
+  const _NavBadgeIcon({
+    required this.state,
+    required this.destinationIndex,
+    required this.selected,
+    required this.icon,
+    this.size,
+    this.color,
+  });
+
+  final AppState state;
+  final int destinationIndex;
+  final bool selected;
+  final IconData icon;
+  final double? size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final glyph = Icon(icon, size: size, color: color);
+    if (destinationIndex > 1 || selected) return glyph;
+    return ListenableSelector<bool>(
+      listenable: state,
+      select: () => _destinationHasUnread(state, destinationIndex),
+      builder: (context, hasUnread, child) {
+        if (!hasUnread) return child!;
+        final scheme = Theme.of(context).colorScheme;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            child!,
+            Positioned(
+              right: -3,
+              top: -2,
+              child: Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  shape: BoxShape.circle,
                 ),
               ),
-            ],
-          ),
-        ),
-      );
-    }
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: <Widget>[
-            NoticeStack(state: widget.state),
-            Expanded(child: pages[index]),
+            ),
           ],
-        ),
-      ),
-      bottomNavigationBar: _FloatingNav(
-        selectedIndex: index,
-        destinations: _destinations,
-        onSelected: (value) => setState(() => index = value),
-      ),
+        );
+      },
+      child: glyph,
     );
   }
 }
@@ -227,25 +403,28 @@ class _AppShellState extends State<AppShell> {
 /// between them on a narrow screen. The pill is where the visual change is.
 class _FloatingNav extends StatelessWidget {
   const _FloatingNav({
+    required this.state,
     required this.selectedIndex,
     required this.destinations,
     required this.onSelected,
   });
 
+  final AppState state;
   final int selectedIndex;
   final List<_Destination> destinations;
   final ValueChanged<int> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-          BoneSpacing.xl,
+          BoneSpacing.lg,
           BoneSpacing.sm,
-          BoneSpacing.xl,
+          BoneSpacing.lg,
           BoneSpacing.md,
         ),
         child: Container(
@@ -253,13 +432,15 @@ class _FloatingNav extends StatelessWidget {
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(BoneRadii.pill),
-            border: Border.all(color: scheme.outlineVariant),
+            border: Border.all(color: BoneColors.hairline(theme.brightness)),
           ),
           child: Row(
             children: <Widget>[
               for (var i = 0; i < destinations.length; i++)
                 Expanded(
                   child: _NavItem(
+                    state: state,
+                    destinationIndex: i,
                     destination: destinations[i],
                     selected: i == selectedIndex,
                     onTap: () => onSelected(i),
@@ -275,11 +456,15 @@ class _FloatingNav extends StatelessWidget {
 
 class _NavItem extends StatelessWidget {
   const _NavItem({
+    required this.state,
+    required this.destinationIndex,
     required this.destination,
     required this.selected,
     required this.onTap,
   });
 
+  final AppState state;
+  final int destinationIndex;
   final _Destination destination;
   final bool selected;
   final VoidCallback onTap;
@@ -288,10 +473,20 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final foreground = selected ? scheme.onPrimary : scheme.onSurfaceVariant;
+    final foreground = selected ? scheme.primary : scheme.onSurfaceVariant;
     final showLabels = shouldShowFloatingNavLabels(
       width: MediaQuery.sizeOf(context).width,
       textScale: MediaQuery.textScalerOf(context).scale(1),
+    );
+    final iconWidget = ExcludeSemantics(
+      child: _NavBadgeIcon(
+        state: state,
+        destinationIndex: destinationIndex,
+        selected: selected,
+        icon: selected ? destination.selectedIcon : destination.icon,
+        size: 20,
+        color: foreground,
+      ),
     );
     // NavigationBar supplied the selected/button semantics for free; a
     // hand-rolled bar has to say it itself or the nav stops announcing which
@@ -301,7 +496,9 @@ class _NavItem extends StatelessWidget {
       selected: selected,
       button: true,
       child: Material(
-        color: selected ? scheme.primary : Colors.transparent,
+        color: selected
+            ? BoneColors.navActiveFill(theme.brightness)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(BoneRadii.pill),
         child: InkWell(
           onTap: onTap,
@@ -315,21 +512,14 @@ class _NavItem extends StatelessWidget {
             // Align expands to the bottom-bar slot's loose height, which is
             // the whole screen, and the pill swallowed the page (T43C).
             // With a word, the icon sits over it, so each of the three tabs
-            // gets the full slot width (U11). FittedBox shrinks a word that
-            // is still too long rather than cutting it off.
+            // gets the full slot width (U11). FittedBox keeps a long word on
+            // one line at 320dp and 1.3x text while uniform 12px keeps all
+            // three tabs matched at standard sizes.
             child: showLabels
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      ExcludeSemantics(
-                        child: Icon(
-                          selected
-                              ? destination.selectedIcon
-                              : destination.icon,
-                          size: 20,
-                          color: foreground,
-                        ),
-                      ),
+                      iconWidget,
                       const SizedBox(height: BoneSpacing.xs),
                       FittedBox(
                         fit: BoxFit.scaleDown,
@@ -338,6 +528,11 @@ class _NavItem extends StatelessWidget {
                             destination.label(context.l10n),
                             maxLines: 1,
                             style: theme.textTheme.labelMedium?.copyWith(
+                              fontSize: 12,
+                              height: 1.15,
+                              letterSpacing: 0.1,
+                              fontWeight:
+                                  selected ? FontWeight.w600 : FontWeight.w500,
                               color: foreground,
                             ),
                           ),
@@ -348,17 +543,7 @@ class _NavItem extends StatelessWidget {
                 : Row(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      ExcludeSemantics(
-                        child: Icon(
-                          selected
-                              ? destination.selectedIcon
-                              : destination.icon,
-                          size: 20,
-                          color: foreground,
-                        ),
-                      ),
-                    ],
+                    children: <Widget>[iconWidget],
                   ),
           ),
         ),
@@ -369,19 +554,32 @@ class _NavItem extends StatelessWidget {
 
 /// Master-detail chat layout for wide windows.
 class _ChatWorkspace extends StatelessWidget {
-  const _ChatWorkspace({required this.state});
+  const _ChatWorkspace({
+    required this.state,
+    required this.onQuickSwitch,
+  });
 
   final AppState state;
+  final VoidCallback onQuickSwitch;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Row(
       children: <Widget>[
-        SizedBox(
-          width: 360,
-          child: ChatListScreen(state: state, embedded: true),
+        Material(
+          color: scheme.surfaceContainerLow,
+          child: SizedBox(
+            width: 340,
+            child: ChatListScreen(
+              state: state,
+              embedded: true,
+              onQuickSwitch: onQuickSwitch,
+            ),
+          ),
         ),
-        const VerticalDivider(width: 1),
+        VerticalDivider(width: 1, color: BoneColors.hairline(theme.brightness)),
         Expanded(
           // The list and the open conversation listen for themselves; this
           // pane only follows the selection.

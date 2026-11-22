@@ -9272,6 +9272,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The list changed meanwhile. Look at it again.'**
   String get l2OwnerKeyStale;
+
+  /// Compact pinned-message counter on the 1-row pin strip.
+  ///
+  /// In en, this message translates to:
+  /// **'{current} of {total}'**
+  String chatPinnedCount(int current, int total);
+
+  /// No description provided for @chatPinnedMessagesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned messages'**
+  String get chatPinnedMessagesTitle;
+
+  /// No description provided for @chatNewMessagesDivider.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages'**
+  String get chatNewMessagesDivider;
+
+  /// No description provided for @chatListDraftPrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Draft: {text}'**
+  String chatListDraftPrefix(String text);
+
+  /// No description provided for @chatListPinned.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned'**
+  String get chatListPinned;
+
+  /// No description provided for @chatInsertEmoji.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert emoji'**
+  String get chatInsertEmoji;
+
+  /// No description provided for @chatQuickReact.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick reaction'**
+  String get chatQuickReact;
+
+  /// No description provided for @chatMoreActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More actions'**
+  String get chatMoreActions;
+
+  /// No description provided for @chatSearchThisChat.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat'**
+  String get chatSearchThisChat;
+
+  /// No description provided for @chatSearchAllChats.
+  ///
+  /// In en, this message translates to:
+  /// **'All chats'**
+  String get chatSearchAllChats;
+
+  /// No description provided for @quickSwitcherTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump to…'**
+  String get quickSwitcherTitle;
+
+  /// No description provided for @quickSwitcherHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump to a chat or channel…'**
+  String get quickSwitcherHint;
+
+  /// No description provided for @quickSwitcherEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching chats or channels.'**
+  String get quickSwitcherEmpty;
+
+  /// No description provided for @settingsLinkedDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked devices'**
+  String get settingsLinkedDevices;
+
+  /// No description provided for @settingsLinkedDevicesCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No active devices} =1{1 active device} other{{count} active devices}}'**
+  String settingsLinkedDevicesCount(int count);
+
+  /// No description provided for @communitySelectPromptTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a channel'**
+  String get communitySelectPromptTitle;
+
+  /// No description provided for @communitySelectPromptMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a community and channel on the left to read and post.'**
+  String get communitySelectPromptMessage;
+
+  /// No description provided for @communityToggleDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Community details'**
+  String get communityToggleDetails;
+
+  /// No description provided for @communityToggleCategory.
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle category'**
+  String get communityToggleCategory;
 }
 
 class _AppLocalizationsDelegate

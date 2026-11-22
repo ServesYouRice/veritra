@@ -11,16 +11,33 @@ import 'emoji_data.dart';
 /// The list is grouped and searchable by Unicode name (English). Typing or
 /// pasting any single emoji into the search field offers it directly, so an
 /// emoji missing from the list still works.
-Future<String?> showEmojiPicker(BuildContext context) =>
-    showModalBottomSheet<String>(
+Future<String?> showEmojiPicker(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  if (size.width >= 600) {
+    return showDialog<String>(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => SizedBox(
-        height: MediaQuery.sizeOf(sheetContext).height * 0.7,
-        child: const EmojiPicker(),
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(BoneSpacing.lg),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 460),
+          child: const Padding(
+            padding: EdgeInsets.only(top: BoneSpacing.md),
+            child: EmojiPicker(),
+          ),
+        ),
       ),
     );
+  }
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetContext) => SizedBox(
+      height: MediaQuery.sizeOf(sheetContext).height * 0.7,
+      child: const EmojiPicker(),
+    ),
+  );
+}
 
 /// Entries whose name contains every word of [query], in catalog order.
 List<EmojiEntry> searchEmoji(String query) {

@@ -31,15 +31,33 @@ class WelcomeChoices extends StatelessWidget {
         FilledButton.icon(
           key: const ValueKey<String>('welcome-invite'),
           onPressed: onInvite,
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(
+              horizontal: BoneSpacing.lg,
+              vertical: 14,
+            ),
+          ),
           icon: const Icon(Icons.card_giftcard_outlined),
-          label: Text(l10n.welcomeHaveInvite),
+          label: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(l10n.welcomeHaveInvite, maxLines: 1),
+          ),
         ),
         const SizedBox(height: BoneSpacing.md),
         OutlinedButton.icon(
           key: const ValueKey<String>('welcome-account'),
           onPressed: onAccount,
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(
+              horizontal: BoneSpacing.lg,
+              vertical: 14,
+            ),
+          ),
           icon: const Icon(Icons.login),
-          label: Text(l10n.welcomeHaveAccount),
+          label: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(l10n.welcomeHaveAccount, maxLines: 1),
+          ),
         ),
         const SizedBox(height: BoneSpacing.lg),
         Center(

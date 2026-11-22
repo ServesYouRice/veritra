@@ -60,11 +60,12 @@ class StatusPill extends StatelessWidget {
     // The ground the direction is built on, in both brightnesses: what a
     // solid state fill puts its text in.
     final onState = isDark ? BoneColors.darkCanvas : Colors.white;
+    final hairline = BoneColors.hairline(theme.brightness);
     final (background, foreground, border) = switch (tone) {
       StatusTone.neutral => (
           scheme.surfaceContainerHigh,
           scheme.onSurfaceVariant,
-          scheme.outlineVariant,
+          hairline,
         ),
       StatusTone.accent => (scheme.primary, scheme.onPrimary, scheme.primary),
       StatusTone.verified => (states.verified, onState, states.verified),

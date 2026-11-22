@@ -7,6 +7,7 @@ import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/constrained_body.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
@@ -314,135 +315,139 @@ class _ModerationScreenState extends State<ModerationScreen> {
       ..sort();
     final events = _events ?? const <ModerationEvent>[];
     final departed = _departed ?? const <CommunityTimeout>[];
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        BoneSpacing.gutter,
-        BoneSpacing.sm,
-        BoneSpacing.gutter,
-        BoneSpacing.xl,
-      ),
-      children: <Widget>[
-        if (error != null)
-          Text(
-            error,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-          ),
-        if (widget.canManageInvites) ...<Widget>[
-          SectionHeader(l10n.moderationSectionInvites),
-          TileGroup(
-            children: <Widget>[
-              ListTile(
-                leading: Icon(
-                  paused == null ? Icons.link : Icons.pause_circle_outline,
-                ),
-                title: Text(
-                  paused == null
-                      ? l10n.moderationInvitesOpen
-                      : l10n.moderationInvitesPaused(
-                          formatDateTime(context, paused.toLocal()),
-                        ),
-                ),
-              ),
-              ListTile(
-                leading: Icon(paused == null ? Icons.pause : Icons.play_arrow),
-                title: Text(
-                  paused == null
-                      ? l10n.moderationPauseInvites
-                      : l10n.moderationResumeInvites,
-                ),
-                onTap: busy
-                    ? null
-                    : (paused == null ? _pauseInvites : _resumeInvites),
-              ),
-            ],
-          ),
-        ],
-        SectionHeader(l10n.moderationSectionSlow),
-        TileGroup(
-          children: <Widget>[
-            for (final channel in channels)
-              ListTile(
-                leading: const Icon(Icons.speed_outlined),
-                title: Text(_channelName(channel)),
-                subtitle: Text(
-                  (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
-                      ? l10n.moderationSlowOff
-                      : l10n.moderationSlowEvery(
-                          durationWords(
-                            l10n,
-                            moderation!.slowModeSeconds[channel.id]!,
-                          ),
-                        ),
-                ),
-                onTap: busy ? null : () => _setSlowMode(channel),
-              ),
-          ],
+    return ConstrainedBody(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(
+          BoneSpacing.gutter,
+          BoneSpacing.sm,
+          BoneSpacing.gutter,
+          BoneSpacing.xl,
         ),
-        SectionHeader(l10n.moderationSectionBans),
-        TileGroup(
-          children: <Widget>[
-            if (bans.isEmpty && recordOnly.isEmpty)
-              ListTile(title: Text(l10n.moderationNoBans))
-            else ...<Widget>[
-              for (final ban in bans)
-                _banTile(l10n, ban.accountId, onServer: true, busy: busy),
-              for (final account in recordOnly)
-                _banTile(l10n, account, onServer: false, busy: busy),
-            ],
-          ],
-        ),
-        if (widget.canManageInvites) ...<Widget>[
-          SectionHeader(l10n.moderationSectionDepartedTimeouts),
-          TileGroup(
-            children: <Widget>[
-              if (departed.isEmpty)
-                ListTile(title: Text(l10n.moderationNoDepartedTimeouts))
-              else ...<Widget>[
+        children: <Widget>[
+          if (error != null)
+            Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          if (widget.canManageInvites) ...<Widget>[
+            SectionHeader(l10n.moderationSectionInvites),
+            TileGroup(
+              children: <Widget>[
                 ListTile(
-                  dense: true,
-                  title: Text(l10n.moderationDepartedTimeoutsNote),
-                ),
-                for (final timeout in departed)
-                  ListTile(
-                    leading: const Icon(Icons.timer_off_outlined),
-                    title: Text(_name(timeout.accountId)),
-                    subtitle: Text(
-                      l10n.moderationDepartedTimeoutUntil(
-                        formatDateTime(context, timeout.timeoutUntil.toLocal()),
-                      ),
-                    ),
-                    trailing: IconButton(
-                      key: ValueKey<String>(
-                        'lift-departed-${timeout.accountId}',
-                      ),
-                      tooltip: l10n.moderationLiftTimeout(
-                        _name(timeout.accountId),
-                      ),
-                      onPressed: busy ? null : () => _liftDeparted(timeout),
-                      icon: const Icon(Icons.undo),
-                    ),
+                  leading: Icon(
+                    paused == null ? Icons.link : Icons.pause_circle_outline,
                   ),
+                  title: Text(
+                    paused == null
+                        ? l10n.moderationInvitesOpen
+                        : l10n.moderationInvitesPaused(
+                            formatDateTime(context, paused.toLocal()),
+                          ),
+                  ),
+                ),
+                ListTile(
+                  leading:
+                      Icon(paused == null ? Icons.pause : Icons.play_arrow),
+                  title: Text(
+                    paused == null
+                        ? l10n.moderationPauseInvites
+                        : l10n.moderationResumeInvites,
+                  ),
+                  onTap: busy
+                      ? null
+                      : (paused == null ? _pauseInvites : _resumeInvites),
+                ),
+              ],
+            ),
+          ],
+          SectionHeader(l10n.moderationSectionSlow),
+          TileGroup(
+            children: <Widget>[
+              for (final channel in channels)
+                ListTile(
+                  leading: const Icon(Icons.speed_outlined),
+                  title: Text(_channelName(channel)),
+                  subtitle: Text(
+                    (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
+                        ? l10n.moderationSlowOff
+                        : l10n.moderationSlowEvery(
+                            durationWords(
+                              l10n,
+                              moderation!.slowModeSeconds[channel.id]!,
+                            ),
+                          ),
+                  ),
+                  onTap: busy ? null : () => _setSlowMode(channel),
+                ),
+            ],
+          ),
+          SectionHeader(l10n.moderationSectionBans),
+          TileGroup(
+            children: <Widget>[
+              if (bans.isEmpty && recordOnly.isEmpty)
+                ListTile(title: Text(l10n.moderationNoBans))
+              else ...<Widget>[
+                for (final ban in bans)
+                  _banTile(l10n, ban.accountId, onServer: true, busy: busy),
+                for (final account in recordOnly)
+                  _banTile(l10n, account, onServer: false, busy: busy),
               ],
             ],
           ),
-          SectionHeader(l10n.moderationSectionLog),
-          TileGroup(
-            children: <Widget>[
-              if (events.isEmpty)
-                ListTile(title: Text(l10n.moderationNoEvents))
-              else
-                for (final e in events)
+          if (widget.canManageInvites) ...<Widget>[
+            SectionHeader(l10n.moderationSectionDepartedTimeouts),
+            TileGroup(
+              children: <Widget>[
+                if (departed.isEmpty)
+                  ListTile(title: Text(l10n.moderationNoDepartedTimeouts))
+                else ...<Widget>[
                   ListTile(
                     dense: true,
-                    title: Text(_eventText(l10n, e)),
-                    subtitle: Text(
-                      formatDateTime(context, e.createdAt.toLocal()),
-                    ),
+                    title: Text(l10n.moderationDepartedTimeoutsNote),
                   ),
-            ],
-          ),
+                  for (final timeout in departed)
+                    ListTile(
+                      leading: const Icon(Icons.timer_off_outlined),
+                      title: Text(_name(timeout.accountId)),
+                      subtitle: Text(
+                        l10n.moderationDepartedTimeoutUntil(
+                          formatDateTime(
+                              context, timeout.timeoutUntil.toLocal()),
+                        ),
+                      ),
+                      trailing: IconButton(
+                        key: ValueKey<String>(
+                          'lift-departed-${timeout.accountId}',
+                        ),
+                        tooltip: l10n.moderationLiftTimeout(
+                          _name(timeout.accountId),
+                        ),
+                        onPressed: busy ? null : () => _liftDeparted(timeout),
+                        icon: const Icon(Icons.undo),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+            SectionHeader(l10n.moderationSectionLog),
+            TileGroup(
+              children: <Widget>[
+                if (events.isEmpty)
+                  ListTile(title: Text(l10n.moderationNoEvents))
+                else
+                  for (final e in events)
+                    ListTile(
+                      dense: true,
+                      title: Text(_eventText(l10n, e)),
+                      subtitle: Text(
+                        formatDateTime(context, e.createdAt.toLocal()),
+                      ),
+                    ),
+              ],
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

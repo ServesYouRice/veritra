@@ -20,6 +20,8 @@ import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../search/search_screen.dart';
 import '../settings/invite_screen.dart';
+import '../../ui/widgets/constrained_body.dart';
+import 'chat_desktop.dart' show isDesktopPlatform;
 import 'chat_preview.dart';
 import 'chat_screen.dart';
 import 'conversation_details_screen.dart';
@@ -27,14 +29,14 @@ import 'copied_history_screen.dart';
 import 'mute_sheet.dart';
 import 'message_request_screen.dart';
 import 'new_conversation_sheet.dart';
-import '../../ui/widgets/refresh_action.dart';
 import '../../l10n/l10n.dart';
 
-class ChatListScreen extends StatelessWidget {
+class ChatListScreen extends StatefulWidget {
   const ChatListScreen({
     required this.state,
     this.embedded = false,
     this.archived = false,
+    this.onQuickSwitch,
     super.key,
   });
 
@@ -48,6 +50,26 @@ class ChatListScreen extends StatelessWidget {
   /// master-detail view: tapping a row updates the detail pane instead of
   /// pushing a full-screen route.
   final bool embedded;
+
+  /// Optional quick-switcher callback for the embedded desktop pane.
+  final VoidCallback? onQuickSwitch;
+
+  @override
+  State<ChatListScreen> createState() => _ChatListScreenState();
+}
+
+class _ChatListScreenState extends State<ChatListScreen> {
+  final ValueNotifier<int> _draftTick = ValueNotifier<int>(0);
+
+  AppState get state => widget.state;
+  bool get archived => widget.archived;
+  bool get embedded => widget.embedded;
+
+  @override
+  void dispose() {
+    _draftTick.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +87,8 @@ class ChatListScreen extends StatelessWidget {
 
   Widget _build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final hairline = BoneColors.hairline(theme.brightness);
     final conversations = _visibleConversations(state);
     // Strangers wait behind one Requests row above the chats (B8, U28); they
     // never show in Archived.
@@ -88,8 +112,113 @@ class ChatListScreen extends StatelessWidget {
         return positions[a.id]!.compareTo(positions[b.id]!);
       });
     final requestRows = requests.isEmpty ? 0 : 1;
+    final listBody = RefreshIndicator(
+      onRefresh: state.refreshConversations,
+      child: chats.isEmpty && requests.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: <Widget>[
+                const SizedBox(height: 120),
+                // An empty list can mean "still loading"; showing the empty
+                // state too early reads as "your data is gone".
+                if (!state.conversationsLoaded)
+                  const Center(child: CircularProgressIndicator())
+                else if (archived)
+                  EmptyState(
+                    icon: Icons.archive_outlined,
+                    title: context.l10n.chatListArchivedEmptyTitle,
+                    message: context.l10n.chatListArchivedEmptyMessage,
+                  )
+                else
+                  EmptyState(
+                    icon: Icons.chat_bubble_outline,
+                    title: context.l10n.chatListEmptyTitle,
+                    message: context.l10n.chatListEmptyMessage,
+                    action: _emptyActions(context),
+                  ),
+              ],
+            )
+          // No separators: rows are held apart by spacing and the active row
+          // by a tinted ground, which is what removes the most recognisably
+          // default surface in the app (`docs/design.md` §3).
+          : ListView.builder(
+              // Keeps the scroll offset when another destination replaces
+              // the list and it comes back (T49C-4). Per account, so a
+              // different account's list starts at the top.
+              key: PageStorageKey<String>(
+                '${archived ? 'chat-list-archived' : 'chat-list'}'
+                ':${state.session?.accountId}',
+              ),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.sm,
+                BoneSpacing.sm,
+                BoneSpacing.sm,
+                BoneSpacing.lg,
+              ),
+              itemCount: requestRows + chats.length,
+              itemBuilder: (context, index) {
+                if (index < requestRows) {
+                  return _RequestsTile(
+                    count: requests.length,
+                    onTap: () => Navigator.of(context).push(
+                      sharedAxisRoute<void>(
+                        (_) => _RequestsScreen(
+                          state: state,
+                          embedded: embedded,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final conversation = chats[index - requestRows];
+                return _ConversationTile(
+                  conversation: conversation,
+                  profiles: state.profiles,
+                  pinned: state.isChatPinned(conversation.id),
+                  muted: state.isMuted(conversation.id),
+                  selected: embedded &&
+                      state.selectedConversationId == conversation.id,
+                  // The hero flight only exists on the pushed layout. In
+                  // the embedded workspace this row and the open
+                  // conversation share a route, and two widgets with one
+                  // hero tag is an assertion, not a nicer animation.
+                  hero: !embedded,
+                  previews: state,
+                  draftTick: _draftTick,
+                  swipeOpensActions: true,
+                  onActions: (anchor) => _showRowActions(
+                    context,
+                    conversation,
+                    anchor: anchor,
+                  ),
+                  onTap: () async {
+                    state.selectAndPrepare(conversation.id);
+                    if (embedded) {
+                      // The archive is its own page: leave it so the pane
+                      // beside the list shows the chat that was picked.
+                      if (archived) Navigator.of(context).pop();
+                      _draftTick.value++;
+                      return;
+                    }
+                    await Navigator.of(context).push(
+                      sharedAxisRoute<void>(
+                        (_) => ChatScreen(
+                          state: state,
+                          conversationId: conversation.id,
+                        ),
+                      ),
+                    );
+                    if (mounted) _draftTick.value++;
+                  },
+                );
+              },
+            ),
+    );
     return Scaffold(
+      backgroundColor: embedded ? Colors.transparent : null,
       appBar: AppBar(
+        backgroundColor: embedded ? Colors.transparent : null,
         // A display-sized title is most of what stops the screen reading as
         // stock Material (`docs/design.md` §8). The bar stays fixed rather
         // than collapsing on scroll — a collapsing sliver would also have to
@@ -109,7 +238,7 @@ class ChatListScreen extends StatelessWidget {
           // New chat lives in the bar (U28) so nothing floats over a row. It
           // is the one filled control here: Bone rations its accent to the
           // primary action, active nav, unread count and focus ring. The
-          // embedded list sits in a 360 dp pane, so it keeps icons only.
+          // embedded list sits in a 340 dp pane, so it keeps icons only.
           if (!archived)
             BarAction(
                 label: context.l10n.chatListNewChat,
@@ -136,7 +265,6 @@ class ChatListScreen extends StatelessWidget {
                     sharedAxisRoute<void>(
                         (_) => CopiedHistoryListScreen(state: state))),
                 icon: Icons.history),
-          RefreshAction(onRefresh: state.refreshConversations),
           if (!archived)
             IconButton(
               tooltip: context.l10n.chatListSearch,
@@ -150,100 +278,55 @@ class ChatListScreen extends StatelessWidget {
           const SizedBox(width: BoneSpacing.sm),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: state.refreshConversations,
-        child: chats.isEmpty && requests.isEmpty
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: <Widget>[
-                  const SizedBox(height: 120),
-                  // An empty list can mean "still loading"; showing the empty
-                  // state too early reads as "your data is gone".
-                  if (!state.conversationsLoaded)
-                    const Center(child: CircularProgressIndicator())
-                  else if (archived)
-                    EmptyState(
-                      icon: Icons.archive_outlined,
-                      title: context.l10n.chatListArchivedEmptyTitle,
-                      message: context.l10n.chatListArchivedEmptyMessage,
-                    )
-                  else
-                    EmptyState(
-                      icon: Icons.chat_bubble_outline,
-                      title: context.l10n.chatListEmptyTitle,
-                      message: context.l10n.chatListEmptyMessage,
-                      action: _emptyActions(context),
-                    ),
-                ],
-              )
-            // No separators: rows are held apart by spacing and the active row
-            // by a tinted ground, which is what removes the most recognisably
-            // default surface in the app (`docs/design.md` §3).
-            : ListView.builder(
-                // Keeps the scroll offset when another destination replaces
-                // the list and it comes back (T49C-4). Per account, so a
-                // different account's list starts at the top.
-                key: PageStorageKey<String>(
-                  '${archived ? 'chat-list-archived' : 'chat-list'}'
-                  ':${state.session?.accountId}',
-                ),
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(
-                  BoneSpacing.sm,
-                  BoneSpacing.sm,
-                  BoneSpacing.sm,
-                  BoneSpacing.lg,
-                ),
-                itemCount: requestRows + chats.length,
-                itemBuilder: (context, index) {
-                  if (index < requestRows) {
-                    return _RequestsTile(
-                      count: requests.length,
-                      onTap: () => Navigator.of(context).push(
-                        sharedAxisRoute<void>(
-                          (_) => _RequestsScreen(
-                            state: state,
-                            embedded: embedded,
-                          ),
+      body: Column(
+        children: <Widget>[
+          if (embedded && !archived && widget.onQuickSwitch != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.md,
+                BoneSpacing.xs,
+                BoneSpacing.md,
+                BoneSpacing.xs,
+              ),
+              child: InkWell(
+                key: const Key('chat-list-quick-switch'),
+                onTap: widget.onQuickSwitch,
+                borderRadius: BorderRadius.circular(BoneRadii.sm),
+                child: Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: BoneSpacing.md,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(BoneRadii.sm),
+                    border: Border.all(color: hairline),
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.search,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: BoneSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          context.l10n.quickSwitcherTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall,
                         ),
                       ),
-                    );
-                  }
-                  final conversation = chats[index - requestRows];
-                  return _ConversationTile(
-                    conversation: conversation,
-                    profiles: state.profiles,
-                    muted: state.isMuted(conversation.id),
-                    selected: embedded &&
-                        state.selectedConversationId == conversation.id,
-                    // The hero flight only exists on the pushed layout. In
-                    // the embedded workspace this row and the open
-                    // conversation share a route, and two widgets with one
-                    // hero tag is an assertion, not a nicer animation.
-                    hero: !embedded,
-                    previews: state,
-                    swipeOpensActions: true,
-                    onActions: () => _showRowActions(context, conversation),
-                    onTap: () {
-                      state.selectAndPrepare(conversation.id);
-                      if (embedded) {
-                        // The archive is its own page: leave it so the pane
-                        // beside the list shows the chat that was picked.
-                        if (archived) Navigator.of(context).pop();
-                        return;
-                      }
-                      Navigator.of(context).push(
-                        sharedAxisRoute<void>(
-                          (_) => ChatScreen(
-                            state: state,
-                            conversationId: conversation.id,
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
+                    ],
+                  ),
+                ),
               ),
+            ),
+          Expanded(
+            child: embedded ? listBody : ConstrainedBody(child: listBody),
+          ),
+        ],
       ),
     );
   }
@@ -298,63 +381,136 @@ class ChatListScreen extends StatelessWidget {
   /// does elsewhere for a conversation; nothing here needs message content.
   Future<void> _showRowActions(
     BuildContext context,
-    Conversation conversation,
-  ) async {
+    Conversation conversation, {
+    Offset? anchor,
+  }) async {
+    final l10n = context.l10n;
     final muted = state.isMuted(conversation.id);
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-                leading: const Icon(Icons.archive_outlined),
-                title: Text(state.isArchived(conversation.id)
-                    ? context.l10n.w8Unarchive
-                    : context.l10n.w8Archive),
-                onTap: () => Navigator.of(sheetContext).pop('archive')),
-            ListTile(
-                leading: const Icon(Icons.push_pin_outlined),
-                title: Text(state.isChatPinned(conversation.id)
-                    ? context.l10n.w8UnpinChat
-                    : context.l10n.w8PinChat),
-                onTap: () => Navigator.of(sheetContext).pop('pin')),
-            ListTile(
-              leading: Icon(
-                muted
-                    ? Icons.notifications_active_outlined
-                    : Icons.notifications_off_outlined,
-              ),
-              title: Text(
-                muted ? context.l10n.chatListUnmute : context.l10n.chatListMute,
-              ),
-              onTap: () => Navigator.of(sheetContext).pop('mute'),
+    final isArchived = state.isArchived(conversation.id);
+    final isPinned = state.isChatPinned(conversation.id);
+    final String? action;
+    if (anchor != null && isDesktopPlatform) {
+      final overlay =
+          Overlay.of(context).context.findRenderObject() as RenderBox?;
+      final rect = overlay == null
+          ? RelativeRect.fromLTRB(anchor.dx, anchor.dy, anchor.dx, anchor.dy)
+          : RelativeRect.fromRect(
+              Rect.fromLTWH(anchor.dx, anchor.dy, 1, 1),
+              Offset.zero & overlay.size,
+            );
+      action = await showMenu<String>(
+        context: context,
+        position: rect,
+        items: <PopupMenuEntry<String>>[
+          PopupMenuItem<String>(
+            value: 'archive',
+            child: Row(
+              children: <Widget>[
+                const Icon(Icons.archive_outlined, size: 18),
+                const SizedBox(width: BoneSpacing.md),
+                Text(isArchived ? l10n.w8Unarchive : l10n.w8Archive),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: Text(context.l10n.chatListDetails),
-              onTap: () => Navigator.of(sheetContext).pop('details'),
+          ),
+          PopupMenuItem<String>(
+            value: 'pin',
+            child: Row(
+              children: <Widget>[
+                const Icon(Icons.push_pin_outlined, size: 18),
+                const SizedBox(width: BoneSpacing.md),
+                Text(isPinned ? l10n.w8UnpinChat : l10n.w8PinChat),
+              ],
             ),
-            // U19: said once here, not on each action.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                BoneSpacing.gutter,
-                BoneSpacing.xs,
-                BoneSpacing.gutter,
-                BoneSpacing.md,
-              ),
-              child: Text(
-                context.l10n.w8ChatActionsLocalNote,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
+          ),
+          PopupMenuItem<String>(
+            value: 'mute',
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  muted
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_off_outlined,
+                  size: 18,
+                ),
+                const SizedBox(width: BoneSpacing.md),
+                Text(muted ? l10n.chatListUnmute : l10n.chatListMute),
+              ],
             ),
-          ],
+          ),
+          PopupMenuItem<String>(
+            value: 'details',
+            child: Row(
+              children: <Widget>[
+                const Icon(Icons.info_outline, size: 18),
+                const SizedBox(width: BoneSpacing.md),
+                Text(l10n.chatListDetails),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+              l10n.w8ChatActionsLocalNote,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
+      );
+    } else {
+      action = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ListTile(
+                  leading: const Icon(Icons.archive_outlined),
+                  title: Text(isArchived ? l10n.w8Unarchive : l10n.w8Archive),
+                  onTap: () => Navigator.of(sheetContext).pop('archive')),
+              ListTile(
+                  leading: const Icon(Icons.push_pin_outlined),
+                  title: Text(isPinned ? l10n.w8UnpinChat : l10n.w8PinChat),
+                  onTap: () => Navigator.of(sheetContext).pop('pin')),
+              ListTile(
+                leading: Icon(
+                  muted
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_off_outlined,
+                ),
+                title: Text(
+                  muted ? l10n.chatListUnmute : l10n.chatListMute,
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('mute'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(l10n.chatListDetails),
+                onTap: () => Navigator.of(sheetContext).pop('details'),
+              ),
+              // U19: said once here, not on each action.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  BoneSpacing.gutter,
+                  BoneSpacing.xs,
+                  BoneSpacing.gutter,
+                  BoneSpacing.md,
+                ),
+                child: Text(
+                  l10n.w8ChatActionsLocalNote,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    }
     if (!context.mounted || action == null) {
       return;
     }
@@ -551,7 +707,7 @@ class _RequestsScreen extends StatelessWidget {
                 muted: false,
                 selected: false,
                 hero: false,
-                onActions: () {},
+                onActions: (_) {},
                 onTap: () async {
                   final accepted = await _openRequest(
                     context,
@@ -658,6 +814,8 @@ class _ConversationTile extends StatelessWidget {
     this.profiles,
     this.showProfileName = true,
     this.previews,
+    this.draftTick,
+    this.pinned = false,
     this.muted = false,
     this.selected = false,
     this.hero = false,
@@ -675,10 +833,13 @@ class _ConversationTile extends StatelessWidget {
   /// Where this row reads the last message from (U12), or null for a row that
   /// never quotes one, such as a request.
   final AppState? previews;
+  final Listenable? draftTick;
   final VoidCallback onTap;
 
-  /// Opens the row's mute/details menu.
-  final VoidCallback onActions;
+  /// Opens the row's mute/details menu. Passes cursor position on desktop
+  /// secondary-click so it can anchor a context menu, or null for sheets.
+  final ValueChanged<Offset?> onActions;
+  final bool pinned;
   final bool muted;
   final bool selected;
   final bool hero;
@@ -704,8 +865,8 @@ class _ConversationTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(BoneRadii.md),
           child: InkWell(
             onTap: onTap,
-            onLongPress: onActions,
-            onSecondaryTap: onActions,
+            onLongPress: () => onActions(null),
+            onSecondaryTapDown: (details) => onActions(details.globalPosition),
             borderRadius: BorderRadius.circular(BoneRadii.md),
             child: ConstrainedBox(
               // 62dp is the direction's row height; the constraint is a
@@ -748,6 +909,17 @@ class _ConversationTile extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if (pinned) ...<Widget>[
+                                const SizedBox(width: BoneSpacing.xs + 2),
+                                Semantics(
+                                  label: l10n.chatListPinned,
+                                  child: Icon(
+                                    Icons.push_pin_outlined,
+                                    size: 14,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                               if (muted) ...<Widget>[
                                 const SizedBox(width: BoneSpacing.xs + 2),
                                 Semantics(
@@ -768,6 +940,7 @@ class _ConversationTile extends StatelessWidget {
                                 child: _RowSubtitle(
                                   conversation: conversation,
                                   previews: previews,
+                                  draftTick: draftTick,
                                 ),
                               ),
                               if (retention != null &&
@@ -842,7 +1015,7 @@ class _ConversationTile extends StatelessWidget {
     return Dismissible(
       key: ValueKey<String>('chat-row-${conversation.id}'),
       confirmDismiss: (_) async {
-        onActions();
+        onActions(null);
         return false;
       },
       background: const SizedBox.shrink(),
@@ -851,40 +1024,68 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
-/// The line under a row's title: "sender: first words" of the last message,
-/// or the kind line when there is none to quote (U12).
+/// The line under a row's title: unsent draft (when previews are enabled),
+/// "sender: first words" of the last message, or the kind line when there is
+/// none to quote (U12).
 ///
 /// It selects its own text, so a new message rebuilds this one line and not the
 /// list around it (T49C-1), and a change of sender name, block or members is
 /// picked up because the text is what is compared.
 class _RowSubtitle extends StatelessWidget {
-  const _RowSubtitle({required this.conversation, required this.previews});
+  const _RowSubtitle({
+    required this.conversation,
+    required this.previews,
+    this.draftTick,
+  });
 
   final Conversation conversation;
   final AppState? previews;
+  final Listenable? draftTick;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final style = Theme.of(context).textTheme.bodySmall;
-    Widget line(String text) => Text(
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall;
+    Widget line(String text, {bool isDraft = false}) => Text(
           text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: style,
+          style: isDraft
+              ? style?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontStyle: FontStyle.italic,
+                )
+              : style,
         );
     final state = previews;
     if (state == null) return line(conversationRowSubtitle(l10n, conversation));
-    return ListenableSelector<String?>(
-      listenable: state,
-      select: () => chatPreviewLine(
-        l10n,
-        state,
-        conversation,
-        state.chatPreviewFor(conversation.id),
+    final listenable = draftTick == null
+        ? state
+        : Listenable.merge(<Listenable>[state, draftTick!]);
+    return ListenableSelector<(String?, bool)>(
+      listenable: listenable,
+      select: () {
+        if (state.showChatPreviews) {
+          final draft = state.composerDrafts.textFor(conversation.id).trim();
+          if (draft.isNotEmpty) {
+            return (l10n.chatListDraftPrefix(draft), true);
+          }
+        }
+        return (
+          chatPreviewLine(
+            l10n,
+            state,
+            conversation,
+            state.chatPreviewFor(conversation.id),
+          ),
+          false,
+        );
+      },
+      builder: (context, selected, _) => line(
+        selected.$1 ?? conversationRowSubtitle(l10n, conversation),
+        isDraft: selected.$2,
       ),
-      builder: (context, preview, _) =>
-          line(preview ?? conversationRowSubtitle(l10n, conversation)),
     );
   }
 }

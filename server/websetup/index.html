@@ -20,6 +20,7 @@
         --surface: #ffffff;
         --raised: #f0ede6;
         --border: rgb(26 22 32 / 50%);
+        --hairline: rgb(26 22 32 / 11%);
         --text: #1a1620;
         --muted: #6b6169;
         --accent: #3a2e42;
@@ -33,6 +34,7 @@
           --surface: #211a2d;
           --raised: #2b233a;
           --border: rgb(168 158 166 / 60%);
+          --hairline: rgb(243 239 250 / 13%);
           --text: #f3effa;
           --muted: #a89ea6;
           --accent: #ede4da;
@@ -41,7 +43,7 @@
       }
       *, *::before, *::after { box-sizing: inherit; }
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--canvas); color: var(--text); }
-      main { width: min(560px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: clamp(20px, 6vw, 32px); }
+      main { width: min(560px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-lg); padding: clamp(20px, 6vw, 32px); }
       .lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
       .lockup svg { width: 40px; height: 40px; flex: none; }
       /* Matches docs/branding/concept-06/veritra-wordmark.svg: lowercase,
@@ -52,8 +54,8 @@
       p { margin: 0 0 14px; color: var(--muted); line-height: 1.5; }
       p:last-child { margin-bottom: 0; }
       /* The one pill on the page, in the app's `micro` step. */
-      .pill { display: inline-block; margin-bottom: 16px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; }
-      code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-size: 0.925em; }
+      .pill { display: inline-block; margin-bottom: 16px; padding: 3px 10px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; }
+      code { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; background: var(--raised); color: var(--text); border: 1px solid var(--hairline); border-radius: 6px; padding: 1px 6px; font-size: 0.925em; }
     </style>
   </head>
   <body>

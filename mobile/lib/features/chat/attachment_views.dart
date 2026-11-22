@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../ui/format.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
@@ -32,8 +33,8 @@ Future<void> openAttachment(
 }) async {
   if (entry.isImage) {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => AttachmentImageScreen(
+      sharedAxisRoute<void>(
+        (_) => AttachmentImageScreen(
           state: state,
           entry: entry,
           conversationId: conversationId,
@@ -288,17 +289,97 @@ void _snack(BuildContext context, String text) {
 }
 
 /// One attachment inside a message bubble.
-class AttachmentTile extends StatelessWidget {
-  const AttachmentTile({required this.entry, required this.onOpen, super.key});
+///
+/// When [loadPreview] is provided for an in-memory image attachment on an
+/// accepted conversation, decrypts and renders a bounded inline thumbnail
+/// above the file caption, wiping the decrypted bytes on dispose. Message
+/// requests never pass [loadPreview].
+class AttachmentTile extends StatefulWidget {
+  const AttachmentTile({
+    required this.entry,
+    required this.onOpen,
+    this.loadPreview,
+    super.key,
+  });
 
   final AttachmentEntry entry;
   final VoidCallback? onOpen;
+  final Future<Uint8List> Function()? loadPreview;
+
+  @override
+  State<AttachmentTile> createState() => _AttachmentTileState();
+}
+
+class _AttachmentTileState extends State<AttachmentTile> {
+  Uint8List? _previewBytes;
+  bool _disposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeLoadPreview();
+  }
+
+  @override
+  void didUpdateWidget(AttachmentTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entry.id != widget.entry.id ||
+        (oldWidget.loadPreview == null) != (widget.loadPreview == null)) {
+      _wipePreview();
+      _maybeLoadPreview();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _wipePreview();
+    super.dispose();
+  }
+
+  void _wipePreview() {
+    final bytes = _previewBytes;
+    _previewBytes = null;
+    bytes?.fillRange(0, bytes.length, 0);
+  }
+
+  void _maybeLoadPreview() {
+    final loader = widget.loadPreview;
+    if (loader == null ||
+        !widget.entry.isImage ||
+        !widget.entry.opensFromMemory) {
+      return;
+    }
+    unawaited(_loadPreview(loader));
+  }
+
+  Future<void> _loadPreview(Future<Uint8List> Function() loader) async {
+    Uint8List? bytes;
+    try {
+      bytes = await loader();
+      final size = await readImageSize(bytes);
+      final showable = size != null &&
+          size.width > 0 &&
+          size.height > 0 &&
+          size.width * size.height <= maxViewerPixels;
+      if (_disposed || !mounted || !showable) {
+        bytes.fillRange(0, bytes.length, 0);
+        return;
+      }
+      setState(() => _previewBytes = bytes);
+    } catch (_) {
+      bytes?.fillRange(0, bytes.length, 0);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final entry = widget.entry;
+    final onOpen = widget.onOpen;
     final size = formatFileSize(context, entry.plaintextSize);
+    final preview = _previewBytes;
     return Semantics(
       button: onOpen != null,
       // The tile's own tap action: excludeSemantics below drops the InkWell's,
@@ -313,38 +394,74 @@ class AttachmentTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(BoneRadii.md),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                entry.isImage
-                    ? Icons.image_outlined
-                    : Icons.insert_drive_file_outlined,
-                color: scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: BoneSpacing.sm),
-              Flexible(
-                child: Column(
+          child: preview != null
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    Text(
-                      entry.fileName,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium,
+                    Container(
+                      constraints: const BoxConstraints(
+                        maxWidth: 260,
+                        maxHeight: 220,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(BoneRadii.md),
+                        border: Border.all(
+                          color: BoneColors.hairline(theme.brightness),
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Image.memory(
+                        preview,
+                        cacheWidth: 480,
+                        fit: BoxFit.cover,
+                        semanticLabel: entry.fileName,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
                     ),
+                    const SizedBox(height: BoneSpacing.xs),
                     Text(
-                      size,
+                      '${entry.fileName} · $size',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      entry.isImage
+                          ? Icons.image_outlined
+                          : Icons.insert_drive_file_outlined,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: BoneSpacing.sm),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            entry.fileName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                          Text(
+                            size,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -10,6 +10,7 @@ import '../../ui/avatar.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/constrained_body.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/section_header.dart';
 import '../chat/chat_list_screen.dart'
@@ -35,9 +36,18 @@ import '../../l10n/l10n.dart';
 /// Message contents are ciphertext on the server and cannot be searched
 /// there by design.
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({required this.state, super.key});
+  const SearchScreen({
+    required this.state,
+    this.conversationId,
+    super.key,
+  });
 
   final AppState state;
+
+  /// When opened from inside a chat (Ctrl+F or Conversation Details), scopes
+  /// message search to this conversation by default with a 1-tap toggle to
+  /// search all local chats.
+  final String? conversationId;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -52,6 +62,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final query = TextEditingController();
   Timer? _debounce;
   _SearchMode mode = _SearchMode.messages;
+  late bool _scopeToConversation = widget.conversationId != null;
   List<MessageSearchHit> messageHits = <MessageSearchHit>[];
   List<MetadataSearchResult> results = <MetadataSearchResult>[];
   bool searching = false;
@@ -315,10 +326,40 @@ class _SearchScreenState extends State<SearchScreen> {
               onSelectionChanged: (selection) => _setMode(selection.single),
             ),
           ),
+          if (mode == _SearchMode.messages && widget.conversationId != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+                BoneSpacing.gutter,
+                BoneSpacing.xs,
+              ),
+              child: Wrap(
+                spacing: BoneSpacing.sm,
+                children: <Widget>[
+                  ChoiceChip(
+                    key: const Key('search-scope-this-chat'),
+                    label: Text(context.l10n.chatSearchThisChat),
+                    selected: _scopeToConversation,
+                    onSelected: (_) =>
+                        setState(() => _scopeToConversation = true),
+                  ),
+                  ChoiceChip(
+                    key: const Key('search-scope-all-chats'),
+                    label: Text(context.l10n.chatSearchAllChats),
+                    selected: !_scopeToConversation,
+                    onSelected: (_) =>
+                        setState(() => _scopeToConversation = false),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
-            child: mode == _SearchMode.messages
-                ? _messageResults(context)
-                : _peopleResults(context),
+            child: ConstrainedBody(
+              child: mode == _SearchMode.messages
+                  ? _messageResults(context)
+                  : _peopleResults(context),
+            ),
           ),
         ],
       ),
@@ -334,7 +375,12 @@ class _SearchScreenState extends State<SearchScreen> {
         message: context.l10n.searchMessagesIntroMessage,
       );
     }
-    if (messageHits.isEmpty) {
+    final visibleHits = _scopeToConversation && widget.conversationId != null
+        ? messageHits
+            .where((hit) => hit.conversationId == widget.conversationId)
+            .toList(growable: false)
+        : messageHits;
+    if (visibleHits.isEmpty) {
       return EmptyState(
         icon: Icons.search_off,
         title: context.l10n.searchMessagesNoResultsTitle,
@@ -346,9 +392,9 @@ class _SearchScreenState extends State<SearchScreen> {
         horizontal: BoneSpacing.sm,
         vertical: BoneSpacing.sm,
       ),
-      itemCount: messageHits.length,
+      itemCount: visibleHits.length,
       itemBuilder: (context, index) {
-        final hit = messageHits[index];
+        final hit = visibleHits[index];
         final conversation = widget.state.conversations
             .where((item) => item.id == hit.conversationId)
             .firstOrNull;

@@ -216,13 +216,13 @@ ThemeData _buildTheme(Brightness brightness) {
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(BoneRadii.lg),
-        side: BorderSide(color: scheme.outlineVariant),
+        side: BorderSide(color: BoneColors.hairline(brightness)),
       ),
       margin: EdgeInsets.zero,
     ),
     chipTheme: ChipThemeData(
       backgroundColor: scheme.surfaceContainerHigh,
-      side: BorderSide(color: scheme.outlineVariant),
+      side: BorderSide(color: BoneColors.hairline(brightness)),
       labelStyle: textTheme.labelSmall,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(BoneRadii.pill),
@@ -274,6 +274,23 @@ ThemeData _buildTheme(Brightness brightness) {
             : textTheme.labelSmall,
       ),
     ),
+    navigationRailTheme: NavigationRailThemeData(
+      backgroundColor: scheme.surface,
+      indicatorColor: BoneColors.navActiveFill(brightness),
+      minWidth: 88,
+      selectedIconTheme: IconThemeData(color: scheme.primary),
+      unselectedIconTheme: IconThemeData(color: scheme.onSurfaceVariant),
+      selectedLabelTextStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: scheme.primary,
+      ),
+      unselectedLabelTextStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+        color: scheme.onSurfaceVariant,
+      ),
+    ),
     listTileTheme: ListTileThemeData(
       titleTextStyle: textTheme.labelLarge,
       subtitleTextStyle: textTheme.bodySmall,
@@ -281,7 +298,7 @@ ThemeData _buildTheme(Brightness brightness) {
       minVerticalPadding: BoneSpacing.md,
     ),
     dividerTheme: DividerThemeData(
-      color: scheme.outlineVariant,
+      color: BoneColors.hairline(brightness),
       space: 1,
       thickness: 1,
     ),

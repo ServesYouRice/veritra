@@ -8,6 +8,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../crypto/crypto_service.dart';
 import '../../ui/format.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
@@ -196,8 +197,8 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
     final scanned = scanner != null
         ? await scanner(context)
         : await Navigator.of(context).push<String>(
-            MaterialPageRoute<String>(
-              builder: (_) => QrScanScreen(title: context.l10n.safetyScanTitle),
+            sharedAxisRoute<String>(
+              (_) => QrScanScreen(title: context.l10n.safetyScanTitle),
             ),
           );
     if (scanned == null || !mounted) return;

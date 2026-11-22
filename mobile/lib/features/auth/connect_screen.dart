@@ -12,6 +12,7 @@ import '../../storage/account_slots.dart';
 import '../settings/accounts_screen.dart' show AccountsShortcut;
 import '../settings/device_link_screen.dart'
     show DeviceLinkStep, DeviceLinkSteps;
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
 import 'account_recovery_screen.dart';
@@ -335,8 +336,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
             ? () {
                 if (widget.state.busy) return;
                 Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => AccountRecoveryStartScreen(
+                  sharedAxisRoute<void>(
+                    (_) => AccountRecoveryStartScreen(
                       state: widget.state,
                       initialServer: url.text.trim(),
                     ),
@@ -717,8 +718,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _scanInviteLink() async {
     final scanned = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (_) => QrScanScreen(
+      sharedAxisRoute<String>(
+        (_) => QrScanScreen(
           title: context.l10n.connectScanInviteTitle,
           hint: context.l10n.qrPointCameraInvite,
         ),
@@ -1199,7 +1200,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _scanLinkCode() async {
     final scanned = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(builder: (_) => const QrScanScreen()),
+      sharedAxisRoute<String>((_) => const QrScanScreen()),
     );
     if (!mounted || scanned == null || scanned.isEmpty) {
       return;
