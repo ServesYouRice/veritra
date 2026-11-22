@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import '../tokens.dart';
 import '../../l10n/l10n.dart';
 
-/// Always-visible notice for demo builds (decision D11). Demo builds run the
-/// real end-to-end encryption before its independent review, so they must
-/// never look like a release build.
+/// Demo notice shown before the workspace opens (decision D11). Once signed
+/// in, users can find the same notice in About.
 class DemoBanner extends StatelessWidget {
   const DemoBanner({super.key});
 

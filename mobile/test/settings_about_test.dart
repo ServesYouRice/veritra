@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/auth/qr_scan_screen.dart';
 import 'package:private_messenger/features/settings/device_link_screen.dart';
@@ -108,6 +109,23 @@ void main() {
       expect(find.byType(AboutDialog), findsOneWidget);
       expect(find.text(veritraVersion), findsOneWidget);
       expect(find.textContaining('AGPL-3.0-or-later'), findsWidgets);
+      expect(find.textContaining('unreviewed encryption'), findsNothing);
+    });
+
+    testWidgets('the demo About dialog retains the encryption notice', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_App(state: _state(demo: true)));
+      await tester.scrollUntilVisible(find.text('About Veritra'), 200);
+      await tester.ensureVisible(find.text('About Veritra'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('About Veritra'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+            'Demo build · unreviewed encryption. Not for real conversations.'),
+        findsOneWidget,
+      );
     });
   });
 
@@ -350,12 +368,13 @@ class _App extends StatelessWidget {
   }
 }
 
-AppState _state() {
+AppState _state({bool demo = false}) {
   final api = _Api();
   return AppState(
     apiClientFactory: (_) => api,
     cryptoService: TestOnlyCryptoService(),
     localStore: MemoryLocalStore(),
+    config: ClientConfig(demo: demo),
     syncServiceFactory: (_, __) => _FakeSyncService(),
   )
     ..api = api

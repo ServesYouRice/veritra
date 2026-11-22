@@ -337,9 +337,8 @@ The `errorContainer` treatment stays on the danger zone; it is doing real work.
 
 ### §7 Empty states
 
-Was a `CircleAvatar` + icon. Now the concept-06 chain-link mark as low-opacity
-line art. One shared widget already existed and was used consistently — only its
-interior changed.
+The shared empty state shows the concept-06 chain-link mark as low-opacity
+line art above the heading. The screen icon sits beside the heading.
 
 The mark family behind it was redrawn on Bone on 2026-08-18, so
 `branding/concept-06/` and this document no longer disagree about the palette;

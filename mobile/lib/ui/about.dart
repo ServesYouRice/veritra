@@ -45,14 +45,18 @@ void registerVeritraLicense() {
 Widget _icon(BuildContext context) =>
     VeritraMark(size: 40, color: Theme.of(context).colorScheme.onSurface);
 
-void showVeritraAbout(BuildContext context) {
+void showVeritraAbout(BuildContext context, {bool demo = false}) {
   registerVeritraLicense();
+  final l10n = context.l10n;
   showAboutDialog(
     context: context,
     applicationName: veritraProductName,
     applicationVersion: veritraVersion,
     applicationIcon: _icon(context),
     applicationLegalese: veritraLegalese(context),
+    children: <Widget>[
+      if (demo) Text(l10n.demoBannerNotice(l10n.demoBannerLabel)),
+    ],
   );
 }
 

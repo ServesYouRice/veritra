@@ -116,9 +116,14 @@ class _AppShellState extends State<AppShell> {
         widget.state.pendingAccountRecovery != null,
         widget.state.recoveryFollowUp != null,
       ),
-      builder: (context, _, __) {
+      builder: (context, session, _) {
         final content = _buildContent(context);
-        if (!widget.state.config.demo) return content;
+        final (lifecycle, connected, _, recoveryFollowUp) = session;
+        final showsWorkspace = connected &&
+            lifecycle != SessionLifecycle.initializing &&
+            lifecycle != SessionLifecycle.recoveryRequired &&
+            !recoveryFollowUp;
+        if (!widget.state.config.demo || showsWorkspace) return content;
         return Column(
           children: <Widget>[
             const DemoBanner(),

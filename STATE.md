@@ -213,7 +213,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | D04 | Minimal admin audit events |
 | D05/D20 | Production stays fail-closed until an independent external review; review, signing and device evidence wait until all three phases are done |
 | D06/D10/D21 | One product, one repo, three phases; local demos first on Android, iOS, Windows, Linux; the Flutter app in `mobile/` serves every platform; desktop is never a fork |
-| D11/D12 | Demo builds use the real MLS path only via `main_demo.dart`, labelled "Demo · unreviewed crypto"; `http://` only for loopback |
+| D11/D12 | Demo builds use the real MLS path only via `main_demo.dart`, with an unreviewed encryption notice before the workspace opens and in Settings → About; `http://` only for loopback |
 | D14/D15 | Go: latest 1.26 patch (1.26.11). Flutter 3.44.0; `sqlite3` held at 3.5.x until the Flutter pin moves |
 | D18 | Coverage floors only move up (Go 50%, Flutter 43%; measured 60%) |
 | D19 | Embedded chat stays end-to-end encrypted, so phase 3 ships a client SDK |

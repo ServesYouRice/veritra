@@ -451,7 +451,10 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: Text(
                         l10n.aboutVersion(veritraVersion, veritraLicenseName),
                       ),
-                      onTap: () => showVeritraAbout(context),
+                      onTap: () => showVeritraAbout(
+                        context,
+                        demo: state.config.demo,
+                      ),
                     ),
                     ListTile(
                       leading: const Icon(Icons.description_outlined),

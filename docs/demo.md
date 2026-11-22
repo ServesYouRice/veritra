@@ -2,8 +2,9 @@
 
 Run Veritra on your own machine: one local server, and apps that talk to it.
 The demo uses the real OpenMLS encryption, which has **not** been
-independently reviewed yet. Every demo app shows a "Demo build · unreviewed
-encryption" banner. Do not use it for real secrets.
+independently reviewed yet. The "Demo build · unreviewed encryption" notice
+appears before the workspace opens and in Settings → About. Do not use it for
+real secrets.
 
 ## 1. Start the server
 

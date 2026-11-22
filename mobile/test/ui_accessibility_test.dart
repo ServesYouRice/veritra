@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/auth/connect_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
@@ -13,8 +14,11 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'package:private_messenger/ui/app_shell.dart';
 import 'package:private_messenger/ui/theme.dart';
 import 'package:private_messenger/ui/tokens.dart';
+import 'package:private_messenger/ui/widgets/demo_banner.dart';
+import 'package:private_messenger/ui/widgets/empty_state.dart';
 import 'package:private_messenger/ui/widgets/section_header.dart';
 import 'package:private_messenger/ui/widgets/status_pill.dart';
+import 'package:private_messenger/ui/widgets/veritra_mark.dart';
 
 import 'test_crypto_service.dart';
 
@@ -24,6 +28,72 @@ void main() {
     expect(shouldShowFloatingNavLabels(width: 320, textScale: 1), isTrue);
     expect(shouldShowFloatingNavLabels(width: 320, textScale: 1.3), isTrue);
     expect(shouldShowFloatingNavLabels(width: 500, textScale: 1.31), isFalse);
+  });
+
+  testWidgets('the demo banner clears when the workspace opens',
+      (tester) async {
+    final state = AppState(
+      apiClientFactory: (_) => ApiClient(baseUrl: 'https://localhost:8080'),
+      cryptoService: TestOnlyCryptoService(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _TestSyncService(),
+      config: const ClientConfig(demo: true),
+    )..lifecycle = SessionLifecycle.initializing;
+    addTearDown(state.dispose);
+
+    Widget surface() => MaterialApp(home: AppShell(state: state));
+    await tester.pumpWidget(surface());
+    expect(find.byType(DemoBanner), findsOneWidget);
+
+    state
+      ..lifecycle = SessionLifecycle.ready
+      ..session = const Session(
+        baseUrl: 'https://localhost:8080',
+        token: 'owner-token',
+        accountId: 'acct_owner',
+        deviceId: 'dev_owner',
+        username: 'owner',
+      )
+      ..conversationsLoaded = true;
+    await tester.pumpWidget(surface());
+    expect(find.byType(DemoBanner), findsNothing);
+    expect(find.byType(EmptyState), findsOneWidget);
+  });
+
+  testWidgets('empty states place the icon beside a wrapping heading', (
+    tester,
+  ) async {
+    const title = 'No conversations yet';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: const Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 280,
+              child: EmptyState(
+                icon: Icons.forum_outlined,
+                title: title,
+                message: 'Start a chat.',
+              ),
+            ),
+          ),
+        ),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: const TextScaler.linear(2.5),
+          ),
+          child: child!,
+        ),
+      ),
+    );
+
+    final mark = tester.getRect(find.byType(VeritraMark));
+    final icon = tester.getRect(find.byIcon(Icons.forum_outlined));
+    final heading = tester.getRect(find.text(title));
+    expect(mark.bottom, lessThan(icon.top));
+    expect(icon.right, lessThan(heading.left));
+    expect(icon.center.dy, closeTo(heading.center.dy, 0.1));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('tabs show their word at 320dp and text scale 1.3 (U11)', (
