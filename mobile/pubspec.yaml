@@ -29,7 +29,7 @@ dependencies:
   path_provider: 2.1.6
   flutter_webrtc: 1.6.3
   # Group-call media transport (B6, O1 under D106). Exact version.
-  livekit_client: 2.13.2
+  livekit_client: 2.14.0
   sqlite3: 3.5.2
   file_selector: 1.1.0
   # Desktop shell (W3, W4). Newer tray_manager releases need Flutter 3.47.
@@ -38,7 +38,7 @@ dependencies:
   local_notifier: 0.1.6
   # Composer files (W9, B4). desktop_drop 0.9 needs Flutter 3.47.
   desktop_drop: 0.8.4
-  pasteboard: 0.6.0
+  pasteboard: 0.6.2
   open_filex: 5.0.0
   # Voice notes (B1): record to a file, play a decrypted copy.
   record: 7.2.0

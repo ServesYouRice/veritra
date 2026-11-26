@@ -17,6 +17,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "13.0.0"
+  archive:
+    dependency: transitive
+    description:
+      name: archive
+      sha256: "2fda90592c0afd219c5e285618a98da835cd10df38372666093d25dfe457a2d0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.7.1"
   args:
     dependency: transitive
     description:
@@ -641,10 +649,18 @@ packages:
     dependency: "direct main"
     description:
       name: livekit_client
-      sha256: c63211bd5073b308417de2b048809c156f50cb5bda02713150478742be2a1bc1
+      sha256: d13e2d38f0795c416f65c3e2decb03e451d48bf03baa4c8225c8a8baa8b470ca
       url: "https://pub.dev"
     source: hosted
-    version: "2.13.2"
+    version: "2.14.0"
+  livekit_ffi:
+    dependency: transitive
+    description:
+      name: livekit_ffi
+      sha256: c107a4c63d5c2a37f878bf9af7582238e12dec69f3041c80193dd6a2ccb2c694
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.15.0"
   local_notifier:
     dependency: "direct main"
     description:
@@ -841,10 +857,10 @@ packages:
     dependency: "direct main"
     description:
       name: pasteboard
-      sha256: e0535da36124e6f2ca9d17424102ce5de34e72acc39f05a1d942b974b48e5eea
+      sha256: "7b1c7ed83b4ff27acced26e96b87c16ac37fb6c57d7886eb3130faccb28b2cc2"
       url: "https://pub.dev"
     source: hosted
-    version: "0.6.0"
+    version: "0.6.2"
   path:
     dependency: transitive
     description:
@@ -941,6 +957,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.2"
+  posix:
+    dependency: transitive
+    description:
+      name: posix
+      sha256: "613646d076944f3acc125830af935b48d4b8a57a388691547bbfd25b434f4d63"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.5.4"
   protobuf:
     dependency: transitive
     description:
@@ -1097,10 +1121,10 @@ packages:
     dependency: transitive
     description:
       name: sdp_transform
-      sha256: "73e412a5279a5c2de74001535208e20fff88f225c9a4571af0f7146202755e45"
+      sha256: "8bf8144bb612ff308896eb665a5045e2551038ebfbd3bc067969653dce7f1c90"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.2"
+    version: "0.4.0"
   shelf:
     dependency: transitive
     description:
